@@ -71,3 +71,38 @@ jobs:
             *.log
           if-no-files-found: ignore
           retention-days: 7
+
+  web:
+    name: Web dashboard build and audit
+    runs-on: [self-hosted, windows, mmch]
+    timeout-minutes: 30
+
+    defaults:
+      run:
+        working-directory: web
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        shell: powershell
+        run: npm ci --no-audit --no-fund
+
+      - name: Build static export
+        shell: powershell
+        run: npm run build
+
+      - name: Verify static export output
+        shell: powershell
+        run: |
+          if (!(Test-Path 'out/index.html')) { throw 'Static export did not produce out/index.html' }
+          $css = Get-ChildItem 'out' -Recurse -Filter '*.css'
+          if (!$css) { throw 'Static export produced no CSS' }
+          $total = ($css | Measure-Object -Property Length -Sum).Sum
+          Write-Host "CSS files: $($css.Count), total bytes: $total"
+          if ($total -lt 5000) { throw "CSS output suspiciously small ($total bytes) - Tailwind may have failed" }
+
+      - name: Audit web dependencies
+        shell: powershell
+        run: npm audit --audit-level=high
