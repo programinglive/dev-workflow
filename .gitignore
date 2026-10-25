@@ -35,3 +35,9 @@ Thumbs.db
 
 # Local Netlify folder
 .netlify
+
+# SSH keys (never commit private keys)
+.ssh/id_*
+.ssh/*.pem
+!.ssh/config
+!.ssh/known_hosts
