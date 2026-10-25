@@ -146,7 +146,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           # Node 24 so `npm@latest` (12.x, requires >=22) can install.
           # npm 11.5.1+ is the floor for Trusted Publishing, but tracking
