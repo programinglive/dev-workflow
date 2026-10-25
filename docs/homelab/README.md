@@ -52,6 +52,7 @@ Semua komunikasi SSH dan layanan internal berjalan di atas Tailscale tailnet `ta
 
 - [Tailnet & SSH Infrastructure](./infra-tailnet-ssh.md)
 - [CLI Tools Per Machine](./cli-tools.md)
+- [Self-Hosted CI Runner](./ci-runner.md)
 - [Security Rules](./security-rules.md)
 
 ---
