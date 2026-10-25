@@ -262,6 +262,18 @@ npm test                            # full suite
 node --test tests/setup-stack.test.js
 ```
 
+### CI
+
+`.github/workflows/ci.yml` runs on every pull request and on pushes to `main`:
+
+1. `npm ci`
+2. `npm test`
+3. `npm run build:server`
+4. `npm audit --omit=dev --audit-level=high`
+
+A pull request cannot merge green if any of these fail. The job runs on Node 20
+to match `github-release.yml`.
+
 `tests/test-helpers.js` exports `stripNpmNotices()`, which removes npm's own
 `npm warn`/`npm notice` chatter and Rollup's third-party annotation warnings from
 captured stderr before the build test asserts on it. Without it, a clean build
