@@ -20,7 +20,7 @@
     "setup": "node scripts/setup-stack.js",
     "test": "node --no-deprecation --test",
     "check": "node --check index.js",
-    "prepare": "husky",
+    "prepare": "node scripts/install-husky.js",
     "postinstall": "node install.js",
     "release": "node scripts/release.cjs",
     "release:major": "node scripts/release.cjs major",

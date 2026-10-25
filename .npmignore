@@ -1,0 +1,35 @@
+# Keep development and deployment files out of the published package.
+# Without this file npm falls back to .gitignore, which still lets tracked
+# files such as .env.production through.
+
+# Environment files - the example is fine, real ones are not
+.env
+.env.*
+!.env.example
+
+# Local workflow state
+.state/
+*.db
+*.db-wal
+*.db-shm
+
+# Tests and CI
+tests/
+.github/
+.husky/
+.agent/
+
+# Web dashboard has its own package and is deployed separately
+web/
+
+# Build and tooling artefacts
+dist/
+node_modules/
+coverage/
+*.log
+*.tgz
+
+# Docs that are not useful to package consumers
+docs/
+CHANGELOG.md
+test-output.html

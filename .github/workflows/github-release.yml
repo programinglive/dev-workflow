@@ -1,5 +1,11 @@
 name: Create GitHub Release
 
+# Build runs on the self-hosted MMCH runner (no GitHub minutes).
+# Publish runs on a GitHub-hosted runner because `npm publish --provenance`
+# requires a supported cloud CI/CD provider with a cloud-hosted runner:
+# https://docs.npmjs.com/generating-provenance-statements
+# The hosted job is a single publish step and only runs on a v* tag.
+
 on:
   push:
     tags:
@@ -15,8 +21,104 @@ permissions:
   id-token: write
 
 jobs:
-  release:
+  build:
+    name: Build and verify package
+    runs-on: [self-hosted, windows, mmch]
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Determine version
+        id: version
+        shell: powershell
+        run: |
+          $tag = "${{ github.event.inputs.tag }}"
+          if ([string]::IsNullOrWhiteSpace($tag)) { $tag = $env:GITHUB_REF_NAME }
+          if ([string]::IsNullOrWhiteSpace($tag)) { throw 'Unable to determine tag name' }
+          $version = $tag -replace '^v', ''
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "version=$version" >> $env:GITHUB_OUTPUT
+          Write-Host "tag=$tag version=$version"
+
+      - name: Install dependencies
+        shell: powershell
+        run: npm ci --no-audit --no-fund
+
+      - name: Run tests
+        shell: powershell
+        run: npm test
+
+      - name: Build package
+        shell: powershell
+        run: npm run build:server
+
+      - name: Verify the built bundle starts
+        shell: powershell
+        run: |
+          $proc = Start-Process node -ArgumentList 'dist/index.mjs' -PassThru -RedirectStandardError "$env:TEMP\rel-err.txt" -RedirectStandardOutput "$env:TEMP\rel-out.txt"
+          Start-Sleep -Seconds 5
+          if ($proc.HasExited) {
+            Get-Content "$env:TEMP\rel-err.txt" -ErrorAction SilentlyContinue
+            throw "Built bundle exited with code $($proc.ExitCode)"
+          }
+          Stop-Process -Id $proc.Id -Force
+          Write-Host 'Built bundle started successfully.'
+
+      - name: Pack tarball
+        id: pack
+        shell: powershell
+        run: |
+          # npm prints the `prepare` script output and warnings before the JSON,
+          # so the raw output is not parseable as-is. Take everything from the
+          # first line that starts the JSON array.
+          # ErrorActionPreference must be relaxed first: under PowerShell 5.1 any
+          # native-command stderr output becomes a terminating error.
+          $ErrorActionPreference = 'Continue'
+          $raw = & npm pack --json 2>&1 | Out-String
+          $ErrorActionPreference = 'Stop'
+          $start = $raw.IndexOf("`n[")
+          if ($start -lt 0) { throw "Could not find JSON in npm pack output" }
+          $json = $raw.Substring($start + 1)
+          $name = ($json | ConvertFrom-Json)[0].filename
+          if (!(Test-Path $name)) { throw "npm pack did not produce $name" }
+          Write-Host "packed $name"
+          "tarball=$name" >> $env:GITHUB_OUTPUT
+
+      - name: Write version metadata
+        shell: powershell
+        env:
+          REL_TAG: ${{ steps.version.outputs.tag }}
+          REL_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $meta = @{ tag = $env:REL_TAG; version = $env:REL_VERSION } | ConvertTo-Json
+          Set-Content -Path 'release-meta.json' -Value $meta -Encoding utf8
+          Get-Content 'release-meta.json'
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-package
+          path: ${{ steps.pack.outputs.tarball }}
+          retention-days: 7
+
+      - name: Upload version metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-meta
+          path: release-meta.json
+          retention-days: 7
+          if-no-files-found: error
+
+  publish:
+    name: Publish to npm and create release
+    needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout repository
@@ -31,43 +133,35 @@ jobs:
           node-version: "20"
           registry-url: "https://registry.npmjs.org"
 
-      - name: Determine version
-        id: version
-        run: |
-          if [ -n "${{ github.event.inputs.tag }}" ]; then
-            TAG="${{ github.event.inputs.tag }}"
-          else
-            TAG="${GITHUB_REF_NAME}"
-          fi
-
-          if [ -z "$TAG" ]; then
-            echo "Unable to determine tag name"
-            exit 1
-          fi
-
-          VERSION="${TAG#v}"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
       - name: Update npm
         run: npm install -g npm@latest
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Download package artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-package
 
-      - name: Install web dependencies
-        run: npm ci --prefix web
+      - name: Download version metadata
+        uses: actions/download-artifact@v4
+        with:
+          name: release-meta
 
-      - name: Build package
-        run: npm run build
+      - name: Read version
+        id: meta
+        run: |
+          VERSION=$(node -p "require('./release-meta.json').version")
+          TAG=$(node -p "require('./release-meta.json').tag")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Publishing $VERSION for $TAG"
 
       - name: Publish to npm
-        run: npm publish --provenance
+        run: npm publish *.tgz --provenance --access public
 
       - name: Generate release notes
         run: |
-          echo "Extracting release notes for version ${{ steps.version.outputs.version }}"
-          node scripts/extract-release-notes.cjs "${{ steps.version.outputs.version }}" > release-notes.md
+          echo "Extracting release notes for version ${{ steps.meta.outputs.version }}"
+          node scripts/extract-release-notes.cjs "${{ steps.meta.outputs.version }}" > release-notes.md
           echo "--- Release notes content ---"
           cat release-notes.md
           echo "--- End of release notes ---"
@@ -75,7 +169,7 @@ jobs:
       - name: Publish GitHub release
         uses: actions/github-script@v7
         env:
-          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          RELEASE_TAG: ${{ steps.meta.outputs.tag }}
         with:
           script: |
             const fs = require('fs');

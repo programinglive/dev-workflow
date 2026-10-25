@@ -313,6 +313,44 @@ generated nothing and was referenced by no script.
 
 ---
 
+## Release Workflow
+
+`.github/workflows/github-release.yml` runs on a `v*` tag and is split in two:
+
+| Job | Runner | What it does |
+|---|---|---|
+| `build` | self-hosted MMCH | `npm ci` -> `npm test` -> `build:server` -> verify the built bundle starts -> `npm pack` -> upload tarball + metadata |
+| `publish` | `ubuntu-latest` | download tarball -> `npm publish --provenance` -> create/update the GitHub release |
+
+**Why publish is not on MMCH:** npm provenance requires a supported cloud CI/CD
+provider with a **cloud-hosted** runner
+([docs](https://docs.npmjs.com/generating-provenance-statements)). A self-hosted
+runner cannot produce an attestation, so `--provenance` would have to be dropped
+and consumers would lose the ability to verify which commit the package was
+built from.
+
+The split keeps the expensive part - install, test, build, pack - on our own
+hardware, and spends hosted minutes only on a single publish step that runs when
+a release tag is pushed. Pull requests never touch the hosted runner.
+
+Publishing authenticates through **npm Trusted Publishing (OIDC)** - no
+`NPM_TOKEN` secret is required, and `id-token: write` plus `registry-url` on
+`setup-node` is the whole configuration.
+
+### What goes into the package
+
+`.npmignore` keeps the published tarball to the runtime server: roughly 60 files
+and 65 kB. It excludes `.env*` (only `.env.example` ships), `.state/`, tests,
+CI config, `web/`, and docs. Without it npm falls back to `.gitignore`, which
+still allows tracked files such as `.env.production` into the tarball.
+
+`scripts/install-husky.js` runs from `prepare`. It installs git hooks only when
+a `.git` directory is present, so installing the package from the registry as a
+dependency does not fail on husky. The `husky || true` idiom is not portable to
+Windows, where npm runs scripts through `cmd.exe`.
+
+---
+
 ## 🏠 Homelab Development Guide
 
 Repo ini juga berisi panduan konfigurasi homelab internal **programinglive** — Tailscale + SSH antar 3 mesin (MMCH, HELLOWORLD, Mac).
