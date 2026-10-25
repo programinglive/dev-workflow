@@ -35,30 +35,30 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Verify toolchain
-        shell: pwsh
+        shell: powershell
         run: |
           node --version
           npm --version
           git --version
 
       - name: Install dependencies
-        shell: pwsh
+        shell: powershell
         run: npm ci --no-audit --no-fund
 
       - name: Run tests
-        shell: pwsh
+        shell: powershell
         run: npm test
 
       - name: Build server bundle
-        shell: pwsh
+        shell: powershell
         run: npm run build:server
 
       - name: Audit production dependencies
-        shell: pwsh
+        shell: powershell
         run: npm audit --omit=dev --audit-level=high
 
       - name: Verify stack setup helpers
-        shell: pwsh
+        shell: powershell
         run: node --test tests/setup-stack.test.js
 
       - name: Upload test output on failure
