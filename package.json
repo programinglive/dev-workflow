@@ -77,7 +77,7 @@
     "postcss": "^8.5.6",
     "standard-version": "^9.5.0",
     "supertest": "^7.3.1",
-    "typescript": "^5.9.3"
+    "typescript": "^7.0.2"
   },
   "standard-version": {
     "releaseCommitMessageFormat": "chore(release): {{currentTag}} 🚀",
