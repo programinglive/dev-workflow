@@ -268,6 +268,22 @@ captured stderr before the build test asserts on it. Without it, a clean build
 could look broken on machines with a user-level `.npmrc` or with dependency
 versions that emit annotation warnings.
 
+### CI
+
+`.github/workflows/ci.yml` runs on the **self-hosted runner on MMCH**, not on
+GitHub-hosted minutes:
+
+```yaml
+runs-on: [self-hosted, windows, mmch]
+```
+
+Steps: `npm ci` → `npm test` → `build:server` →
+`npm audit --omit=dev --audit-level=high` → setup-stack suite. A pull request
+cannot merge green if any step fails.
+
+Runner provisioning and troubleshooting are documented in
+[docs/homelab/ci-runner.md](./docs/homelab/ci-runner.md).
+
 ### Dependency hygiene
 
 ```bash
@@ -297,6 +313,7 @@ Repo ini juga berisi panduan konfigurasi homelab internal **programinglive** —
 | [docs/homelab/README.md](./docs/homelab/README.md) | Overview & quick reference |
 | [docs/homelab/infra-tailnet-ssh.md](./docs/homelab/infra-tailnet-ssh.md) | Tailnet + SSH setup lengkap |
 | [docs/homelab/cli-tools.md](./docs/homelab/cli-tools.md) | CLI tools per machine |
+| [docs/homelab/ci-runner.md](./docs/homelab/ci-runner.md) | Self-hosted CI runner di MMCH |
 | [docs/homelab/security-rules.md](./docs/homelab/security-rules.md) | Aturan keamanan |
 | [.agent/workflows/homelab-setup.md](./.agent/workflows/homelab-setup.md) | Workflow MCP untuk onboarding mesin baru |
 
@@ -331,11 +348,19 @@ npm test
 ```
 
 ```
-ℹ tests 71
-✔ pass 71
+ℹ tests 112
+ℹ pass 110
+ℹ fail 0
+ℹ skipped 2
 ```
 
-Test yang gagal di Windows (DB adapter, release-wrapper) adalah known issue karena `better-sqlite3` native module belum ter-compile. Core workflow tests semuanya pass.
+The two skipped tests are the MySQL and PostgreSQL adapters, which need a real
+database connection (`MYSQL_URL` / `PG_URL`). Everything else, including the
+SQLite adapter, runs.
+
+If a Windows install fails on a native module, it is almost always a missing
+prebuild for your Node ABI rather than a broken test - see
+[docs/homelab/ci-runner.md](./docs/homelab/ci-runner.md#troubleshooting).
 
 ---
 
