@@ -2,81 +2,51 @@
 # ==============================================================================
 # Programinglive Homelab Bootstrap Script for macOS (Mac)
 # Installs: RTK (Token Killer), Superpowers (Skills), and Dev-Workflow MCP
+#
+# This script is a thin wrapper. All OpenCode configuration logic lives in
+# scripts/setup-stack.js so Windows and macOS cannot drift apart.
 # ==============================================================================
 
-set -e
+set -euo pipefail
 
 echo "🚀 Starting Homelab Unix/macOS Bootstrap on Mac..."
 
-# 1. Check / Install RTK
-if ! command -v rtk &> /dev/null; then
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SETUP_SCRIPT="$REPO_ROOT/scripts/setup-stack.js"
+
+if [ ! -f "$SETUP_SCRIPT" ]; then
+    echo "✗ Could not find $SETUP_SCRIPT" >&2
+    echo "  Run this script from inside a clone of dev-workflow-mcp-server." >&2
+    exit 1
+fi
+
+# 1. Ensure Node is available (setup-stack.js is a Node script)
+if ! command -v node > /dev/null 2>&1; then
+    echo "✗ Node.js not found on PATH. Install Node 20+ and re-run." >&2
+    exit 1
+fi
+
+# 2. Check / install RTK
+if ! command -v rtk > /dev/null 2>&1; then
     echo "⚡ Installing RTK via Homebrew..."
     brew install rtk || curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/refs/heads/master/install.sh | sh
 else
     echo "✓ RTK is already installed."
 fi
 
-# 2. Setup OpenCode Config Directory
-CONFIG_DIR="$HOME/.config/opencode"
-PLUGINS_DIR="$CONFIG_DIR/plugins"
-NODE_MODULES_DIR="$CONFIG_DIR/node_modules"
-SUPERPOWERS_DIR="$NODE_MODULES_DIR/superpowers"
-
-mkdir -p "$PLUGINS_DIR" "$NODE_MODULES_DIR"
-
-# 3. Clone / Update Superpowers
-if [ -d "$SUPERPOWERS_DIR" ]; then
-    echo "📦 Updating Superpowers..."
-    git -C "$SUPERPOWERS_DIR" pull --depth 1
+# 3. Install dependencies BEFORE the MCP server is registered, otherwise the
+#    server crashes at startup with ERR_MODULE_NOT_FOUND.
+if [ ! -d "$REPO_ROOT/node_modules" ]; then
+    echo "📥 Installing dependencies..."
+    ( cd "$REPO_ROOT" && npm install --no-audit --no-fund )
 else
-    echo "📦 Cloning Superpowers..."
-    git clone --depth 1 https://github.com/obra/superpowers.git "$SUPERPOWERS_DIR"
+    echo "✓ Dependencies already installed."
 fi
 
-# 4. Clone or Setup Dev-Workflow MCP Server
-SERVER_DIR="$HOME/code/dev-workflow-mcp-server"
-mkdir -p "$(dirname "$SERVER_DIR")"
-if [ ! -d "$SERVER_DIR" ]; then
-    echo "🛠️ Cloning dev-workflow-mcp-server..."
-    git clone https://github.com/programinglive/dev-workflow-mcp-server.git "$SERVER_DIR"
-else
-    echo "✓ dev-workflow-mcp-server already exists at $SERVER_DIR"
-fi
-
-# 5. Configure opencode.json via Node helper
-echo "⚙️ Configuring opencode.json..."
-node -e '
-const fs = require("fs");
-const path = require("path");
-const configPath = process.argv[1];
-const serverIndex = process.argv[2];
-
-let config = {};
-try {
-    if (fs.existsSync(configPath)) {
-        config = JSON.parse(fs.readFileSync(configPath, "utf8").replace(/^\uFEFF/, ""));
-    }
-} catch (e) {}
-
-config.$schema = config.$schema || "https://opencode.ai/config.json";
-config.plugin = Array.isArray(config.plugin) ? config.plugin : [];
-if (!config.plugin.includes("superpowers@git+https://github.com/obra/superpowers.git")) {
-    config.plugin.push("superpowers@git+https://github.com/obra/superpowers.git");
-}
-
-config.mcp = config.mcp || {};
-config.mcp["dev-workflow"] = {
-    type: "local",
-    command: ["node", serverIndex],
-    enabled: true
-};
-
-fs.writeFileSync(configPath, JSON.stringify(config, null, 4), "utf8");
-console.log("✓ opencode.json updated successfully.");
-' "$CONFIG_DIR/opencode.json" "$SERVER_DIR/index.js"
-
-# 6. Register RTK hook
-rtk init -g --opencode || true
+# 4. Configure the stack (config path, plugins, MCP server, RTK hook, verification)
+echo ""
+echo "⚙️ Configuring OpenCode..."
+node "$SETUP_SCRIPT"
 
 echo ""
 echo "============================================================="
