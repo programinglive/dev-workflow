@@ -118,14 +118,14 @@ jobs:
           Get-Content 'release-meta.json'
 
       - name: Upload package artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: npm-package
           path: ${{ steps.pack.outputs.tarball }}
           retention-days: 7
 
       - name: Upload version metadata
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-meta
           path: release-meta.json
