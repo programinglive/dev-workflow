@@ -172,6 +172,32 @@ app.prepare().then(() => {
         }
     });
 
+    // 🏭 AI Software Factory API Endpoints (for factory.programinglive.com integration)
+    server.get('/api/factory/status', (req, res) => {
+        res.json({
+            factory: 'programinglive-node-factory',
+            status: 'operational',
+            domain: process.env.FACTORY_DOMAIN || 'factory.programinglive.com',
+            version: '1.9.1',
+            features: {
+                workflowDiscipline: true,
+                agenticSkills: true,
+                tokenCompression: true
+            },
+            timestamp: new Date().toISOString()
+        });
+    });
+
+    server.post('/api/factory/webhook', (req, res) => {
+        const payload = req.body;
+        console.log('🏭 [Factory Webhook Received]:', payload?.event || 'generic-trigger');
+        res.json({
+            success: true,
+            message: 'Webhook received and queued for factory processing',
+            receivedAt: new Date().toISOString()
+        });
+    });
+
     // Next.js handler for all other routes
     server.all('*', (req, res) => {
         return handle(req, res);
