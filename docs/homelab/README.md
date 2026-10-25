@@ -1,10 +1,12 @@
 # Homelab Development Guide
 
-Panduan konfigurasi homelab development untuk **programinglive** tailnet. Dokumen ini menjadi referensi standar saat setup mesin baru atau troubleshooting koneksi antar-node.
+Configuration guide for the **programinglive** homelab tailnet. This is the
+standard reference when setting up a new machine or troubleshooting
+node-to-node connectivity.
 
 ---
 
-## Topologi
+## Topology
 
 ```
 MMCH (Windows 11) ─── Tailscale ─── HELLOWORLD (Windows)
@@ -12,11 +14,12 @@ MMCH (Windows 11) ─── Tailscale ─── HELLOWORLD (Windows)
                             └── Tailscale ─── Mac (macOS)
 ```
 
-Semua komunikasi SSH dan layanan internal berjalan di atas Tailscale tailnet `tail34fbfd.ts.net`. Port 22 tidak pernah terbuka ke LAN atau internet.
+All SSH traffic and internal services run over the Tailscale tailnet
+`tail34fbfd.ts.net`. Port 22 is never exposed to the LAN or the internet.
 
 ---
 
-## Perangkat
+## Machines
 
 | Hostname | Tailscale IP | OS | Role |
 |---|---|---|---|
@@ -26,29 +29,29 @@ Semua komunikasi SSH dan layanan internal berjalan di atas Tailscale tailnet `ta
 
 ---
 
-## Repositori Terkait
+## Related repositories
 
-| Repo | Visibility | Deskripsi |
+| Repo | Visibility | Description |
 |---|---|---|
-| `mmch` | Private | Konfigurasi utama MMCH + infrastruktur |
-| `helloworld` | Private | Konfigurasi HELLOWORLD |
-| `mac-optimization` | Private | Konfigurasi Mac |
-| `dev-workflow-mcp-server` | Private | MCP server workflow discipline |
+| `mmch` | Private | Primary MMCH configuration and infrastructure |
+| `helloworld` | Private | HELLOWORLD configuration |
+| `mac-optimization` | Private | Mac configuration |
+| `dev-workflow-mcp-server` | Private | MCP server for workflow discipline |
 
 ---
 
-## Quick Reference
+## Quick reference
 
-- **SSH dari MMCH**: `ssh helloworld`, `ssh mac`
-- **SSH dari HELLOWORLD/Mac ke MMCH**: `ssh mmch`
+- **SSH from MMCH**: `ssh helloworld`, `ssh mac`
+- **SSH from HELLOWORLD/Mac to MMCH**: `ssh mmch`
 - **Tailscale IP range**: `100.64.0.0/10`
-- **SSH user**: `mahardhika` (admin di semua machine)
+- **SSH user**: `mahardhika` (admin on every machine)
 - **Cross-machine key**: `~/.ssh/id_ed25519_devgroup`
-- **GitLab key**: `~/.ssh/id_ed25519` (jangan ditimpa)
+- **GitLab key**: `~/.ssh/id_ed25519` (do not overwrite)
 
 ---
 
-## Dokumentasi Lengkap
+## Full documentation
 
 - [Tailnet & SSH Infrastructure](./infra-tailnet-ssh.md)
 - [CLI Tools Per Machine](./cli-tools.md)
@@ -57,9 +60,9 @@ Semua komunikasi SSH dan layanan internal berjalan di atas Tailscale tailnet `ta
 
 ---
 
-## Workflow Dev dengan MCP
+## Development workflow with MCP
 
-Untuk memulai task development di project manapun, gunakan MCP tools:
+To start a development task in any project, use the MCP tools:
 
 ```
 1. start_task → 2. Implement → 3. mark_bug_fixed
@@ -68,4 +71,4 @@ Untuk memulai task development di project manapun, gunakan MCP tools:
 → 9. perform_release → 10. complete_task
 ```
 
-Lihat `.agent/workflows/` untuk template workflow lengkap.
+See `.agent/workflows/` for complete workflow templates.
