@@ -1,17 +1,17 @@
 # Tailnet & SSH Infrastructure
 
-Panduan lengkap konfigurasi Tailscale dan SSH aman antar mesin homelab.
+Complete guide to Tailscale and secure SSH configuration across homelab machines.
 
 ---
 
 ## 1. Tailnet
 
-- **Akun Tailscale**: `programinglive`
+- **Tailscale account**: `programinglive`
 - **MagicDNS suffix**: `tail34fbfd.ts.net`
 - **MagicDNS**: enabled tailnet-wide
 - **CGNAT IPv4 range**: `100.64.0.0/10`
 
-### Perangkat Terdaftar
+### Registered devices
 
 | Hostname | Tailscale IP | OS |
 |---|---|---|
@@ -19,7 +19,8 @@ Panduan lengkap konfigurasi Tailscale dan SSH aman antar mesin homelab.
 | `helloworld` | `100.90.209.77` | Windows |
 | `mahatmas-macbook-pro` | `100.127.94.70` | macOS |
 
-**Aturan firewall**: SSH ingress hanya diizinkan dari `100.64.0.0/10`. Tidak ada rule TCP 22 yang membuka ke LAN atau internet.
+**Firewall rule**: SSH ingress is allowed only from `100.64.0.0/10`. No TCP 22
+rule opens to the LAN or the internet.
 
 ---
 
@@ -27,12 +28,12 @@ Panduan lengkap konfigurasi Tailscale dan SSH aman antar mesin homelab.
 
 ### OpenSSH Server
 
-- Versi: **Win32-OpenSSH 10.4p1** (MSI resmi, bukan Windows optional capability)
-- Service `sshd`: `Automatic`, `Running`
+- Version: **Win32-OpenSSH 10.4p1** (official MSI, not the Windows optional capability)
+- `sshd` service: `Automatic`, `Running`
 - Listening: TCP 22 (IPv4 + IPv6)
-- Built-in `Administrator` account tetap disabled
+- The built-in `Administrator` account stays disabled
 
-### Hardening `sshd_config`
+### `sshd_config` hardening
 
 ```
 DenyUsers Administrator
@@ -40,16 +41,18 @@ Match Group administrators
     AuthorizedKeysFile __PROGRAMDATA__/ssh/administrators_authorized_keys
 ```
 
-### Authorized Keys (administrator)
+### Authorized keys (administrator)
 
-Karena `mahardhika` adalah member `Administrators`, public key diletakkan di:
+Because `mahardhika` is a member of `Administrators`, the public key goes in:
+
 ```
 C:\ProgramData\ssh\administrators_authorized_keys
 ```
 
-ACL wajib:
+ACL requirements:
+
 - Owner: `BUILTIN\Administrators`
-- Hanya `NT AUTHORITY\SYSTEM` dan `BUILTIN\Administrators` yang punya Full Control
+- Only `NT AUTHORITY\SYSTEM` and `BUILTIN\Administrators` have Full Control
 - Inheritance disabled
 
 ```powershell
@@ -57,18 +60,18 @@ icacls "C:\ProgramData\ssh\administrators_authorized_keys" /inheritance:r /grant
 icacls "C:\ProgramData\ssh\administrators_authorized_keys" /setowner "*S-1-5-32-544"
 ```
 
-Untuk non-admin user, gunakan `%USERPROFILE%\.ssh\authorized_keys` biasa.
+For a non-admin user, use the normal `%USERPROFILE%\.ssh\authorized_keys`.
 
-### Firewall Rules
+### Firewall rules
 
 ```
 MMCH SSH (Tailscale only)  → 100.64.0.0/10
 OpenSSH SSH Server Preview  → 100.64.0.0/10
 ```
 
-Tidak ada rule inbound TCP 22 yang mengizinkan `LAN` atau `Any`.
+No inbound TCP 22 rule allows `LAN` or `Any`.
 
-### SSH Client Config
+### SSH client config
 
 File: `C:\Users\mahardhika\.ssh\config`
 
@@ -90,19 +93,21 @@ Host mac
     IdentityFile ~/.ssh/id_ed25519
 ```
 
-> **Penting**: `StrictHostKeyChecking ask` tetap aktif. Jangan diset ke `no`.
+> **Important**: keep `StrictHostKeyChecking ask`. Never set it to `no`.
 
 ### Keys
 
-| Key |用途 |
+| Key | Purpose |
 |---|---|
-| `~/.ssh/id_ed25519` | GitLab (retain, jangan ditimpa) |
+| `~/.ssh/id_ed25519` | GitLab (keep it, never overwrite) |
 | `~/.ssh/id_ed25519_devgroup` | Cross-machine SSH (preferred) |
 
-**Public key** untuk disebar ke HELLOWORLD dan Mac:
+**Public key** to distribute to HELLOWORLD and Mac:
+
 ```
 ssh-ed25519 <redacted-public-key> devgroup@MMCH
 ```
+
 Fingerprint: `SHA256:J0+58fUdrXHNyd5upO7HkSx0+sANnYe88UNjbCasnIw`
 
 ---
@@ -113,13 +118,13 @@ Fingerprint: `SHA256:J0+58fUdrXHNyd5upO7HkSx0+sANnYe88UNjbCasnIw`
 - MagicDNS: `helloworld.tail34fbfd.ts.net`
 - SSH user: `mahardhika`
 
-### Checklist Setup
+### Setup checklist
 
-1. Install OpenSSH Server (Windows optional capability atau MSI resmi)
-2. Start service `sshd`, set ke `Automatic`
-3. Tambahkan public key MMCH ke authorized keys
-4. Apply ACL (jika user admin)
-5. Tambahkan public key HELLOWORLD ke MMCH untuk reverse access
+1. Install OpenSSH Server (Windows optional capability or the official MSI)
+2. Start the `sshd` service and set it to `Automatic`
+3. Add MMCH's public key to the authorized keys
+4. Apply the ACL if the user is an administrator
+5. Add HELLOWORLD's public key to MMCH for reverse access
 6. Test: `ssh helloworld hostname`
 
 ---
@@ -127,53 +132,53 @@ Fingerprint: `SHA256:J0+58fUdrXHNyd5upO7HkSx0+sANnYe88UNjbCasnIw`
 ## 4. Mac — macOS
 
 - Tailscale host: `mahatmas-macbook-pro` / `mahatmas-macbook-pro.tail34fbfd.ts.net`
-- SSH user: `mahardhika` (konfirmasi username macOS)
-- Repo terkait: `mac-optimization`
+- SSH user: `mahardhika` (confirm the macOS username)
+- Related repo: `mac-optimization`
 
-### Checklist Setup
+### Setup checklist
 
 1. Enable **Remote Login** (System Settings → General → Sharing → Remote Login)
-2. Pastikan firewall macOS mengizinkan SSH di interface Tailscale
-3. Tambahkan public key MMCH ke `~/.ssh/authorized_keys` dengan mode `600`
-4. Tambahkan public key Mac ke MMCH `administrators_authorized_keys`
+2. Make sure the macOS firewall allows SSH on the Tailscale interface
+3. Add MMCH's public key to `~/.ssh/authorized_keys` with mode `600`
+4. Add Mac's public key to MMCH's `administrators_authorized_keys`
 5. Test: `ssh mac hostname`
 
 ---
 
-## 5. New Machine Onboarding Checklist
+## 5. New machine onboarding checklist
 
-1. Join tailnet yang sama + enable MagicDNS
-2. Install OpenSSH server
-   - Windows: Windows capability (jika Windows Update jalan) atau MSI resmi Win32-OpenSSH
+1. Join the same tailnet and enable MagicDNS
+2. Install an OpenSSH server
+   - Windows: Windows capability (if Windows Update works) or the official Win32-OpenSSH MSI
    - macOS: enable Remote Login
-3. Set SSH service auto-start
+3. Set the SSH service to start automatically
 4. Disable Administrator/root SSH login
-5. Restrict inbound TCP 22 ke `100.64.0.0/10` only
-6. Generate Ed25519 key lokal untuk mesin baru
-7. Tukar public key saja — **private key tidak pernah离开 mesin asalnya**
-8. Apply ACL Windows untuk administrator accounts
-9. Tambahkan alias ke `~/.ssh/config`
-10. Test kedua arah dengan `hostname` / `whoami`
-11. Update dokumen ini
+5. Restrict inbound TCP 22 to `100.64.0.0/10` only
+6. Generate a local Ed25519 key for the new machine
+7. Exchange **public keys only** — a private key never leaves the machine that created it
+8. Apply Windows ACLs for administrator accounts
+9. Add an alias to `~/.ssh/config`
+10. Test both directions with `hostname` / `whoami`
+11. Update this document
 
 ---
 
 ## 6. Troubleshooting
 
-### SSH auth fails pada Windows
+### SSH auth fails on Windows
 
-- Cek ACL: `icacls C:\ProgramData\ssh\administrators_authorized_keys`
-- Harus ada hanya SYSTEM + Administrators
-- Inheritance harus disabled
-- Coba `Get-Service sshd | Restart-Service`
+- Check the ACL: `icacls C:\ProgramData\ssh\administrators_authorized_keys`
+- It must contain only SYSTEM and Administrators
+- Inheritance must be disabled
+- Try `Get-Service sshd | Restart-Service`
 
-### MagicDNS tidak resolve
+### MagicDNS does not resolve
 
-- Pastikan Tailscale versi terbaru
-- Cek `tailscale status`
-- Verify MagicDNS enabled di admin console tailnet
+- Make sure Tailscale is current
+- Check `tailscale status`
+- Verify MagicDNS is enabled in the tailnet admin console
 
-### Port 22 tidak reachable dari mesin lain
+### Port 22 is not reachable from another machine
 
-- Cek `Get-NetFirewallRule | Where-Object {$_.DisplayName -like '*SSH*'}`
-- Pastikan rule enable dan scope hanya `100.64.0.0/10`
+- Check `Get-NetFirewallRule | Where-Object {$_.DisplayName -like '*SSH*'}`
+- Make sure the rule is enabled and scoped to `100.64.0.0/10` only

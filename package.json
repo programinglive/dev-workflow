@@ -6,6 +6,9 @@
   "mcpName": "io.github.programinglive/dev-workflow-mcp-server",
   "type": "module",
   "main": "index.js",
+  "engines": {
+    "node": ">=20"
+  },
   "bin": {
     "dev-workflow-mcp": "index.js"
   },
