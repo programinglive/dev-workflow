@@ -131,6 +131,42 @@ async function setupStack() {
     console.error('✗ Failed to write opencode.json:', err.message);
   }
 
+  // 5. Create AGENTS.md in target project root if missing
+  const targetProjectRoot = process.env.INIT_CWD || process.cwd();
+  const agentsMdPath = path.join(targetProjectRoot, 'AGENTS.md');
+  if (!existsSync(agentsMdPath)) {
+    const defaultAgentsMd = `# Dev Workflow Enforcement Rules
+
+## 🛑 MANDATORY MCP WORKFLOW DISCIPLINE
+
+You are connected to the \`dev-workflow\` MCP server. **You MUST NOT perform any coding task, bug fix, or feature implementation without going through the strict workflow enforced by the dev-workflow MCP tools.**
+
+### The Rule of Operation
+Before taking any action or answering user requests regarding code changes, check your workflow status and follow these exact steps in sequence:
+
+1. **Start Task**: Call \`start_task\` with a clear description and type (\`feature\`, \`bugfix\`, \`refactor\`, or \`other\`).
+2. **Implement**: Write your code changes.
+3. **Mark Fixed**: Call \`mark_bug_fixed\` with a summary of the implementation.
+4. **Create Tests**: Create appropriate unit/integration tests covering your changes.
+5. **Run Tests**: Execute your test suite and call \`run_tests\` with \`passed: true\` and the test command. **Never commit if tests fail!**
+6. **Document**: Update documentation and call \`create_documentation\`.
+7. **Ready Check**: Call \`check_ready_to_commit\` to verify all steps.
+8. **Commit & Push**: Call \`commit_and_push\` with a conventional commit message.
+9. **Release**: Call \`perform_release\` with the release command (or \`skip_release\` if docs-only).
+10. **Complete**: Call \`complete_task\` to finish the session and reset the workflow.
+
+**Do not bypass these steps. The MCP server will block commits and releases if any required step is skipped.**
+`;
+    try {
+      writeFileSync(agentsMdPath, defaultAgentsMd, 'utf8');
+      console.log(`✓ Created AGENTS.md rule enforcement at ${agentsMdPath}`);
+    } catch (err) {
+      console.warn('⚠️ Could not create AGENTS.md:', err.message);
+    }
+  } else {
+    console.log('✓ AGENTS.md already exists in project root.');
+  }
+
   console.log('\n============================================================');
   console.log('🎉 UNIFIED AI AGENT DEVELOPMENT STACK INSTALLED SUCCESSFULLY!');
   console.log('============================================================');
