@@ -217,6 +217,52 @@ Untuk isolasi multi-client (misal Windsurf + Antigravity pakai state terpisah):
 
 ---
 
+## 🧰 One-Command Stack Setup (OpenCode V2)
+
+`scripts/setup-stack.js` installs the whole AI agent stack: the dev-workflow MCP
+server, [obra/superpowers](https://github.com/obra/superpowers) skills, and
+[RTK](https://github.com/rtk-ai/rtk) token compression.
+
+```bash
+node scripts/setup-stack.js      # any platform
+```
+
+Platform wrappers (they only install RTK, run `npm install`, then delegate):
+
+```powershell
+pwsh scripts/bootstrap-windows.ps1
+```
+
+```bash
+bash scripts/bootstrap-unix.sh
+```
+
+### What it does
+
+1. **Finds the real config directory.** Runs `opencode debug paths` and uses the
+   reported `config` path. OpenCode V2 resolves this to `~/.config/opencode` on
+   **every** platform, including Windows - `%APPDATA%\opencode` is not read.
+2. **Backs up `opencode.json`** to `secrets/opencode-backup-<timestamp>.json`
+   before touching it.
+3. **Registers Superpowers** under the V2 `plugins` key (the V1 `plugin` key is
+   deprecated and ignored by V2).
+4. **Registers the MCP server** under `mcp.servers` via `opencode mcp add`, which
+   writes a schema-valid `Mcp.LocalConfigEncoded` entry.
+5. **Installs dependencies.** Without `npm install` the server dies at startup
+   with `ERR_MODULE_NOT_FOUND: Cannot find package 'dotenv'`.
+6. **Smoke tests the server**, then verifies with `opencode mcp list` and
+   `opencode plugin list`. Exits non-zero when any check fails, so a broken
+   install can no longer report success.
+7. **Creates `AGENTS.md`** in the current project if missing.
+
+### Tests
+
+```bash
+node --test tests/setup-stack.test.js
+```
+
+---
+
 ## 🏠 Homelab Development Guide
 
 Repo ini juga berisi panduan konfigurasi homelab internal **programinglive** — Tailscale + SSH antar 3 mesin (MMCH, HELLOWORLD, Mac).
