@@ -277,9 +277,18 @@ GitHub-hosted minutes:
 runs-on: [self-hosted, windows, mmch]
 ```
 
-Steps: `npm ci` → `npm test` → `build:server` →
-`npm audit --omit=dev --audit-level=high` → setup-stack suite. A pull request
-cannot merge green if any step fails.
+Two jobs:
+
+| Job | Steps |
+|---|---|
+| `test` | `npm ci` → `npm test` → `build:server` → `npm audit --omit=dev --audit-level=high` → setup-stack suite |
+| `web` | `npm ci` in `web/` → static export build → verify `out/index.html` and CSS size → `npm audit --audit-level=high` |
+
+The `web` job exists because the dashboard is deployed to Netlify from `web/`
+and previously had no CI coverage at all. The CSS size check catches a Tailwind
+regression that a green build would otherwise hide.
+
+A pull request cannot merge green if either job fails.
 
 Runner provisioning and troubleshooting are documented in
 [docs/homelab/ci-runner.md](./docs/homelab/ci-runner.md).
