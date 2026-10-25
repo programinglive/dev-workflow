@@ -60,14 +60,26 @@ jobs:
       - name: Verify the built bundle starts
         shell: powershell
         run: |
-          $proc = Start-Process node -ArgumentList 'dist/index.mjs' -PassThru -RedirectStandardError "$env:TEMP\rel-err.txt" -RedirectStandardOutput "$env:TEMP\rel-out.txt"
+          # A stdio MCP server exits cleanly when its stdin closes, so "process
+          # has exited" is not a failure by itself. Judge by the startup banner,
+          # the same rule setup-stack.js uses.
+          $err = "$env:TEMP\rel-err.txt"
+          $proc = Start-Process node -ArgumentList 'dist/index.mjs' -PassThru `
+            -RedirectStandardError $err -RedirectStandardOutput "$env:TEMP\rel-out.txt"
           Start-Sleep -Seconds 5
+
+          $output = if (Test-Path $err) { Get-Content $err -Raw } else { '' }
           if ($proc.HasExited) {
-            Get-Content "$env:TEMP\rel-err.txt" -ErrorAction SilentlyContinue
-            throw "Built bundle exited with code $($proc.ExitCode)"
+            Write-Host "Bundle exited with code $($proc.ExitCode). Output:"
+            Write-Host $output
+            if ($output -notmatch 'running on stdio') {
+              throw 'Built bundle did not report that it started.'
+            }
+            Write-Host 'Bundle started and exited cleanly (stdin closed).'
+          } else {
+            Stop-Process -Id $proc.Id -Force
+            Write-Host 'Bundle stayed alive - started successfully.'
           }
-          Stop-Process -Id $proc.Id -Force
-          Write-Host 'Built bundle started successfully.'
 
       - name: Pack tarball
         id: pack
