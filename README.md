@@ -85,6 +85,43 @@ See [MCP client configuration](#mcp-client-configuration).
 | `project_summary` | Aggregate activity for the project |
 | `project_summary_data` | Read the persisted `project-summary.json` |
 | `project_summary_db` | Read the per-user summary from SQLite |
+| `list_factory_tasks` | List your Factory task queue (requires config) |
+| `claim_factory_task` | Claim a Factory task and start a local workflow |
+| `sync_task_status` | Report a status change back to Factory |
+
+### Factory task integration
+
+Three tools connect this server to the **Factory** task queue at
+`factory.programinglive.com`, backed by the PocketBase `activity_tasks`
+collection.
+
+They stay **inert** until configured. With no configuration the server behaves
+exactly as before, and the tools reply with setup instructions.
+
+```bash
+FACTORY_PB_URL=https://pocketbase.programinglive.com
+FACTORY_PB_IDENTITY=<activity_users email>
+FACTORY_PB_PASSWORD=<password>
+FACTORY_MACHINE_ID=<optional machine name>
+```
+
+Use an **`activity_users` account, not a PocketBase superuser**. The collection
+rules already scope every row to its owner:
+
+```
+listRule:   @request.auth.id != "" && owner = @request.auth.id
+updateRule: @request.auth.id != "" && owner = @request.auth.id && (...)
+```
+
+A superuser token would grant access to every collection in the database, which
+this integration does not need.
+
+| Tool | Writes? | What it does |
+|---|---|---|
+| `list_factory_tasks` | no | Returns `open`, `in_progress` and `blocked` tasks, ordered by status → `rank_override` → priority |
+| `claim_factory_task` | yes | Sets `status=in_progress`, `started_at`, `session_id`, `machine_id`, then starts a local workflow |
+| `sync_task_status` | yes | Sets the new status; `done` stamps `completed_at`, `blocked` requires a reason |
+
 
 ### Example session
 
@@ -223,6 +260,10 @@ DEV_WORKFLOW_DB_URL=postgresql://user:pass@localhost:5432/devworkflow
 | `DEV_WORKFLOW_DB_PATH` | `.state/dev-workflow.db` | SQLite path (optional) |
 | `DEV_WORKFLOW_USER_ID` | auto-generated | User ID for multi-user isolation |
 | `DEV_WORKFLOW_STATE_FILE` | auto-resolved | Override for `workflow-state.json` |
+| `FACTORY_PB_URL` | — | PocketBase base URL for Factory task integration |
+| `FACTORY_PB_IDENTITY` | — | `activity_users` email |
+| `FACTORY_PB_PASSWORD` | — | Password for that account |
+| `FACTORY_MACHINE_ID` | — | Optional machine name stamped on claimed tasks |
 
 ### Project-specific state
 

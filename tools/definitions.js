@@ -362,5 +362,71 @@ export function getToolList() {
         properties: {},
       },
     },
+    {
+      name: "list_factory_tasks",
+      description:
+        "List work assigned to you in the Factory task queue (PocketBase activity_tasks). Returns open, in_progress and blocked tasks ordered by status, rank override and priority. Requires FACTORY_PB_URL, FACTORY_PB_IDENTITY and FACTORY_PB_PASSWORD.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          statuses: {
+            type: "array",
+            items: { type: "string", enum: ["open", "in_progress", "blocked", "done"] },
+            description: "Statuses to include. Defaults to open, in_progress and blocked.",
+          },
+          project: {
+            type: "string",
+            description: "Optional project name to filter by.",
+          },
+          limit: {
+            type: "number",
+            description: "Maximum number of tasks to return (1-200, default 50).",
+          },
+        },
+      },
+    },
+    {
+      name: "claim_factory_task",
+      description:
+        "Claim a task from the Factory queue: sets it to in_progress with a start timestamp, then starts a local workflow for it. Use the recordId returned by list_factory_tasks.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          recordId: {
+            type: "string",
+            description: "PocketBase record id of the task to claim.",
+          },
+        },
+        required: ["recordId"],
+      },
+    },
+    {
+      name: "sync_task_status",
+      description:
+        "Report a task status change back to the Factory queue. Marking a task blocked requires a reason; marking it done sets the completion timestamp.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          recordId: {
+            type: "string",
+            description: "PocketBase record id of the task.",
+          },
+          status: {
+            type: "string",
+            enum: ["open", "in_progress", "blocked", "done"],
+            description: "New status.",
+          },
+          reason: {
+            type: "string",
+            description: "Required when status is 'blocked'.",
+          },
+          nextAction: {
+            type: "string",
+            description: "Optional description of what happens next.",
+          },
+        },
+        required: ["recordId", "status"],
+      },
+    },
   ];
 }
