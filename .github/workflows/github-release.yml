@@ -188,7 +188,7 @@ jobs:
           echo "--- End of release notes ---"
 
       - name: Publish GitHub release
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           RELEASE_TAG: ${{ steps.meta.outputs.tag }}
         with:
