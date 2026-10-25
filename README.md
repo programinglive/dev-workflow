@@ -1,6 +1,6 @@
 # Dev Workflow MCP Server
 
-MCP server yang memaksa kamu mengikuti disiplin development workflow: **test → dokumentasi → commit → release**, tanpa bisa dilewatkan.
+An MCP server that enforces development workflow discipline: **tests → documentation → commit → release**, with no way to skip a step.
 
 ```mermaid
 graph LR
@@ -18,9 +18,9 @@ graph LR
 
 ---
 
-## Quick Start — 3 Menit
+## Quick Start
 
-### 1. Clone & Install
+### 1. Clone and install
 
 ```bash
 git clone https://github.com/programinglive/dev-workflow-mcp-server.git
@@ -28,62 +28,76 @@ cd dev-workflow-mcp-server
 npm install
 ```
 
-> **Windows**: `better-sqlite3` butuh native build. Install [Python 3](https://python.org) + [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) dulu sebelum `npm install`.
+`better-sqlite3` ships prebuilt binaries for Node 22 and newer (ABI 127, 137,
+141, 147). On Node 20 there is no prebuild for the current version, so npm falls
+back to `node-gyp` and you need [Python 3](https://python.org) and
+[Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
+on Windows. See [Troubleshooting](#troubleshooting).
 
-### 2. Test Server Berjalan
+### 2. Verify the server runs
 
 ```bash
 node index.js call get_workflow_status
 ```
 
-Output:
+Expected output:
 
 ```
 📊 Current Workflow Status:
+
 Phase: idle
 Task: (none)
-Next step: idle
+Feature flow: ❌
+...
 ```
 
-### 3. Hubungkan ke MCP Client
+### 3. Connect an MCP client
 
-Lihat bagian [Konfigurasi MCP Client](#-konfigurasi-mcp-client) di bawah.
+See [MCP client configuration](#mcp-client-configuration).
 
 ---
 
-## 🛠️ Available Tools
+## Available Tools
 
-| Tool | Fungsi |
+22 tools.
+
+| Tool | Purpose |
 |---|---|
-| `start_task` | Mulai task baru (wajib pertama) |
-| `create_feature_flow` | Catat alur fitur dengan Mermaid |
-| `mark_bug_fixed` | Tandai implementasi selesai |
-| `create_tests` | Tandai tests sudah dibuat |
-| `skip_tests` | Lewati tests dengan alasan |
-| `run_tests` | Catat hasil test (blokir commit jika fail) |
-| `create_documentation` | Tandai docs sudah dibuat |
-| `check_ready_to_commit` | Verifikasi semua step selesai |
-| `commit_and_push` | `git add` → `commit` → `push` otomatis |
-| `perform_release` | Catat release version |
-| `skip_release` | Lewati release (docs-only task) |
-| `complete_task` | Selesai & reset workflow |
-| `get_workflow_status` | Cek fase saat ini |
-| `view_history` | Lihat riwayat task selesai |
-| `run_full_workflow` | Jalankan semua step sekaligus (1 command) |
-| `project_summary` | Ringkasan aktivitas project |
+| `start_task` | Begin a task (always the first step) |
+| `create_feature_flow` | Record the feature flow as Mermaid |
+| `mark_bug_fixed` | Mark the implementation done |
+| `create_tests` | Mark tests as written |
+| `skip_tests` | Skip tests with a justification |
+| `run_tests` | Record test results (blocks commit when failing) |
+| `create_documentation` | Mark docs as written |
+| `check_ready_to_commit` | Verify every required step is complete |
+| `commit_and_push` | `git add` → `commit` → `push` |
+| `perform_release` | Record a release |
+| `skip_release` | Skip the release step with a justification |
+| `complete_task` | Finish and reset the workflow |
+| `get_workflow_status` | Show the current phase |
+| `continue_workflow` | Get guidance on the next step |
+| `view_history` | List completed tasks |
+| `run_full_workflow` | Run every step in one call |
+| `rerun_workflow` | Restart the current task from the beginning |
+| `drop_task` | Abandon the task without completing it |
+| `force_complete_task` | Complete despite missing steps, with a reason |
+| `project_summary` | Aggregate activity for the project |
+| `project_summary_data` | Read the persisted `project-summary.json` |
+| `project_summary_db` | Read the per-user summary from SQLite |
 
-### Contoh Percakapan
+### Example session
 
 ```
 "Start a new task: add user authentication, type: feature"
-→ start_task called, phase moves to coding
+→ start_task, phase moves to coding
 
-[kamu ngoding]
+[you write code]
 
 "Mark as fixed: login with JWT token"
 → mark_bug_fixed, phase moves to testing
 
-[tulis test]
+[you write tests]
 
 "Create tests done"
 → create_tests
@@ -95,10 +109,10 @@ Lihat bagian [Konfigurasi MCP Client](#-konfigurasi-mcp-client) di bawah.
 → create_documentation, phase moves to ready_to_commit
 
 "Check if ready to commit"
-→ check_ready_to_commit → ✅ READY
+→ check_ready_to_commit → READY
 
 "Commit and push: message='feat(auth): add JWT authentication'"
-→ commit_and_push (auto git add/commit/push), phase moves to release
+→ commit_and_push, phase moves to release
 
 "Perform release: command='npm run release:minor'"
 → perform_release, phase moves to ready_to_complete
@@ -109,27 +123,37 @@ Lihat bagian [Konfigurasi MCP Client](#-konfigurasi-mcp-client) di bawah.
 
 ---
 
-## ⚙️ Konfigurasi MCP Client
+## MCP client configuration
 
 ### OpenCode
 
-Tambahkan ke `~/.config/opencode/opencode.json`:
+OpenCode V2 nests servers under `mcp.servers` and does **not** accept an
+`enabled` key there. Config path is reported by `opencode debug paths`
+(`~/.config/opencode` on every platform, including Windows).
 
 ```json
 {
   "mcp": {
-    "dev-workflow": {
-      "type": "local",
-      "command": ["node", "C:\\path\\to\\dev-workflow-mcp-server\\index.js"],
-      "enabled": true
+    "servers": {
+      "dev-workflow": {
+        "type": "local",
+        "command": ["node", "C:\\path\\to\\dev-workflow-mcp-server\\index.js"]
+      }
     }
   }
 }
 ```
 
+The simplest way to write this correctly is to let OpenCode do it:
+
+```bash
+opencode mcp add dev-workflow --global -- node "C:\path\to\dev-workflow-mcp-server\index.js"
+```
+
 ### Claude Desktop
 
-File: `%APPDATA%\Claude\claude_desktop_config.json` (Windows) atau `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
+`%APPDATA%\Claude\claude_desktop_config.json` (Windows) or
+`~/Library/Application Support/Claude/claude_desktop_config.json` (macOS):
 
 ```json
 {
@@ -144,7 +168,8 @@ File: `%APPDATA%\Claude\claude_desktop_config.json` (Windows) atau `~/Library/Ap
 
 ### Windsurf
 
-File: `%APPDATA%\Windsurf\config.json` (Windows) atau `~/Library/Application Support/Windsurf/config.json` (macOS)
+`%APPDATA%\Windsurf\config.json` (Windows) or
+`~/Library/Application Support/Windsurf/config.json` (macOS):
 
 ```json
 {
@@ -160,7 +185,7 @@ File: `%APPDATA%\Windsurf\config.json` (Windows) atau `~/Library/Application Sup
 
 ### Antigravity
 
-File: `%APPDATA%\Antigravity\mcp_config.json`
+`%APPDATA%\Antigravity\mcp_config.json`:
 
 ```json
 {
@@ -173,35 +198,39 @@ File: `%APPDATA%\Antigravity\mcp_config.json`
 }
 ```
 
-> **Performance tip**: Gunakan `node index.js` langsung, jangan `npx`, agar startup lebih cepat.
+> **Performance:** run `node index.js` directly rather than through `npx`.
+> Startup is noticeably faster.
 
 ---
 
-## 🔧 Configuration
+## Configuration
 
 ### Database
 
-Default pakai **SQLite** (file-based, zero config). Bisa ganti ke PostgreSQL/MySQL:
+Defaults to **SQLite** (file-based, zero config). PostgreSQL and MySQL are also
+supported:
 
 ```bash
-# .env atau environment variable
+# .env or environment variable
 DEV_WORKFLOW_DB_TYPE=postgres
 DEV_WORKFLOW_DB_URL=postgresql://user:pass@localhost:5432/devworkflow
 ```
 
-| Var | Default | Deskripsi |
+| Variable | Default | Description |
 |---|---|---|
-| `DEV_WORKFLOW_DB_TYPE` | `sqlite` | `sqlite`, `mysql`, atau `postgres` |
-| `DEV_WORKFLOW_DB_URL` | — | Connection string (untuk MySQL/Postgres) |
-| `DEV_WORKFLOW_DB_PATH` | `.state/dev-workflow.db` | Path SQLite (opsional) |
-| `DEV_WORKFLOW_USER_ID` | auto-generated | ID user untuk isolasi multi-user |
-| `DEV_WORKFLOW_STATE_FILE` | auto-resolve | Path override workflow-state.json |
+| `DEV_WORKFLOW_DB_TYPE` | `sqlite` | `sqlite`, `mysql`, or `postgres` |
+| `DEV_WORKFLOW_DB_URL` | — | Connection string (MySQL/Postgres) |
+| `DEV_WORKFLOW_DB_PATH` | `.state/dev-workflow.db` | SQLite path (optional) |
+| `DEV_WORKFLOW_USER_ID` | auto-generated | User ID for multi-user isolation |
+| `DEV_WORKFLOW_STATE_FILE` | auto-resolved | Override for `workflow-state.json` |
 
-### Project-Specific State
+### Project-specific state
 
-Setiap project punya workflow state sendiri di `.state/users/<user-id>/workflow-state.json`. File ini otomatis di-gitignore.
+Each project keeps its own state in `.state/users/<user-id>/workflow-state.json`.
+The `.state/` directory is gitignored.
 
-Untuk isolasi multi-client (misal Windsurf + Antigravity pakai state terpisah):
+For multi-client isolation (for example separate state for Windsurf and
+Antigravity), set a different user ID per client:
 
 ```json
 {
@@ -217,17 +246,18 @@ Untuk isolasi multi-client (misal Windsurf + Antigravity pakai state terpisah):
 
 ---
 
-## 🧰 One-Command Stack Setup (OpenCode V2)
+## One-command stack setup (OpenCode V2)
 
-`scripts/setup-stack.js` installs the whole AI agent stack: the dev-workflow MCP
-server, [obra/superpowers](https://github.com/obra/superpowers) skills, and
+`scripts/setup-stack.js` installs the whole agent stack: this MCP server,
+[obra/superpowers](https://github.com/obra/superpowers) skills, and
 [RTK](https://github.com/rtk-ai/rtk) token compression.
 
 ```bash
 node scripts/setup-stack.js      # any platform
 ```
 
-Platform wrappers (they only install RTK, run `npm install`, then delegate):
+Platform wrappers install RTK, run `npm install`, then delegate to the same
+script:
 
 ```powershell
 pwsh scripts/bootstrap-windows.ps1
@@ -240,158 +270,27 @@ bash scripts/bootstrap-unix.sh
 ### What it does
 
 1. **Finds the real config directory.** Runs `opencode debug paths` and uses the
-   reported `config` path. OpenCode V2 resolves this to `~/.config/opencode` on
-   **every** platform, including Windows - `%APPDATA%\opencode` is not read.
+   reported `config` path, falling back to `~/.config/opencode`. OpenCode V2
+   uses that path on Windows too — `%APPDATA%\opencode` is not read.
 2. **Backs up `opencode.json`** to `secrets/opencode-backup-<timestamp>.json`
    before touching it.
-3. **Registers Superpowers** under the V2 `plugins` key (the V1 `plugin` key is
-   deprecated and ignored by V2).
-4. **Registers the MCP server** under `mcp.servers` via `opencode mcp add`, which
-   writes a schema-valid `Mcp.LocalConfigEncoded` entry.
+3. **Registers Superpowers** under the V2 `plugins` key. The V1 `plugin` key is
+   deprecated and ignored by V2.
+4. **Registers the MCP server** via `opencode mcp add`, which writes a
+   schema-valid `mcp.servers` entry.
 5. **Installs dependencies.** Without `npm install` the server dies at startup
    with `ERR_MODULE_NOT_FOUND: Cannot find package 'dotenv'`.
 6. **Smoke tests the server**, then verifies with `opencode mcp list` and
-   `opencode plugin list`. Exits non-zero when any check fails, so a broken
-   install can no longer report success.
+   `opencode plugin list`. Exits non-zero when a check fails.
 7. **Creates `AGENTS.md`** in the current project if missing.
 
-### Tests
+---
+
+## Tests
 
 ```bash
 npm test                            # full suite
 node --test tests/setup-stack.test.js
-```
-
-`tests/test-helpers.js` exports `stripNpmNotices()`, which removes npm's own
-`npm warn`/`npm notice` chatter and Rollup's third-party annotation warnings from
-captured stderr before the build test asserts on it. Without it, a clean build
-could look broken on machines with a user-level `.npmrc` or with dependency
-versions that emit annotation warnings.
-
-### CI
-
-`.github/workflows/ci.yml` runs on the **self-hosted runner on MMCH**, not on
-GitHub-hosted minutes:
-
-```yaml
-runs-on: [self-hosted, windows, mmch]
-```
-
-Two jobs:
-
-| Job | Steps |
-|---|---|
-| `test` | `npm ci` → `npm test` → `build:server` → `npm audit --omit=dev --audit-level=high` → setup-stack suite |
-| `web` | `npm ci` in `web/` → static export build → verify `out/index.html` and CSS size → `npm audit --audit-level=high` |
-
-The `web` job exists because the dashboard is deployed to Netlify from `web/`
-and previously had no CI coverage at all. The CSS size check catches a Tailwind
-regression that a green build would otherwise hide.
-
-A pull request cannot merge green if either job fails.
-
-Runner provisioning and troubleshooting are documented in
-[docs/homelab/ci-runner.md](./docs/homelab/ci-runner.md).
-
-### Dependency hygiene
-
-```bash
-npm audit                 # full tree (production + dev)
-npm audit --omit=dev      # production only
-```
-
-Both report `0 vulnerabilities`. `tar` is pinned via `overrides` in
-`package.json`; bump that pin when a new advisory lands rather than relying on
-the transitive range.
-
-The root `tailwindcss` devDependency was removed: it was added when the web
-dashboard still shipped a static HTML page, but that build step no longer
-exists. The dashboard under `web/` has its own Tailwind setup
-(`web/tailwind.config.ts`). The root `tailwind.config.js` pointed `content` at
-`web/public/**/*.{html,js}`, a directory that holds only SVG icons, so it
-generated nothing and was referenced by no script.
-
----
-
-## Release Workflow
-
-`.github/workflows/github-release.yml` runs on a `v*` tag and is split in two:
-
-| Job | Runner | What it does |
-|---|---|---|
-| `build` | self-hosted MMCH | `npm ci` -> `npm test` -> `build:server` -> verify the built bundle starts -> `npm pack` -> upload tarball + metadata |
-| `publish` | `ubuntu-latest` | download tarball -> `npm publish --provenance` -> create/update the GitHub release |
-
-**Why publish is not on MMCH:** npm provenance requires a supported cloud CI/CD
-provider with a **cloud-hosted** runner
-([docs](https://docs.npmjs.com/generating-provenance-statements)). A self-hosted
-runner cannot produce an attestation, so `--provenance` would have to be dropped
-and consumers would lose the ability to verify which commit the package was
-built from.
-
-The split keeps the expensive part - install, test, build, pack - on our own
-hardware, and spends hosted minutes only on a single publish step that runs when
-a release tag is pushed. Pull requests never touch the hosted runner.
-
-Publishing authenticates through **npm Trusted Publishing (OIDC)** - no
-`NPM_TOKEN` secret is required, and `id-token: write` plus `registry-url` on
-`setup-node` is the whole configuration.
-
-### What goes into the package
-
-`.npmignore` keeps the published tarball to the runtime server: roughly 60 files
-and 65 kB. It excludes `.env*` (only `.env.example` ships), `.state/`, tests,
-CI config, `web/`, and docs. Without it npm falls back to `.gitignore`, which
-still allows tracked files such as `.env.production` into the tarball.
-
-`scripts/install-husky.js` runs from `prepare`. It installs git hooks only when
-a `.git` directory is present, so installing the package from the registry as a
-dependency does not fail on husky. The `husky || true` idiom is not portable to
-Windows, where npm runs scripts through `cmd.exe`.
-
----
-
-## 🏠 Homelab Development Guide
-
-Repo ini juga berisi panduan konfigurasi homelab internal **programinglive** — Tailscale + SSH antar 3 mesin (MMCH, HELLOWORLD, Mac).
-
-| Dokumen | Isi |
-|---|---|
-| [docs/homelab/README.md](./docs/homelab/README.md) | Overview & quick reference |
-| [docs/homelab/infra-tailnet-ssh.md](./docs/homelab/infra-tailnet-ssh.md) | Tailnet + SSH setup lengkap |
-| [docs/homelab/cli-tools.md](./docs/homelab/cli-tools.md) | CLI tools per machine |
-| [docs/homelab/ci-runner.md](./docs/homelab/ci-runner.md) | Self-hosted CI runner di MMCH |
-| [docs/homelab/security-rules.md](./docs/homelab/security-rules.md) | Aturan keamanan |
-| [.agent/workflows/homelab-setup.md](./.agent/workflows/homelab-setup.md) | Workflow MCP untuk onboarding mesin baru |
-
-> ⚠️ Repo ini **private**. Jangan bagikan ke publik.
-
----
-
-## 🚫 What This Server Prevents
-
-- ❌ Commit tanpa tests
-- ❌ Commit dengan tests yang fail
-- ❌ Commit tanpa dokumentasi
-- ❌ Lupa langkah workflow
-- ❌ Release tanpa commit & push
-
----
-
-## 💡 Tips
-
-1. Selalu mulai dengan `start_task` — ini yang set intention kamu
-2. Jangan skip tests kecuali darurat — pakai `skip_tests` dengan alasan jelas
-3. Pakai `get_workflow_status` kapanpun untuk cek progress
-4. `run_full_workflow` = shortcut untuk task sederhana yang semua datanya sudah siap
-5. Untuk docs-only task, gunakan `skip_release` daripada memaksakan release
-
----
-
-## 🧪 Run Tests
-
-```bash
-npm test
 ```
 
 ```
@@ -401,27 +300,163 @@ npm test
 ℹ skipped 2
 ```
 
-The two skipped tests are the MySQL and PostgreSQL adapters, which need a real
-database connection (`MYSQL_URL` / `PG_URL`). Everything else, including the
-SQLite adapter, runs.
-
-If a Windows install fails on a native module, it is almost always a missing
-prebuild for your Node ABI rather than a broken test - see
-[docs/homelab/ci-runner.md](./docs/homelab/ci-runner.md#troubleshooting).
-
----
-
-## 📦 Build
+The two skipped tests are the MySQL and PostgreSQL adapters. They run only when a
+database is reachable:
 
 ```bash
-npm run build    # → dist/index.mjs (optimized bundle)
-npm run web      # → dashboard di http://localhost:3111
+TEST_MYSQL_URL=mysql://user:pass@localhost:3306/db npm test
+TEST_POSTGRES_URL=postgres://user:pass@localhost:5432/db npm test
 ```
 
-Build output主要用于 npm distribution. Untuk MCP usage, gunakan source `index.js` langsung (lebih cepat startup).
+Everything else, including the SQLite adapter, always runs.
+
+`tests/test-helpers.js` exports `stripNpmNotices()`, which removes npm's own
+`npm warn`/`npm notice` output and Rollup's third-party annotation warnings from
+captured stderr before the build test asserts on it.
 
 ---
 
-## 📄 License
+## CI
+
+`.github/workflows/ci.yml` runs on the **self-hosted runner on MMCH**, not on
+GitHub-hosted minutes:
+
+```yaml
+runs-on: [self-hosted, windows, mmch]
+```
+
+| Job | Steps |
+|---|---|
+| `test` | `npm ci` → `npm test` → `build:server` → `npm audit --omit=dev --audit-level=high` → setup-stack suite |
+| `web` | `npm ci` in `web/` → static export build → verify `out/index.html` and CSS size → `npm audit --audit-level=high` |
+
+The `web` job exists because the dashboard is deployed to Netlify from `web/`.
+The CSS size check catches a Tailwind regression that a green build would
+otherwise hide.
+
+Runner provisioning and troubleshooting: [docs/homelab/ci-runner.md](./docs/homelab/ci-runner.md).
+
+---
+
+## Release workflow
+
+`.github/workflows/github-release.yml` runs on a `v*` tag, split in two:
+
+| Job | Runner | Work |
+|---|---|---|
+| `build` | self-hosted MMCH | `npm ci` → `npm test` → `build:server` → verify the bundle starts → `npm pack` → upload tarball |
+| `publish` | `ubuntu-latest` | download tarball → `npm publish` → create/update the GitHub release |
+
+Publishing uses **Trusted Publishing (OIDC)**: no long-lived npm token is stored
+anywhere, and `id-token: write` plus `registry-url` on `setup-node` is the whole
+configuration. The trusted publisher is registered with `npm trust`:
+
+```bash
+npm trust github @programinglive/dev-workflow-mcp-server \
+  --file .github/workflows/github-release.yml \
+  --repo programinglive/dev-workflow-mcp-server \
+  --allow-publish -y
+```
+
+The `file` must match the workflow filename exactly, or OIDC is rejected.
+
+### No provenance
+
+`--provenance` is intentionally **not** used. npm rejects provenance bundles
+whose source repository is private:
+
+```
+422 Unprocessable Entity - Unsupported GitHub Actions source repository
+visibility: "private". Only public source repositories are supported when
+publishing with provenance.
+```
+
+This repository is private by policy, so provenance is unavailable. Consumers
+cannot cryptographically verify which commit produced a published tarball.
+
+### What ships in the package
+
+`.npmignore` limits the tarball to the runtime server: about 60 files and 66 kB.
+It excludes `.env*` (only `.env.example` ships), `.state/`, tests, CI config,
+`web/`, and docs.
+
+`scripts/install-husky.js` runs from `prepare`. It installs git hooks only when a
+`.git` directory is present, so installing the package as a dependency does not
+fail on husky.
+
+---
+
+## What this server prevents
+
+- Committing without tests
+- Committing with failing tests
+- Committing without documentation
+- Forgetting a workflow step
+- Releasing without committing and pushing
+
+---
+
+## Tips
+
+1. Always start with `start_task` — it sets the intent for the session
+2. Do not skip tests unless it is genuinely impossible — use `skip_tests` with a clear reason
+3. Call `get_workflow_status` whenever you lose track of the phase
+4. `run_full_workflow` is a shortcut for simple tasks where all the data is already known
+5. For docs-only work, use `skip_release` rather than forcing a release
+
+---
+
+## Troubleshooting
+
+**`ERR_MODULE_NOT_FOUND: Cannot find package 'dotenv'`** — dependencies are not
+installed. Run `npm install` in the repo.
+
+**`gyp ERR! find VS` on Windows** — the native module is compiling from source
+because there is no prebuild for your Node ABI. Either switch to a Node version
+that has one, or install Visual Studio Build Tools.
+
+**`EPERM ... better_sqlite3.node`** — a running process holds the file. Stop it,
+then reinstall.
+
+**OpenCode does not load the server** — check the config shape. V2 requires
+`mcp.servers` and rejects `enabled`:
+
+```bash
+opencode mcp list          # should show: dev-workflow  connected
+```
+
+---
+
+## Build
+
+```bash
+npm run build    # → dist/index.mjs (optimized bundle, used for npm distribution)
+npm run web      # → dashboard on http://localhost:3000
+```
+
+For MCP use, point the client at `index.js` directly — startup is faster than the
+bundled `dist/index.mjs`.
+
+---
+
+## Homelab Development Guide
+
+This repository also documents the internal **programinglive** homelab: Tailscale
+plus SSH across three machines (MMCH, HELLOWORLD, Mac).
+
+| Document | Contents |
+|---|---|
+| [docs/homelab/README.md](./docs/homelab/README.md) | Overview and quick reference |
+| [docs/homelab/infra-tailnet-ssh.md](./docs/homelab/infra-tailnet-ssh.md) | Tailnet and SSH setup |
+| [docs/homelab/cli-tools.md](./docs/homelab/cli-tools.md) | CLI tools per machine |
+| [docs/homelab/ci-runner.md](./docs/homelab/ci-runner.md) | Self-hosted CI runner on MMCH |
+| [docs/homelab/security-rules.md](./docs/homelab/security-rules.md) | Security rules |
+| [.agent/workflows/homelab-setup.md](./.agent/workflows/homelab-setup.md) | MCP workflow for onboarding a new machine |
+
+> ⚠️ This repository is **private**. Do not share it publicly.
+
+---
+
+## License
 
 MIT
