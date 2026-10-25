@@ -1,10 +1,16 @@
 name: Create GitHub Release
 
 # Build runs on the self-hosted MMCH runner (no GitHub minutes).
-# Publish runs on a GitHub-hosted runner because `npm publish --provenance`
-# requires a supported cloud CI/CD provider with a cloud-hosted runner:
-# https://docs.npmjs.com/generating-provenance-statements
+#
+# Publish runs on a GitHub-hosted runner because Trusted Publishing (OIDC)
+# needs a cloud-hosted runner to exchange the token:
+# https://docs.npmjs.com/trusted-publishers
 # The hosted job is a single publish step and only runs on a v* tag.
+#
+# `--provenance` is deliberately NOT used. npm rejects provenance bundles
+# when the source repository is private ("Only public source repositories are
+# supported when publishing with provenance"), and this repo is private by
+# policy (see docs/homelab/security-rules.md).
 
 on:
   push:
@@ -171,7 +177,7 @@ jobs:
           echo "Publishing $VERSION for $TAG"
 
       - name: Publish to npm
-        run: npm publish *.tgz --provenance --access public
+        run: npm publish *.tgz --access public
 
       - name: Generate release notes
         run: |
