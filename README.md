@@ -349,6 +349,21 @@ TEST_MYSQL_URL=mysql://user:pass@localhost:3306/db npm test
 TEST_POSTGRES_URL=postgres://user:pass@localhost:5432/db npm test
 ```
 
+To exercise them against real servers without exposing them publicly:
+
+```bash
+# on the database host, once: creates isolated devworkflow_test databases
+./scripts/setup-test-dbs.sh
+
+# locally: opens an SSH tunnel, runs only the adapter tests, closes the tunnel
+TEST_POSTGRES_URL=... TEST_MYSQL_URL=... ./scripts/test-db-adapters.sh
+```
+
+Both adapters pass against live MySQL and PostgreSQL this way (19/19 tests, none
+skipped). The tests **write real rows**, so `setup-test-dbs.sh` creates separate
+`devworkflow_test` databases and grants the test role access only to those. Never
+point these variables at a production database.
+
 Everything else, including the SQLite adapter, always runs.
 
 `tests/test-helpers.js` exports `stripNpmNotices()`, which removes npm's own
