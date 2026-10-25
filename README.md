@@ -271,12 +271,20 @@ versions that emit annotation warnings.
 ### Dependency hygiene
 
 ```bash
-npm audit --omit=dev
+npm audit                 # full tree (production + dev)
+npm audit --omit=dev      # production only
 ```
 
-Production dependencies are kept at `0 vulnerabilities`. `tar` is pinned via
-`overrides` in `package.json`; bump that pin when a new advisory lands rather
-than relying on the transitive range.
+Both report `0 vulnerabilities`. `tar` is pinned via `overrides` in
+`package.json`; bump that pin when a new advisory lands rather than relying on
+the transitive range.
+
+The root `tailwindcss` devDependency was removed: it was added when the web
+dashboard still shipped a static HTML page, but that build step no longer
+exists. The dashboard under `web/` has its own Tailwind setup
+(`web/tailwind.config.ts`). The root `tailwind.config.js` pointed `content` at
+`web/public/**/*.{html,js}`, a directory that holds only SVG icons, so it
+generated nothing and was referenced by no script.
 
 ---
 
