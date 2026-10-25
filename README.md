@@ -258,8 +258,25 @@ bash scripts/bootstrap-unix.sh
 ### Tests
 
 ```bash
+npm test                            # full suite
 node --test tests/setup-stack.test.js
 ```
+
+`tests/test-helpers.js` exports `stripNpmNotices()`, which removes npm's own
+`npm warn`/`npm notice` chatter and Rollup's third-party annotation warnings from
+captured stderr before the build test asserts on it. Without it, a clean build
+could look broken on machines with a user-level `.npmrc` or with dependency
+versions that emit annotation warnings.
+
+### Dependency hygiene
+
+```bash
+npm audit --omit=dev
+```
+
+Production dependencies are kept at `0 vulnerabilities`. `tar` is pinned via
+`overrides` in `package.json`; bump that pin when a new advisory lands rather
+than relying on the transitive range.
 
 ---
 

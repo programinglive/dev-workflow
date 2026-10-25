@@ -33,6 +33,32 @@ export function createRequest(name, args) {
   };
 }
 
+/**
+ * Removes ANSI colour codes and npm's own `npm warn` / `npm notice` chatter from
+ * captured stderr, leaving anything a build tool actually reported.
+ *
+ * npm emits these lines for user-level configuration (e.g. an .npmrc setting
+ * that does not apply here). They say nothing about the build and must not make
+ * a clean build look broken.
+ */
+export function stripNpmNotices(stderr) {
+  if (!stderr) return "";
+
+  const cleaned = String(stderr)
+    .replace(/\u001b\[[0-9;]*m/g, "")
+    .split(/\r?\n/)
+    .filter((line) => !/^\s*npm (warn|notice)\b/.test(line))
+    .join("\n");
+
+  // Rollup annotates dependency comments it cannot interpret. It says so on
+  // stderr but still emits a working bundle ("built in Xms"), so this is noise
+  // from third-party code, not a build failure.
+  return cleaned.replace(
+    /^.*A comment\s*\n(?:.*\n)*?.*contains an annotation that Rollup cannot interpret.*\n?/gm,
+    "",
+  );
+}
+
 export function createGitMock(overrides = {}) {
   return {
     hasWorkingChanges: async () => false,

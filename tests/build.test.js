@@ -5,6 +5,8 @@ import { exec as execCallback } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
 
+import { stripNpmNotices } from './test-helpers.js';
+
 const exec = promisify(execCallback);
 
 test('build generates dist/index.mjs file', async () => {
@@ -13,9 +15,11 @@ test('build generates dist/index.mjs file', async () => {
   const knownWarning = '[plugin vite:resolve] Module "node:process" has been externalized for browser compatibility';
   const tailwindOutput = '≈ tailwindcss';
   const browserslistWarning = 'Browserslist: caniuse-lite is outdated';
-  const actualStderr = stderr.replace(/\x1B\[[0-9;]*m/g, ''); // Remove ANSI codes
+  // npm's own warn/notice lines come from user-level npm configuration and say
+  // nothing about this build; strip them along with ANSI codes.
+  const actualStderr = stripNpmNotices(stderr);
   assert(
-    actualStderr === '' || actualStderr.includes(knownWarning) || actualStderr.includes(tailwindOutput) || actualStderr.includes(browserslistWarning),
+    actualStderr.trim() === '' || actualStderr.includes(knownWarning) || actualStderr.includes(tailwindOutput) || actualStderr.includes(browserslistWarning),
     `Build should not have unexpected errors: ${actualStderr}`
   );
 
@@ -44,7 +48,14 @@ test('Hero component fetches npm downloads directly', async () => {
 
   // Verify it fetches npm downloads directly from npm API
   assert(heroContent.includes('api.npmjs.org'), 'Hero should fetch downloads from npm API');
-  assert(heroContent.includes('useState<string | null>(null)'), 'Hero should have version state');
+  // Downloads come from the npm API; the displayed version comes from
+  // WEB_VERSION (see commit b579113 "sync version badges with package
+  // metadata"), so the old useState-based version assertion no longer applies.
+  assert(
+    heroContent.includes('useState<number | null>(null)'),
+    'Hero should track download count in state'
+  );
+  assert(heroContent.includes('WEB_VERSION'), 'Hero should render the shared WEB_VERSION badge');
 });
 
 test('Netlify deployment configuration exists for static export', async () => {
