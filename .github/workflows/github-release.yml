@@ -142,7 +142,10 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          # Node 24 so `npm@latest` (12.x, requires >=22) can install.
+          # npm 11.5.1+ is the floor for Trusted Publishing, but tracking
+          # latest keeps the OIDC exchange on a current client.
+          node-version: "24"
           registry-url: "https://registry.npmjs.org"
 
       - name: Update npm
