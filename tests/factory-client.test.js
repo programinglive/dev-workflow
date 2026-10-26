@@ -4,237 +4,444 @@ import assert from "node:assert";
 import {
   readFactoryConfig,
   isConfigured,
-  buildTaskFilter,
+  deviceIdFor,
+  deviceFromConfig,
   mapTaskRecord,
   sortTasks,
-  buildClaimPatch,
-  buildStatusPatch,
+  planStatusTransition,
+  buildWorkStartPayload,
+  buildWorkFinishPayload,
+  buildSummary,
   formatTaskList,
+  listTasks,
+  claimTask,
+  updateTaskStatus,
+  clearTokenCache,
+  ACTIVE_STATUSES,
+  VALID_STATUSES,
 } from "../factory-client.js";
 
 // ---------------------------------------------------------------------------
-// Configuration comes from the environment, never from hardcoded values
+// Helpers
 // ---------------------------------------------------------------------------
 
-test("readFactoryConfig returns null when the URL is missing", () => {
-  assert.strictEqual(readFactoryConfig({}), null);
+const WORKSPACE = {
+  projects: [
+    { id: "p1", name: "programinglive/dev-workflow-mcp-server" },
+    { id: "p2", name: "mahatmamahardhikach/factory" },
+  ],
+  tasks: [
+    {
+      id: "11111111-1111-4111-8111-111111111111",
+      projectId: "p1",
+      title: "Sambungkan MCP ke Factory",
+      description: "desc",
+      acceptance: "npm test hijau",
+      priority: "high",
+      status: "backlog",
+      createdAt: "2026-10-26T00:00:00.000Z",
+      updatedAt: "2026-10-26T00:00:00.000Z",
+      work: null,
+    },
+    {
+      id: "22222222-2222-4222-8222-222222222222",
+      projectId: "p2",
+      title: "Tulis runbook",
+      description: "",
+      acceptance: "runbook ada",
+      priority: "normal",
+      status: "queued",
+      createdAt: "2026-10-25T00:00:00.000Z",
+      updatedAt: "2026-10-25T00:00:00.000Z",
+      work: null,
+    },
+    {
+      id: "33333333-3333-4333-8333-333333333333",
+      projectId: "p1",
+      title: "Sedang dikerjakan",
+      description: "",
+      acceptance: "selesai",
+      priority: "high",
+      status: "running",
+      createdAt: "2026-10-24T00:00:00.000Z",
+      updatedAt: "2026-10-24T00:00:00.000Z",
+      work: {
+        id: "sess-1",
+        state: "active",
+        activityStatus: "active",
+        step: "Menulis klien",
+        summary: "",
+        device: { id: "d1", name: "HELLOWORLD" },
+        startedAt: "2026-10-26T01:00:00.000Z",
+      },
+    },
+    {
+      id: "44444444-4444-4444-8444-444444444444",
+      projectId: "p2",
+      title: "Sudah selesai",
+      description: "",
+      acceptance: "done",
+      priority: "low",
+      status: "done",
+      createdAt: "2026-10-20T00:00:00.000Z",
+      updatedAt: "2026-10-20T00:00:00.000Z",
+      work: null,
+    },
+  ],
+  events: [],
+};
+
+function json(body, status = 200) {
+  return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+}
+
+/** Records calls and answers with a queued list of responses. */
+function fakeFetch(handlers) {
+  const calls = [];
+  const impl = async (url, options = {}) => {
+    const entry = { url: String(url), method: options.method || "GET", body: options.body ? JSON.parse(options.body) : null, headers: options.headers || {} };
+    calls.push(entry);
+    for (const handler of handlers) {
+      const result = handler(entry);
+      if (result) return result;
+    }
+    return json({ error: "unexpected call" }, 500);
+  };
+  impl.calls = calls;
+  return impl;
+}
+
+const CONFIG = { url: "https://factory.test", token: "tok-1", pocketBaseUrl: "https://pb.test", machineId: "box", agent: "agent" };
+
+// ---------------------------------------------------------------------------
+// Configuration
+// ---------------------------------------------------------------------------
+
+test("readFactoryConfig returns null without a URL", () => {
+  assert.strictEqual(readFactoryConfig({ FACTORY_TOKEN: "t" }), null);
 });
 
-test("readFactoryConfig returns null when credentials are missing", () => {
-  const env = { FACTORY_PB_URL: "https://pb.example.com" };
-  assert.strictEqual(readFactoryConfig(env), null);
+test("readFactoryConfig returns null without any credential", () => {
+  assert.strictEqual(readFactoryConfig({ FACTORY_URL: "https://factory.test" }), null);
 });
 
-test("readFactoryConfig trims trailing slashes from the URL", () => {
+test("readFactoryConfig accepts a token alone", () => {
+  const config = readFactoryConfig({ FACTORY_URL: "https://factory.test/", FACTORY_TOKEN: "tok" });
+  assert.strictEqual(config.url, "https://factory.test");
+  assert.strictEqual(config.token, "tok");
+  assert.strictEqual(config.pocketBaseUrl, "https://pocketbase.programinglive.com");
+});
+
+test("readFactoryConfig accepts email and password", () => {
   const config = readFactoryConfig({
-    FACTORY_PB_URL: "https://pb.example.com///",
-    FACTORY_PB_IDENTITY: "me@example.com",
-    FACTORY_PB_PASSWORD: "secret",
+    FACTORY_URL: "https://factory.test",
+    FACTORY_EMAIL: "me@example.com",
+    FACTORY_PASSWORD: "secret",
+    FACTORY_MACHINE_ID: "helloworld",
   });
-
-  assert.strictEqual(config.url, "https://pb.example.com");
-  assert.strictEqual(config.identity, "me@example.com");
-  assert.strictEqual(config.password, "secret");
-  assert.strictEqual(config.machineId, null);
+  assert.strictEqual(config.email, "me@example.com");
+  assert.strictEqual(config.machineId, "helloworld");
+  assert.strictEqual(config.token, null);
 });
 
 test("isConfigured reflects whether a usable config exists", () => {
   assert.strictEqual(isConfigured({}), false);
-  assert.strictEqual(
-    isConfigured({
-      FACTORY_PB_URL: "https://pb.example.com",
-      FACTORY_PB_IDENTITY: "me@example.com",
-      FACTORY_PB_PASSWORD: "secret",
-    }),
-    true,
-  );
+  assert.strictEqual(isConfigured({ FACTORY_URL: "https://f.test", FACTORY_TOKEN: "t" }), true);
 });
 
 // ---------------------------------------------------------------------------
-// Filter building
+// Device identity: stable per machine, valid UUID, no state file
 // ---------------------------------------------------------------------------
 
-test("buildTaskFilter defaults to active statuses", () => {
-  const filter = buildTaskFilter({});
-
-  assert.match(filter, /status\s*=\s*"open"/);
-  assert.match(filter, /status\s*=\s*"in_progress"/);
-  assert.match(filter, /status\s*=\s*"blocked"/);
-  assert.doesNotMatch(filter, /"done"/);
+test("deviceIdFor is deterministic and a valid UUID", () => {
+  const first = deviceIdFor("HELLOWORLD");
+  const second = deviceIdFor("HELLOWORLD");
+  assert.strictEqual(first, second);
+  assert.match(first, /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
 });
 
-test("buildTaskFilter honours an explicit status list", () => {
-  const filter = buildTaskFilter({ statuses: ["done"] });
-
-  assert.match(filter, /"done"/);
-  assert.doesNotMatch(filter, /"open"/);
+test("deviceIdFor gives different machines different ids", () => {
+  assert.notStrictEqual(deviceIdFor("machine-a"), deviceIdFor("machine-b"));
 });
 
-test("buildTaskFilter includes a project constraint when given", () => {
-  const filter = buildTaskFilter({ project: "dev-workflow-mcp-server" });
-
-  assert.match(filter, /project\s*=\s*"dev-workflow-mcp-server"/);
+test("deviceFromConfig honours an explicit device id", () => {
+  const device = deviceFromConfig({ ...CONFIG, deviceId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" });
+  assert.strictEqual(device.id, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+  assert.strictEqual(device.name, "box");
 });
 
-test("buildTaskFilter escapes double quotes in user input", () => {
-  const filter = buildTaskFilter({ project: 'evil" || true' });
-
-  assert.doesNotMatch(filter, /evil" \|\| true/);
-  assert.match(filter, /\\"/);
+test("deviceFromConfig trims fields to the API limits", () => {
+  const device = deviceFromConfig({ ...CONFIG, machineId: "x".repeat(200), agent: "y".repeat(80) });
+  assert.ok(device.name.length <= 100);
+  assert.ok(device.agent.length <= 40);
 });
 
 // ---------------------------------------------------------------------------
-// Record mapping
+// Status rules: Factory has no generic status write
 // ---------------------------------------------------------------------------
 
-test("mapTaskRecord keeps the fields the agent needs and drops the rest", () => {
-  const mapped = mapTaskRecord({
-    id: "rec1",
-    task_key: "TASK-1",
-    title: "Fix the thing",
-    project: "dev-workflow-mcp-server",
-    status: "open",
-    next_action: "Reproduce it",
-    priority: "high",
-    category: "Bug Fixing",
-    domain: "infra",
-    blocked_reason: "",
-    decision_needed: true,
-    effort_minutes: 30,
-    rank_override: 5,
-    owner: "user1",
-    collectionId: "col",
-    collectionName: "activity_tasks",
+test("review, blocked and paused finish the work session", () => {
+  assert.deepStrictEqual(planStatusTransition("review"), { kind: "work-finish", outcome: "review" });
+  assert.deepStrictEqual(planStatusTransition("blocked"), { kind: "work-finish", outcome: "blocked" });
+  assert.deepStrictEqual(planStatusTransition("paused"), { kind: "work-finish", outcome: "paused" });
+});
+
+test("backlog, queued and cancelled use move_task", () => {
+  for (const status of ["backlog", "queued", "cancelled"]) {
+    assert.deepStrictEqual(planStatusTransition(status), { kind: "move", status });
+  }
+});
+
+test("running is rejected with a pointer to claim_factory_task", () => {
+  assert.throws(() => planStatusTransition("running"), /claim_factory_task/);
+});
+
+test("done is rejected because a human decides it", () => {
+  assert.throws(() => planStatusTransition("done"), /human/i);
+});
+
+test("unknown status lists what Factory accepts", () => {
+  assert.throws(() => planStatusTransition("shipped"), /Unknown status.*backlog/);
+});
+
+test("every Factory status is covered by the rules", () => {
+  for (const status of VALID_STATUSES) {
+    if (status === "running" || status === "done") {
+      assert.throws(() => planStatusTransition(status));
+    } else {
+      assert.ok(planStatusTransition(status).kind);
+    }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Work payloads
+// ---------------------------------------------------------------------------
+
+test("buildWorkStartPayload shapes the start action", () => {
+  const payload = buildWorkStartPayload({
+    taskId: "t1",
+    device: { id: "d1", name: "box", platform: "win32", agent: "agent" },
+    step: "Menulis klien",
   });
+  assert.strictEqual(payload.action, "start");
+  assert.strictEqual(payload.taskId, "t1");
+  assert.strictEqual(payload.step, "Menulis klien");
+});
 
-  assert.deepStrictEqual(mapped, {
-    id: "rec1",
-    taskKey: "TASK-1",
-    title: "Fix the thing",
-    project: "dev-workflow-mcp-server",
-    status: "open",
-    nextAction: "Reproduce it",
-    priority: "high",
-    category: "Bug Fixing",
-    domain: "infra",
-    blockedReason: null,
-    decisionNeeded: true,
-    effortMinutes: 30,
-    rankOverride: 5,
+test("buildWorkStartPayload requires a task and a device", () => {
+  assert.throws(() => buildWorkStartPayload({ device: { id: "d1" } }), /taskId/);
+  assert.throws(() => buildWorkStartPayload({ taskId: "t1", device: {} }), /device/);
+});
+
+test("buildWorkStartPayload truncates a long step", () => {
+  const payload = buildWorkStartPayload({ taskId: "t1", device: { id: "d1" }, step: "x".repeat(400) });
+  assert.strictEqual(payload.step.length, 240);
+});
+
+test("buildWorkFinishPayload shapes the finish action", () => {
+  const payload = buildWorkFinishPayload({ sessionId: "s1", deviceId: "d1", outcome: "review", summary: "Selesai, minta review." });
+  assert.deepStrictEqual(payload, {
+    action: "finish",
+    sessionId: "s1",
+    deviceId: "d1",
+    outcome: "review",
+    summary: "Selesai, minta review.",
   });
 });
 
-test("mapTaskRecord tolerates missing optional fields", () => {
-  const mapped = mapTaskRecord({ id: "rec2", task_key: "T2", title: "Minimal", project: "p", status: "open" });
+test("buildWorkFinishPayload rejects an unknown outcome", () => {
+  assert.throws(() => buildWorkFinishPayload({ sessionId: "s1", deviceId: "d1", outcome: "done", summary: "abc" }), /outcome/i);
+});
 
+test("buildWorkFinishPayload requires a real summary", () => {
+  assert.throws(() => buildWorkFinishPayload({ sessionId: "s1", deviceId: "d1", outcome: "review", summary: "a" }), /summary/i);
+});
+
+test("buildWorkFinishPayload truncates to Factory's 2000 char limit", () => {
+  const payload = buildWorkFinishPayload({ sessionId: "s1", deviceId: "d1", outcome: "review", summary: "x".repeat(3000) });
+  assert.strictEqual(payload.summary.length, 2000);
+});
+
+test("buildSummary prefers a reason over a generic message", () => {
+  assert.strictEqual(buildSummary({ reason: "Butuh akses DB" }), "Butuh akses DB");
+  assert.match(buildSummary({ status: "review" }), /review/);
+});
+
+// ---------------------------------------------------------------------------
+// Mapping and ordering
+// ---------------------------------------------------------------------------
+
+test("mapTaskRecord resolves the project name and keeps the work session", () => {
+  const mapped = mapTaskRecord(WORKSPACE.tasks[2], WORKSPACE.projects);
+
+  assert.strictEqual(mapped.projectName, "programinglive/dev-workflow-mcp-server");
+  assert.strictEqual(mapped.taskKey, "33333333");
+  assert.strictEqual(mapped.work.state, "active");
+  assert.strictEqual(mapped.work.deviceName, "HELLOWORLD");
+  assert.strictEqual(mapped.work.step, "Menulis klien");
+});
+
+test("mapTaskRecord tolerates a task without work or project", () => {
+  const mapped = mapTaskRecord({ id: "x", title: "Minimal", status: "backlog" });
   assert.strictEqual(mapped.priority, "normal");
-  assert.strictEqual(mapped.decisionNeeded, false);
-  assert.strictEqual(mapped.blockedReason, null);
+  assert.strictEqual(mapped.work, null);
+  assert.strictEqual(mapped.projectName, null);
 });
 
-// ---------------------------------------------------------------------------
-// Ordering: the agent should see the most important task first
-// ---------------------------------------------------------------------------
-
-test("sortTasks puts in_progress before open before blocked", () => {
+test("sortTasks puts running before queued before backlog", () => {
   const sorted = sortTasks([
-    { status: "blocked", priority: "high", rankOverride: null },
-    { status: "open", priority: "high", rankOverride: null },
-    { status: "in_progress", priority: "low", rankOverride: null },
+    { status: "backlog", priority: "high" },
+    { status: "queued", priority: "low" },
+    { status: "running", priority: "low" },
   ]);
-
-  assert.deepStrictEqual(sorted.map((t) => t.status), ["in_progress", "open", "blocked"]);
+  assert.deepStrictEqual(sorted.map((t) => t.status), ["running", "queued", "backlog"]);
 });
 
-test("sortTasks orders by priority within the same status", () => {
+test("sortTasks orders by priority within a status", () => {
   const sorted = sortTasks([
-    { status: "open", priority: "low", rankOverride: null },
-    { status: "open", priority: "high", rankOverride: null },
-    { status: "open", priority: "normal", rankOverride: null },
+    { status: "backlog", priority: "low" },
+    { status: "backlog", priority: "high" },
+    { status: "backlog", priority: "normal" },
   ]);
-
   assert.deepStrictEqual(sorted.map((t) => t.priority), ["high", "normal", "low"]);
 });
 
-test("sortTasks lets rankOverride win over priority", () => {
-  const sorted = sortTasks([
-    { status: "open", priority: "high", rankOverride: null },
-    { status: "open", priority: "low", rankOverride: 1 },
-  ]);
-
-  assert.strictEqual(sorted[0].priority, "low");
-});
-
 test("sortTasks does not mutate its input", () => {
-  const input = [
-    { status: "open", priority: "low", rankOverride: null },
-    { status: "open", priority: "high", rankOverride: null },
-  ];
+  const input = [{ status: "backlog", priority: "low" }, { status: "backlog", priority: "high" }];
   sortTasks(input);
-
   assert.strictEqual(input[0].priority, "low");
-});
-
-// ---------------------------------------------------------------------------
-// Write payloads
-// ---------------------------------------------------------------------------
-
-test("buildClaimPatch marks the task in progress and stamps the session", () => {
-  const patch = buildClaimPatch({ sessionId: "ses_1", machineId: "helloworld", now: "2026-10-26T00:00:00.000Z" });
-
-  assert.strictEqual(patch.status, "in_progress");
-  assert.strictEqual(patch.started_at, "2026-10-26T00:00:00.000Z");
-  assert.strictEqual(patch.session_id, "ses_1");
-  assert.strictEqual(patch.machine_id, "helloworld");
-});
-
-test("buildClaimPatch omits machine_id when not configured", () => {
-  const patch = buildClaimPatch({ sessionId: "ses_1", machineId: null, now: "2026-10-26T00:00:00.000Z" });
-
-  assert.ok(!("machine_id" in patch));
-});
-
-test("buildStatusPatch sets completed_at only for done", () => {
-  const done = buildStatusPatch({ status: "done", now: "2026-10-26T00:00:00.000Z" });
-  assert.strictEqual(done.completed_at, "2026-10-26T00:00:00.000Z");
-
-  const blocked = buildStatusPatch({ status: "blocked", reason: "waiting on review", now: "2026-10-26T00:00:00.000Z" });
-  assert.ok(!("completed_at" in blocked));
-  assert.strictEqual(blocked.blocked_reason, "waiting on review");
-});
-
-test("buildStatusPatch rejects an unknown status", () => {
-  assert.throws(() => buildStatusPatch({ status: "shipped" }), /status/i);
-});
-
-test("buildStatusPatch requires a reason when blocking", () => {
-  assert.throws(() => buildStatusPatch({ status: "blocked" }), /reason/i);
 });
 
 // ---------------------------------------------------------------------------
 // Rendering
 // ---------------------------------------------------------------------------
 
-test("formatTaskList shows an actionable summary", () => {
-  const out = formatTaskList([
-    {
-      taskKey: "TASK-1",
-      title: "Fix the thing",
-      status: "open",
-      priority: "high",
-      project: "repo",
-      nextAction: "Reproduce it",
-    },
-  ]);
+test("formatTaskList shows key, title, status, project and active session", () => {
+  const out = formatTaskList([mapTaskRecord(WORKSPACE.tasks[2], WORKSPACE.projects)]);
 
-  assert.match(out, /TASK-1/);
-  assert.match(out, /Fix the thing/);
-  assert.match(out, /high/);
-  assert.match(out, /Reproduce it/);
+  assert.match(out, /33333333/);
+  assert.match(out, /Sedang dikerjakan/);
+  assert.match(out, /running/);
+  assert.match(out, /dev-workflow-mcp-server/);
+  assert.match(out, /active session on HELLOWORLD: Menulis klien/);
 });
 
-test("formatTaskList handles an empty queue without pretending there is work", () => {
-  const out = formatTaskList([]);
+test("formatTaskList does not pretend there is work", () => {
+  assert.match(formatTaskList([]), /no tasks/i);
+});
 
-  assert.match(out, /no (open|active|pending)? ?tasks/i);
+// ---------------------------------------------------------------------------
+// HTTP behaviour
+// ---------------------------------------------------------------------------
+
+test("listTasks hides done and cancelled by default", async () => {
+  const fetchImpl = fakeFetch([(call) => (call.url.endsWith("/api/factory") ? json(WORKSPACE) : null)]);
+  const tasks = await listTasks(CONFIG, {}, fetchImpl);
+
+  assert.deepStrictEqual(tasks.map((t) => t.status).sort(), ["backlog", "queued", "running"]);
+  assert.strictEqual(ACTIVE_STATUSES.includes("done"), false);
+});
+
+test("listTasks sends the token as a Bearer header", async () => {
+  const fetchImpl = fakeFetch([(call) => (call.url.endsWith("/api/factory") ? json(WORKSPACE) : null)]);
+  await listTasks(CONFIG, {}, fetchImpl);
+
+  assert.strictEqual(fetchImpl.calls[0].headers.Authorization, "Bearer tok-1");
+});
+
+test("listTasks filters by project name and limit", async () => {
+  const fetchImpl = fakeFetch([(call) => (call.url.endsWith("/api/factory") ? json(WORKSPACE) : null)]);
+  const filtered = await listTasks(CONFIG, { project: "factory", limit: 1 }, fetchImpl);
+
+  assert.strictEqual(filtered.length, 1);
+  assert.strictEqual(filtered[0].projectName, "mahatmamahardhikach/factory");
+});
+
+test("listTasks logs in once when only email and password are given", async () => {
+  clearTokenCache();
+  const fetchImpl = fakeFetch([
+    (call) => (call.url.includes("auth-with-password") ? json({ token: "fresh" }) : null),
+    (call) => (call.url.endsWith("/api/factory") ? json(WORKSPACE) : null),
+  ]);
+  const config = { ...CONFIG, token: null, email: "me@example.com", password: "secret" };
+
+  await listTasks(config, {}, fetchImpl);
+  await listTasks(config, {}, fetchImpl);
+
+  const logins = fetchImpl.calls.filter((call) => call.url.includes("auth-with-password"));
+  assert.strictEqual(logins.length, 1);
+  clearTokenCache();
+});
+
+test("listTasks surfaces a login failure with a useful message", async () => {
+  clearTokenCache();
+  const fetchImpl = fakeFetch([(call) => (call.url.includes("auth-with-password") ? json({ message: "bad" }, 401) : null)]);
+  const config = { ...CONFIG, token: null, email: "me@example.com", password: "wrong" };
+
+  await assert.rejects(() => listTasks(config, {}, fetchImpl), /FACTORY_EMAIL/);
+  clearTokenCache();
+});
+
+test("claimTask starts a work session", async () => {
+  const fetchImpl = fakeFetch([
+    (call) => (call.url.endsWith("/api/work") && call.method === "POST" ? json({ session: { id: "sess-9", state: "active" } }) : null),
+  ]);
+
+  const session = await claimTask(CONFIG, {
+    recordId: "11111111-1111-4111-8111-111111111111",
+    device: { id: "d1", name: "box", platform: "win32", agent: "agent" },
+    step: "Mulai",
+  }, fetchImpl);
+
+  assert.strictEqual(session.id, "sess-9");
+  assert.strictEqual(fetchImpl.calls[0].body.action, "start");
+  assert.strictEqual(fetchImpl.calls[0].body.taskId, "11111111-1111-4111-8111-111111111111");
+});
+
+test("updateTaskStatus moves a task with move_task", async () => {
+  const fetchImpl = fakeFetch([
+    (call) => (call.url.endsWith("/api/factory") ? json({ ok: true, runId: null }) : null),
+  ]);
+
+  const result = await updateTaskStatus(CONFIG, { recordId: "t1", status: "cancelled" }, fetchImpl);
+
+  assert.deepStrictEqual(result, { id: "t1", status: "cancelled" });
+  assert.strictEqual(fetchImpl.calls[0].body.action, "move_task");
+  assert.strictEqual(fetchImpl.calls[0].body.status, "cancelled");
+});
+
+test("updateTaskStatus finishes the active session for review", async () => {
+  const fetchImpl = fakeFetch([
+    (call) => (call.url.endsWith("/api/factory") ? json(WORKSPACE) : null),
+    (call) => (call.url.endsWith("/api/work") && call.method === "POST" ? json({ session: { id: "sess-1", state: "review", summary: "Selesai" } }) : null),
+  ]);
+  const config = { ...CONFIG, deviceId: "d1" };
+
+  const result = await updateTaskStatus(config, {
+    recordId: "33333333-3333-4333-8333-333333333333",
+    status: "review",
+    reason: "Selesai, minta review.",
+  }, fetchImpl);
+
+  assert.strictEqual(result.status, "review");
+  const finish = fetchImpl.calls.find((call) => call.url.endsWith("/api/work"));
+  assert.strictEqual(finish.body.action, "finish");
+  assert.strictEqual(finish.body.sessionId, "sess-1");
+  assert.strictEqual(finish.body.outcome, "review");
+});
+
+test("updateTaskStatus refuses review without an active session", async () => {
+  const fetchImpl = fakeFetch([(call) => (call.url.endsWith("/api/factory") ? json(WORKSPACE) : null)]);
+
+  await assert.rejects(
+    () => updateTaskStatus(CONFIG, { recordId: "11111111-1111-4111-8111-111111111111", status: "review" }, fetchImpl),
+    /no active work session/i,
+  );
+});
+
+test("updateTaskStatus refuses running before hitting the network", async () => {
+  const fetchImpl = fakeFetch([]);
+  await assert.rejects(() => updateTaskStatus(CONFIG, { recordId: "t1", status: "running" }, fetchImpl), /claim_factory_task/);
+  assert.strictEqual(fetchImpl.calls.length, 0);
 });
