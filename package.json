@@ -30,7 +30,8 @@
     "release:minor": "node scripts/release.cjs minor",
     "release:patch": "node scripts/release.cjs patch",
     "web": "npm start --prefix web",
-    "release:first": "node scripts/release.cjs --first-release"
+    "release:first": "node scripts/release.cjs --first-release",
+    "verify:bundle": "node scripts/verify-bundle.mjs"
   },
   "keywords": [
     "mcp",
