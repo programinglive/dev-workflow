@@ -36,6 +36,17 @@ const WORK_OUTCOMES = { review: "review", blocked: "blocked", paused: "paused" }
 /** Statuses reachable through POST /api/factory { action: move_task }. */
 const MOVABLE_STATUSES = ["backlog", "queued", "cancelled"];
 
+/**
+ * Values accepted by POST /api/factory { action: create_task }.
+ *
+ * `queued` is deliberately not the default: Factory enqueues a worker run for
+ * it and rejects the task (409) unless `acceptance` contains a ```run block.
+ */
+const CREATABLE_STATUSES = ["backlog", "queued"];
+const CREATABLE_PRIORITIES = ["low", "normal", "high"];
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 const STATUS_ORDER = { running: 0, queued: 1, backlog: 2, review: 3, blocked: 4, done: 5, cancelled: 6 };
 const PRIORITY_ORDER = { high: 0, normal: 1, low: 2 };
 
@@ -433,6 +444,78 @@ export async function updateTaskStatus(config, { recordId, status, reason, nextA
   return { id: recordId, status: plan.outcome, session };
 }
 
+/**
+ * Creates a task on the Factory board.
+ *
+ * Factory validates the payload strictly (see its zod schema), so the same
+ * limits are enforced here to give the agent an actionable message instead of
+ * an opaque HTTP 400.
+ *
+ * `status` defaults to `backlog` on purpose. Factory only enqueues a worker run
+ * for `queued`, and a queued task without a ```run block is rejected with 409.
+ * Recording work should never start execution as a side effect.
+ */
+export async function createTask(config, input = {}, fetchImpl = fetch) {
+  const projectId = clean(input.projectId);
+  const title = clean(input.title) || "";
+  const description = clean(input.description) || "";
+  const acceptance = clean(input.acceptance) || "";
+  const priority = clean(input.priority) || "normal";
+  const status = clean(input.status) || "backlog";
+
+  if (!projectId) throw new Error("projectId is required. Use list_factory_projects to find one.");
+  if (!UUID_RE.test(projectId)) throw new Error(`projectId "${projectId}" is not a UUID.`);
+  if (title.length < 3 || title.length > 140) {
+    throw new Error("title must be 3-140 characters.");
+  }
+  if (acceptance.length < 3 || acceptance.length > 3000) {
+    throw new Error("acceptance must be 3-3000 characters and should state what proves the work is done.");
+  }
+  if (description.length > 4000) throw new Error("description must be at most 4000 characters.");
+  if (!CREATABLE_PRIORITIES.includes(priority)) {
+    throw new Error(`priority must be one of: ${CREATABLE_PRIORITIES.join(", ")}.`);
+  }
+  if (!CREATABLE_STATUSES.includes(status)) {
+    throw new Error(`status must be one of: ${CREATABLE_STATUSES.join(", ")}.`);
+  }
+
+  const body = await request(config, "/api/factory", {
+    method: "POST",
+    body: { action: "create_task", task: { projectId, title, description, acceptance, priority, status } },
+    fetchImpl,
+  });
+
+  return { id: body.id ?? null, runId: body.runId ?? null, status };
+}
+
+/** Lists the owner's projects so a task can reference a real projectId. */
+export async function listProjects(config, fetchImpl = fetch) {
+  const workspace = await readWorkspace(config, fetchImpl);
+  return (workspace.projects || []).map((project) => ({
+    id: project.id ?? null,
+    name: project.name ?? null,
+    repository: project.repository ?? null,
+    branch: project.branch ?? null,
+    stack: project.stack ?? null,
+  }));
+}
+
+/** Human-readable rendering of the project list. */
+export function formatProjectList(projects = []) {
+  if (!Array.isArray(projects) || projects.length === 0) {
+    return "No projects in this Factory workspace yet. Create one in the Factory UI first.";
+  }
+
+  const lines = [`${projects.length} project(s) in Factory:`, ""];
+  projects.forEach((project, index) => {
+    lines.push(`${index + 1}. ${project.name}  [${project.id}]`);
+    const meta = [project.stack, project.branch].filter(Boolean).join(" · ");
+    if (meta) lines.push(`   ${meta}`);
+    if (project.repository) lines.push(`   ${project.repository}`);
+  });
+  return lines.join("\n");
+}
+
 /** Builds the finish summary, which Factory requires (3-2000 chars). */
 export function buildSummary({ reason, nextAction, status } = {}) {
   const parts = [clean(reason), clean(nextAction)].filter(Boolean);
@@ -440,4 +523,4 @@ export function buildSummary({ reason, nextAction, status } = {}) {
   return text.length < 3 ? `${text} (dilaporkan agen)` : text.slice(0, 2000);
 }
 
-export { MOVABLE_STATUSES, WORK_OUTCOMES };
+export { MOVABLE_STATUSES, WORK_OUTCOMES, CREATABLE_STATUSES, CREATABLE_PRIORITIES };

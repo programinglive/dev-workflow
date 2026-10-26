@@ -4,7 +4,7 @@ import { handleSkipRelease, handlePerformRelease } from "./release-handlers.js";
 import { handleCommitAndPush, handleCompleteTask, handleForceCompleteTask, handleDropTask } from "./commit-handlers.js";
 import { handleProjectSummary, handleProjectSummaryData, handleProjectSummaryDb, handleViewHistory } from "./summary-handlers.js";
 import { handleGetWorkflowStatus, handleReadyCheck, handleContinueWorkflow, handleRerunWorkflow } from "./status-handlers.js";
-import { handleListFactoryTasks, handleClaimFactoryTask, handleSyncTaskStatus } from "./factory-handlers.js";
+import { handleListFactoryTasks, handleClaimFactoryTask, handleSyncTaskStatus, handleListFactoryProjects, handleCreateFactoryTask } from "./factory-handlers.js";
 
 function summarizeResponse(label, response) {
   const text = response?.content?.[0]?.text || "";
@@ -219,6 +219,10 @@ export async function handleToolCall({
         return handleRunFullWorkflow(args, { workflowState, exec, git, utils });
       case "list_factory_tasks":
         return handleListFactoryTasks(args);
+      case "list_factory_projects":
+        return handleListFactoryProjects(args);
+      case "create_factory_task":
+        return handleCreateFactoryTask(args);
       case "claim_factory_task":
         return handleClaimFactoryTask(args, { workflowState });
       case "sync_task_status":

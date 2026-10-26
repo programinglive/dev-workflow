@@ -386,6 +386,54 @@ export function getToolList() {
       },
     },
     {
+      name: "list_factory_projects",
+      description:
+        "List projects in the Factory workspace with their UUIDs. Run this before create_factory_task, because Factory requires a real projectId and cannot accept an invented one.",
+      inputSchema: {
+        type: "object",
+        properties: {},
+      },
+    },
+    {
+      name: "create_factory_task",
+      description:
+        "Create a task on the Factory board through the official write path (POST /api/factory create_task). Defaults to status 'backlog', which records the work WITHOUT starting a worker run. Only pass status 'queued' when you really want the worker to execute it - Factory rejects a queued task (409) unless 'acceptance' contains a ```run block. Use list_factory_projects first to get a real projectId.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          projectId: {
+            type: "string",
+            description: "Project UUID from list_factory_projects. Required.",
+          },
+          title: {
+            type: "string",
+            description: "Task title, 3-140 characters.",
+          },
+          description: {
+            type: "string",
+            description: "Optional context: current behaviour, what should change. Max 4000 characters.",
+          },
+          acceptance: {
+            type: "string",
+            description:
+              "What must be true for this task to be done. 3-3000 characters. Required by Factory.",
+          },
+          priority: {
+            type: "string",
+            enum: ["low", "normal", "high"],
+            description: "Defaults to normal.",
+          },
+          status: {
+            type: "string",
+            enum: ["backlog", "queued"],
+            description:
+              "Defaults to backlog. 'queued' also creates a worker run and requires a ```run block in acceptance.",
+          },
+        },
+        required: ["projectId", "title", "acceptance"],
+      },
+    },
+    {
       name: "claim_factory_task",
       description:
         "Claim a task by opening a Factory work session. This is what moves the task to 'running' on the board, because Factory has no plain status edit for it. Also starts the local workflow for that task. Use the task id from list_factory_tasks.",

@@ -5,7 +5,10 @@ import {
   findTask,
   claimTask,
   updateTaskStatus,
+  createTask,
+  listProjects,
   formatTaskList,
+  formatProjectList,
   planStatusTransition,
 } from "../../factory-client.js";
 
@@ -150,5 +153,79 @@ export async function handleSyncTaskStatus(args = {}) {
     );
   } catch (error) {
     return textResponse(`Could not update the task: ${error.message}`);
+  }
+}
+
+/**
+ * Lists projects, because create_task needs a real projectId (UUID) and the
+ * agent cannot invent one.
+ */
+export async function handleListFactoryProjects() {
+  const { config, response } = requireConfig();
+  if (!config) return response;
+
+  try {
+    const projects = await listProjects(config);
+    return textResponse(formatProjectList(projects));
+  } catch (error) {
+    return textResponse(`Could not read the Factory projects: ${error.message}`);
+  }
+}
+
+/**
+ * Creates a task on the board through the official write path.
+ *
+ * Defaults to `backlog`. Factory starts a worker run for `queued` tasks, so
+ * recording work must not enqueue execution by accident.
+ */
+export async function handleCreateFactoryTask(args = {}) {
+  const { config, response } = requireConfig();
+  if (!config) return response;
+
+  const title = typeof args.title === "string" ? args.title.trim() : "";
+  const acceptance = typeof args.acceptance === "string" ? args.acceptance.trim() : "";
+
+  if (!title) {
+    return textResponse("Provide 'title' for the task (3-140 characters).");
+  }
+  if (!acceptance) {
+    return textResponse(
+      [
+        "Provide 'acceptance': what must be true for this task to count as done.",
+        "Factory requires it, and it is what the next person checks.",
+      ].join("\n"),
+    );
+  }
+  if (!args.projectId) {
+    return textResponse(
+      "Provide 'projectId'. Run 'list_factory_projects' first - Factory needs a real project UUID.",
+    );
+  }
+
+  try {
+    const created = await createTask(config, {
+      projectId: args.projectId,
+      title,
+      description: args.description,
+      acceptance,
+      priority: args.priority,
+      status: args.status,
+    });
+
+    return textResponse(
+      [
+        `Created task ${created.id ? `[${String(created.id).slice(0, 8)}] ` : ""}${title}`,
+        `Status: ${created.status}${created.status === "backlog" ? " (no worker run started)" : ""}`,
+        created.runId ? `Worker run queued: ${created.runId}` : "",
+        "",
+        created.status === "backlog"
+          ? "Recorded in the backlog. Use claim_factory_task when someone starts working on it."
+          : "Move it out of the queue if execution was not intended.",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+  } catch (error) {
+    return textResponse(`Could not create the task: ${error.message}`);
   }
 }
