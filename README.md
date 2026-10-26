@@ -411,8 +411,14 @@ runs-on: [self-hosted, windows, mmch]
 
 | Job | Steps |
 |---|---|
-| `test` | `npm ci` → `npm test` → `build:server` → `npm audit --omit=dev --audit-level=high` → setup-stack suite |
+| `test` | `npm ci` → `npm test` → `build:server` → **verify the bundle starts** → `npm audit --omit=dev --audit-level=high` → setup-stack suite |
 | `web` | `npm ci` in `web/` → static export build → verify `out/index.html` and CSS size → `npm audit --audit-level=high` |
+
+The bundle verification step exists because a successful build does not mean
+the artefact runs. `dist/index.mjs` is the published package entry, and a
+bundler upgrade once produced a green build whose output crashed on startup.
+`scripts/verify-bundle.mjs` starts the bundle and requires the stdio startup
+banner, so that class of failure fails the pull request instead of the release.
 
 The `web` job exists because the dashboard is deployed to Netlify from `web/`.
 The CSS size check catches a Tailwind regression that a green build would

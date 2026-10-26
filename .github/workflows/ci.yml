@@ -53,6 +53,10 @@ jobs:
         shell: powershell
         run: npm run build:server
 
+      - name: Verify the built bundle starts
+        shell: powershell
+        run: node scripts/verify-bundle.mjs
+
       - name: Audit production dependencies
         shell: powershell
         run: npm audit --omit=dev --audit-level=high
