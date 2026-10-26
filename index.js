@@ -13,16 +13,7 @@ import {
 import { fileURLToPath } from "url";
 import { exec } from "./exec.js";
 import { normalizeRequestArgs, shellEscape } from "./utils.js";
-import {
-  getCurrentBranch,
-  getLastCommitMessage,
-  getPrimaryBranch,
-  getStagedChanges,
-  hasStagedChanges,
-  hasTestChanges,
-  hasWorkingChanges,
-  workingTreeSummary,
-} from "./git-helpers.js";
+import { createGitFacade } from "./git-facade.js";
 import {
   createCommitMessageParts,
   determineReleaseTypeFromCommit,
@@ -33,6 +24,7 @@ import { handleToolCall } from "./tools/handlers.js";
 
 export { createCommitMessageParts, determineReleaseTypeFromCommit } from "./commit-helpers.js";
 export { containsTestFilesInStatus, workingTreeSummary } from "./git-helpers.js";
+export { createGitFacade } from "./git-facade.js";
 export { WorkflowState } from "./workflow-state.js";
 
 export let workflowState = null;
@@ -69,16 +61,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     normalizeRequestArgs,
     workflowState,
     exec,
-    git: {
-      hasWorkingChanges,
-      hasTestChanges,
-      hasStagedChanges,
-      getStagedChanges,
-      getCurrentBranch,
-      getPrimaryBranch,
-      getLastCommitMessage,
-      workingTreeSummary,
-    },
+    git: createGitFacade(),
     utils: { shellEscape, determineReleaseTypeFromCommit, createCommitMessageParts },
   });
 });
@@ -255,16 +238,7 @@ async function cliMain(argv) {
       normalizeRequestArgs,
       workflowState,
       exec,
-      git: {
-        hasWorkingChanges,
-        hasTestChanges,
-        hasStagedChanges,
-        getStagedChanges,
-        getCurrentBranch,
-        getPrimaryBranch,
-        getLastCommitMessage,
-        workingTreeSummary,
-      },
+      git: createGitFacade(),
       utils: { shellEscape, determineReleaseTypeFromCommit, createCommitMessageParts },
     });
 

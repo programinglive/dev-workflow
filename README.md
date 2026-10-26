@@ -91,36 +91,61 @@ See [MCP client configuration](#mcp-client-configuration).
 
 ### Factory task integration
 
-Three tools connect this server to the **Factory** task queue at
-`factory.programinglive.com`, backed by the PocketBase `activity_tasks`
-collection.
+Three tools connect this server to the **Factory** board at
+`factory.programinglive.com`. They read and write the real task table
+(`factory_tasks`), not the retired PocketBase `activity_tasks` collection
+(which still exists but holds 0 records and never reached the board).
 
 They stay **inert** until configured. With no configuration the server behaves
 exactly as before, and the tools reply with setup instructions.
 
 ```bash
-FACTORY_PB_URL=https://pocketbase.programinglive.com
-FACTORY_PB_IDENTITY=<activity_users email>
-FACTORY_PB_PASSWORD=<password>
-FACTORY_MACHINE_ID=<optional machine name>
+FACTORY_URL=https://factory.programinglive.com
+FACTORY_EMAIL=<activity_users email>
+FACTORY_PASSWORD=<password>
 ```
 
-Use an **`activity_users` account, not a PocketBase superuser**. The collection
-rules already scope every row to its owner:
+Or supply a ready token instead of a password:
 
-```
-listRule:   @request.auth.id != "" && owner = @request.auth.id
-updateRule: @request.auth.id != "" && owner = @request.auth.id && (...)
+```bash
+FACTORY_TOKEN=<PocketBase activity_users token>
 ```
 
-A superuser token would grant access to every collection in the database, which
-this integration does not need.
+Optional:
+
+```bash
+FACTORY_PB_URL=https://pocketbase.programinglive.com   # where the login happens
+FACTORY_MACHINE_ID=<name shown on the device row>       # defaults to the hostname
+FACTORY_DEVICE_ID=<fixed device UUID>                   # else derived from the name
+FACTORY_AGENT=dev-workflow-mcp                          # max 40 chars
+```
+
+Use an **`activity_users` account, not a PocketBase superuser**. Factory accepts
+that token as `Authorization: Bearer <token>` for non-browser clients, and the
+account only sees its own tasks.
 
 | Tool | Writes? | What it does |
 |---|---|---|
-| `list_factory_tasks` | no | Returns `open`, `in_progress` and `blocked` tasks, ordered by status → `rank_override` → priority |
-| `claim_factory_task` | yes | Sets `status=in_progress`, `started_at`, `session_id`, `machine_id`, then starts a local workflow |
-| `sync_task_status` | yes | Sets the new status; `done` stamps `completed_at`, `blocked` requires a reason |
+| `list_factory_tasks` | no | Reads `GET /api/factory`, maps tasks plus their latest work session, and orders them status → priority. Defaults to `running, queued, backlog, review, blocked` |
+| `claim_factory_task` | yes | Opens a work session (`POST /api/work {action:start}`), which is what turns the task `running` on the board, then starts a local workflow |
+| `sync_task_status` | yes | Uses the only endpoint that can produce the status; see the table below |
+
+#### Status mapping is not free-form
+
+Factory has no generic "set status" endpoint, so the tool routes each status to
+the endpoint that actually supports it:
+
+| Requested status | Endpoint used | Result |
+|---|---|---|
+| `review`, `blocked`, `paused` | `POST /api/work {action:finish}` | Session closes, task changes accordingly |
+| `backlog`, `queued`, `cancelled` | `POST /api/factory {action:move_task}` | Board column changes |
+| `running` | — rejected | Point the caller at `claim_factory_task` |
+| `done` | — rejected | A human approves the work in Factory |
+
+`review` requires an active work session. Asking for it without one fails with
+"no active work session" instead of silently doing nothing — the task must be
+claimed first. Full behaviour, limits (summary 2000 chars, step 240 chars) and
+troubleshooting live in [docs/factory-integration.md](docs/factory-integration.md).
 
 
 ### Example session
@@ -260,10 +285,13 @@ DEV_WORKFLOW_DB_URL=postgresql://user:pass@localhost:5432/devworkflow
 | `DEV_WORKFLOW_DB_PATH` | `.state/dev-workflow.db` | SQLite path (optional) |
 | `DEV_WORKFLOW_USER_ID` | auto-generated | User ID for multi-user isolation |
 | `DEV_WORKFLOW_STATE_FILE` | auto-resolved | Override for `workflow-state.json` |
-| `FACTORY_PB_URL` | — | PocketBase base URL for Factory task integration |
-| `FACTORY_PB_IDENTITY` | — | `activity_users` email |
-| `FACTORY_PB_PASSWORD` | — | Password for that account |
-| `FACTORY_MACHINE_ID` | — | Optional machine name stamped on claimed tasks |
+| `FACTORY_URL` | - | Factory base URL, e.g. `https://factory.programinglive.com` |
+| `FACTORY_TOKEN` | - | PocketBase `activity_users` token sent as a Bearer header |
+| `FACTORY_EMAIL` | - | `activity_users` email, exchanged for a token on demand |
+| `FACTORY_PASSWORD` | - | Password for that account |
+| `FACTORY_PB_URL` | `https://pocketbase.programinglive.com` | Where the token is obtained |
+| `FACTORY_MACHINE_ID` | hostname | Device name shown on the Factory board |
+| `FACTORY_DEVICE_ID` | derived from the name | Stable device UUID |
 
 ### Project-specific state
 

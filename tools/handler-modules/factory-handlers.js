@@ -2,16 +2,16 @@ import { textResponse } from "./shared.js";
 import {
   readFactoryConfig,
   listTasks,
+  findTask,
   claimTask,
   updateTaskStatus,
   formatTaskList,
-  buildStatusPatch,
+  planStatusTransition,
 } from "../../factory-client.js";
 
 /**
- * Factory tools stay inert unless FACTORY_PB_URL, FACTORY_PB_IDENTITY and
- * FACTORY_PB_PASSWORD are set. That keeps the MCP server usable on machines
- * that have no Factory access at all.
+ * Factory tools stay inert unless a Factory URL and credentials are set.
+ * That keeps the MCP server usable on machines without Factory access.
  */
 function requireConfig() {
   const config = readFactoryConfig();
@@ -23,13 +23,17 @@ function requireConfig() {
           "Factory is not configured on this machine.",
           "",
           "Set these environment variables where the MCP server is launched:",
-          "  FACTORY_PB_URL=https://pocketbase.programinglive.com",
-          "  FACTORY_PB_IDENTITY=<activity_users email>",
-          "  FACTORY_PB_PASSWORD=<password>",
-          "  FACTORY_MACHINE_ID=<optional machine name>",
+          "  FACTORY_URL=https://factory.programinglive.com",
+          "  FACTORY_TOKEN=<PocketBase activity_users token>",
           "",
-          "Use an activity_users account, not a PocketBase superuser: the",
-          "activity_tasks rules already scope every row to its owner.",
+          "Or let the client log in for you:",
+          "  FACTORY_EMAIL=<activity_users email>",
+          "  FACTORY_PASSWORD=<password>",
+          "",
+          "Optional:",
+          "  FACTORY_PB_URL=<PocketBase base URL, default https://pocketbase.programinglive.com>",
+          "  FACTORY_MACHINE_ID=<name shown on the device row>",
+          "  FACTORY_DEVICE_ID=<fixed device UUID>",
         ].join("\n"),
       ),
     };
@@ -37,7 +41,7 @@ function requireConfig() {
   return { config, response: null };
 }
 
-export async function handleListFactoryTasks(args) {
+export async function handleListFactoryTasks(args = {}) {
   const { config, response } = requireConfig();
   if (!config) return response;
 
@@ -53,7 +57,7 @@ export async function handleListFactoryTasks(args) {
   }
 }
 
-export async function handleClaimFactoryTask(args, { workflowState }) {
+export async function handleClaimFactoryTask(args = {}, { workflowState } = {}) {
   const { config, response } = requireConfig();
   if (!config) return response;
 
@@ -62,33 +66,40 @@ export async function handleClaimFactoryTask(args, { workflowState }) {
     return textResponse("Provide the 'recordId' of the task to claim (see list_factory_tasks).");
   }
 
-  const task = (await listTasks(config, { statuses: ["open", "in_progress", "blocked"], limit: 200 })).find(
-    (item) => item.id === recordId,
-  );
-  if (!task) {
-    return textResponse(`No task with id "${recordId}" is visible to this account.`);
-  }
-
   try {
-    const claimed = await claimTask(config, {
-      recordId,
-      sessionId: null,
-    });
+    const task = await findTask(config, recordId);
+    if (!task) {
+      return textResponse(`No task with id "${recordId}" is visible to this account.`);
+    }
+    if (task.work?.state === "active") {
+      return textResponse(
+        [
+          `"${task.title}" already has an active work session${task.work.deviceName ? ` on ${task.work.deviceName}` : ""}.`,
+          "Finish that session before claiming it again.",
+        ].join("\n"),
+      );
+    }
 
-    workflowState.reset();
-    workflowState.state.currentPhase = "coding";
-    workflowState.state.taskDescription = `${claimed.taskKey || claimed.id}: ${claimed.title}`;
-    workflowState.state.taskType = "other";
-    await workflowState.save();
+    const step = typeof args.step === "string" && args.step.trim() ? args.step.trim() : "Working on the task";
+    const session = await claimTask(config, { recordId, step });
+    if (!session) throw new Error("Factory accepted the claim but returned no work session.");
+
+    if (workflowState) {
+      workflowState.reset();
+      workflowState.state.currentPhase = "coding";
+      workflowState.state.taskDescription = `[${task.taskKey || task.id}] ${task.title}`;
+      workflowState.state.taskType = "other";
+      await workflowState.save();
+    }
 
     return textResponse(
       [
-        `Claimed ${claimed.taskKey || claimed.id}: ${claimed.title}`,
-        `Status is now ${claimed.status}.`,
-        claimed.nextAction ? `Next action: ${claimed.nextAction}` : "",
+        `Claimed [${task.taskKey || task.id}] ${task.title}`,
+        `Factory status is now running (work session ${session.id}).`,
+        task.projectName ? `Project: ${task.projectName}` : "",
         "",
         "Local workflow started for this task.",
-        "Use 'sync_task_status' when the work is done or blocked.",
+        "Use 'sync_task_status' with review, blocked or paused when the work is done.",
       ]
         .filter(Boolean)
         .join("\n"),
@@ -98,45 +109,41 @@ export async function handleClaimFactoryTask(args, { workflowState }) {
   }
 }
 
-export async function handleSyncTaskStatus(args) {
+export async function handleSyncTaskStatus(args = {}) {
   const { config, response } = requireConfig();
   if (!config) return response;
 
   const recordId = typeof args.recordId === "string" ? args.recordId.trim() : "";
   const status = typeof args.status === "string" ? args.status.trim() : "";
+  const reason = typeof args.reason === "string" ? args.reason : null;
+  const nextAction = typeof args.nextAction === "string" ? args.nextAction : null;
 
   if (!recordId) {
     return textResponse("Provide the 'recordId' of the task to update.");
   }
   if (!status) {
-    return textResponse("Provide 'status': one of open, in_progress, blocked, done.");
+    return textResponse("Provide 'status'. Factory accepts: backlog, queued, review, blocked, paused, cancelled.");
+  }
+  if (status === "blocked" && !reason) {
+    return textResponse("Marking a task blocked requires a 'reason' so the next person knows what is missing.");
   }
 
-  // Validate locally before touching the network so the agent gets an
-  // actionable message instead of a transport error.
+  // Validate locally so the agent gets an actionable message instead of a
+  // transport error from Factory.
   try {
-    buildStatusPatch({
-      status,
-      reason: typeof args.reason === "string" ? args.reason : null,
-      nextAction: typeof args.nextAction === "string" ? args.nextAction : null,
-    });
+    planStatusTransition(status);
   } catch (error) {
     return textResponse(error.message);
   }
 
   try {
-    const updated = await updateTaskStatus(config, {
-      recordId,
-      status,
-      reason: typeof args.reason === "string" ? args.reason : null,
-      nextAction: typeof args.nextAction === "string" ? args.nextAction : null,
-    });
+    const result = await updateTaskStatus(config, { recordId, status, reason, nextAction });
 
     return textResponse(
       [
-        `Updated ${updated.taskKey || updated.id} to ${updated.status}.`,
-        updated.blockedReason ? `Blocked reason: ${updated.blockedReason}` : "",
-        updated.nextAction ? `Next action: ${updated.nextAction}` : "",
+        `Updated ${recordId} to ${result.status}.`,
+        result.session?.summary ? `Summary: ${result.session.summary}` : "",
+        result.status === "review" ? "Waiting for human approval in Factory." : "",
       ]
         .filter(Boolean)
         .join("\n"),

@@ -365,18 +365,18 @@ export function getToolList() {
     {
       name: "list_factory_tasks",
       description:
-        "List work assigned to you in the Factory task queue (PocketBase activity_tasks). Returns open, in_progress and blocked tasks ordered by status, rank override and priority. Requires FACTORY_PB_URL, FACTORY_PB_IDENTITY and FACTORY_PB_PASSWORD.",
+        "List tasks from the Factory board (factory.programinglive.com), newest activity first. Defaults to work that still needs attention: running, queued, backlog, review and blocked. Requires FACTORY_URL plus FACTORY_TOKEN, or FACTORY_EMAIL and FACTORY_PASSWORD.",
       inputSchema: {
         type: "object",
         properties: {
           statuses: {
             type: "array",
-            items: { type: "string", enum: ["open", "in_progress", "blocked", "done"] },
-            description: "Statuses to include. Defaults to open, in_progress and blocked.",
+            items: { type: "string", enum: ["backlog", "queued", "running", "review", "blocked", "done", "cancelled"] },
+            description: "Statuses to include. Defaults to running, queued, backlog, review and blocked.",
           },
           project: {
             type: "string",
-            description: "Optional project name to filter by.",
+            description: "Optional project name or id to filter by (case-insensitive substring).",
           },
           limit: {
             type: "number",
@@ -388,13 +388,17 @@ export function getToolList() {
     {
       name: "claim_factory_task",
       description:
-        "Claim a task from the Factory queue: sets it to in_progress with a start timestamp, then starts a local workflow for it. Use the recordId returned by list_factory_tasks.",
+        "Claim a task by opening a Factory work session. This is what moves the task to 'running' on the board, because Factory has no plain status edit for it. Also starts the local workflow for that task. Use the task id from list_factory_tasks.",
       inputSchema: {
         type: "object",
         properties: {
           recordId: {
             type: "string",
-            description: "PocketBase record id of the task to claim.",
+            description: "Factory task id (UUID) to claim.",
+          },
+          step: {
+            type: "string",
+            description: "Short description of what you are about to do, shown on the device row (max 240 chars).",
           },
         },
         required: ["recordId"],
@@ -403,26 +407,26 @@ export function getToolList() {
     {
       name: "sync_task_status",
       description:
-        "Report a task status change back to the Factory queue. Marking a task blocked requires a reason; marking it done sets the completion timestamp.",
+        "Report a task status change to Factory using the endpoint that supports it: review, blocked and paused finish the work session; backlog, queued and cancelled move the task. 'running' is set by claim_factory_task and 'done' is decided by a human in Factory.",
       inputSchema: {
         type: "object",
         properties: {
           recordId: {
             type: "string",
-            description: "PocketBase record id of the task.",
+            description: "Factory task id (UUID).",
           },
           status: {
             type: "string",
-            enum: ["open", "in_progress", "blocked", "done"],
-            description: "New status.",
+            enum: ["backlog", "queued", "review", "blocked", "paused", "cancelled"],
+            description: "New status. 'running' and 'done' are rejected on purpose.",
           },
           reason: {
             type: "string",
-            description: "Required when status is 'blocked'.",
+            description: "Required when status is 'blocked'; used as the session summary otherwise.",
           },
           nextAction: {
             type: "string",
-            description: "Optional description of what happens next.",
+            description: "What happens next. Appended to the session summary.",
           },
         },
         required: ["recordId", "status"],
