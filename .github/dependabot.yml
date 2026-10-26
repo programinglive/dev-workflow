@@ -63,6 +63,15 @@ updates:
         update-types: ["version-update:semver-major"]
       - dependency-name: "react-dom"
         update-types: ["version-update:semver-major"]
+      # Tailwind 4 is a rewrite of how CSS is generated: the @tailwind
+      # directives become @import "tailwindcss", the config moves into CSS,
+      # and the PostCSS plugin is replaced by @tailwindcss/postcss. This
+      # dashboard is finished and stable, so a major rewrite of its styling
+      # pipeline is not wanted. Ignored entirely, not just majors, so no
+      # 4.x PR reappears.
+      - dependency-name: "tailwindcss"
+      - dependency-name: "@tailwindcss/postcss"
+      - dependency-name: "@tailwindcss/cli"
 
   # Keep the CI workflow actions current
   - package-ecosystem: "github-actions"
