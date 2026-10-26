@@ -18,6 +18,12 @@ export default defineConfig({
       },
       external: [
         '@modelcontextprotocol/sdk',
+        // dotenv ships CommonJS only (dist/index.cjs). Bundling it into an ES
+        // module leaks its `require.main === module` guard, which throws
+        // "require is not defined in ES module scope" at startup. Keeping it
+        // external lets Node load it as CJS, which is how it is designed to run.
+        'dotenv',
+        'dotenv/config',
         // Node.js built-in modules
         'node:fs',
         'node:path',
