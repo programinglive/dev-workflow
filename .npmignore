@@ -18,6 +18,7 @@ tests/
 .github/
 .husky/
 .agent/
+scripts/manual/
 
 # Web dashboard has its own package and is deployed separately
 web/
