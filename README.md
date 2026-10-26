@@ -424,6 +424,19 @@ The `web` job exists because the dashboard is deployed to Netlify from `web/`.
 The CSS size check catches a Tailwind regression that a green build would
 otherwise hide.
 
+### Tailwind stays on v3
+
+`web/` uses Tailwind 3.4 and is **not** being migrated to v4. Tailwind 4 is a
+rewrite of the CSS pipeline: the `@tailwind` directives become
+`@import "tailwindcss"`, the config moves into CSS, and the PostCSS plugin is
+replaced by `@tailwindcss/postcss`. The dashboard is finished and stable, so
+rewriting its styling pipeline risks the entire visual design for no functional
+gain.
+
+`dependabot.yml` ignores `tailwindcss`, `@tailwindcss/postcss` and
+`@tailwindcss/cli` entirely — not just majors — so no v4 pull request
+reappears.
+
 Runner provisioning and troubleshooting: [docs/homelab/ci-runner.md](./docs/homelab/ci-runner.md).
 
 ---
