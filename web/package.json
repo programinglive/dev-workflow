@@ -7,7 +7,7 @@
     "dev": "node server.js",
     "build": "next build",
     "start": "cross-env NODE_ENV=production node server.js",
-    "lint": "next lint"
+    "lint": "eslint ."
   },
   "dependencies": {
     "bcrypt": "^6.0.0",
@@ -31,7 +31,7 @@
     "@types/react-dom": "^19",
     "autoprefixer": "^10.6.1",
     "cross-env": "^10.1.0",
-    "eslint": "^9",
+    "eslint": "^10.13.0",
     "eslint-config-next": "16.4.2",
     "jest": "^30.5.2",
     "postcss": "^8.5.31",
