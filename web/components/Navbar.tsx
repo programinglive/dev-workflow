@@ -2,7 +2,8 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { Github, Menu, X, Moon, Sun, LogOut } from "lucide-react";
+import { Menu, X, Moon, Sun, LogOut } from "lucide-react";
+import { GithubIcon } from "./GithubIcon";
 import Image from "next/image";
 import { apiClient } from "@/lib/api-client";
 
@@ -114,7 +115,7 @@ export default function Navbar() {
                             rel="noopener noreferrer"
                             className="flex items-center gap-1.5 px-3 py-1.5 lg:px-4 lg:py-2 bg-gray-100 dark:bg-white/5 hover:bg-gray-200 dark:hover:bg-white/10 rounded-lg transition text-xs lg:text-sm text-gray-900 dark:text-white"
                         >
-                            <Github className="w-3.5 h-3.5 lg:w-4 lg:h-4" />
+                            <GithubIcon className="w-3.5 h-3.5 lg:w-4 lg:h-4" />
                             GitHub
                         </a>
                         {isAuthenticated && (
@@ -180,7 +181,7 @@ export default function Navbar() {
                             rel="noopener noreferrer"
                             className="flex items-center gap-2 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition"
                         >
-                            <Github className="w-4 h-4" />
+                            <GithubIcon className="w-4 h-4" />
                             GitHub
                         </a>
                         {isAuthenticated ? (
