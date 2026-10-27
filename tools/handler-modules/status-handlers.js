@@ -1,9 +1,29 @@
 import { textResponse, formatChecklist, isReleaseSatisfied, getContinueGuidance, resetToCommitIfWorkingChanges } from "./shared.js";
 import { handleCommitAndPush } from "./commit-handlers.js";
 
-export function handleGetWorkflowStatus(workflowState) {
+export async function handleGetWorkflowStatus(workflowState) {
   const status = workflowState.state;
   const nextStep = status ? status.currentPhase : "idle";
+
+  // Deteksi berkas state yang terakhir ditulis proses MCP lain. Tanpa
+  // peringatan ini, agen bisa meng-commit atas nama task orang lain.
+  let sharedWarning = "";
+  try {
+    const disk = await workflowState.readDiskState();
+    if (workflowState.isForeignWrite(disk)) {
+      const owner = disk.owner || {};
+      sharedWarning =
+        `\n\n⚠️ PERINGATAN: berkas state ini terakhir ditulis proses MCP LAIN ` +
+        `(${owner.token || "tanpa-token"}, pid ${owner.pid ?? "?"}).\n` +
+        `   State workflow dipakai bersama antar sesi di mesin ini.\n` +
+        `   Periksa apakah "Task:" di atas benar-benar milik Anda SEBELUM commit_and_push.`;
+      if (disk.currentPhase && disk.currentPhase !== "idle" && disk.taskDescription) {
+        sharedWarning += `\n   Proses itu sedang mengerjakan: "${disk.taskDescription}"`;
+      }
+    }
+  } catch {
+    // Status tetap ditampilkan walau pemeriksaan berkas gagal.
+  }
 
   return textResponse(
     `📊 Current Workflow Status:
@@ -19,7 +39,7 @@ Ready check: ${status.readyCheckCompleted ? "✅" : "❌"}
 Commit & push: ${status.commitAndPushCompleted ? "✅" : "❌"}
 Released: ${status.released ? "✅" : "❌"}
 
-Next step: ${nextStep}`
+Next step: ${nextStep}${sharedWarning}`
   );
 }
 
