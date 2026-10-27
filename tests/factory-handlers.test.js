@@ -167,11 +167,15 @@ test("sync tool explains that running comes from claiming", async () => {
   }
 });
 
-test("sync tool refuses done because a human decides it", async () => {
+test("sync tool can mark a task done, and reports server errors instead of blocking it locally", async () => {
   setEnv();
   try {
+    // Factory menolak done untuk task yang belum sampai review (409). Di tes ini
+    // jaringan tidak tersedia, jadi yang dibuktikan adalah: handler TIDAK lagi
+    // menolak done di sisi klien, dan kegagalan diteruskan apa adanya.
     const out = text(await handleSyncTaskStatus({ recordId: "r1", status: "done" }));
-    assert.match(out, /human/i);
+    assert.doesNotMatch(out, /human/i);
+    assert.match(out, /Could not update the task/i);
   } finally {
     clearEnv();
   }
