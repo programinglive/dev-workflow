@@ -455,7 +455,7 @@ export function getToolList() {
     {
       name: "sync_task_status",
       description:
-        "Report a task status change to Factory using the endpoint that supports it: review, blocked and paused finish the work session; backlog, queued and cancelled move the task. 'running' is set by claim_factory_task and 'done' is decided by a human in Factory.",
+        "Report a task status change to Factory using the endpoint that supports it: review, blocked and paused finish the work session; backlog, queued, cancelled and done move the task. 'done' is the approval step: Factory accepts it only when the task is currently in review, and it marks the work as finished. 'running' is set by claim_factory_task, not here.",
       inputSchema: {
         type: "object",
         properties: {
@@ -465,8 +465,9 @@ export function getToolList() {
           },
           status: {
             type: "string",
-            enum: ["backlog", "queued", "review", "blocked", "paused", "cancelled"],
-            description: "New status. 'running' and 'done' are rejected on purpose.",
+            enum: ["backlog", "queued", "review", "blocked", "paused", "cancelled", "done"],
+            description:
+              "New status. 'running' is set by claim_factory_task, not here. 'done' is the approval step and is only valid when the task is currently in review.",
           },
           reason: {
             type: "string",
