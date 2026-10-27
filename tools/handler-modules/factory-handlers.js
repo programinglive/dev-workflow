@@ -102,7 +102,7 @@ export async function handleClaimFactoryTask(args = {}, { workflowState } = {}) 
         task.projectName ? `Project: ${task.projectName}` : "",
         "",
         "Local workflow started for this task.",
-        "Use 'sync_task_status' with review, blocked or paused when the work is done.",
+        "Use 'sync_task_status' with review, blocked or paused to close the session, or done to approve the task once it is in review.",
       ]
         .filter(Boolean)
         .join("\n"),
@@ -125,7 +125,7 @@ export async function handleSyncTaskStatus(args = {}) {
     return textResponse("Provide the 'recordId' of the task to update.");
   }
   if (!status) {
-    return textResponse("Provide 'status'. Factory accepts: backlog, queued, review, blocked, paused, cancelled.");
+    return textResponse("Provide 'status'. Factory accepts: backlog, queued, review, blocked, paused, cancelled, done.");
   }
   if (status === "blocked" && !reason) {
     return textResponse("Marking a task blocked requires a 'reason' so the next person knows what is missing.");
