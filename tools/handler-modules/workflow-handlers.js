@@ -1,7 +1,12 @@
 import { textResponse, isReleaseSatisfied, isErrorResponse, ensurePrdExists } from "./shared.js";
 
 export async function handleStartTask(args, workflowState) {
-  workflowState.reset();
+  // Selamatkan dulu pekerjaan yang mungkin tertimpa. Ini menangani dua kasus:
+  //   1. Proses MCP LAIN menulis berkas state setelah kita memuatnya.
+  //   2. Task kita sendiri yang belum selesai lalu diganti task baru.
+  const preservedBeforeSave = await workflowState.reconcileWithDisk();
+  const { archivedTask } = workflowState.reset({ archive: true });
+
   workflowState.state.currentPhase = "coding";
   workflowState.state.taskDescription = args.description;
   workflowState.state.taskType = args.type;
@@ -10,10 +15,34 @@ export async function handleStartTask(args, workflowState) {
   workflowState.state.commitAndPushCompleted = false;
   workflowState.state.lastCommitMessage = "";
   workflowState.state.lastPushBranch = "";
-  await workflowState.save();
+  const reconciled = await workflowState.save();
+
+  const warnings = [];
+  const preservedForeign = reconciled?.preservedTask || preservedBeforeSave?.preservedTask;
+  if (preservedForeign) {
+    warnings.push(
+      `⚠️ Ada task yang SEDANG BERJALAN dari proses agen lain dan hampir tertimpa:\n` +
+        `   "${preservedForeign}"\n` +
+        `   Task itu sudah disimpan ke history sebagai 'interrupted', bukan dihapus.\n` +
+        `   State workflow di mesin ini dipakai bersama antar sesi - periksa sebelum commit.`
+    );
+  }
+  if (archivedTask) {
+    warnings.push(
+      `ℹ️ Task sebelumnya belum selesai dan diganti: "${archivedTask}".\n` +
+        `   Disimpan ke history sebagai 'interrupted'.`
+    );
+  }
+  if (reconciled?.mergedHistory > 0) {
+    warnings.push(
+      `ℹ️ ${reconciled.mergedHistory} entri history dari proses lain digabungkan, tidak ditimpa.`
+    );
+  }
+
+  const warningBlock = warnings.length > 0 ? `\n\n${warnings.join("\n\n")}` : "";
 
   return textResponse(
-    `✅ Task Started: ${args.description}\n\n🎯 Be conscious about what you're coding!\n\nWorkflow Steps:\n1. ✓ Start task (current)\n2. ⏳ Describe feature flow with Mermaid\n3. ⏳ Fix/implement the feature\n4. ⏳ Create tests\n5. ⏳ Run tests (must pass!)\n6. ⏳ Create documentation\n7. ⏳ Run 'check_ready_to_commit'\n8. ⏳ Run 'commit_and_push' (commits and pushes)\n9. ⏳ Run 'perform_release' (handles versioning and tags) or 'skip_release' (when no release is needed)\n10. ⏳ Complete task\n\nReminder: Focus on writing clean, maintainable code!`
+    `✅ Task Started: ${args.description}${warningBlock}\n\n🎯 Be conscious about what you're coding!\n\nWorkflow Steps:\n1. ✓ Start task (current)\n2. ⏳ Describe feature flow with Mermaid\n3. ⏳ Fix/implement the feature\n4. ⏳ Create tests\n5. ⏳ Run tests (must pass!)\n6. ⏳ Create documentation\n7. ⏳ Run 'check_ready_to_commit'\n8. ⏳ Run 'commit_and_push' (commits and pushes)\n9. ⏳ Run 'perform_release' (handles versioning and tags) or 'skip_release' (when no release is needed)\n10. ⏳ Complete task\n\nReminder: Focus on writing clean, maintainable code!`
   );
 }
 

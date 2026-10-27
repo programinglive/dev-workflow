@@ -14,6 +14,22 @@ const USER_ID_FILENAME = "user-id";
 let cachedUserId = null;
 let cachedUserStateDir = null;
 
+/**
+ * Identitas proses MCP ini.
+ *
+ * MENGAPA ADA
+ * -----------
+ * Berkas state disimpan per USER (`user-id`), bukan per sesi agen. Dua sesi
+ * opencode di mesin yang sama berbagi satu `workflow-state.json`. Akibatnya
+ * sesi B menimpa pekerjaan sesi A tanpa jejak: task A tidak pernah masuk
+ * `history` karena history hanya ditulis saat task DITUTUP.
+ *
+ * Token ini dicap ke setiap penulisan supaya kita bisa mengetahui bahwa isi
+ * berkas di disk terakhir ditulis oleh proses LAIN, lalu menyelamatkan task
+ * yang sedang berjalan itu sebelum kita menimpanya.
+ */
+const PROCESS_TOKEN = `proc-${process.pid}-${Math.random().toString(16).slice(2, 10)}`;
+
 function generateUserId() {
   const timestamp = Date.now().toString(16);
   const randomSuffix = Math.random().toString(16).slice(2, 10);
@@ -535,10 +551,119 @@ export class WorkflowState {
   }
 
   async save() {
+    const reconciled = await this.reconcileWithDisk();
+    this.state.owner = {
+      token: PROCESS_TOKEN,
+      pid: process.pid,
+      updatedAt: new Date().toISOString(),
+    };
     await fs.writeFile(this.stateFile, JSON.stringify(this.state, null, 2));
     await ensureCompatibilityLinks(this.stateFile);
     await this.updateProjectSummary();
     await this.syncToDatabase();
+    this.lastReconcile = reconciled;
+    return reconciled;
+  }
+
+  /**
+   * Baca isi berkas state APA ADANYA dari disk (bukan dari memori).
+   * Mengembalikan null kalau belum ada / rusak.
+   */
+  async readDiskState() {
+    try {
+      const data = await fs.readFile(this.stateFile, "utf-8");
+      return JSON.parse(data);
+    } catch {
+      return null;
+    }
+  }
+
+  /** True kalau berkas di disk terakhir ditulis proses MCP lain. */
+  isForeignWrite(diskState) {
+    const token = diskState?.owner?.token;
+    return typeof token === "string" && token.length > 0 && token !== PROCESS_TOKEN;
+  }
+
+  historyKey(entry) {
+    return `${entry?.timestamp || ""}|${entry?.taskDescription || ""}`;
+  }
+
+  mergeDiskHistory(diskState) {
+    if (!diskState || !Array.isArray(diskState.history)) {
+      return 0;
+    }
+    if (!Array.isArray(this.state.history)) {
+      this.state.history = [];
+    }
+    const seen = new Set(this.state.history.map((entry) => this.historyKey(entry)));
+    let added = 0;
+    for (const entry of diskState.history) {
+      const key = this.historyKey(entry);
+      if (!seen.has(key)) {
+        this.state.history.push(entry);
+        seen.add(key);
+        added += 1;
+      }
+    }
+    return added;
+  }
+
+  /**
+   * Rekonsiliasi sebelum menulis: jangan buang pekerjaan proses lain.
+   *
+   * 1. Gabungkan `history` dari disk supaya catatan task lain tidak hilang.
+   * 2. Kalau disk memuat task yang SEDANG BERJALAN milik proses lain, arsipkan
+   *    ke `history` sebagai `interrupted` sebelum kita menimpanya.
+   *
+   * Tanpa langkah 2, task itu lenyap tanpa jejak - itulah bug yang menyebabkan
+   * pekerjaan resize docker-alma tidak pernah muncul di view_history.
+   */
+  async reconcileWithDisk() {
+    const result = { mergedHistory: 0, preservedTask: null, foreignToken: null };
+    const disk = await this.readDiskState();
+    if (!disk) {
+      return result;
+    }
+
+    result.mergedHistory = this.mergeDiskHistory(disk);
+
+    if (!this.isForeignWrite(disk)) {
+      return result;
+    }
+
+    result.foreignToken = disk.owner.token;
+
+    const hasRunningTask =
+      typeof disk.taskDescription === "string" &&
+      disk.taskDescription.trim() !== "" &&
+      disk.currentPhase &&
+      disk.currentPhase !== "idle";
+
+    if (!hasRunningTask) {
+      return result;
+    }
+
+    const alreadyArchived = this.state.history.some(
+      (entry) => entry.interrupted && entry.taskDescription === disk.taskDescription
+    );
+    if (alreadyArchived) {
+      return result;
+    }
+
+    this.state.history.push({
+      taskDescription: disk.taskDescription,
+      taskType: disk.taskType || "other",
+      commitMessage: disk.lastCommitMessage || "",
+      interrupted: true,
+      dropped: true,
+      dropReason:
+        "Ditimpa proses agen lain: state workflow dipakai bersama antar sesi di mesin ini",
+      interruptedAtPhase: disk.currentPhase,
+      interruptedBy: disk.owner.token,
+      timestamp: new Date().toISOString(),
+    });
+    result.preservedTask = disk.taskDescription;
+    return result;
   }
 
   async updateProjectSummary() {
@@ -625,7 +750,43 @@ export class WorkflowState {
     };
   }
 
-  reset() {
+  /**
+   * Reset ke keadaan idle.
+   *
+   * `archive` sengaja OPT-IN (default false). Pemanggil yang sudah menulis
+   * `addToHistory` sendiri - complete_task, force_complete_task, drop_task -
+   * akan menghasilkan entri ganda kalau reset ikut mengarsipkan.
+   *
+   * `start_task` memakai `{ archive: true }` supaya task yang sedang berjalan
+   * tidak lenyap saat diganti task baru.
+   */
+  reset(options = {}) {
+    const archive = options.archive === true;
+    const previous = this.state || {};
+    const history = Array.isArray(previous.history) ? previous.history.slice() : [];
+
+    const hasRunningTask =
+      typeof previous.taskDescription === "string" &&
+      previous.taskDescription.trim() !== "" &&
+      previous.currentPhase &&
+      previous.currentPhase !== "idle";
+
+    let archivedTask = null;
+    if (archive && hasRunningTask) {
+      archivedTask = previous.taskDescription;
+      history.push({
+        taskDescription: previous.taskDescription,
+        taskType: previous.taskType || "other",
+        commitMessage: previous.lastCommitMessage || "",
+        interrupted: true,
+        dropped: true,
+        dropReason:
+          options.reason || "Diganti start_task berikutnya sebelum task selesai",
+        interruptedAtPhase: previous.currentPhase,
+        timestamp: new Date().toISOString(),
+      });
+    }
+
     this.state = {
       currentPhase: "idle",
       taskDescription: "",
@@ -647,8 +808,11 @@ export class WorkflowState {
       lastPushBranch: "",
       featureFlowCreated: false,
       featureFlowDescription: "",
-      history: this.state.history,
+      history,
+      taskType: "",
     };
+
+    return { archivedTask };
   }
 
   addToHistory(entry) {
