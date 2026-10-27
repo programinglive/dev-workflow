@@ -34,7 +34,7 @@ export const VALID_STATUSES = ["backlog", "queued", "running", "review", "blocke
 const WORK_OUTCOMES = { review: "review", blocked: "blocked", paused: "paused" };
 
 /** Statuses reachable through POST /api/factory { action: move_task }. */
-const MOVABLE_STATUSES = ["backlog", "queued", "cancelled"];
+const MOVABLE_STATUSES = ["backlog", "queued", "cancelled", "done"];
 
 /**
  * Values accepted by POST /api/factory { action: create_task }.
@@ -89,6 +89,10 @@ export function readFactoryConfig(env = process.env) {
     machineId: clean(env.FACTORY_MACHINE_ID),
     deviceId: clean(env.FACTORY_DEVICE_ID),
     agent: clean(env.FACTORY_AGENT) || "dev-workflow-mcp",
+    // Sesi editor yang sedang berjalan. Papan Factory memakainya untuk
+    // menunjukkan sesi mana yang mengerjakan, bukan hanya perangkatnya.
+    clientSessionId: clean(env.OPENCODE_SESSION_ID) || clean(env.CLIENT_SESSION_ID),
+    clientSessionTitle: clean(env.OPENCODE_SESSION_TITLE) || clean(env.CLIENT_SESSION_TITLE),
   };
 }
 
@@ -130,6 +134,19 @@ export function deviceFromConfig(config) {
     platform: String(process.platform).slice(0, 60),
     agent: String(config.agent || "dev-workflow-mcp").slice(0, 40),
   };
+}
+
+/**
+ * Sesi editor yang sedang berjalan, kalau diketahui.
+ *
+ * Papan Factory memakai ini untuk menjawab "sesi mana yang mengerjakan task
+ * ini", bukan sekadar "perangkat mana". Tanpa nilai, sesi kerja tetap dibuat -
+ * perangkat lama tidak boleh gagal hanya karena variabel ini belum diset.
+ */
+export function clientSessionFromConfig(config) {
+  const id = String(config?.clientSessionId || "").trim();
+  if (!id) return null;
+  return { id: id.slice(0, 120), title: String(config?.clientSessionTitle || "").trim().slice(0, 200) };
 }
 
 // ---------------------------------------------------------------------------
@@ -240,18 +257,12 @@ export function planStatusTransition(status) {
     );
   }
 
-  if (value === "done") {
-    throw new Error(
-      '"done" is decided by a human in Factory. Report "review" when the work is finished and waiting for approval.',
-    );
-  }
-
-  // MOVABLE_STATUSES: backlog, queued, cancelled
+  // MOVABLE_STATUSES: backlog, queued, cancelled, done
   return { kind: "move", status: value };
 }
 
 /** Payload for POST /api/work { action: "start" }. */
-export function buildWorkStartPayload({ taskId, device, step, now = null } = {}) {
+export function buildWorkStartPayload({ taskId, device, step, clientSession, now = null } = {}) {
   if (!taskId) throw new Error("taskId is required to start a work session.");
   if (!device?.id) throw new Error("A device with an id is required to start a work session.");
   return {
@@ -259,6 +270,7 @@ export function buildWorkStartPayload({ taskId, device, step, now = null } = {})
     taskId,
     device,
     step: String(step || "Working on the task").slice(0, 240),
+    ...(clientSession?.id ? { clientSession: { id: String(clientSession.id).slice(0, 120), title: String(clientSession.title || "").slice(0, 200) } } : {}),
     ...(now ? { now } : {}),
   };
 }
@@ -390,7 +402,12 @@ export async function findTask(config, taskId, fetchImpl = fetch) {
 export async function claimTask(config, { recordId, device, step } = {}, fetchImpl = fetch) {
   if (!recordId) throw new Error("recordId is required to claim a task.");
 
-  const payload = buildWorkStartPayload({ taskId: recordId, device: device || deviceFromConfig(config), step });
+  const payload = buildWorkStartPayload({
+    taskId: recordId,
+    device: device || deviceFromConfig(config),
+    step,
+    clientSession: clientSessionFromConfig(config),
+  });
   const body = await request(config, "/api/work", { method: "POST", body: payload, fetchImpl });
   return body.session || null;
 }

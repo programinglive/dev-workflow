@@ -196,8 +196,10 @@ test("running is rejected with a pointer to claim_factory_task", () => {
   assert.throws(() => planStatusTransition("running"), /claim_factory_task/);
 });
 
-test("done is rejected because a human decides it", () => {
-  assert.throws(() => planStatusTransition("done"), /human/i);
+test("done moves the task, but only from review (server enforces it)", () => {
+  const plan = planStatusTransition("done");
+  assert.equal(plan.kind, "move");
+  assert.equal(plan.status, "done");
 });
 
 test("unknown status lists what Factory accepts", () => {
@@ -206,7 +208,7 @@ test("unknown status lists what Factory accepts", () => {
 
 test("every Factory status is covered by the rules", () => {
   for (const status of VALID_STATUSES) {
-    if (status === "running" || status === "done") {
+    if (status === "running") {
       assert.throws(() => planStatusTransition(status));
     } else {
       assert.ok(planStatusTransition(status).kind);
@@ -237,6 +239,54 @@ test("buildWorkStartPayload requires a task and a device", () => {
 test("buildWorkStartPayload truncates a long step", () => {
   const payload = buildWorkStartPayload({ taskId: "t1", device: { id: "d1" }, step: "x".repeat(400) });
   assert.strictEqual(payload.step.length, 240);
+});
+
+test("buildWorkStartPayload includes the editor session when known", () => {
+  const payload = buildWorkStartPayload({
+    taskId: "t1",
+    device: { id: "d1" },
+    step: "Kerjakan",
+    clientSession: { id: "ses_abc", title: "MySQL root + Portal Temuan" },
+  });
+  assert.deepStrictEqual(payload.clientSession, { id: "ses_abc", title: "MySQL root + Portal Temuan" });
+});
+
+test("buildWorkStartPayload omits the session when it is unknown", () => {
+  const payload = buildWorkStartPayload({ taskId: "t1", device: { id: "d1" }, step: "Kerjakan" });
+  assert.strictEqual("clientSession" in payload, false);
+});
+
+test("buildWorkStartPayload trims session fields to the API limits", () => {
+  const payload = buildWorkStartPayload({
+    taskId: "t1",
+    device: { id: "d1" },
+    step: "Kerjakan",
+    clientSession: { id: "x".repeat(300), title: "y".repeat(400) },
+  });
+  assert.strictEqual(payload.clientSession.id.length, 120);
+  assert.strictEqual(payload.clientSession.title.length, 200);
+});
+
+test("clientSessionFromConfig reads the environment names and tolerates absence", async () => {
+  const { clientSessionFromConfig } = await import("../factory-client.js");
+  assert.strictEqual(clientSessionFromConfig({}), null);
+  assert.strictEqual(clientSessionFromConfig({ clientSessionId: "   " }), null);
+  assert.deepStrictEqual(
+    clientSessionFromConfig({ clientSessionId: "ses_1", clientSessionTitle: "Judul" }),
+    { id: "ses_1", title: "Judul" },
+  );
+  assert.deepStrictEqual(clientSessionFromConfig({ clientSessionId: "ses_1" }), { id: "ses_1", title: "" });
+});
+
+test("readFactoryConfig picks the editor session from OPENCODE_* variables", () => {
+  const config = readFactoryConfig({
+    FACTORY_URL: "https://factory.example",
+    FACTORY_TOKEN: "t",
+    OPENCODE_SESSION_ID: "ses_env",
+    OPENCODE_SESSION_TITLE: "Sesi dari env",
+  });
+  assert.strictEqual(config.clientSessionId, "ses_env");
+  assert.strictEqual(config.clientSessionTitle, "Sesi dari env");
 });
 
 test("buildWorkFinishPayload shapes the finish action", () => {
