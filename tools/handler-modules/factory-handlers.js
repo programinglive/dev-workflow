@@ -60,6 +60,48 @@ export async function handleListFactoryTasks(args = {}) {
   }
 }
 
+/**
+ * Formats how long ago a work session was last seen.
+ *
+ * Returns an empty string when the timestamp is missing or unparsable, so the
+ * caller can leave that part of the message out instead of printing garbage.
+ */
+function formatLastSeen(value) {
+  if (!value) return "";
+  const seen = Date.parse(value);
+  if (Number.isNaN(seen)) return "";
+  const minutes = Math.floor((Date.now() - seen) / 60000);
+  if (minutes < 1) return "baru saja";
+  if (minutes < 60) return `${minutes} menit lalu`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} jam lalu`;
+  return `${Math.floor(hours / 24)} hari lalu`;
+}
+
+/**
+ * Builds the message shown when Factory refuses a claim because another device
+ * still holds the task.
+ *
+ * The refusal is actionable: it names the holder and shows the exact call to
+ * make, so the agent does not have to guess which parameter is missing.
+ */
+function takeoverRequiredMessage(title, holder = {}) {
+  const seen = formatLastSeen(holder.lastSeenAt);
+  const holderText = [holder.deviceName, holder.agent].filter(Boolean).join(" (") + (holder.agent ? ")" : "");
+  return [
+    `"${title}" sedang dikerjakan oleh perangkat lain.`,
+    "",
+    holderText ? `Pemegang sesi: ${holderText}${seen ? `, terakhir terlihat ${seen}` : ""}.` : "",
+    "",
+    "Ambil alih dengan menyertakan alasan (3-500 karakter):",
+    `  claim_factory_task { "recordId": "<id>", "step": "<langkah>", "takeoverReason": "<alasanmu>" }`,
+    "",
+    "Alasannya dicatat di papan, jadi orang berikutnya tahu kenapa pekerjaan berpindah tangan.",
+  ]
+    .filter((line) => line !== "")
+    .join("\n");
+}
+
 export async function handleClaimFactoryTask(args = {}, { workflowState } = {}) {
   const { config, response } = requireConfig();
   if (!config) return response;
@@ -69,22 +111,20 @@ export async function handleClaimFactoryTask(args = {}, { workflowState } = {}) 
     return textResponse("Provide the 'recordId' of the task to claim (see list_factory_tasks).");
   }
 
+  const takeoverReason = typeof args.takeoverReason === "string" ? args.takeoverReason.trim() : "";
+  // Judul diambil di luar try supaya pesan penolakan tetap menyebut task yang
+  // sebenarnya, bukan teks umum.
+  let taskTitle = "Task ini";
+
   try {
     const task = await findTask(config, recordId);
     if (!task) {
       return textResponse(`No task with id "${recordId}" is visible to this account.`);
     }
-    if (task.work?.state === "active") {
-      return textResponse(
-        [
-          `"${task.title}" already has an active work session${task.work.deviceName ? ` on ${task.work.deviceName}` : ""}.`,
-          "Finish that session before claiming it again.",
-        ].join("\n"),
-      );
-    }
+    taskTitle = task.title;
 
     const step = typeof args.step === "string" && args.step.trim() ? args.step.trim() : "Working on the task";
-    const session = await claimTask(config, { recordId, step });
+    const session = await claimTask(config, { recordId, step, takeoverReason });
     if (!session) throw new Error("Factory accepted the claim but returned no work session.");
 
     if (workflowState) {
@@ -108,6 +148,11 @@ export async function handleClaimFactoryTask(args = {}, { workflowState } = {}) 
         .join("\n"),
     );
   } catch (error) {
+    // Factory menolak take over tanpa alasan. Balas dengan arahan yang bisa
+    // dijalankan, bukan dengan pesan error mentah.
+    if (error?.body?.takeoverRequired) {
+      return textResponse(takeoverRequiredMessage(taskTitle, error.body.holder));
+    }
     return textResponse(`Could not claim the task: ${error.message}`);
   }
 }
