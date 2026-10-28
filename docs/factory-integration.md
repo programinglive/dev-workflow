@@ -47,7 +47,8 @@ FACTORY_TOKEN=<activity_users token>
 | `FACTORY_PASSWORD` | — | Password for that account. |
 | `FACTORY_PB_URL` | `https://pocketbase.programinglive.com` | Where the token is obtained. |
 | `FACTORY_MACHINE_ID` | hostname | Device name shown on the board (max 100 chars). |
-| `FACTORY_DEVICE_ID` | derived from the name | Fixed device UUID (max 60 chars, must be a UUID). |
+| `FACTORY_DEVICE_ID` | - | Fixed device UUID. Wins over the shared device file. |
+| `FACTORY_DEVICE_FILE` | `~/.config/programinglive-factory/device.json` | Device identity shared with the Factory CLI. |
 | `FACTORY_AGENT` | `dev-workflow-mcp` | Agent label stored on the session (max 40 chars). |
 
 ### Why `activity_users` and not a superuser
@@ -187,10 +188,41 @@ record of why the work changed hands.
 
 ### Device identity
 
-Factory keys work sessions by device UUID. A random UUID per process would create
-a new device row on every run, so `deviceIdFor(name)` derives a stable
-UUIDv5-shaped id from `FACTORY_MACHINE_ID` (or the hostname). Same machine →
-same row, no state file needed. `FACTORY_DEVICE_ID` overrides it.
+Factory keys work sessions by device UUID. The MCP server and the Factory CLI
+must agree on that UUID, otherwise one machine shows up as two devices and a
+task held by the other tool looks like another machine's work.
+
+Both therefore read the same file: `FACTORY_DEVICE_FILE`, defaulting to
+`~/.config/programinglive-factory/device.json` (the file the CLI writes, mode
+0600). Whichever tool runs first creates it; the other adopts that id.
+`FACTORY_DEVICE_ID` still overrides everything, and `deviceIdFor(name)` is the
+last-resort fallback when the file cannot be read or created.
+
+A session is resumed silently only when **both** the device id and the agent
+match. Sharing a machine is not the same as being the same worker: the CLI
+reports as `Codex` and the MCP server as its configured `FACTORY_AGENT`, so
+taking a task from the other tool on the same machine still needs a takeover
+reason.
+
+### Keeping a session alive
+
+Factory marks a session stale after 120 seconds without a report. A claimed
+task that never reports looks abandoned on the board even while the work
+continues, which is why the MCP server used to show every task it took as
+"no news" almost immediately.
+
+`session-keeper.js` reports a heartbeat every 60 seconds for the session this
+process opened. It is deliberately bounded:
+
+- it reports only for a session this process claimed, never someone else's;
+- it stops the moment the session is finished through `sync_task_status`;
+- it stops on `409`/`404`, which mean the session ended or another device took
+  it over — retrying would fight the new holder;
+- the timer is `unref()`ed, so it never keeps the process alive. A session
+  that outlives the process is exactly what "stale" is for.
+
+A heartbeat that outlived the claim would lie in the opposite direction,
+showing "active" for work nobody is doing.
 
 ---
 
