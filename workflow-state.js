@@ -457,6 +457,35 @@ export function resolveHistoryFile(stateFilePath) {
   return inUserTree ? path.join(dir, STATE_FILENAME) : resolved;
 }
 
+/**
+ * Induk direktori `.state` untuk sebuah berkas state.
+ *
+ * Dulu ini dihitung dengan empat `dirname` berurutan, yang hanya benar selama
+ * tata letaknya tepat `<root>/.state/users/<user>/<berkas>`. Begitu kedalaman
+ * berubah (mis. state sesi ditaruh di subdirektori), angka itu diam-diam
+ * menghasilkan root yang salah dan baris database tercatat di proyek lain.
+ *
+ * Sekarang dicari dengan sengaja: naik sampai menemukan direktori `.state`,
+ * lalu ambil induknya. Tidak bergantung pada kedalaman.
+ */
+export function resolveProjectRootForState(stateFilePath) {
+  const resolved = path.resolve(stateFilePath);
+  let current = path.dirname(resolved);
+
+  for (;;) {
+    if (path.basename(current) === STATE_DIR) {
+      return path.dirname(current);
+    }
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+
+  // Di luar tata letak `.state` (mis. path eksplisit untuk tes): pakai
+  // direktori yang memuat berkasnya.
+  return path.dirname(resolved);
+}
+
 export function resolveStateFile() {
   const customPath = process.env.DEV_WORKFLOW_STATE_FILE;
   if (customPath) {
@@ -785,30 +814,10 @@ export class WorkflowState {
     try {
       const { insertHistoryEntry, updateSummaryForUser, saveState } = await import("./db/index.js");
       const userId = getCurrentUserId();
-      // Use the project directory (parent of .state) as the project identifier
-      // this.stateFile is .../.state/users/<user>/workflow-state.json
-      // so we want resolution logic. For now, let's use the absolute path to the project root.
-      // We can derive it from stateFile path logic in resolveStateFile or just use the directory we are in.
-      // A safe bet that is unique per project on this machine is the project root found by resolveStateFile.
-      // Let's perform a simple resolution:
-
-      const stateDir = path.dirname(path.dirname(path.dirname(this.stateFile)));
-      // stateFile = <root>/.state/users/<user>/workflow-state.json
-      // dirname = <root>/.state/users/<user>
-      // dirname = <root>/.state/users
-      // dirname = <root>/.state
-      // dirname = <root>
-
-      // Wait, let's look at the path structure from resolveStateFile:
-      // path.join(userDir, STATE_FILENAME); where userDir is path.join(stateDir, "users", userId);
-      // and stateDir is path.join(projectRoot, STATE_DIR);
-      // So: projectRoot/.state/users/userId/workflow-state.json
-      // 1. dirname -> .../userId
-      // 2. dirname -> .../users
-      // 3. dirname -> .../.state
-      // 4. dirname -> .../projectRoot
-
-      const projectRoot = path.dirname(path.dirname(path.dirname(path.dirname(this.stateFile))));
+      // projectRoot dipakai sebagai identitas proyek di database. Ditentukan
+      // lewat resolveProjectRootForState, bukan dengan menghitung `dirname`
+      // berkali-kali: jumlah itu hanya benar untuk satu kedalaman tertentu.
+      const projectRoot = resolveProjectRootForState(this.stateFile);
 
       for (const entry of this.state.history || []) {
         await insertHistoryEntry(userId, projectRoot, entry);
