@@ -87,18 +87,19 @@ function formatLastSeen(value) {
  */
 function takeoverRequiredMessage(title, holder = {}) {
   const seen = formatLastSeen(holder.lastSeenAt);
-  const holderText = [holder.deviceName, holder.agent].filter(Boolean).join(" (") + (holder.agent ? ")" : "");
+  const name = String(holder.deviceName || "").trim();
+  const agent = String(holder.agent || "").trim();
+  const holderText = name && agent ? `${name} (${agent})` : name || agent;
   return [
-    `"${title}" sedang dikerjakan oleh perangkat lain.`,
+    `"${title}" is being worked on by another device.`,
+    holderText ? `Holder: ${holderText}${seen ? `, last seen ${seen}` : ""}.` : "",
     "",
-    holderText ? `Pemegang sesi: ${holderText}${seen ? `, terakhir terlihat ${seen}` : ""}.` : "",
+    "To take it over, call claim_factory_task again with a takeoverReason of 3-500 characters:",
+    '  claim_factory_task { "recordId": "<id>", "step": "<step>", "takeoverReason": "<why you are taking over>" }',
     "",
-    "Ambil alih dengan menyertakan alasan (3-500 karakter):",
-    `  claim_factory_task { "recordId": "<id>", "step": "<langkah>", "takeoverReason": "<alasanmu>" }`,
-    "",
-    "Alasannya dicatat di papan, jadi orang berikutnya tahu kenapa pekerjaan berpindah tangan.",
+    "The reason is stored on the board so the next person knows why the work changed hands.",
   ]
-    .filter((line) => line !== "")
+    .filter((line) => line !== null && line !== undefined)
     .join("\n");
 }
 
@@ -138,6 +139,9 @@ export async function handleClaimFactoryTask(args = {}, { workflowState } = {}) 
     return textResponse(
       [
         `Claimed [${task.taskKey || task.id}] ${task.title}`,
+        session.tookOver && session.previousHolder
+          ? `Took over from ${session.previousHolder.deviceName} (${session.previousHolder.agent}). The reason is recorded on the board.`
+          : "",
         `Factory status is now running (work session ${session.id}).`,
         task.projectName ? `Project: ${task.projectName}` : "",
         "",
