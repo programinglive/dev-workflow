@@ -413,18 +413,38 @@ async function ensureCompatibilityLinks(primaryPath) {
  *
  * MENGAPA ADA
  * -----------
- * Berkas state dulu disimpan per USER, jadi empat proses MCP berbagi satu
+ * Berkas state dulu disimpan per USER, jadi beberapa proses MCP berbagi satu
  * `workflow-state.json`. Akibatnya `start_task` di satu sesi mengganti task
  * sesi lain di tengah jalan, dan gerbang kualitas (ready check, tests, docs)
  * ikut dibagi sehingga sesi B bisa memakai hasil sesi A untuk commit.
  *
  * Sekarang task dan gerbangnya milik SESI; `history` tetap milik PROYEK.
  *
- * Urutannya sengaja: env eksplisit dulu (untuk tes dan pemanggil lain), lalu
- * id sesi editor, lalu proses. Jatuh ke proses membuat identitas tetap stabil
- * walau modul di-reload dalam proses yang sama.
+ * MENGAPA BUKAN ENV SAJA
+ * ----------------------
+ * Percobaan pertama membaca `OPENCODE_SESSION_ID` dari environment. OpenCode
+ * tidak men-set variabel itu, sehingga hampir semua berkas jatuh ke
+ * `pid-<pid>`; karena satu proses MCP dipakai bergantian oleh beberapa sesi,
+ * sesi-sesi itu tetap berbagi satu berkas dan saling menimpa.
+ *
+ * OpenCode v2 mengirim identitas sesi per panggilan di
+ * `CallToolRequest.params._meta["ai.opencode/sessionID"]`. Itu sumber utama
+ * sekarang; env tetap dibaca sebagai cadangan untuk tes dan pemanggil lain.
  */
-export function resolveSessionKey(env = process.env) {
+export const SESSION_META_KEY = "ai.opencode/sessionID";
+
+/** Mengambil identitas sesi dari request metadata MCP, atau null. */
+export function sessionKeyFromRequest(request) {
+  const value = request?.params?._meta?.[SESSION_META_KEY];
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed === "" ? null : trimmed;
+}
+
+export function resolveSessionKey(env = process.env, explicitSessionId = null) {
+  const fromRequest = typeof explicitSessionId === "string" ? explicitSessionId.trim() : "";
+  if (fromRequest) return sanitizeSessionKey(fromRequest);
+
   for (const candidate of [env.DEV_WORKFLOW_SESSION_ID, env.OPENCODE_SESSION_ID, env.CLIENT_SESSION_ID]) {
     const value = typeof candidate === "string" ? candidate.trim() : "";
     if (value) return sanitizeSessionKey(value);
@@ -438,8 +458,8 @@ function sanitizeSessionKey(value) {
 }
 
 /** Nama berkas state untuk sesi ini, di direktori user yang sama. */
-function sessionStateFilename(env = process.env) {
-  return `workflow-state.${resolveSessionKey(env)}.json`;
+function sessionStateFilename(env = process.env, explicitSessionId = null) {
+  return `workflow-state.${resolveSessionKey(env, explicitSessionId)}.json`;
 }
 
 /**
@@ -486,7 +506,7 @@ export function resolveProjectRootForState(stateFilePath) {
   return path.dirname(resolved);
 }
 
-export function resolveStateFile() {
+export function resolveStateFile({ sessionId = null } = {}) {
   const customPath = process.env.DEV_WORKFLOW_STATE_FILE;
   if (customPath) {
     return path.resolve(customPath);
@@ -516,7 +536,7 @@ export function resolveStateFile() {
 
   const stateDir = path.join(projectRoot, STATE_DIR);
   const userDir = getUserScopedDir(stateDir);
-  return path.join(userDir, sessionStateFilename());
+  return path.join(userDir, sessionStateFilename(process.env, sessionId));
 }
 
 export class WorkflowState {
@@ -549,6 +569,49 @@ export class WorkflowState {
       history: [],
       taskType: "",
     };
+  }
+
+  /**
+   * Berpindah ke state milik sesi tertentu.
+   *
+   * Satu proses MCP bisa melayani beberapa sesi bergantian, jadi state harus
+   * ditentukan per panggilan - bukan sekali saat proses start. Mengembalikan
+   * true bila berkas benar-benar berpindah.
+   */
+  async useSession(sessionId) {
+    const target = resolveStateFile({ sessionId });
+    if (target === this.stateFile) return false;
+
+    this.stateFile = target;
+    this.historyFile = resolveHistoryFile(target);
+    // Mulai dari state bersih, lalu muat milik sesi itu. Menyalin state sesi
+    // sebelumnya akan membuat sesi baru mewarisi gerbang kualitas sesi lain.
+    this.state = {
+      currentPhase: "idle",
+      taskDescription: "",
+      bugFixed: false,
+      testsCreated: false,
+      testsPassed: false,
+      testsSkipped: false,
+      testsSkippedReason: "",
+      documentationCreated: false,
+      readyToCommit: false,
+      readyCheckCompleted: false,
+      released: false,
+      releaseSkipped: false,
+      releaseSkippedReason: "",
+      releaseCommand: "",
+      releaseNotes: "",
+      commitAndPushCompleted: false,
+      lastCommitMessage: "",
+      lastPushBranch: "",
+      featureFlowCreated: false,
+      featureFlowDescription: "",
+      history: [],
+      taskType: "",
+    };
+    await this.load();
+    return true;
   }
 
   async load() {

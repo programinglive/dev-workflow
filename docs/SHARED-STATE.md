@@ -126,9 +126,33 @@ Factory mencatat `clientSession.id = ses_...` dari variabel itu.
   (`testsPassed`, `readyCheckCompleted`, `documentationCreated`, dan seterusnya).
 - **History bersama** memuat catatan task yang sudah selesai, dari sesi mana pun.
 
-Identitas sesi diambil berurutan dari `DEV_WORKFLOW_SESSION_ID`,
-`OPENCODE_SESSION_ID`, `CLIENT_SESSION_ID`, lalu `pid-<pid>`. Jatuh ke pid
-membuat identitas tetap stabil walau modul di-reload dalam proses yang sama.
+Identitas sesi diambil dari **request metadata** yang dikirim OpenCode pada
+setiap panggilan tool:
+
+```
+CallToolRequest.params._meta["ai.opencode/sessionID"]
+```
+
+Itu sumber yang benar karena melekat pada panggilan, bukan pada proses. Satu
+proses MCP bisa melayani beberapa sesi bergantian, jadi identitas per proses
+tidak cukup.
+
+Cadangan berurutan bila metadata tidak ada: `DEV_WORKFLOW_SESSION_ID`,
+`OPENCODE_SESSION_ID`, `CLIENT_SESSION_ID`, lalu `pid-<pid>`.
+
+### Koreksi: percobaan pertama memakai env dan tidak bekerja
+
+Versi pertama hanya membaca env. OpenCode tidak menjamin variabel itu ada di
+proses MCP, sehingga hampir semua berkas jatuh ke `pid-<pid>`. Karena satu
+proses dipakai bergantian, sesi-sesi itu **tetap** berbagi satu berkas dan
+saling menimpa. Gejalanya: task milik sesi lain muncul di `get_workflow_status`
+milik sesi sendiri.
+
+Sekarang identitas datang dari metadata, dan `handleToolCall` memanggil
+`workflowState.useSession(sessionId)` sebelum menangani tool apa pun.
+`tests/session-metadata-e2e.test.js` membuktikannya lewat transport stdio
+sungguhan: dua sesi pada satu server menghasilkan dua berkas state terpisah,
+tanpa jatuh ke `pid-`.
 
 ## Apa yang berubah
 
@@ -150,8 +174,10 @@ pengaman untuk pemakaian satu-berkas itu.
 ## Cara memverifikasi
 
 ```bash
-node --no-deprecation --test tests/session-state.test.js   # 11 tes isolasi sesi
-node --no-deprecation --test tests/shared-state.test.js    # 15 tes mitigasi lama
+node --no-deprecation --test tests/session-metadata.test.js      # 7 tes metadata
+node --no-deprecation --test tests/session-metadata-e2e.test.js  # 1 tes lewat stdio
+node --no-deprecation --test tests/session-state.test.js         # 11 tes isolasi sesi
+node --no-deprecation --test tests/shared-state.test.js          # 15 tes mitigasi lama
 ```
 
 Yang dikunci tes baru: dua sesi memakai berkas berbeda; task sesi A tidak

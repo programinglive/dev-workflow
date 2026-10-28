@@ -1,4 +1,5 @@
 import { textResponse, isReleaseSatisfied, isErrorResponse } from "./shared.js";
+import { sessionKeyFromRequest } from "../../workflow-state.js";
 import { handleStartTask, handleMarkBugFixed, handleCreateTests, handleSkipTests, handleRunTests, handleCreateDocumentation, handleCreateFeatureFlow } from "./workflow-handlers.js";
 import { handleSkipRelease, handlePerformRelease } from "./release-handlers.js";
 import { handleCommitAndPush, handleCompleteTask, handleForceCompleteTask, handleDropTask } from "./commit-handlers.js";
@@ -166,6 +167,14 @@ export async function handleToolCall({
 }) {
   try {
     const { name } = request.params;
+
+    // Identitas sesi datang dari request metadata, bukan dari environment.
+    // Tanpa ini, satu proses MCP yang dipakai bergantian oleh beberapa sesi
+    // akan berbagi satu state dan saling menimpa task.
+    const sessionId = sessionKeyFromRequest(request);
+    if (sessionId && workflowState?.useSession) {
+      await workflowState.useSession(sessionId);
+    }
     const { args, error: argumentsError } = normalizeRequestArgs(request.params.arguments);
 
     if (argumentsError) {
