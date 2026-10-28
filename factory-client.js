@@ -420,7 +420,11 @@ export async function claimTask(config, { recordId, device, step, takeoverReason
     clientSession: clientSessionFromConfig(config),
   });
   const body = await request(config, "/api/work", { method: "POST", body: payload, fetchImpl });
-  return body.session || null;
+  const session = body.session || null;
+  if (!session) return null;
+  // Pemanggil perlu tahu kalau ia baru menggeser perangkat lain, supaya bisa
+  // melaporkan pengambil alihan itu, bukan menyebutnya klaim biasa.
+  return { ...session, tookOver: Boolean(body.tookOver), previousHolder: body.previousHolder || null };
 }
 
 /**
