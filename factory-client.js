@@ -541,9 +541,19 @@ export async function updateTaskStatus(config, { recordId, status, reason, nextA
   const plan = planStatusTransition(status);
 
   if (plan.kind === "move") {
+    // Factory mewajibkan alasan saat menutup task sebagai done/cancelled
+    // (minimal 3 karakter, maksimal 500). Tanpa field ini, penutupan task
+    // selalu ditolak HTTP 400 - dan karena handler mengembalikan teks alih-alih
+    // melempar, kegagalannya tampak seperti berhasil.
+    const moveReason = typeof reason === "string" ? reason.trim().slice(0, 500) : "";
     await request(config, "/api/factory", {
       method: "POST",
-      body: { action: "move_task", id: recordId, status: plan.status },
+      body: {
+        action: "move_task",
+        id: recordId,
+        status: plan.status,
+        ...(moveReason ? { reason: moveReason } : {}),
+      },
       fetchImpl,
     });
     return { id: recordId, status: plan.status };

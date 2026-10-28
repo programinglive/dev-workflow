@@ -132,6 +132,16 @@ whole design:
 - `running` → rejected: *"Use claim_factory_task… Factory records that as a work session, not a status edit."*
 - `done` → sent as `move_task`. Factory accepts it **only** when the task is
   currently in `review`, and requires a reason; otherwise it answers `409`.
+- `done` / `cancelled` → the reason **must** travel in the `move_task` body
+  (trimmed, max 500). Factory rejects a close without it:
+  *"Alasan wajib diisi (minimal 3 karakter)…"*. Before this was fixed the reason
+  was dropped, so closing any task from MCP failed with HTTP 400 — and because
+  the handler returns text instead of throwing, the failure looked like success
+  to a caller that did not read the response.
+- `backlog` **from `review`** → rejected with `409`. `move_task` only moves
+  tasks that are currently `backlog` or `queued`. To send a reviewed task back
+  to the backlog, finish a work session with `outcome=paused` (see the note
+  below); that is the only supported path.
 - unknown value → rejected, listing the accepted statuses
 - `review` / `blocked` / `paused` **without an active session** → rejected with
   "no active work session. Use claim_factory_task first"

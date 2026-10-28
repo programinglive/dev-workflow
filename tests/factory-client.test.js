@@ -598,6 +598,69 @@ test("updateTaskStatus moves a task with move_task", async () => {
   assert.strictEqual(fetchImpl.calls[0].body.status, "cancelled");
 });
 
+/**
+ * Factory menolak `done`/`cancelled` tanpa alasan (minimal 3 karakter), jadi
+ * alasan HARUS ikut terkirim pada move_task. Tanpa ini, menutup task selalu
+ * gagal dengan HTTP 400 dan papan tidak pernah bisa dibereskan lewat MCP -
+ * kegagalannya juga tidak terlihat karena handler mengembalikan teks, bukan
+ * melempar error.
+ */
+test("updateTaskStatus mengirim alasan pada move_task untuk done", async () => {
+  const fetchImpl = fakeFetch([
+    (call) => (call.url.endsWith("/api/factory") ? json({ ok: true, runId: null }) : null),
+  ]);
+
+  await updateTaskStatus(
+    CONFIG,
+    {
+      recordId: "44444444-4444-4444-8444-444444444444",
+      status: "done",
+      reason: "Diverifikasi ulang 29 Okt: 7 tes hijau, kontrol negatif 4 gagal.",
+    },
+    fetchImpl,
+  );
+
+  const body = fetchImpl.calls[0].body;
+  assert.strictEqual(body.action, "move_task");
+  assert.strictEqual(body.status, "done");
+  assert.strictEqual(
+    body.reason,
+    "Diverifikasi ulang 29 Okt: 7 tes hijau, kontrol negatif 4 gagal.",
+    "alasan harus ikut pada move_task, kalau tidak Factory menolak dengan 400",
+  );
+});
+
+test("updateTaskStatus tidak mengirim alasan kosong pada move_task", async () => {
+  const fetchImpl = fakeFetch([
+    (call) => (call.url.endsWith("/api/factory") ? json({ ok: true, runId: null }) : null),
+  ]);
+
+  await updateTaskStatus(CONFIG, { recordId: "t1", status: "backlog" }, fetchImpl);
+
+  assert.ok(
+    !("reason" in fetchImpl.calls[0].body),
+    "move ke backlog tanpa alasan tidak boleh mengirim field reason kosong",
+  );
+});
+
+test("updateTaskStatus memotong alasan move_task ke 500 karakter", async () => {
+  const fetchImpl = fakeFetch([
+    (call) => (call.url.endsWith("/api/factory") ? json({ ok: true, runId: null }) : null),
+  ]);
+
+  await updateTaskStatus(
+    CONFIG,
+    { recordId: "t1", status: "done", reason: "x".repeat(900) },
+    fetchImpl,
+  );
+
+  assert.strictEqual(
+    fetchImpl.calls[0].body.reason.length,
+    500,
+    "Factory menolak alasan lebih dari 500 karakter",
+  );
+});
+
 test("updateTaskStatus finishes the active session for review", async () => {
   const fetchImpl = fakeFetch([
     (call) => (call.url.endsWith("/api/factory") ? json(WORKSPACE) : null),
