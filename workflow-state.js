@@ -408,6 +408,55 @@ async function ensureCompatibilityLinks(primaryPath) {
   }
 }
 
+/**
+ * Identitas sesi agen ini.
+ *
+ * MENGAPA ADA
+ * -----------
+ * Berkas state dulu disimpan per USER, jadi empat proses MCP berbagi satu
+ * `workflow-state.json`. Akibatnya `start_task` di satu sesi mengganti task
+ * sesi lain di tengah jalan, dan gerbang kualitas (ready check, tests, docs)
+ * ikut dibagi sehingga sesi B bisa memakai hasil sesi A untuk commit.
+ *
+ * Sekarang task dan gerbangnya milik SESI; `history` tetap milik PROYEK.
+ *
+ * Urutannya sengaja: env eksplisit dulu (untuk tes dan pemanggil lain), lalu
+ * id sesi editor, lalu proses. Jatuh ke proses membuat identitas tetap stabil
+ * walau modul di-reload dalam proses yang sama.
+ */
+export function resolveSessionKey(env = process.env) {
+  for (const candidate of [env.DEV_WORKFLOW_SESSION_ID, env.OPENCODE_SESSION_ID, env.CLIENT_SESSION_ID]) {
+    const value = typeof candidate === "string" ? candidate.trim() : "";
+    if (value) return sanitizeSessionKey(value);
+  }
+  return `pid-${process.pid}`;
+}
+
+function sanitizeSessionKey(value) {
+  const cleaned = String(value).replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
+  return (cleaned || "session").slice(0, 64);
+}
+
+/** Nama berkas state untuk sesi ini, di direktori user yang sama. */
+function sessionStateFilename(env = process.env) {
+  return `workflow-state.${resolveSessionKey(env)}.json`;
+}
+
+/**
+ * Berkas tempat `history` bersama disimpan.
+ *
+ * Dalam tata letak nyata (`.state/users/<user>/`) history dipisahkan dari state
+ * sesi supaya catatan proyek tidak terpecah per sesi. Pemanggil yang memberi
+ * path eksplisit di luar tata letak itu tetap memakai satu berkas, persis
+ * seperti sebelumnya.
+ */
+export function resolveHistoryFile(stateFilePath) {
+  const resolved = path.resolve(stateFilePath);
+  const dir = path.dirname(resolved);
+  const inUserTree = path.basename(path.dirname(dir)) === "users";
+  return inUserTree ? path.join(dir, STATE_FILENAME) : resolved;
+}
+
 export function resolveStateFile() {
   const customPath = process.env.DEV_WORKFLOW_STATE_FILE;
   if (customPath) {
@@ -438,12 +487,15 @@ export function resolveStateFile() {
 
   const stateDir = path.join(projectRoot, STATE_DIR);
   const userDir = getUserScopedDir(stateDir);
-  return path.join(userDir, STATE_FILENAME);
+  return path.join(userDir, sessionStateFilename());
 }
 
 export class WorkflowState {
   constructor(stateFilePath = resolveStateFile()) {
     this.stateFile = stateFilePath;
+    // History milik proyek, state milik sesi. Dalam tata letak nyata keduanya
+    // berkas berbeda; untuk path eksplisit keduanya menunjuk berkas yang sama.
+    this.historyFile = resolveHistoryFile(stateFilePath);
     this.state = {
       currentPhase: "idle",
       taskDescription: "",
@@ -482,6 +534,7 @@ export class WorkflowState {
       // Ensure compatibility mirrors exist whenever the primary file is present
       // Run this as non-blocking to speed up startup
       ensureCompatibilityLinks(this.stateFile).catch(() => { });
+      await this.mergeSharedHistory();
       if (typeof this.state.testsCreated !== "boolean") {
         this.state.testsCreated = false;
       }
@@ -530,7 +583,59 @@ export class WorkflowState {
       }
       // Missing file is fine; bootstrap fresh artifacts for downstream consumers.
       await this.ensurePrimaryFile();
+      // Sesi baru tetap harus melihat riwayat proyek yang sudah ada.
+      await this.mergeSharedHistory();
     }
+  }
+
+  /**
+   * Menyatukan `history` sesi ini dengan `history` bersama.
+   *
+   * History adalah catatan proyek: task yang selesai di satu sesi harus
+   * terlihat dari sesi lain, dan entri yang sama tidak boleh berganda walau
+   * berkali-kali disimpan.
+   */
+  async mergeSharedHistory() {
+    if (this.historyFile === this.stateFile) {
+      return 0;
+    }
+
+    const shared = await this.readHistoryFile();
+    const merged = this.mergeDiskHistory(shared);
+    if (merged > 0) {
+      await this.writeHistoryFile();
+    }
+    return merged;
+  }
+
+  async readHistoryFile() {
+    try {
+      const data = await fs.readFile(this.historyFile, "utf-8");
+      return JSON.parse(data);
+    } catch {
+      return null;
+    }
+  }
+
+  /** Menulis hanya `history` ke berkas bersama, tanpa task milik sesi ini. */
+  async writeHistoryFile() {
+    if (this.historyFile === this.stateFile) {
+      return;
+    }
+
+    const shared = (await this.readHistoryFile()) || {};
+    const merged = Array.isArray(shared.history) ? shared.history.slice() : [];
+    const seen = new Set(merged.map((entry) => this.historyKey(entry)));
+    for (const entry of this.state.history || []) {
+      const key = this.historyKey(entry);
+      if (!seen.has(key)) {
+        merged.push(entry);
+        seen.add(key);
+      }
+    }
+
+    await fs.mkdir(path.dirname(this.historyFile), { recursive: true });
+    await fs.writeFile(this.historyFile, JSON.stringify({ ...shared, history: merged }, null, 2));
   }
 
   async ensurePrimaryFile() {
@@ -558,6 +663,9 @@ export class WorkflowState {
       updatedAt: new Date().toISOString(),
     };
     await fs.writeFile(this.stateFile, JSON.stringify(this.state, null, 2));
+    // History ditulis ke berkas bersama supaya sesi lain melihat task yang
+    // selesai di sini, sementara task yang sedang berjalan tetap milik sesi.
+    await this.writeHistoryFile();
     await ensureCompatibilityLinks(this.stateFile);
     await this.updateProjectSummary();
     await this.syncToDatabase();

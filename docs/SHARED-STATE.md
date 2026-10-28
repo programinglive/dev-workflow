@@ -103,3 +103,65 @@ node --no-deprecation --test tests/shared-state.test.js
    `commit_and_push`. Kalau bukan task Anda, batalkan dan commit manual.
 2. Kalau melihat peringatan "state dipakai bersama", artinya ada sesi lain aktif
    di direktori kerja yang sama.
+
+---
+
+# Isolasi penuh per sesi (opsi a, dikerjakan 28 Oktober 2026)
+
+Bagian di atas adalah **mitigasi**. Bagian ini adalah perbaikannya.
+
+Kendala yang dulu disebut di sini - "server MCP perlu identitas sesi yang
+stabil, yang belum tersedia" - ternyata sudah tidak berlaku: OpenCode
+menyuntikkan `OPENCODE_SESSION_ID` ke environment server MCP. Buktinya papan
+Factory mencatat `clientSession.id = ses_...` dari variabel itu.
+
+## Tata letak berkas sekarang
+
+```
+<root>/.state/users/<user-id>/workflow-state.json                  -> history PROYEK
+<root>/.state/users/<user-id>/workflow-state.<sesi>.json           -> task SESI
+```
+
+- **State sesi** memuat task yang sedang dikerjakan beserta gerbangnya
+  (`testsPassed`, `readyCheckCompleted`, `documentationCreated`, dan seterusnya).
+- **History bersama** memuat catatan task yang sudah selesai, dari sesi mana pun.
+
+Identitas sesi diambil berurutan dari `DEV_WORKFLOW_SESSION_ID`,
+`OPENCODE_SESSION_ID`, `CLIENT_SESSION_ID`, lalu `pid-<pid>`. Jatuh ke pid
+membuat identitas tetap stabil walau modul di-reload dalam proses yang sama.
+
+## Apa yang berubah
+
+| Sebelum | Sesudah |
+|---|---|
+| Dua sesi berbagi satu task | Tiap sesi punya task sendiri |
+| Gerbang kualitas dibagi, sesi B bisa memakai `readyCheckCompleted` sesi A | Gerbang milik sesi, tidak bisa dipinjam |
+| `start_task` mengganti task sesi lain | Tidak menyentuh berkas sesi lain |
+| History terancam terpecah kalau state dipisah | History digabung dua arah, tanpa duplikat |
+
+## Kompatibilitas
+
+Pemanggil yang memberi path eksplisit (mis. `new WorkflowState("/tmp/x.json")`)
+tetap memakai satu berkas: `resolveHistoryFile()` hanya memisahkan history bila
+berkas berada di tata letak `.state/users/<id>/`. 15 tes `shared-state.test.js`
+lulus tanpa perubahan, dan mekanisme `interrupted` tetap ada sebagai jaring
+pengaman untuk pemakaian satu-berkas itu.
+
+## Cara memverifikasi
+
+```bash
+node --no-deprecation --test tests/session-state.test.js   # 9 tes isolasi sesi
+node --no-deprecation --test tests/shared-state.test.js    # 15 tes mitigasi lama
+```
+
+Yang dikunci tes baru: dua sesi memakai berkas berbeda; task sesi A tidak
+tertimpa sesi B; gerbang kualitas tidak bisa dipinjam; history bertemu dua arah;
+history tidak berganda; identitas stabil dalam satu proses; `OPENCODE_SESSION_ID`
+dipakai; path eksplisit tetap satu berkas; history bersama ada di berkas kanonik.
+
+## Sisa risiko
+
+`syncToDatabase` masih menghitung `projectRoot` dengan empat `dirname` dari path
+state. Tata letak sekarang tetap sedalam itu, jadi masih benar - tapi kalau
+kedalaman path berubah lagi, angka itu harus ikut berubah. Belum dibuat
+eksplisit karena di luar lingkup perubahan ini.
