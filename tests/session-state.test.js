@@ -4,7 +4,7 @@ import { mkdtemp, rm, writeFile, readFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { WorkflowState, resolveStateFile, resolveHistoryFile } from "../workflow-state.js";
+import { WorkflowState, resolveStateFile, resolveHistoryFile, resolveProjectRootForState } from "../workflow-state.js";
 
 /**
  * Tes untuk pemisahan state PER SESI.
@@ -215,8 +215,30 @@ test("path eksplisit tetap memakai satu berkas (kompatibel)", async () => {
   }
 });
 
-test("history bersama disimpan di berkas kanonik user", async () => {
-  await withProject(async (projectRoot) => {
+test("projectRoot dikenali dari letak .state, bukan dari jumlah dirname", () => {
+  // Tata letak sekarang tetap sedalam layout lama, jadi menghitung empat
+  // dirname masih "kebetulan benar". Tes ini mengunci maksud sebenarnya:
+  // projectRoot adalah induk direktori .state, sedalam apa pun berkasnya.
+  // path.resolve dipakai supaya perbandingan ikut menyertakan drive letter.
+  const root = path.resolve(path.sep, "projects", "app");
+
+  const shallow = path.join(root, ".state", "users", "user-x", "workflow-state.json");
+  assert.equal(resolveProjectRootForState(shallow), root, "layout saat ini");
+
+  const deeper = path.join(root, ".state", "users", "user-x", "sessions", "s1", "workflow-state.json");
+  assert.equal(
+    resolveProjectRootForState(deeper),
+    root,
+    "kedalaman berbeda harus tetap menunjuk projectRoot yang sama, bukan <root>/.state",
+  );
+});
+
+test("projectRoot untuk path di luar .state memakai direktori berkasnya", () => {
+  const explicit = path.resolve(path.sep, "tmp", "scratch", "state.json");
+  assert.equal(resolveProjectRootForState(explicit), path.dirname(explicit));
+});
+
+test("history bersama disimpan di berkas kanonik user", async () => {  await withProject(async (projectRoot) => {
     const a = await stateFor("ses-aaa");
     a.state.taskDescription = "Task sesi A yang masih berjalan";
     a.addToHistory({ taskDescription: "Task kanonik", taskType: "feature", commitMessage: "" });

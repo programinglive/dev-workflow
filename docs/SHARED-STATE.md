@@ -150,18 +150,34 @@ pengaman untuk pemakaian satu-berkas itu.
 ## Cara memverifikasi
 
 ```bash
-node --no-deprecation --test tests/session-state.test.js   # 9 tes isolasi sesi
+node --no-deprecation --test tests/session-state.test.js   # 11 tes isolasi sesi
 node --no-deprecation --test tests/shared-state.test.js    # 15 tes mitigasi lama
 ```
 
 Yang dikunci tes baru: dua sesi memakai berkas berbeda; task sesi A tidak
 tertimpa sesi B; gerbang kualitas tidak bisa dipinjam; history bertemu dua arah;
 history tidak berganda; identitas stabil dalam satu proses; `OPENCODE_SESSION_ID`
-dipakai; path eksplisit tetap satu berkas; history bersama ada di berkas kanonik.
+dipakai; path eksplisit tetap satu berkas; history bersama ada di berkas kanonik;
+`projectRoot` dikenali dari letak `.state` dan tidak bergantung pada kedalaman.
 
 ## Sisa risiko
 
-`syncToDatabase` masih menghitung `projectRoot` dengan empat `dirname` dari path
-state. Tata letak sekarang tetap sedalam itu, jadi masih benar - tapi kalau
-kedalaman path berubah lagi, angka itu harus ikut berubah. Belum dibuat
-eksplisit karena di luar lingkup perubahan ini.
+Dulu `syncToDatabase` menghitung `projectRoot` dengan empat `dirname` berurutan.
+Itu hanya benar selama tata letaknya tepat `<root>/.state/users/<user>/<berkas>`.
+Begitu kedalaman berubah, angka itu diam-diam menghasilkan root yang salah dan
+baris database tercatat di proyek lain.
+
+Sekarang diganti `resolveProjectRootForState()`: naik sampai menemukan
+direktori `.state`, lalu ambil induknya. Tidak bergantung pada kedalaman.
+
+```
+<root>/.state/users/u/workflow-state.json                  -> <root>   (sama)
+<root>/.state/users/u/sessions/s1/workflow-state.json      -> <root>   (lama: <root>/.state/users, SALAH)
+```
+
+Untuk berkas di luar tata letak `.state` (mis. path eksplisit untuk tes),
+projectRoot adalah direktori yang memuat berkas itu.
+
+Sisa risiko yang masih ada: `resolveHistoryFile()` menganggap berkas berada di
+tata letak user bila induk dari induknya bernama `users`. Itu benar untuk
+kedalaman sekarang; kalau struktur user berubah, aturan itu perlu ditinjau.
