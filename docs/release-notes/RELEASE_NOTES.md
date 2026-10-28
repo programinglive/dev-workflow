@@ -4,6 +4,7 @@ Authoritative history of user-visible changes for the Development Workflow MCP S
 
 | Version | Date | Notes |
 |---------|------|-------|
+| 1.12.3 | 2026-10-28 | **release:** catat rilis 1.12.2 (5c67101) |
 | 1.12.2 | 2026-10-28 | **release:** catat rilis 1.12.1 (3beaa23) |
 | 1.12.1 | 2026-10-28 | **release:** catat rilis 1.12.0 (bb8624b) |
 | 1.12.0 | 2026-10-28 | See CHANGELOG for details. |
@@ -64,6 +65,14 @@ Authoritative history of user-visible changes for the Development Workflow MCP S
 
 
 
+
+
+## 1.12.3 – 📝 Documentation
+
+Released on **2026-10-28**.
+
+- **release:** catat rilis 1.12.2 (5c67101)
+- **factory:** kirim alasan pada move_task agar task bisa ditutup (88f6b48)
 
 ## 1.12.2 – 📝 Documentation
 
