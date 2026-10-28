@@ -8,8 +8,9 @@
  *
  * There is no "set any status" endpoint. `running` is a work session, and
  * `review` / `blocked` / `paused` are outcomes of finishing that session.
- * `done` is decided by a human. This module encodes those rules instead of
- * pretending the API is a generic CRUD store.
+ * `done` is an approval that the owner may record, but Factory accepts it only
+ * for a task that is already in `review`. This module encodes those rules
+ * instead of pretending the API is a generic CRUD store.
  *
  * Authentication uses a PocketBase `activity_users` token sent as a Bearer
  * header, which Factory accepts for non-browser clients. The token can be
