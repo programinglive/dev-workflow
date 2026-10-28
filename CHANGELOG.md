@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.12.1](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.12.0...v1.12.1) (2026-10-28)
+
+
+### 📝 Documentation
+
+* **release:** catat rilis 1.12.0 ([bb8624b](https://github.com/programinglive/dev-workflow-mcp-server/commit/bb8624b635768df999c5d7986072cb118b324a36))
+
+
+### ♻️ Refactors
+
+* **state:** tentukan projectRoot dari letak .state, bukan jumlah dirname ([7ba5755](https://github.com/programinglive/dev-workflow-mcp-server/commit/7ba5755d2932e029dd2d6c61ee2e1cf5d2aaf582))
+
 ## [1.12.0](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.11.0...v1.12.0) (2026-10-28)
 
 
