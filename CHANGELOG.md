@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.12.3](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.12.2...v1.12.3) (2026-10-28)
+
+
+### 📝 Documentation
+
+* **release:** catat rilis 1.12.2 ([5c67101](https://github.com/programinglive/dev-workflow-mcp-server/commit/5c6710192a70efbc38af7d7bb31ac8a6baae6dfb))
+
+
+### 🐛 Bug Fixes
+
+* **factory:** kirim alasan pada move_task agar task bisa ditutup ([88f6b48](https://github.com/programinglive/dev-workflow-mcp-server/commit/88f6b48cc056166e198f248ac43a79351efe33d3))
+
 ### [1.12.2](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.12.1...v1.12.2) (2026-10-28)
 
 
