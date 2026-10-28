@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.11.0](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.10.0...v1.11.0) (2026-10-28)
+
+
+### 📝 Documentation
+
+* **release:** catat rilis 1.10.0 ([a57dba4](https://github.com/programinglive/dev-workflow-mcp-server/commit/a57dba414505e2fc585d5b839cae976208dd2ee1))
+
+
+### 🐛 Bug Fixes
+
+* **mcp:** laporkan pengambil alihan dan rapikan pesan penolakan ([02b9e33](https://github.com/programinglive/dev-workflow-mcp-server/commit/02b9e33218775a72a4c1834b2cc68213e2facf3f))
+
+
+### ✨ Features
+
+* **mcp:** heartbeat otomatis dan identitas perangkat bersama CLI ([11e73e0](https://github.com/programinglive/dev-workflow-mcp-server/commit/11e73e03c0f7d8cc2f8446fb6a2bb22fb158bff2))
+
+
+### 🧹 Chores
+
+* **license:** make Clinic proprietary and refresh README ([7cd2bda](https://github.com/programinglive/dev-workflow-mcp-server/commit/7cd2bdad9ee6792636c5be4c89682e04022a50bf))
+
 ## [1.10.0](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.9.1...v1.10.0) (2026-10-28)
 
 
