@@ -4,6 +4,7 @@ Authoritative history of user-visible changes for the Development Workflow MCP S
 
 | Version | Date | Notes |
 |---------|------|-------|
+| 1.10.0 | 2026-10-28 | See CHANGELOG for details. |
 | 1.9.1 | 2026-01-29 | **workflow:** add mermaid diagram and fix high severity tar vulnerability (32b47fa) |
 | 1.9.0 | 2026-01-29 | See CHANGELOG for details. |
 | 1.8.1 | 2025-12-26 | add release notes for v1.8.0 (5a4025b) |
@@ -54,6 +55,13 @@ Authoritative history of user-visible changes for the Development Workflow MCP S
 
 
 
+
+
+## 1.10.0
+
+Released on **2026-10-28**.
+
+- See CHANGELOG for details.
 
 ## 1.9.1 – ✨ Features
 
