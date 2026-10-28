@@ -1,4 +1,5 @@
 import { textResponse } from "./shared.js";
+import { startKeeping, stopKeeping } from "../../session-keeper.js";
 import {
   readFactoryConfig,
   listTasks,
@@ -128,6 +129,10 @@ export async function handleClaimFactoryTask(args = {}, { workflowState } = {}) 
     const session = await claimTask(config, { recordId, step, takeoverReason });
     if (!session) throw new Error("Factory accepted the claim but returned no work session.");
 
+    // Tanpa ini sesi jadi "tidak ada kabar" dalam 120 detik padahal sedang
+    // dikerjakan, dan papan terlihat penuh task mati.
+    startKeeping(config, session, step);
+
     if (workflowState) {
       workflowState.reset();
       workflowState.state.currentPhase = "coding";
@@ -190,6 +195,9 @@ export async function handleSyncTaskStatus(args = {}) {
 
   try {
     const result = await updateTaskStatus(config, { recordId, status, reason, nextAction });
+    // Sesi ditutup, jadi berhenti melaporkan: heartbeat setelah ini akan
+    // ditolak server dan hanya mengaburkan keadaan papan.
+    stopKeeping();
 
     return textResponse(
       [
