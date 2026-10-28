@@ -20,8 +20,10 @@
  * above can be tested without a live Factory.
  */
 
-import { createHash } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import os from "os";
+import { mkdirSync, readFileSync, writeFileSync } from "fs";
+import path from "path";
 
 export const DEFAULT_POCKETBASE_URL = "https://pocketbase.programinglive.com";
 
@@ -89,6 +91,9 @@ export function readFactoryConfig(env = process.env) {
     pocketBaseUrl: trimSlash(clean(env.FACTORY_PB_URL) || DEFAULT_POCKETBASE_URL),
     machineId: clean(env.FACTORY_MACHINE_ID),
     deviceId: clean(env.FACTORY_DEVICE_ID),
+    // Berkas identitas perangkat yang dipakai bersama dengan CLI Factory.
+    // Tanpa ini satu mesin muncul sebagai dua perangkat di papan.
+    deviceFile: clean(env.FACTORY_DEVICE_FILE),
     agent: clean(env.FACTORY_AGENT) || "dev-workflow-mcp",
     // Sesi editor yang sedang berjalan. Papan Factory memakainya untuk
     // menunjukkan sesi mana yang mengerjakan, bukan hanya perangkatnya.
@@ -126,11 +131,49 @@ export function deviceIdFor(seed) {
   ].join("-");
 }
 
+/**
+ * Reads the device id this machine shares with the Factory CLI.
+ *
+ * The CLI stores a random UUID in `~/.config/programinglive-factory/device.json`.
+ * The MCP server used to derive its own id from the machine name, so one
+ * machine appeared as two devices on the board and a task held by the other
+ * tool looked like another machine's work. Reading and creating the same file
+ * keeps one machine to one identity, whichever tool runs first.
+ *
+ * Returns null when the file cannot be used, so the caller falls back to the
+ * name-derived id instead of failing to claim at all.
+ */
+export function sharedDeviceId(deviceFile) {
+  if (!deviceFile) return null;
+  try {
+    const id = JSON.parse(readFileSync(deviceFile, "utf8"))?.id;
+    if (typeof id === "string" && UUID_RE.test(id)) return id;
+  } catch {
+    // Berkas belum ada atau rusak: dibuat di bawah.
+  }
+
+  const id = randomUUID();
+  try {
+    mkdirSync(path.dirname(deviceFile), { recursive: true, mode: 0o700 });
+    // "wx" gagal kalau proses lain menang balapan; id itu yang dipakai.
+    writeFileSync(deviceFile, JSON.stringify({ id }), { flag: "wx", mode: 0o600 });
+    return id;
+  } catch {
+    try {
+      const existing = JSON.parse(readFileSync(deviceFile, "utf8"))?.id;
+      if (typeof existing === "string" && UUID_RE.test(existing)) return existing;
+    } catch {
+      // Tetap gagal: biar pemanggil memakai id turunan nama mesin.
+    }
+    return null;
+  }
+}
+
 /** Builds the `device` object Factory expects on every work call. */
 export function deviceFromConfig(config) {
   const name = (config.machineId || os.hostname() || "unknown").slice(0, 100);
   return {
-    id: config.deviceId || deviceIdFor(name),
+    id: config.deviceId || sharedDeviceId(config.deviceFile) || deviceIdFor(name),
     name,
     platform: String(process.platform).slice(0, 60),
     agent: String(config.agent || "dev-workflow-mcp").slice(0, 40),
@@ -425,6 +468,29 @@ export async function claimTask(config, { recordId, device, step, takeoverReason
   // Pemanggil perlu tahu kalau ia baru menggeser perangkat lain, supaya bisa
   // melaporkan pengambil alihan itu, bukan menyebutnya klaim biasa.
   return { ...session, tookOver: Boolean(body.tookOver), previousHolder: body.previousHolder || null };
+}
+
+/**
+ * Reports that a work session is still alive, and what it is doing.
+ *
+ * Factory marks a session stale after 120 seconds without a report, so a
+ * claimed task that never reports looks abandoned on the board even while the
+ * work continues. `step` is optional: the server keeps the previous value.
+ */
+export async function heartbeatWork(config, { sessionId, deviceId, step, clientSession } = {}, fetchImpl = fetch) {
+  if (!sessionId) throw new Error("sessionId is required to report a heartbeat.");
+  if (!deviceId) throw new Error("deviceId is required to report a heartbeat.");
+
+  const text = typeof step === "string" ? step.trim() : "";
+  const payload = {
+    action: "heartbeat",
+    sessionId,
+    deviceId,
+    ...(text ? { step: text.slice(0, 240) } : {}),
+    ...(clientSession?.id ? { clientSession: { id: String(clientSession.id).slice(0, 120), title: String(clientSession.title || "").slice(0, 200) } } : {}),
+  };
+  const body = await request(config, "/api/work", { method: "POST", body: payload, fetchImpl });
+  return body.session || null;
 }
 
 /**

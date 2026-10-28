@@ -1,5 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert";
+import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   readFactoryConfig,
@@ -15,6 +18,7 @@ import {
   formatTaskList,
   listTasks,
   claimTask,
+  heartbeatWork,
   updateTaskStatus,
   clearTokenCache,
   ACTIVE_STATUSES,
@@ -174,6 +178,57 @@ test("deviceFromConfig trims fields to the API limits", () => {
   const device = deviceFromConfig({ ...CONFIG, machineId: "x".repeat(200), agent: "y".repeat(80) });
   assert.ok(device.name.length <= 100);
   assert.ok(device.agent.length <= 40);
+});
+
+test("deviceFromConfig shares one identity with the Factory CLI", () => {
+  const directory = mkdtempSync(join(tmpdir(), "factory-device-"));
+  try {
+    const file = join(directory, "device.json");
+    writeFileSync(file, JSON.stringify({ id: "c4d59aeb-a044-41ff-b3f6-9800bf463933" }));
+
+    // Dua tool di satu mesin harus memakai satu identitas perangkat.
+    const first = deviceFromConfig({ ...CONFIG, deviceFile: file });
+    const second = deviceFromConfig({ ...CONFIG, deviceFile: file });
+    assert.strictEqual(first.id, "c4d59aeb-a044-41ff-b3f6-9800bf463933");
+    assert.strictEqual(second.id, first.id);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("deviceFromConfig creates the shared device file when it is missing", () => {
+  const directory = mkdtempSync(join(tmpdir(), "factory-device-"));
+  try {
+    const file = join(directory, "nested", "device.json");
+    const device = deviceFromConfig({ ...CONFIG, deviceFile: file });
+
+    assert.match(device.id, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    assert.strictEqual(JSON.parse(readFileSync(file, "utf8")).id, device.id, "berkas harus menyimpan id yang dipakai");
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("an explicit FACTORY_DEVICE_ID still wins over the shared file", () => {
+  const directory = mkdtempSync(join(tmpdir(), "factory-device-"));
+  try {
+    const file = join(directory, "device.json");
+    writeFileSync(file, JSON.stringify({ id: "c4d59aeb-a044-41ff-b3f6-9800bf463933" }));
+
+    const device = deviceFromConfig({ ...CONFIG, deviceFile: file, deviceId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" });
+    assert.strictEqual(device.id, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("readFactoryConfig captures FACTORY_DEVICE_FILE so the shared identity is used", () => {
+  const config = readFactoryConfig({
+    FACTORY_URL: "https://factory.test",
+    FACTORY_TOKEN: "tok",
+    FACTORY_DEVICE_FILE: "/tmp/device.json",
+  });
+  assert.strictEqual(config.deviceFile, "/tmp/device.json");
 });
 
 // ---------------------------------------------------------------------------
@@ -431,6 +486,39 @@ test("listTasks surfaces a login failure with a useful message", async () => {
 
   await assert.rejects(() => listTasks(config, {}, fetchImpl), /FACTORY_EMAIL/);
   clearTokenCache();
+});
+
+test("heartbeatWork reports the current step and session", async () => {
+  const fetchImpl = fakeFetch([
+    (call) => (call.url.endsWith("/api/work") && call.method === "POST" ? json({ session: { id: "sess-9", state: "active" } }) : null),
+  ]);
+
+  await heartbeatWork(CONFIG, {
+    sessionId: "sess-9",
+    deviceId: "d1",
+    step: "Menulis tes",
+  }, fetchImpl);
+
+  const beat = fetchImpl.calls[0].body;
+  assert.strictEqual(beat.action, "heartbeat");
+  assert.strictEqual(beat.sessionId, "sess-9");
+  assert.strictEqual(beat.deviceId, "d1");
+  assert.strictEqual(beat.step, "Menulis tes");
+});
+
+test("heartbeatWork omits an empty step instead of sending an invalid one", async () => {
+  const fetchImpl = fakeFetch([
+    (call) => (call.url.endsWith("/api/work") ? json({ session: { id: "sess-9", state: "active" } }) : null),
+  ]);
+
+  await heartbeatWork(CONFIG, { sessionId: "sess-9", deviceId: "d1", step: "   " }, fetchImpl);
+
+  assert.strictEqual("step" in fetchImpl.calls[0].body, false, "langkah kosong tidak boleh dikirim");
+});
+
+test("heartbeatWork refuses without a session or device", async () => {
+  await assert.rejects(() => heartbeatWork(CONFIG, { deviceId: "d1" }, fakeFetch([])), /sessionId/);
+  await assert.rejects(() => heartbeatWork(CONFIG, { sessionId: "s1" }, fakeFetch([])), /deviceId/);
 });
 
 test("claimTask starts a work session", async () => {
