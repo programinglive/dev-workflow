@@ -92,8 +92,10 @@ export function readFactoryConfig(env = process.env) {
     machineId: clean(env.FACTORY_MACHINE_ID),
     deviceId: clean(env.FACTORY_DEVICE_ID),
     // Berkas identitas perangkat yang dipakai bersama dengan CLI Factory.
-    // Tanpa ini satu mesin muncul sebagai dua perangkat di papan.
-    deviceFile: clean(env.FACTORY_DEVICE_FILE),
+    // Tanpa ini satu mesin muncul sebagai dua perangkat di papan. Bawaannya
+    // jalur yang sama dengan CLI, jadi kedua tool langsung sepakat tanpa
+    // konfigurasi tambahan.
+    deviceFile: clean(env.FACTORY_DEVICE_FILE) || defaultDeviceFile(),
     agent: clean(env.FACTORY_AGENT) || "dev-workflow-mcp",
     // Sesi editor yang sedang berjalan. Papan Factory memakainya untuk
     // menunjukkan sesi mana yang mengerjakan, bukan hanya perangkatnya.
@@ -129,6 +131,16 @@ export function deviceIdFor(seed) {
     value.slice(16, 20),
     value.slice(20, 32),
   ].join("-");
+}
+
+/**
+ * The device identity file the Factory CLI writes.
+ *
+ * Keeping this in one place means the CLI and the MCP server cannot drift to
+ * different paths, which is what made one machine appear as two devices.
+ */
+export function defaultDeviceFile(env = process.env) {
+  return clean(env.FACTORY_DEVICE_FILE) || path.join(os.homedir(), ".config", "programinglive-factory", "device.json");
 }
 
 /**

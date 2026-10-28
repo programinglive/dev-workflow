@@ -9,6 +9,7 @@ import {
   isConfigured,
   deviceIdFor,
   deviceFromConfig,
+  defaultDeviceFile,
   mapTaskRecord,
   sortTasks,
   planStatusTransition,
@@ -229,6 +230,14 @@ test("readFactoryConfig captures FACTORY_DEVICE_FILE so the shared identity is u
     FACTORY_DEVICE_FILE: "/tmp/device.json",
   });
   assert.strictEqual(config.deviceFile, "/tmp/device.json");
+});
+
+test("readFactoryConfig defaults to the device file the CLI writes", () => {
+  // Tanpa ini, penyatuan identitas tidak pernah aktif di produksi: MCP tetap
+  // memakai id turunan nama mesin sementara CLI memakai device.json.
+  const config = readFactoryConfig({ FACTORY_URL: "https://factory.test", FACTORY_TOKEN: "tok" });
+  assert.match(config.deviceFile, /\.config[\\/]programinglive-factory[\\/]device\.json$/);
+  assert.strictEqual(config.deviceFile, defaultDeviceFile({}));
 });
 
 // ---------------------------------------------------------------------------
