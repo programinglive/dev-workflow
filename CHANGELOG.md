@@ -2,6 +2,81 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.10.0](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.9.1...v1.10.0) (2026-10-28)
+
+
+### ✅ Tests
+
+* run MySQL and PostgreSQL adapters against real servers ([#31](https://github.com/programinglive/dev-workflow-mcp-server/issues/31)) ([9b6aaef](https://github.com/programinglive/dev-workflow-mcp-server/commit/9b6aaef65ea95aeb6c34f228cd3d5c1f2566a492))
+
+
+### 👷 Continuous Integration
+
+* build releases on MMCH, publish on a hosted runner ([#9](https://github.com/programinglive/dev-workflow-mcp-server/issues/9)) ([e975796](https://github.com/programinglive/dev-workflow-mcp-server/commit/e975796e9ffef7d250afb0d478472a1614916ed2)), closes [#7](https://github.com/programinglive/dev-workflow-mcp-server/issues/7)
+* publish without provenance while the repo stays private ([#12](https://github.com/programinglive/dev-workflow-mcp-server/issues/12)) ([6dbc16f](https://github.com/programinglive/dev-workflow-mcp-server/commit/6dbc16fa5d5e4b804ae7b838b760cea6d5ddafaf))
+* run tests on the self-hosted MMCH runner ([#7](https://github.com/programinglive/dev-workflow-mcp-server/issues/7)) ([ad296f1](https://github.com/programinglive/dev-workflow-mcp-server/commit/ad296f1debfed5de61da5401a14f8a776ed49227))
+* verify the built bundle actually starts ([#44](https://github.com/programinglive/dev-workflow-mcp-server/issues/44)) ([dbaa2a8](https://github.com/programinglive/dev-workflow-mcp-server/commit/dbaa2a8c8ff999c7184cbccc0c10290d0ea54bb0))
+
+
+### 🧹 Chores
+
+* **ci:** add dependabot configuration ([#15](https://github.com/programinglive/dev-workflow-mcp-server/issues/15)) ([80ca440](https://github.com/programinglive/dev-workflow-mcp-server/commit/80ca4406c46a9b684977de9d21702a3ca5d92526))
+* **ci:** bump actions/checkout from 4 to 7 ([#16](https://github.com/programinglive/dev-workflow-mcp-server/issues/16)) ([cea2089](https://github.com/programinglive/dev-workflow-mcp-server/commit/cea208973e6b966bfe140d09c42b11f5ab30cf46))
+* **ci:** bump actions/download-artifact from 4 to 8 ([#18](https://github.com/programinglive/dev-workflow-mcp-server/issues/18)) ([a957d40](https://github.com/programinglive/dev-workflow-mcp-server/commit/a957d40aa7f8fa72d31e7c24239023df8775cf75))
+* **ci:** bump actions/github-script from 7 to 9 ([#17](https://github.com/programinglive/dev-workflow-mcp-server/issues/17)) ([1cdeda5](https://github.com/programinglive/dev-workflow-mcp-server/commit/1cdeda51132bc5b4f32e7345bcebbfdca130975b))
+* **ci:** bump actions/setup-node from 4 to 7 ([#19](https://github.com/programinglive/dev-workflow-mcp-server/issues/19)) ([d147a9e](https://github.com/programinglive/dev-workflow-mcp-server/commit/d147a9e142513872b774cfc91a4aff2e72789d85))
+* **ci:** bump actions/upload-artifact from 4 to 7 ([#20](https://github.com/programinglive/dev-workflow-mcp-server/issues/20)) ([01f4902](https://github.com/programinglive/dev-workflow-mcp-server/commit/01f49024d0077b125b15de1df1502dfefb0966d9))
+* **ci:** keep tailwind on v3 and stop dependabot proposing v4 ([#46](https://github.com/programinglive/dev-workflow-mcp-server/issues/46)) ([71193a7](https://github.com/programinglive/dev-workflow-mcp-server/commit/71193a7631adfdbff6fb6410b794efbff4d8e8e1))
+* **deps)(deps:** bump the minor-and-patch group with 5 updates ([#21](https://github.com/programinglive/dev-workflow-mcp-server/issues/21)) ([65be648](https://github.com/programinglive/dev-workflow-mcp-server/commit/65be648dda4d6974065c7579e7577db05eff62ee))
+* **deps:** bump commitlint to 21 and align config-conventional ([#32](https://github.com/programinglive/dev-workflow-mcp-server/issues/32)) ([df59f39](https://github.com/programinglive/dev-workflow-mcp-server/commit/df59f39b1ffd84a0f1c5613e5369b2be98090067))
+* **deps:** bump dotenv to 18 ([#41](https://github.com/programinglive/dev-workflow-mcp-server/issues/41)) ([b8ee057](https://github.com/programinglive/dev-workflow-mcp-server/commit/b8ee0579037583541dd738eb8798010f38bae532))
+* **deps:** bump typescript to 7 ([#33](https://github.com/programinglive/dev-workflow-mcp-server/issues/33)) ([0b292fc](https://github.com/programinglive/dev-workflow-mcp-server/commit/0b292fc7dc0b8a7bbdfd96a5f5892a388fb7713f))
+* **deps:** drop root dependencies that only the dashboard uses ([#34](https://github.com/programinglive/dev-workflow-mcp-server/issues/34)) ([cf2a529](https://github.com/programinglive/dev-workflow-mcp-server/commit/cf2a529024e36a72d37bfc7ad34839f0159888ea))
+* regenerate package-lock.json to fix ECOMPROMISED error ([83c9ba0](https://github.com/programinglive/dev-workflow-mcp-server/commit/83c9ba06fce6acd01c3ee3bd95c26e3f8b42930f))
+* **web-deps)(deps:** bump dotenv from 17.2.3 to 18.0.9 in /web ([#27](https://github.com/programinglive/dev-workflow-mcp-server/issues/27)) ([baa2d5c](https://github.com/programinglive/dev-workflow-mcp-server/commit/baa2d5cbdf1d37a65a117fba1a53d5284a18317b))
+* **web-deps)(deps:** bump the minor-and-patch group ([#26](https://github.com/programinglive/dev-workflow-mcp-server/issues/26)) ([9deefc1](https://github.com/programinglive/dev-workflow-mcp-server/commit/9deefc12ab090bd2acf49de0926a11aca9e169e5))
+* **web-deps:** bump @types/node to 26 in web ([#42](https://github.com/programinglive/dev-workflow-mcp-server/issues/42)) ([0f4f5e2](https://github.com/programinglive/dev-workflow-mcp-server/commit/0f4f5e2a2aad053431271bb74ddde42d24bbc664))
+* **web-deps:** bump eslint to 10 and fix the lint script ([#39](https://github.com/programinglive/dev-workflow-mcp-server/issues/39)) ([6477024](https://github.com/programinglive/dev-workflow-mcp-server/commit/6477024a2dc63f7a02698060dce70a063d4abf7d))
+* **web-deps:** bump lucide-react to 1.x and replace the removed Github icon ([#40](https://github.com/programinglive/dev-workflow-mcp-server/issues/40)) ([a4db628](https://github.com/programinglive/dev-workflow-mcp-server/commit/a4db6281514e5481a1754153c41053a663ae24fe))
+* **web-deps:** bump typescript to 7 in web and migrate import assertions ([#43](https://github.com/programinglive/dev-workflow-mcp-server/issues/43)) ([3e00a26](https://github.com/programinglive/dev-workflow-mcp-server/commit/3e00a26e3d35c374cac98bb292c23761318fe0e1))
+* **web:** update version to 1.9.1 ([6b0eb38](https://github.com/programinglive/dev-workflow-mcp-server/commit/6b0eb383a1db85b6045197f5b062e1252c4ff706))
+
+
+### 🐛 Bug Fixes
+
+* **build:** keep dotenv external so the bundle can start ([#45](https://github.com/programinglive/dev-workflow-mcp-server/issues/45)) ([d889c8f](https://github.com/programinglive/dev-workflow-mcp-server/commit/d889c8f27d55268387c6d82e0742bdf397445cdc))
+* **ci:** do not fail release when the bundle exits after stdin closes ([#10](https://github.com/programinglive/dev-workflow-mcp-server/issues/10)) ([033ea9a](https://github.com/programinglive/dev-workflow-mcp-server/commit/033ea9aa2fa3077a23dca566b432a8dfbeb2301b))
+* **ci:** use Node 24 in the publish job so npm@latest can install ([#11](https://github.com/programinglive/dev-workflow-mcp-server/issues/11)) ([283b7d5](https://github.com/programinglive/dev-workflow-mcp-server/commit/283b7d5544648745e6d250cef5aac0e75fa529d4))
+* clear remaining devDependency advisories ([#5](https://github.com/programinglive/dev-workflow-mcp-server/issues/5)) ([97deb5f](https://github.com/programinglive/dev-workflow-mcp-server/commit/97deb5f5e4669259d7d8288821e325d4b1881497))
+* repair stale test assertions and clear production audit ([#4](https://github.com/programinglive/dev-workflow-mcp-server/issues/4)) ([b018012](https://github.com/programinglive/dev-workflow-mcp-server/commit/b018012106a5b3eade15ccc996eeb0e8620893fe))
+* **scripts:** make stack setup work on OpenCode V2 ([#3](https://github.com/programinglive/dev-workflow-mcp-server/issues/3)) ([a2a1618](https://github.com/programinglive/dev-workflow-mcp-server/commit/a2a161824bdb68723de9053ac53b7da767c393ca))
+* **state:** stop losing in-progress work when workflow state is shared between sessions ([3cb34f1](https://github.com/programinglive/dev-workflow-mcp-server/commit/3cb34f1a465a8084706a00da006046fce1591e5c))
+* **web:** clear dashboard advisories and add CI coverage ([#8](https://github.com/programinglive/dev-workflow-mcp-server/issues/8)) ([790e551](https://github.com/programinglive/dev-workflow-mcp-server/commit/790e5515c708f463ee00ff20406c2147620356bb))
+
+
+### ✨ Features
+
+* add AGENTS.md enforcement rules and auto-creation during stack setup ([08633a6](https://github.com/programinglive/dev-workflow-mcp-server/commit/08633a66c6f1a30d9047432c135cdcefd91080f7))
+* add remote bootstrap scripts for Windows (HELLOWORLD) and macOS (Mac) ([4bb5db5](https://github.com/programinglive/dev-workflow-mcp-server/commit/4bb5db544236cf90c25275aef2b2db5abdd85e8d))
+* add Software Factory architecture docs and API endpoints for factory.programinglive.com ([fde59aa](https://github.com/programinglive/dev-workflow-mcp-server/commit/fde59aa04a17dab179437efaf95289f7b71783e5))
+* add unified setup script for AI Agent Development Stack (Workflow + Superpowers + RTK) ([6c9a0a8](https://github.com/programinglive/dev-workflow-mcp-server/commit/6c9a0a89d93b007df3030b9cf9b7bbed06acad4c))
+* **factory:** izinkan agen menandai task selesai (approve) dari sync_task_status ([38e7343](https://github.com/programinglive/dev-workflow-mcp-server/commit/38e7343be896e08363184ecd56e463ff2cc2d06b))
+* **factory:** read and update your Factory task queue from MCP ([#14](https://github.com/programinglive/dev-workflow-mcp-server/issues/14)) ([482ef5a](https://github.com/programinglive/dev-workflow-mcp-server/commit/482ef5ab5738428205e6283cf93eb9dc14cff95e))
+* **factory:** tambah create_factory_task dan list_factory_projects ([1c5ed69](https://github.com/programinglive/dev-workflow-mcp-server/commit/1c5ed69b17d01399f4e8f009ec193f8b703857b7))
+* **factory:** wire MCP to the real Factory API instead of PocketBase activity_tasks ([fa841c6](https://github.com/programinglive/dev-workflow-mcp-server/commit/fa841c61a99faeb844ec75393cc2ea3676d5651c))
+* **mcp:** kirim alasan takeover dan ekspos respons 409 Factory ([caf1c30](https://github.com/programinglive/dev-workflow-mcp-server/commit/caf1c30eba1705437e69aefd17eb4e394f27b436))
+* **mcp:** kirim identitas sesi editor, dan izinkan status done ([58929f1](https://github.com/programinglive/dev-workflow-mcp-server/commit/58929f11aab9b1fd0db3456b06696c6f6ab1b386))
+* **mcp:** takeover task milik perangkat lain lewat alasan ([d35c777](https://github.com/programinglive/dev-workflow-mcp-server/commit/d35c777ac489151cc27ba3e8a61fa2c7d60bd5a9))
+* **web:** add mermaid visual planning to landing page ([519868e](https://github.com/programinglive/dev-workflow-mcp-server/commit/519868e8571df618d3fce5ebc26d9782f3269a5c))
+
+
+### 📝 Documentation
+
+* **mcp:** dokumentasikan parameter takeoverReason ([6e96422](https://github.com/programinglive/dev-workflow-mcp-server/commit/6e964221bfface1c27c30e03e14e751e38c7571e))
+* rewrite README in English and correct stale claims ([#13](https://github.com/programinglive/dev-workflow-mcp-server/issues/13)) ([d88951b](https://github.com/programinglive/dev-workflow-mcp-server/commit/d88951b15f32047ed88115a383632f3829a0f392))
+* rewrite README with quickstart guide, add homelab docs, fix Windows path tests ([f6f4910](https://github.com/programinglive/dev-workflow-mcp-server/commit/f6f4910725319af6c001d997525125777305e480))
+* **web:** add mermaid feature flow to documentation ([83ab683](https://github.com/programinglive/dev-workflow-mcp-server/commit/83ab6835fdb5c669a9db0a264b5938881231db1e))
+
 ### [1.9.1](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.9.0...v1.9.1) (2026-01-29)
 
 
