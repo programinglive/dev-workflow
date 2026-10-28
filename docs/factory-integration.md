@@ -124,12 +124,13 @@ whole design:
 | `review` | work session finished with `outcome=review` | agent |
 | `blocked` | work session finished with `outcome=blocked` | agent |
 | `paused` | work session finished with `outcome=paused` | agent |
-| `done` | human approval in the Factory UI | **human only** |
+| `done` | `move_task`, only from `review` | agent, via `sync_task_status` |
 
 `sync_task_status` enforces this:
 
 - `running` → rejected: *"Use claim_factory_task… Factory records that as a work session, not a status edit."*
-- `done` → rejected: *"done is decided by a human in Factory."*
+- `done` → sent as `move_task`. Factory accepts it **only** when the task is
+  currently in `review`, and requires a reason; otherwise it answers `409`.
 - unknown value → rejected, listing the accepted statuses
 - `review` / `blocked` / `paused` **without an active session** → rejected with
   "no active work session. Use claim_factory_task first"
@@ -150,15 +151,39 @@ sync_task_status { recordId, status: "review", reason: "…" }
                                          → session closes, task waits for approval
 ```
 
-Re-claiming a task that already has a live session is refused up front:
+### Taking over a task held by another device
+
+The server decides whether a claim is a takeover; the client does not refuse on
+its own. A task whose active session belongs to **another device** can be taken
+over by supplying a reason:
 
 ```
-"<title>" already has an active work session on HELLOWORLD.
-Finish that session before claiming it again.
+claim_factory_task { recordId, step, takeoverReason: "Pemilik lama offline 3 hari, saya lanjutkan." }
 ```
 
-This matters on a shared board: two agents claiming the same task would otherwise
-fight over one session row.
+The reason must be 3-500 characters and is required for **every** takeover,
+whether or not the previous holder is still reporting. Factory closes the
+previous session as `taken_over` with the reason stored on it, opens a new
+session on your device, and records a `work.taken_over` event naming both
+devices. The previous holder is locked out of that task immediately.
+
+Without a reason, the server answers `409` and the client turns it into an
+actionable message:
+
+```json
+{
+  "error": "Task sedang dikerjakan di perangkat lain. Ambil alih dengan menyertakan alasan takeover.",
+  "takeoverRequired": true,
+  "holder": { "deviceName": "MMCH", "agent": "Codex", "lastSeenAt": "2026-10-27T06:00:31.249Z" }
+}
+```
+
+A claim of a task whose active session belongs to the **same device** is not a
+takeover: the server resumes that session idempotently and no reason is needed.
+
+This matters on a shared board: two agents claiming the same task would
+otherwise fight over one session row, and a takeover always leaves a written
+record of why the work changed hands.
 
 ### Device identity
 
@@ -220,7 +245,9 @@ Terminal statuses are hidden by default so the queue shows live work.
 | `Factory login failed (HTTP 401)` | wrong password, or a superuser instead of `activity_users` | fix credentials |
 | `Factory request failed (HTTP 403)` | `Origin` mismatch on a browser-only route | use the Bearer path, which this client does |
 | `no active work session` | asking for `review` without claiming | `claim_factory_task` first |
-| `already has an active work session` | another device (or an earlier run) still holds it | finish or pause it first |
+| `takeoverRequired: true` | another device (or an earlier run) still holds the task | call `claim_factory_task` again with a `takeoverReason` of 3-500 characters |
+| `Alasan takeover minimal 3 karakter.` | the reason is too short to explain the handover | write a longer reason |
+| `Alasan takeover maksimal 500 karakter.` | the reason is too long | shorten it |
 | task stays `backlog` after a claim | the claim went to a different Factory account | check `FACTORY_EMAIL` |
 
 ### Legacy note
