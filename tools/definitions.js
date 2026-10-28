@@ -476,7 +476,8 @@ export function getToolList() {
           },
           reason: {
             type: "string",
-            description: "Required when status is 'blocked'; used as the session summary otherwise.",
+            description:
+              "Why. Required when status is 'blocked'. Also required by Factory (min 3 characters) when status is 'done' or 'cancelled' - it becomes the closure note on the board. Otherwise used as the session summary.",
           },
           nextAction: {
             type: "string",
