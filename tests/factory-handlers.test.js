@@ -230,13 +230,80 @@ test("claim handler opens a work session and starts the local workflow", async (
   }
 });
 
-test("claim handler refuses a task that already has an active session", async () => {
+test("claim handler asks the server and explains a missing takeover reason", async () => {
   setEnv();
-  const stub = stubFetch((call) => (call.url.endsWith("/api/factory") ? json(WORKSPACE) : json({}, 500)));
+  const stub = stubFetch((call) => {
+    if (call.url.endsWith("/api/factory")) return json(WORKSPACE);
+    if (call.url.endsWith("/api/work")) {
+      return json(
+        {
+          error: "Task sedang dikerjakan di perangkat lain. Ambil alih dengan menyertakan alasan takeover.",
+          takeoverRequired: true,
+          holder: { deviceName: "MMCH", agent: "Codex", lastSeenAt: "2026-10-27T06:00:31.249Z" },
+        },
+        409,
+      );
+    }
+    return json({}, 500);
+  });
+
   try {
     const out = text(await handleClaimFactoryTask({ recordId: TASK_ID }, { workflowState: null }));
-    assert.match(out, /already has an active work session/);
-    assert.strictEqual(stub.calls.filter((call) => call.url.endsWith("/api/work")).length, 0);
+
+    assert.match(out, /MMCH/, "pesan harus menyebut perangkat yang memegang task");
+    assert.match(out, /Codex/);
+    assert.match(out, /Sambungkan MCP ke Factory/, "pesan harus menyebut judul task yang sebenarnya");
+    assert.match(out, /takeoverReason/, "pesan harus menunjukkan parameter yang perlu diisi");
+    assert.match(out, /3-500/, "pesan harus menyebut panjang alasan yang diterima");
+    assert.doesNotMatch(out, /already has an active work session/);
+
+    const start = stub.calls.find((call) => call.url.endsWith("/api/work"));
+    assert.ok(start, "server harus tetap ditanya, bukan ditolak di sisi klien");
+    assert.strictEqual(start.body.action, "start");
+  } finally {
+    stub.restore();
+    clearEnv();
+  }
+});
+
+test("claim handler forwards a takeover reason", async () => {
+  setEnv();
+  const stub = stubFetch((call) => {
+    if (call.url.endsWith("/api/factory")) return json(WORKSPACE);
+    if (call.url.endsWith("/api/work")) return json({ session: { id: "sess-new", state: "active" }, tookOver: true });
+    return json({}, 500);
+  });
+
+  try {
+    const out = text(
+      await handleClaimFactoryTask(
+        { recordId: TASK_ID, step: "Lanjut", takeoverReason: "Pemilik lama offline 3 hari, saya lanjutkan." },
+        { workflowState: null },
+      ),
+    );
+
+    assert.match(out, /Claimed/);
+    const start = stub.calls.find((call) => call.url.endsWith("/api/work"));
+    assert.strictEqual(start.body.takeoverReason, "Pemilik lama offline 3 hari, saya lanjutkan.");
+  } finally {
+    stub.restore();
+    clearEnv();
+  }
+});
+
+test("claim handler claims a task held by another device when no reason is needed", async () => {
+  setEnv();
+  const stub = stubFetch((call) => {
+    if (call.url.endsWith("/api/factory")) return json(WORKSPACE);
+    if (call.url.endsWith("/api/work")) return json({ session: { id: "sess-resumed", state: "active" } });
+    return json({}, 500);
+  });
+
+  try {
+    const out = text(await handleClaimFactoryTask({ recordId: TASK_ID, step: "Lanjut" }, { workflowState: null }));
+    assert.match(out, /Claimed/, "server yang memutuskan, bukan klien");
+    const start = stub.calls.find((call) => call.url.endsWith("/api/work"));
+    assert.ok(start, "permintaan harus dikirim ke server");
   } finally {
     stub.restore();
     clearEnv();
