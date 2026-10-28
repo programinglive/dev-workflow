@@ -449,6 +449,46 @@ test("claimTask starts a work session", async () => {
   assert.strictEqual(fetchImpl.calls[0].body.taskId, "11111111-1111-4111-8111-111111111111");
 });
 
+test("buildWorkStartPayload includes takeoverReason only when it is a usable reason", () => {
+  const device = { id: "d1", name: "box", platform: "win32", agent: "agent" };
+  const taskId = "11111111-1111-4111-8111-111111111111";
+
+  assert.strictEqual(buildWorkStartPayload({ taskId, device }).takeoverReason, undefined);
+  assert.strictEqual(buildWorkStartPayload({ taskId, device, takeoverReason: "   " }).takeoverReason, undefined);
+  assert.strictEqual(buildWorkStartPayload({ taskId, device, takeoverReason: "saya lanjutkan" }).takeoverReason, "saya lanjutkan");
+});
+
+test("claimTask sends the takeover reason to Factory", async () => {
+  const fetchImpl = fakeFetch([
+    (call) => (call.url.endsWith("/api/work") && call.method === "POST" ? json({ session: { id: "sess-9", state: "active" }, tookOver: true }) : null),
+  ]);
+
+  await claimTask(CONFIG, {
+    recordId: "11111111-1111-4111-8111-111111111111",
+    device: { id: "d1", name: "box", platform: "win32", agent: "agent" },
+    step: "Lanjut",
+    takeoverReason: "Pemilik lama offline 3 hari, saya lanjutkan.",
+  }, fetchImpl);
+
+  assert.strictEqual(fetchImpl.calls[0].body.takeoverReason, "Pemilik lama offline 3 hari, saya lanjutkan.");
+});
+
+test("a refused request exposes the parsed body and status", async () => {
+  const fetchImpl = fakeFetch([
+    (call) => (call.url.endsWith("/api/work") ? json({ error: "butuh alasan", takeoverRequired: true, holder: { deviceName: "MMCH", agent: "Codex", lastSeenAt: "2026-10-28T00:00:00.000Z" } }, 409) : null),
+  ]);
+
+  await assert.rejects(
+    () => claimTask(CONFIG, { recordId: "11111111-1111-4111-8111-111111111111", device: { id: "d1" } }, fetchImpl),
+    (error) => {
+      assert.strictEqual(error.status, 409);
+      assert.strictEqual(error.body.takeoverRequired, true);
+      assert.strictEqual(error.body.holder.deviceName, "MMCH");
+      return true;
+    },
+  );
+});
+
 test("updateTaskStatus moves a task with move_task", async () => {
   const fetchImpl = fakeFetch([
     (call) => (call.url.endsWith("/api/factory") ? json({ ok: true, runId: null }) : null),

@@ -262,14 +262,18 @@ export function planStatusTransition(status) {
 }
 
 /** Payload for POST /api/work { action: "start" }. */
-export function buildWorkStartPayload({ taskId, device, step, clientSession, now = null } = {}) {
+export function buildWorkStartPayload({ taskId, device, step, takeoverReason, clientSession, now = null } = {}) {
   if (!taskId) throw new Error("taskId is required to start a work session.");
   if (!device?.id) throw new Error("A device with an id is required to start a work session.");
+  // Alasan yang hanya berisi spasi dianggap tidak ada, jadi Factory tetap
+  // menjawab dengan permintaan alasan takeover, bukan pesan format.
+  const reason = typeof takeoverReason === "string" ? takeoverReason.trim() : "";
   return {
     action: "start",
     taskId,
     device,
     step: String(step || "Working on the task").slice(0, 240),
+    ...(reason ? { takeoverReason: reason } : {}),
     ...(clientSession?.id ? { clientSession: { id: String(clientSession.id).slice(0, 120), title: String(clientSession.title || "").slice(0, 200) } } : {}),
     ...(now ? { now } : {}),
   };
@@ -352,7 +356,12 @@ async function request(config, path, { method = "GET", body, fetchImpl = fetch }
 
   if (!response.ok) {
     const detail = parsed.error || parsed.message || text || response.statusText;
-    throw new Error(`Factory request failed (HTTP ${response.status}): ${detail}`);
+    // Body dan status ikut dibawa ke pemanggil, supaya penolakan takeover
+    // bisa diterjemahkan jadi arahan yang bisa dijalankan.
+    const error = new Error(`Factory request failed (HTTP ${response.status}): ${detail}`);
+    error.status = response.status;
+    error.body = parsed;
+    throw error;
   }
 
   return parsed;
@@ -399,13 +408,14 @@ export async function findTask(config, taskId, fetchImpl = fetch) {
  * Claims a task by opening a work session, which is what makes it `running` in
  * the Factory UI.
  */
-export async function claimTask(config, { recordId, device, step } = {}, fetchImpl = fetch) {
+export async function claimTask(config, { recordId, device, step, takeoverReason } = {}, fetchImpl = fetch) {
   if (!recordId) throw new Error("recordId is required to claim a task.");
 
   const payload = buildWorkStartPayload({
     taskId: recordId,
     device: device || deviceFromConfig(config),
     step,
+    takeoverReason,
     clientSession: clientSessionFromConfig(config),
   });
   const body = await request(config, "/api/work", { method: "POST", body: payload, fetchImpl });

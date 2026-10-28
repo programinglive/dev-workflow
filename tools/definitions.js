@@ -436,7 +436,7 @@ export function getToolList() {
     {
       name: "claim_factory_task",
       description:
-        "Claim a task by opening a Factory work session. This is what moves the task to 'running' on the board, because Factory has no plain status edit for it. Also starts the local workflow for that task. Use the task id from list_factory_tasks.",
+        "Claim a task by opening a Factory work session. This is what moves the task to 'running' on the board, because Factory has no plain status edit for it. Also starts the local workflow for that task. Use the task id from list_factory_tasks. If the task is held by another device, pass 'takeoverReason' to take it over; Factory records that reason on the board and locks the previous holder out.",
       inputSchema: {
         type: "object",
         properties: {
@@ -447,6 +447,11 @@ export function getToolList() {
           step: {
             type: "string",
             description: "Short description of what you are about to do, shown on the device row (max 240 chars).",
+          },
+          takeoverReason: {
+            type: "string",
+            description:
+              "Alasan mengambil alih task yang sedang dipegang perangkat lain (3-500 karakter). Wajib diisi hanya bila task itu dipegang perangkat lain. Alasannya dicatat di papan.",
           },
         },
         required: ["recordId"],
