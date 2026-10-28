@@ -4,6 +4,7 @@ Authoritative history of user-visible changes for the Development Workflow MCP S
 
 | Version | Date | Notes |
 |---------|------|-------|
+| 1.12.2 | 2026-10-28 | **release:** catat rilis 1.12.1 (3beaa23) |
 | 1.12.1 | 2026-10-28 | **release:** catat rilis 1.12.0 (bb8624b) |
 | 1.12.0 | 2026-10-28 | See CHANGELOG for details. |
 | 1.11.0 | 2026-10-28 | See CHANGELOG for details. |
@@ -62,6 +63,14 @@ Authoritative history of user-visible changes for the Development Workflow MCP S
 
 
 
+
+
+## 1.12.2 – 📝 Documentation
+
+Released on **2026-10-28**.
+
+- **release:** catat rilis 1.12.1 (3beaa23)
+- **state:** ambil identitas sesi dari request metadata, bukan env (f879938)
 
 ## 1.12.1 – 📝 Documentation
 
