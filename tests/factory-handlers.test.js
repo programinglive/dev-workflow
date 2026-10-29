@@ -21,6 +21,7 @@ const WORKSPACE = {
       title: "Sambungkan MCP ke Factory",
       description: "",
       acceptance: "npm test hijau",
+      definitionOfDone: "- [ ] sesi kerja tercatat",
       priority: "high",
       status: "running",
       createdAt: "2026-10-26T00:00:00.000Z",
@@ -40,6 +41,7 @@ const WORKSPACE = {
       projectId: "p1",
       title: "Task backlog",      description: "",
       acceptance: "selesai",
+      definitionOfDone: "- [ ] tes lulus",
       priority: "normal",
       status: "backlog",
       createdAt: "2026-10-25T00:00:00.000Z",
@@ -216,6 +218,7 @@ test("claim handler opens a work session and starts the local workflow", async (
 
     assert.match(out, /Claimed/);
     assert.match(out, /running/);
+    assert.match(out, /Definition of done:\n- \[ \] tes lulus/, "kriteria selesai harus terbaca sebelum bekerja");
     assert.strictEqual(workflowState.state.currentPhase, "coding");
     assert.match(workflowState.state.taskDescription, /Sambungkan MCP ke Factory|Task backlog/);
     assert.strictEqual(saved.length, 1);

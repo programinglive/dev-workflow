@@ -149,6 +149,7 @@ export async function handleClaimFactoryTask(args = {}, { workflowState } = {}) 
           : "",
         `Factory status is now running (work session ${session.id}).`,
         task.projectName ? `Project: ${task.projectName}` : "",
+        task.definitionOfDone ? `Definition of done:\n${task.definitionOfDone}` : "",
         "",
         "Local workflow started for this task.",
         "Use 'sync_task_status' with review, blocked or paused to close the session, or done to approve the task once it is in review.",
@@ -241,6 +242,7 @@ export async function handleCreateFactoryTask(args = {}) {
 
   const title = typeof args.title === "string" ? args.title.trim() : "";
   const acceptance = typeof args.acceptance === "string" ? args.acceptance.trim() : "";
+  const definitionOfDone = typeof args.definitionOfDone === "string" ? args.definitionOfDone.trim() : "";
 
   if (!title) {
     return textResponse("Provide 'title' for the task (3-140 characters).");
@@ -250,6 +252,17 @@ export async function handleCreateFactoryTask(args = {}) {
       [
         "Provide 'acceptance': what must be true for this task to count as done.",
         "Factory requires it, and it is what the next person checks.",
+      ].join("\n"),
+    );
+  }
+  if (!definitionOfDone) {
+    return textResponse(
+      [
+        "Provide 'definitionOfDone': the checklist that must be true before this task can be marked done.",
+        "Use one condition per line, for example:",
+        "- [ ] build lulus",
+        "- [ ] halaman login terverifikasi",
+        "It is stored separately from 'acceptance', which also carries the ```run block for the worker.",
       ].join("\n"),
     );
   }
@@ -265,6 +278,7 @@ export async function handleCreateFactoryTask(args = {}) {
       title,
       description: args.description,
       acceptance,
+      definitionOfDone,
       priority: args.priority,
       status: args.status,
     });

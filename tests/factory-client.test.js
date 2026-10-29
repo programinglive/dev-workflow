@@ -445,6 +445,14 @@ test("formatTaskList does not pretend there is work", () => {
   assert.match(formatTaskList([]), /no tasks/i);
 });
 
+test("formatTaskList shows the definition of done so the agent can read it before claiming", () => {
+  const out = formatTaskList([
+    { taskKey: "abc12345", title: "Tambah DoD", status: "backlog", priority: "normal", definitionOfDone: "- [ ] build lulus\n- [ ] bukti diunggah" },
+  ]);
+
+  assert.match(out, /DoD: - \[ \] build lulus/);
+});
+
 // ---------------------------------------------------------------------------
 // HTTP behaviour
 // ---------------------------------------------------------------------------

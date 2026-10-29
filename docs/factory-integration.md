@@ -264,6 +264,7 @@ Truncation happens before the request, so a long summary cannot cause a 400.
   "status": "running",
   "priority": "high",
   "projectName": "programinglive/dev-workflow-mcp-server",
+  "definitionOfDone": "- [ ] build lulus\n- [ ] halaman login terverifikasi",
   "work": {
     "id": "f14531c5-…",
     "state": "active",
@@ -272,6 +273,12 @@ Truncation happens before the request, so a long summary cannot cause a 400.
   }
 }
 ```
+
+`definitionOfDone` adalah checklist kondisi yang harus benar sebelum task boleh
+ditutup. `formatTaskList` menampilkannya sebagai baris `DoD:`, dan
+`claim_factory_task` menyertakannya di keluaran klaim supaya agen membacanya
+sebelum bekerja. `acceptance` tetap terpisah: itu syarat diterima plus blok
+` ```run ` yang dieksekusi worker.
 
 Ordering is status first (`running` → `queued` → `backlog` → `review` →
 `blocked` → `done` → `cancelled`), then priority (`high` → `normal` → `low`).

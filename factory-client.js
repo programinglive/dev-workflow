@@ -229,6 +229,7 @@ export function mapTaskRecord(record = {}, projects = []) {
     projectName: byId.get(record.projectId) ?? null,
     description: record.description || null,
     acceptance: record.acceptance || null,
+    definitionOfDone: record.definitionOfDone || null,
     createdAt: record.createdAt ?? null,
     updatedAt: record.updatedAt ?? null,
     work: work
@@ -274,6 +275,7 @@ export function formatTaskList(tasks = []) {
       lines.push(`   active session${who}${task.work.step ? `: ${task.work.step}` : ""}`);
     }
     if (task.acceptance) lines.push(`   acceptance: ${firstLine(task.acceptance)}`);
+    if (task.definitionOfDone) lines.push(`   DoD: ${firstLine(task.definitionOfDone)}`);
   });
 
   return lines.join("\n");
@@ -580,6 +582,7 @@ export async function createTask(config, input = {}, fetchImpl = fetch) {
   const title = clean(input.title) || "";
   const description = clean(input.description) || "";
   const acceptance = clean(input.acceptance) || "";
+  const definitionOfDone = clean(input.definitionOfDone) || "";
   const priority = clean(input.priority) || "normal";
   const status = clean(input.status) || "backlog";
 
@@ -591,6 +594,11 @@ export async function createTask(config, input = {}, fetchImpl = fetch) {
   if (acceptance.length < 3 || acceptance.length > 3000) {
     throw new Error("acceptance must be 3-3000 characters and should state what proves the work is done.");
   }
+  if (definitionOfDone.length < 3 || definitionOfDone.length > 3000) {
+    throw new Error(
+      "definitionOfDone must be 3-3000 characters and must list what proves the task is done, for example '- [ ] build lulus'.",
+    );
+  }
   if (description.length > 4000) throw new Error("description must be at most 4000 characters.");
   if (!CREATABLE_PRIORITIES.includes(priority)) {
     throw new Error(`priority must be one of: ${CREATABLE_PRIORITIES.join(", ")}.`);
@@ -601,7 +609,7 @@ export async function createTask(config, input = {}, fetchImpl = fetch) {
 
   const body = await request(config, "/api/factory", {
     method: "POST",
-    body: { action: "create_task", task: { projectId, title, description, acceptance, priority, status } },
+    body: { action: "create_task", task: { projectId, title, description, acceptance, definitionOfDone, priority, status } },
     fetchImpl,
   });
 
