@@ -207,3 +207,145 @@ projectRoot adalah direktori yang memuat berkas itu.
 Sisa risiko yang masih ada: `resolveHistoryFile()` menganggap berkas berada di
 tata letak user bila induk dari induknya bernama `users`. Itu benar untuk
 kedalaman sekarang; kalau struktur user berubah, aturan itu perlu ditinjau.
+
+
+---
+
+# Penulis basi tidak boleh menang (dikerjakan 29 Oktober 2026)
+
+Bagian sebelumnya memisahkan state **per sesi**. Itu belum cukup: satu sesi bisa
+dilayani **lebih dari satu proses MCP** sekaligus, dan proses yang memegang state
+lama masih bisa menimpa task yang lebih baru.
+
+## Masalah
+
+Kejadian 29 Oktober 2026, saat mencatat evaluasi Scion:
+
+1. `start_task` menjawab `✅ Task Started: Pindahkan klien Factory ke tools...`
+   dengan deskripsi yang benar.
+2. `get_workflow_status` berikutnya menampilkan task **yang sama sekali lain**
+   (`[a5124498] Siapkan runner Factory rootless...`).
+3. `create_tests` menjawab sukses, lalu `run_tests` menjawab
+   *"Please mark your feature/bug as fixed first"* - padahal
+   `mark_bug_fixed` sudah sukses.
+
+Gejalanya bukan "history hilang", melainkan **dua panggilan berurutan membaca
+task yang berbeda**.
+
+### Bukti
+
+Di mesin ini ada **tiga** proses `node ...dev-workflow-mcp-server\index.js`
+dengan induk yang sama (`13220`), dijalankan 12:53 dan 19:35. Berkas state sesi
+yang sama ditulis bergantian oleh proses-proses itu:
+
+```
+ses_e78531efdffdTwpNXPlkD2X322 | coding | '[a5124498] Siapkan runner Factory rootless...'
+ses_e9e08865dffd6fT72KVGYg4n6F | coding | '[db4468aa] Perbaiki TypeError Livewire...'
+```
+
+Proses yang memegang state dari pukul 13:01 menulis lagi pukul 20:20, menimpa
+task yang baru dibuat.
+
+### Reproduksi
+
+Dua proses pada satu berkas state, tanpa MCP:
+
+```
+holder: loaded phase=idle task=""
+worker: saved task="[NEW] task yang benar-benar dikerjakan"
+holder: saved. reconciled={"preservedTask":"[NEW] task yang benar-benar dikerjakan","foreignToken":"proc-26236-..."}
+holder: final on-disk task="[STALE] task dari proses basi"     <-- penulis basi MENANG
+```
+
+Task yang tertimpa memang masuk `history` sebagai `interrupted`, tetapi:
+
+- task yang lebih baru **tetap hilang** dari state aktif, dan
+- pemanggil tetap diberi tahu **"berhasil"**.
+
+## Akar masalah
+
+`save()` menulis seluruh state di memori tanpa memeriksa apakah isi disk berubah
+sejak terakhir dimuat. Rekonsiliasi yang ada hanya menyelamatkan `history` dan
+mengarsipkan task asing; ia **tidak mencegah** penimpaan, dan tidak ada
+verifikasi sesudah menulis.
+
+## Yang diperbaiki
+
+### 1. Penulis basi tidak menang
+
+`WorkflowState` mengingat `loadedTask` - task yang terakhir dibaca dari atau
+ditulis ke disk. `save()` menolak menimpa bila **semua** ini benar:
+
+- disk memuat task yang sedang berjalan (`currentPhase !== "idle"`),
+- task di disk **bukan** task yang terakhir kita muat (jadi ditulis orang lain
+  sesudah kita membaca),
+- task di disk **bukan** task yang akan kita tulis,
+- pemanggil tidak menyatakan maksud mengganti task.
+
+Saat konflik, instance yang basi **mengadopsi** state dari disk, sehingga langkah
+berikutnya tidak lagi memakai task usang.
+
+### 2. `start_task` tetap boleh mengganti task
+
+Mengganti task adalah maksud `start_task`, jadi ia memakai
+`save({ allowReplaceRunningTask: true })`. Task yang diganti tetap diarsipkan
+`reconcileWithDisk` sebagai `interrupted`, bukan dihapus.
+
+### 3. Sukses palsu dihapus
+
+Sesudah menulis, `save()` membaca ulang berkas dan membandingkan
+`taskDescription`. Kalau berbeda, ia **melempar**:
+
+```
+State workflow tidak bertahan: yang ditulis "<X>" tetapi di disk "<Y>".
+Proses MCP lain menimpanya. Muat ulang state sebelum melanjutkan.
+```
+
+Lebih baik gagal terang-terangan daripada melaporkan "berhasil" untuk state yang
+sudah ditimpa.
+
+### 4. Semua tool memberi tahu, bukan sebagian
+
+`handleToolCall` menempelkan peringatan ke respons tool mana pun bila
+penyimpanan terakhir kalah:
+
+```
+⚠️ STATE TIDAK TERSIMPAN - proses MCP lain memulai task lebih baru.
+   Task di disk : "<task di disk>"
+   Task Anda    : "<task Anda>"
+   State Anda sudah dimuat ulang dari disk, jadi langkah berikutnya mengikuti task di disk.
+```
+
+## Cara memverifikasi
+
+```bash
+node --no-deprecation --test tests/stale-write-guard.test.js   # 5 tes
+node --no-deprecation --test                                    # 323 tes
+```
+
+Yang dikunci `tests/stale-write-guard.test.js`:
+
+1. penulis basi tidak menimpa task berjalan yang lebih baru;
+2. setelah konflik, instance basi memakai state dari disk;
+3. `start_task` tetap boleh mengganti task dan mengarsipkan yang lama;
+4. `verifyPersisted()` melempar kalau isi disk bukan yang kita tulis;
+5. penulisan berurutan di sesi yang sama **tidak** dianggap konflik.
+
+## Sisa risiko
+
+**Beberapa proses MCP untuk satu sesi masih terjadi.** Perbaikan ini membuatnya
+aman (tidak ada penimpaan diam-diam), tetapi tidak menguranginya. Penyebabnya di
+luar kode ini: OpenCode menjalankan lebih dari satu instance server MCP yang
+sama. Selama itu terjadi, setiap tool bisa mendarat di proses yang berbeda.
+
+**Cadangan identitas sesi masih memakai env.** Bila
+`_meta["ai.opencode/sessionID"]` tidak ada, `resolveSessionKey()` memakai
+`OPENCODE_SESSION_ID`, lalu `pid-<pid>`. Keduanya milik **proses**, bukan
+panggilan. Pada mesin dengan beberapa proses, panggilan tanpa metadata bisa
+masuk ke berkas sesi lain. Guard di atas tidak menangkapnya karena kedua pihak
+menganggap dirinya benar. Belum ada bukti kejadian ini, tetapi belum tertutup.
+
+**Rotasi setelah selesai.** `commit_and_push` dan `complete_task` masih membaca
+`taskDescription` dari state di memori. Kalau konflik terjadi tepat di antara
+`check_ready_to_commit` dan `commit_and_push`, commit bisa memakai pesan task
+yang salah. Peringatan di respons adalah jaringnya, bukan pencegahan.
