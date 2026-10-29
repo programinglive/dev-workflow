@@ -329,6 +329,11 @@ test("sync handler finishes the session for review", async () => {
 
     assert.match(out, /Updated/);
     assert.match(out, /review/);
+    assert.match(
+      out,
+      /Definition of done:\n- \[ \] sesi kerja tercatat/,
+      "checklist harus dibaca lagi saat melaporkan selesai, bukan hanya saat claim",
+    );
     const finish = stub.calls.find((call) => call.url.endsWith("/api/work"));
     assert.strictEqual(finish.body.action, "finish");
     assert.strictEqual(finish.body.deviceId, DEVICE_ID);
