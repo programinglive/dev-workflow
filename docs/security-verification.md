@@ -110,12 +110,22 @@ npm test fixture also reproduced Windows ENOENT; release tooling now invokes the
 fixed package-manager test command through cmd on Windows and honors the supplied
 working directory. No production credentials or database were used.
 
-Before upstream integration: full suite 251 passed, 2 external DB skips; focused
-security suite 42 passed; server and static dashboard build passed; dashboard lint
-zero errors (20 existing warnings). Remote main has additional session-isolation
-and Factory changes through f6a7e02 / package 1.12.3; integrate and reverify before
-release. Docker is unavailable locally, so live SQL and API staging remain rollout
-checks. Publishing the npm package does not deploy those web services.
+Integrated upstream f6a7e02 / package 1.12.3, preserving session isolation, explicit
+Git project resolution, Factory heartbeat and task definitions. Its failing stdio
+metadata test reproduced the eager creation of a PID fallback at startup. State is
+now loaded only after request session selection; the existing E2E test passes.
+The new shared-history writer also gets an independent persistence guard, verified
+by a failing-then-passing unsafe-write regression.
+
+After integration: full suite 316 passed, 2 external DB skips; server and static
+dashboard build passed; source syntax lint passed (103 files); dashboard lint zero
+errors (20 existing warnings). Docker is unavailable locally, so live SQL and API
+staging remain rollout checks. Publishing npm does not deploy those web services.
+
+Compatibility: browser authentication now uses an HttpOnly cookie instead of a
+JSON token; custom browser clients must send credentials and handle CORS. Existing
+Bearer authentication remains accepted. Deployment must provide explicit signing
+secrets and runtime DB configuration; insecure fallback secrets are rejected.
 
 The changes reduce concrete leakage paths. Passing tests does not establish that
 the system is universally secure or ready for unrestricted production credentials.

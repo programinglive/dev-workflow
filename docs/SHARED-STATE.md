@@ -103,3 +103,107 @@ node --no-deprecation --test tests/shared-state.test.js
    `commit_and_push`. Kalau bukan task Anda, batalkan dan commit manual.
 2. Kalau melihat peringatan "state dipakai bersama", artinya ada sesi lain aktif
    di direktori kerja yang sama.
+
+---
+
+# Isolasi penuh per sesi (opsi a, dikerjakan 28 Oktober 2026)
+
+Bagian di atas adalah **mitigasi**. Bagian ini adalah perbaikannya.
+
+Kendala yang dulu disebut di sini - "server MCP perlu identitas sesi yang
+stabil, yang belum tersedia" - ternyata sudah tidak berlaku: OpenCode
+menyuntikkan `OPENCODE_SESSION_ID` ke environment server MCP. Buktinya papan
+Factory mencatat `clientSession.id = ses_...` dari variabel itu.
+
+## Tata letak berkas sekarang
+
+```
+<root>/.state/users/<user-id>/workflow-state.json                  -> history PROYEK
+<root>/.state/users/<user-id>/workflow-state.<sesi>.json           -> task SESI
+```
+
+- **State sesi** memuat task yang sedang dikerjakan beserta gerbangnya
+  (`testsPassed`, `readyCheckCompleted`, `documentationCreated`, dan seterusnya).
+- **History bersama** memuat catatan task yang sudah selesai, dari sesi mana pun.
+
+Identitas sesi diambil dari **request metadata** yang dikirim OpenCode pada
+setiap panggilan tool:
+
+```
+CallToolRequest.params._meta["ai.opencode/sessionID"]
+```
+
+Itu sumber yang benar karena melekat pada panggilan, bukan pada proses. Satu
+proses MCP bisa melayani beberapa sesi bergantian, jadi identitas per proses
+tidak cukup.
+
+Cadangan berurutan bila metadata tidak ada: `DEV_WORKFLOW_SESSION_ID`,
+`OPENCODE_SESSION_ID`, `CLIENT_SESSION_ID`, lalu `pid-<pid>`.
+
+### Koreksi: percobaan pertama memakai env dan tidak bekerja
+
+Versi pertama hanya membaca env. OpenCode tidak menjamin variabel itu ada di
+proses MCP, sehingga hampir semua berkas jatuh ke `pid-<pid>`. Karena satu
+proses dipakai bergantian, sesi-sesi itu **tetap** berbagi satu berkas dan
+saling menimpa. Gejalanya: task milik sesi lain muncul di `get_workflow_status`
+milik sesi sendiri.
+
+Sekarang identitas datang dari metadata, dan `handleToolCall` memanggil
+`workflowState.useSession(sessionId)` sebelum menangani tool apa pun.
+`tests/session-metadata-e2e.test.js` membuktikannya lewat transport stdio
+sungguhan: dua sesi pada satu server menghasilkan dua berkas state terpisah,
+tanpa jatuh ke `pid-`.
+
+## Apa yang berubah
+
+| Sebelum | Sesudah |
+|---|---|
+| Dua sesi berbagi satu task | Tiap sesi punya task sendiri |
+| Gerbang kualitas dibagi, sesi B bisa memakai `readyCheckCompleted` sesi A | Gerbang milik sesi, tidak bisa dipinjam |
+| `start_task` mengganti task sesi lain | Tidak menyentuh berkas sesi lain |
+| History terancam terpecah kalau state dipisah | History digabung dua arah, tanpa duplikat |
+
+## Kompatibilitas
+
+Pemanggil yang memberi path eksplisit (mis. `new WorkflowState("/tmp/x.json")`)
+tetap memakai satu berkas: `resolveHistoryFile()` hanya memisahkan history bila
+berkas berada di tata letak `.state/users/<id>/`. 15 tes `shared-state.test.js`
+lulus tanpa perubahan, dan mekanisme `interrupted` tetap ada sebagai jaring
+pengaman untuk pemakaian satu-berkas itu.
+
+## Cara memverifikasi
+
+```bash
+node --no-deprecation --test tests/session-metadata.test.js      # 7 tes metadata
+node --no-deprecation --test tests/session-metadata-e2e.test.js  # 1 tes lewat stdio
+node --no-deprecation --test tests/session-state.test.js         # 11 tes isolasi sesi
+node --no-deprecation --test tests/shared-state.test.js          # 15 tes mitigasi lama
+```
+
+Yang dikunci tes baru: dua sesi memakai berkas berbeda; task sesi A tidak
+tertimpa sesi B; gerbang kualitas tidak bisa dipinjam; history bertemu dua arah;
+history tidak berganda; identitas stabil dalam satu proses; `OPENCODE_SESSION_ID`
+dipakai; path eksplisit tetap satu berkas; history bersama ada di berkas kanonik;
+`projectRoot` dikenali dari letak `.state` dan tidak bergantung pada kedalaman.
+
+## Sisa risiko
+
+Dulu `syncToDatabase` menghitung `projectRoot` dengan empat `dirname` berurutan.
+Itu hanya benar selama tata letaknya tepat `<root>/.state/users/<user>/<berkas>`.
+Begitu kedalaman berubah, angka itu diam-diam menghasilkan root yang salah dan
+baris database tercatat di proyek lain.
+
+Sekarang diganti `resolveProjectRootForState()`: naik sampai menemukan
+direktori `.state`, lalu ambil induknya. Tidak bergantung pada kedalaman.
+
+```
+<root>/.state/users/u/workflow-state.json                  -> <root>   (sama)
+<root>/.state/users/u/sessions/s1/workflow-state.json      -> <root>   (lama: <root>/.state/users, SALAH)
+```
+
+Untuk berkas di luar tata letak `.state` (mis. path eksplisit untuk tes),
+projectRoot adalah direktori yang memuat berkas itu.
+
+Sisa risiko yang masih ada: `resolveHistoryFile()` menganggap berkas berada di
+tata letak user bila induk dari induknya bernama `users`. Itu benar untuk
+kedalaman sekarang; kalau struktur user berubah, aturan itu perlu ditinjau.

@@ -4,12 +4,13 @@ import { safeLog, securityOutputFilter } from '../../security/sanitizer.js';
 import { securityAudit } from '../../security/audit.js';
 import path from 'node:path';
 import { assertSafeToolCommand } from '../../security/commands.js';
+import { sessionKeyFromRequest } from "../../workflow-state.js";
 import { handleStartTask, handleMarkBugFixed, handleCreateTests, handleSkipTests, handleRunTests, handleCreateDocumentation, handleCreateFeatureFlow } from "./workflow-handlers.js";
 import { handleSkipRelease, handlePerformRelease } from "./release-handlers.js";
 import { handleCommitAndPush, handleCompleteTask, handleForceCompleteTask, handleDropTask } from "./commit-handlers.js";
 import { handleProjectSummary, handleProjectSummaryData, handleProjectSummaryDb, handleViewHistory } from "./summary-handlers.js";
 import { handleGetWorkflowStatus, handleReadyCheck, handleContinueWorkflow, handleRerunWorkflow } from "./status-handlers.js";
-import { handleListFactoryTasks, handleClaimFactoryTask, handleSyncTaskStatus, handleListFactoryProjects, handleCreateFactoryTask } from "./factory-handlers.js";
+import { handleListFactoryTasks, handleClaimFactoryTask, handleSyncTaskStatus, handleListFactoryProjects, handleCreateFactoryTask, handleUpdateFactoryTask } from "./factory-handlers.js";
 
 function summarizeResponse(label, response) {
   const text = response?.content?.[0]?.text || "";
@@ -171,6 +172,14 @@ async function dispatchToolCall({
 }) {
   try {
     const { name } = request.params;
+
+    // Identitas sesi datang dari request metadata, bukan dari environment.
+    // Tanpa ini, satu proses MCP yang dipakai bergantian oleh beberapa sesi
+    // akan berbagi satu state dan saling menimpa task.
+    const sessionId = sessionKeyFromRequest(request);
+    if (sessionId && workflowState?.useSession) {
+      await workflowState.useSession(sessionId);
+    }
     const { args, error: argumentsError } = normalizeRequestArgs(request.params.arguments);
 
     if (argumentsError) {
@@ -236,6 +245,8 @@ async function dispatchToolCall({
         return handleListFactoryProjects(args);
       case "create_factory_task":
         return handleCreateFactoryTask(args);
+      case "update_factory_task":
+        return handleUpdateFactoryTask(args);
       case "claim_factory_task":
         return handleClaimFactoryTask(args, { workflowState });
       case "sync_task_status":

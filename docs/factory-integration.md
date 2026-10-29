@@ -6,6 +6,8 @@ Three MCP tools connect this server to the Factory board at
 | Tool | Direction | Endpoint |
 |---|---|---|
 | `list_factory_tasks` | read | `GET /api/factory` |
+| `create_factory_task` | write | `POST /api/factory` (`action: create_task`) |
+| `update_factory_task` | write | `POST /api/factory` (`action: update_task`) |
 | `claim_factory_task` | write | `POST /api/work` (`action: start`) |
 | `sync_task_status` | write | `POST /api/work` (`action: finish`) or `POST /api/factory` (`action: move_task`) |
 
@@ -47,7 +49,8 @@ FACTORY_TOKEN=<activity_users token>
 | `FACTORY_PASSWORD` | — | Password for that account. |
 | `FACTORY_PB_URL` | `https://pocketbase.programinglive.com` | Where the token is obtained. |
 | `FACTORY_MACHINE_ID` | hostname | Device name shown on the board (max 100 chars). |
-| `FACTORY_DEVICE_ID` | derived from the name | Fixed device UUID (max 60 chars, must be a UUID). |
+| `FACTORY_DEVICE_ID` | - | Fixed device UUID. Wins over the shared device file. |
+| `FACTORY_DEVICE_FILE` | `~/.config/programinglive-factory/device.json` | Device identity shared with the Factory CLI. |
 | `FACTORY_AGENT` | `dev-workflow-mcp` | Agent label stored on the session (max 40 chars). |
 
 ### Why `activity_users` and not a superuser
@@ -128,9 +131,30 @@ whole design:
 
 `sync_task_status` enforces this:
 
+- `review` → **refused when the latest lifecycle event for the task is a
+  `work.review` or `task.done`**. Factory reads a second review as an approval,
+  so repeating it moves the task to `done` without a human decision. This
+  happened on 29 October 2026: a session left in `review` while the board still
+  showed `backlog` meant the next `review` report approved the task. The client
+  now stops before the network call and tells the caller to ask the owner for
+  `done` (or to send the task back to `backlog`). A later `work.paused` event
+  clears the block, so rework can be reported again.
 - `running` → rejected: *"Use claim_factory_task… Factory records that as a work session, not a status edit."*
 - `done` → sent as `move_task`. Factory accepts it **only** when the task is
   currently in `review`, and requires a reason; otherwise it answers `409`.
+  Factory also answers `409` while the task's `definitionOfDone` is empty, so a
+  task created before that field existed must be completed with
+  `update_factory_task` first.
+- `done` / `cancelled` → the reason **must** travel in the `move_task` body
+  (trimmed, max 500). Factory rejects a close without it:
+  *"Alasan wajib diisi (minimal 3 karakter)…"*. Before this was fixed the reason
+  was dropped, so closing any task from MCP failed with HTTP 400 — and because
+  the handler returns text instead of throwing, the failure looked like success
+  to a caller that did not read the response.
+- `backlog` **from `review`** → rejected with `409`. `move_task` only moves
+  tasks that are currently `backlog` or `queued`. To send a reviewed task back
+  to the backlog, finish a work session with `outcome=paused` (see the note
+  below); that is the only supported path.
 - unknown value → rejected, listing the accepted statuses
 - `review` / `blocked` / `paused` **without an active session** → rejected with
   "no active work session. Use claim_factory_task first"
@@ -144,12 +168,31 @@ task-status list.
 ## 3. Typical flow
 
 ```
-list_factory_tasks                      → pick a task, note its id
+list_factory_tasks                      → pick a task, note its id and its DoD
 claim_factory_task { recordId, step }    → task becomes running, session opens
 … work …
 sync_task_status { recordId, status: "review", reason: "…" }
                                          → session closes, task waits for approval
 ```
+
+Before claiming, read the task's `definitionOfDone`: that checklist is what the
+owner will check when approving. If a task has none (it was created before the
+field existed), fill it with `update_factory_task` — otherwise `done` is
+rejected with `409` no matter how much evidence the summary carries.
+
+### Filling a missing definition of done
+
+```
+update_factory_task {
+  recordId: "<uuid>",
+  definitionOfDone: "- [ ] build lulus\n- [ ] halaman login terverifikasi"
+}
+```
+
+The tool reads the task's current version first and sends it as
+`expectedUpdatedAt`. If another session changed the task in between, Factory
+answers `409` and the tool tells the agent to reload instead of overwriting that
+change.
 
 ### Taking over a task held by another device
 
@@ -187,10 +230,41 @@ record of why the work changed hands.
 
 ### Device identity
 
-Factory keys work sessions by device UUID. A random UUID per process would create
-a new device row on every run, so `deviceIdFor(name)` derives a stable
-UUIDv5-shaped id from `FACTORY_MACHINE_ID` (or the hostname). Same machine →
-same row, no state file needed. `FACTORY_DEVICE_ID` overrides it.
+Factory keys work sessions by device UUID. The MCP server and the Factory CLI
+must agree on that UUID, otherwise one machine shows up as two devices and a
+task held by the other tool looks like another machine's work.
+
+Both therefore read the same file: `FACTORY_DEVICE_FILE`, defaulting to
+`~/.config/programinglive-factory/device.json` (the file the CLI writes, mode
+0600). Whichever tool runs first creates it; the other adopts that id.
+`FACTORY_DEVICE_ID` still overrides everything, and `deviceIdFor(name)` is the
+last-resort fallback when the file cannot be read or created.
+
+A session is resumed silently only when **both** the device id and the agent
+match. Sharing a machine is not the same as being the same worker: the CLI
+reports as `Codex` and the MCP server as its configured `FACTORY_AGENT`, so
+taking a task from the other tool on the same machine still needs a takeover
+reason.
+
+### Keeping a session alive
+
+Factory marks a session stale after 120 seconds without a report. A claimed
+task that never reports looks abandoned on the board even while the work
+continues, which is why the MCP server used to show every task it took as
+"no news" almost immediately.
+
+`session-keeper.js` reports a heartbeat every 60 seconds for the session this
+process opened. It is deliberately bounded:
+
+- it reports only for a session this process claimed, never someone else's;
+- it stops the moment the session is finished through `sync_task_status`;
+- it stops on `409`/`404`, which mean the session ended or another device took
+  it over — retrying would fight the new holder;
+- the timer is `unref()`ed, so it never keeps the process alive. A session
+  that outlives the process is exactly what "stale" is for.
+
+A heartbeat that outlived the claim would lie in the opposite direction,
+showing "active" for work nobody is doing.
 
 ---
 
@@ -222,6 +296,7 @@ Truncation happens before the request, so a long summary cannot cause a 400.
   "status": "running",
   "priority": "high",
   "projectName": "programinglive/dev-workflow-mcp-server",
+  "definitionOfDone": "- [ ] build lulus\n- [ ] halaman login terverifikasi",
   "work": {
     "id": "f14531c5-…",
     "state": "active",
@@ -230,6 +305,12 @@ Truncation happens before the request, so a long summary cannot cause a 400.
   }
 }
 ```
+
+`definitionOfDone` adalah checklist kondisi yang harus benar sebelum task boleh
+ditutup. `formatTaskList` menampilkannya sebagai baris `DoD:`, dan
+`claim_factory_task` menyertakannya di keluaran klaim supaya agen membacanya
+sebelum bekerja. `acceptance` tetap terpisah: itu syarat diterima plus blok
+` ```run ` yang dieksekusi worker.
 
 Ordering is status first (`running` → `queued` → `backlog` → `review` →
 `blocked` → `done` → `cancelled`), then priority (`high` → `normal` → `low`).
