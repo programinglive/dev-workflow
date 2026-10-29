@@ -1,6 +1,11 @@
 export function getToolList() {
   return [
     {
+      name:'security_audit',
+      description:'Audit current project knowledge, files, runtime configuration metadata and scoped database rows. Returns sanitized findings only; does not resolve credentials or read protected file contents.',
+      inputSchema:{type:'object',properties:{},additionalProperties:false},
+    },
+    {
       name: "start_task",
       description:
         "Start a new coding task. This is the first step - be conscious about what you're coding.",
@@ -10,6 +15,10 @@ export function getToolList() {
           description: {
             type: "string",
             description: "Clear description of what you're going to code",
+          },
+          classification: {
+            type:'string',enum:['PUBLIC','INTERNAL','CONFIDENTIAL','SECRET'],
+            description:'Knowledge sensitivity. Defaults to INTERNAL. SECRET input is denied; supply a SecretReference instead.',
           },
           type: {
             type: "string",

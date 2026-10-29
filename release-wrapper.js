@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { safeLog } from './security/sanitizer.js';
+import { assertSafeKnowledge } from './security/policy.js';
 
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
@@ -74,7 +76,7 @@ async function main() {
   const additionalArgs = process.argv.slice(3).filter((arg) => arg !== '--force');
 
   if (!RELEASE_TYPES.has(releaseTypeArg)) {
-    console.error(
+    safeLog('error',
       '❌ Release guard: expected release type argument (major | minor | patch). Example: npm run release:patch'
     );
     process.exit(1);
@@ -83,14 +85,14 @@ async function main() {
   const repoRoot = process.cwd();
   const projectRootCandidate = process.env.INIT_CWD || repoRoot;
   if (projectRootCandidate.includes(`node_modules${path.sep}`)) {
-    console.error('❌ Release guard: refusing to run inside node_modules.');
+    safeLog('error', '❌ Release guard: refusing to run inside node_modules.');
     process.exit(1);
   }
   const projectRoot = projectRootCandidate;
 
   const result = await loadWorkflowStateCandidates(projectRoot);
   if (!result) {
-    console.error(
+    safeLog('error',
       `❌ Release guard: cannot locate workflow state under ${path.join(projectRoot, '.state')}.
 Make sure the dev-workflow MCP is installed and you have started a task.`
     );
@@ -98,6 +100,12 @@ Make sure the dev-workflow MCP is installed and you have started a task.`
   }
 
   const { state, path: statePath } = result;
+  try {
+    assertSafeKnowledge(state);
+  } catch (error) {
+    safeLog('error', 'Release guard: unsafe legacy knowledge; remediate before releasing.', error);
+    process.exit(1);
+  }
 
   const errors = [];
   if (state.currentPhase !== 'release') {
@@ -116,20 +124,20 @@ Make sure the dev-workflow MCP is installed and you have started a task.`
   }
 
   if (errors.length && !forceFlag) {
-    console.error('❌ Release guard blocked the release:');
+    safeLog('error', '❌ Release guard blocked the release:');
     for (const message of errors) {
-      console.error(`  • ${message}`);
+      safeLog('error', `  • ${message}`);
     }
-    console.error("\nUse 'perform_release' through the dev-workflow MCP after completing the missing steps.");
-    console.error("Or use: npm run release:patch -- --force (to bypass guard)");
+    safeLog('error', "\nUse 'perform_release' through the dev-workflow MCP after completing the missing steps.");
+    safeLog('error', "Or use: npm run release:patch -- --force (to bypass guard)");
     process.exit(1);
   }
 
   if (forceFlag && errors.length) {
-    console.warn('⚠️ --force flag detected. Bypassing workflow guard.');
-    console.warn('Errors that were skipped:');
+    safeLog('warn', '⚠️ --force flag detected. Bypassing workflow guard.');
+    safeLog('warn', 'Errors that were skipped:');
     for (const message of errors) {
-      console.warn(`  • ${message}`);
+      safeLog('warn', `  • ${message}`);
     }
   }
 
@@ -138,15 +146,15 @@ Make sure the dev-workflow MCP is installed and you have started a task.`
   try {
     await fs.access(commiterReleaseScript);
   } catch {
-    console.error('❌ Release guard: @programinglive/commiter release script not found.');
-    console.error('   Ensure @programinglive/commiter is installed as a dev dependency.');
-    console.error('   Try: npm install --save-dev @programinglive/commiter');
+    safeLog('error', '❌ Release guard: @programinglive/commiter release script not found.');
+    safeLog('error', '   Ensure @programinglive/commiter is installed as a dev dependency.');
+    safeLog('error', '   Try: npm install --save-dev @programinglive/commiter');
     process.exit(1);
   }
 
   const runRelease = async () => {
     if (process.env.DEV_WORKFLOW_SKIP_RELEASE === '1') {
-      console.log('ℹ️ DEV_WORKFLOW_SKIP_RELEASE=1 detected. Skipping actual release command.');
+      safeLog('info', 'ℹ️ DEV_WORKFLOW_SKIP_RELEASE=1 detected. Skipping actual release command.');
       return 0;
     }
 
@@ -154,9 +162,13 @@ Make sure the dev-workflow MCP is installed and you have started a task.`
       const child = spawn(
         process.execPath,
         [commiterReleaseScript, releaseTypeArg, ...additionalArgs],
-        { stdio: 'inherit', cwd: repoRoot }
+        { stdio: ['ignore','pipe','pipe'], cwd: repoRoot }
       );
 
+      let output='';
+      child.stdout.on('data',chunk=>{if(output.length<1024*1024)output+=chunk.toString();});
+      child.stderr.on('data',chunk=>{if(output.length<1024*1024)output+=chunk.toString();});
+      child.on('close',()=>safeLog('info',output));
       child.on('error', (error) => reject(error));
       child.on('close', (code) => resolve(code));
     });
@@ -165,11 +177,11 @@ Make sure the dev-workflow MCP is installed and you have started a task.`
   try {
     const exitCode = await runRelease();
     if (exitCode !== 0) {
-      console.error(`❌ Release command exited with code ${exitCode}.`);
+      safeLog('error', `❌ Release command exited with code ${exitCode}.`);
       process.exit(exitCode);
     }
   } catch (error) {
-    console.error(`❌ Failed to run release command: ${error.message}`);
+    safeLog('error', `❌ Failed to run release command: ${error.message}`);
     process.exit(1);
   }
 
@@ -180,13 +192,14 @@ Make sure the dev-workflow MCP is installed and you have started a task.`
   state.currentPhase = 'ready_to_complete';
 
   try {
+    assertSafeKnowledge(state);
     await fs.writeFile(statePath, JSON.stringify(state, null, 2));
   } catch (error) {
-    console.error(`❌ Release guard: failed to update workflow state. ${error.message}`);
+    safeLog('error', `❌ Release guard: failed to update workflow state. ${error.message}`);
     process.exit(1);
   }
 
-  console.log('✅ Release recorded in workflow state. You can now run complete_task.');
+  safeLog('info', '✅ Release recorded in workflow state. You can now run complete_task.');
 }
 
 main();

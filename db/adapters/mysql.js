@@ -1,5 +1,6 @@
 import mysql from "mysql2/promise";
 import { DbAdapter } from "./base.js";
+import { assertSafeKnowledge, classify } from '../../security/policy.js';
 
 const FREQUENCY_FORMATS = {
     daily: "%Y-%m-%d",
@@ -69,6 +70,8 @@ export class MysqlAdapter extends DbAdapter {
         )
       `);
 
+            const [classificationColumns]=await conn.query("SHOW COLUMNS FROM workflow_history LIKE 'classification'");
+            if(!classificationColumns.length) await conn.query("ALTER TABLE workflow_history ADD COLUMN classification VARCHAR(20) NOT NULL DEFAULT 'INTERNAL'");
             // Indexes are effectively covered by PRIMARY/UNIQUE keys, but we can add secondary if needed.
         } finally {
             conn.release();
@@ -89,14 +92,14 @@ export class MysqlAdapter extends DbAdapter {
         // MySQL INSERT ON DUPLICATE KEY UPDATE
         const query = `
       INSERT INTO workflow_history
-      (user_id, project_path, task_description, task_type, commit_message, timestamp, forced, force_reason, dropped, drop_reason)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (user_id, project_path, task_description, task_type, commit_message, timestamp, forced, force_reason, dropped, drop_reason, classification)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON DUPLICATE KEY UPDATE
         commit_message=VALUES(commit_message),
         forced=VALUES(forced),
         force_reason=VALUES(force_reason),
         dropped=VALUES(dropped),
-        drop_reason=VALUES(drop_reason)
+        drop_reason=VALUES(drop_reason), classification=VALUES(classification)
     `;
 
         await this.pool.execute(query, [
@@ -109,7 +112,8 @@ export class MysqlAdapter extends DbAdapter {
             entry.forced ? 1 : 0,
             entry.forceReason || null,
             entry.dropped ? 1 : 0,
-            entry.dropReason || null
+            entry.dropReason || null,
+            classify(entry)
         ]);
 
         await this.updateSummaryForUser(userId, normalizedProjectPath);
@@ -120,7 +124,7 @@ export class MysqlAdapter extends DbAdapter {
         const normalizedProjectPath = projectPath || '';
 
         const [rows] = await this.pool.execute(`
-      SELECT task_type, timestamp, task_description
+      SELECT classification, task_type, timestamp, task_description
       FROM workflow_history
       WHERE user_id = ? AND project_path = ?
       ORDER BY timestamp DESC
@@ -132,7 +136,9 @@ export class MysqlAdapter extends DbAdapter {
             taskTypes[row.task_type] = (taskTypes[row.task_type] || 0) + 1;
         }
 
+        assertSafeKnowledge(rows);
         const recentTasks = rows.slice(0, 5).map(r => ({
+            classification: r.classification,
             description: r.task_description,
             type: r.task_type,
             timestamp: r.timestamp,

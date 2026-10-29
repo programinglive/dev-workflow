@@ -69,7 +69,7 @@ Update the following values:
 Example `.env`:
 ```bash
 DEV_WORKFLOW_DB_TYPE=postgres
-DEV_WORKFLOW_DB_URL=postgres://devworkflow:MySecureP@ssw0rd@postgres:5432/devworkflow
+DEV_WORKFLOW_DB_URL=postgres://USER:[REDACTED]@HOST:5432/database
 POSTGRES_PASSWORD=MySecureP@ssw0rd
 DEV_WORKFLOW_USER_ID=dhika
 NODE_ENV=production

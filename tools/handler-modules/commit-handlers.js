@@ -62,13 +62,9 @@ export async function handleCommitAndPush(args, context) {
   }
 
   try {
-    if (commitBody) {
-      await exec(
-        `git commit -m ${utils.shellEscape(generatedSummary)} -m ${utils.shellEscape(commitBody)}`
-      );
-    } else {
-      await exec(`git commit -m ${utils.shellEscape(generatedSummary)}`);
-    }
+    const commitArguments=['commit','-m',generatedSummary];
+    if(commitBody)commitArguments.push('-m',commitBody);
+    await exec('git commit',{executable:'git',arguments:commitArguments});
   } catch (error) {
     const output = error.stderr || error.stdout || error.message || "Unknown error";
     if (output.includes("nothing to commit")) {

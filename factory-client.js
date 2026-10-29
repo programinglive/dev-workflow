@@ -22,6 +22,9 @@
 
 import { createHash } from "crypto";
 import os from "os";
+import { assertSafeKnowledge } from './security/policy.js';
+import { sanitize } from './security/sanitizer.js';
+import { registerRuntimeSecret } from './security/runtime-secrets.js';
 
 export const DEFAULT_POCKETBASE_URL = "https://pocketbase.programinglive.com";
 
@@ -80,6 +83,7 @@ export function readFactoryConfig(env = process.env) {
   const email = clean(env.FACTORY_EMAIL);
   const password = clean(env.FACTORY_PASSWORD);
   if (!token && !(email && password)) return null;
+  registerRuntimeSecret(token); registerRuntimeSecret(password);
 
   return {
     url: trimSlash(url),
@@ -306,6 +310,7 @@ export function buildWorkFinishPayload({ sessionId, deviceId, outcome, summary, 
 // ---------------------------------------------------------------------------
 
 async function resolveToken(config, fetchImpl = fetch) {
+  registerRuntimeSecret(config.token); registerRuntimeSecret(config.password);
   if (config.token) return config.token;
 
   const key = `${config.pocketBaseUrl}|${config.email}`;
@@ -326,6 +331,7 @@ async function resolveToken(config, fetchImpl = fetch) {
 
   const body = await response.json();
   if (!body.token) throw new Error("Factory login returned no token.");
+  registerRuntimeSecret(body.token);
 
   tokenCache.set(key, { token: body.token, expiresAt: Date.now() + TOKEN_TTL_MS });
   return body.token;
@@ -337,6 +343,11 @@ export function clearTokenCache() {
 }
 
 async function request(config, path, { method = "GET", body, fetchImpl = fetch } = {}) {
+  if(body) {
+    // These are Factory work/editor record identifiers, not login sessions.
+    const {sessionId,clientSession,...knowledge}=body;
+    assertSafeKnowledge({...knowledge,workRecordId:sessionId,editorContext:clientSession});
+  }
   const token = await resolveToken(config, fetchImpl);
   const response = await fetchImpl(`${config.url}${path}`, {
     method,
@@ -356,16 +367,16 @@ async function request(config, path, { method = "GET", body, fetchImpl = fetch }
   }
 
   if (!response.ok) {
-    const detail = parsed.error || parsed.message || text || response.statusText;
+    const detail = sanitize(parsed.error || parsed.message || text || response.statusText);
     // Body dan status ikut dibawa ke pemanggil, supaya penolakan takeover
     // bisa diterjemahkan jadi arahan yang bisa dijalankan.
     const error = new Error(`Factory request failed (HTTP ${response.status}): ${detail}`);
     error.status = response.status;
-    error.body = parsed;
+    error.body = sanitize(parsed);
     throw error;
   }
 
-  return parsed;
+  return sanitize(parsed);
 }
 
 /** Reads the whole workspace: projects, tasks and events. */

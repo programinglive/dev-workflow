@@ -33,22 +33,6 @@ export default function Terminal() {
     const hasStarted = useRef(false);
 
     useEffect(() => {
-        const observer = new IntersectionObserver((entries) => {
-            entries.forEach(entry => {
-                if (entry.isIntersecting && !hasStarted.current) {
-                    hasStarted.current = true;
-                    runAnimation();
-                }
-            });
-        });
-
-        if (containerRef.current) {
-            observer.observe(containerRef.current);
-        }
-
-        return () => observer.disconnect();
-    }, []);
-
     const runAnimation = async () => {
         for (const line of terminalLines) {
             await new Promise(r => setTimeout(r, line.delay - (terminalLines[terminalLines.indexOf(line) - 1]?.delay || 0)));
@@ -107,6 +91,18 @@ export default function Terminal() {
 
         setLines(prev => [...prev, <div key={Date.now()} className={className}>{content}</div>]);
     };
+
+        const observer = new IntersectionObserver(entries => {
+            for (const entry of entries) {
+                if (entry.isIntersecting && !hasStarted.current) {
+                    hasStarted.current = true;
+                    void runAnimation();
+                }
+            }
+        });
+        if (containerRef.current) observer.observe(containerRef.current);
+        return () => observer.disconnect();
+    }, []);
 
     return (
         <div ref={containerRef} className="font-mono text-xs sm:text-sm space-y-1.5 sm:space-y-2 min-h-[300px] sm:min-h-[400px]">

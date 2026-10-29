@@ -32,7 +32,7 @@ export default function DocsPage() {
                                 <CheckCircle className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
                                 <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Enforced Discipline</h3>
                             </div>
-                            <p className="text-gray-600 dark:text-gray-400 text-sm">Won't let you skip important steps. Follows a strict, proven development workflow.</p>
+                            <p className="text-gray-600 dark:text-gray-400 text-sm">Won&apos;t let you skip important steps. Follows a strict, proven development workflow.</p>
                         </div>
                         <div className="p-4 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10">
                             <div className="flex items-center gap-3 mb-2">
@@ -70,7 +70,7 @@ export default function DocsPage() {
                             <span className="flex-shrink-0 w-8 h-8 rounded-full bg-indigo-100 dark:bg-indigo-500/20 flex items-center justify-center text-indigo-600 dark:text-indigo-400 font-bold">1</span>
                             <div>
                                 <h3 className="font-semibold mb-1 text-gray-900 dark:text-white">Start a Task</h3>
-                                <p className="text-gray-600 dark:text-gray-400">Begin your coding session by defining what you're working on.</p>
+                                <p className="text-gray-600 dark:text-gray-400">Begin your coding session by defining what you&apos;re working on.</p>
                                 <div className="bg-gray-100 dark:bg-[#1a1a24] rounded-lg p-3 mt-2 border border-gray-300 dark:border-white/10">
                                     <code className="text-sm text-gray-700 dark:text-gray-300">start_task</code>
                                 </div>
@@ -90,7 +90,7 @@ export default function DocsPage() {
                             <span className="flex-shrink-0 w-8 h-8 rounded-full bg-purple-100 dark:bg-purple-500/20 flex items-center justify-center text-purple-600 dark:text-purple-400 font-bold">3</span>
                             <div>
                                 <h3 className="font-semibold mb-1 text-gray-900 dark:text-white">Mark Bug Fixed</h3>
-                                <p className="text-gray-600 dark:text-gray-400">Once you've implemented your feature or fix, mark it as complete.</p>
+                                <p className="text-gray-600 dark:text-gray-400">Once you&apos;ve implemented your feature or fix, mark it as complete.</p>
                                 <div className="bg-gray-100 dark:bg-[#1a1a24] rounded-lg p-3 mt-2 border border-gray-300 dark:border-white/10">
                                     <code className="text-sm text-gray-700 dark:text-gray-300">mark_bug_fixed</code>
                                 </div>

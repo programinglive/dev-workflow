@@ -14,7 +14,7 @@ export async function handleGetWorkflowStatus(workflowState) {
       const owner = disk.owner || {};
       sharedWarning =
         `\n\n⚠️ PERINGATAN: berkas state ini terakhir ditulis proses MCP LAIN ` +
-        `(${owner.token || "tanpa-token"}, pid ${owner.pid ?? "?"}).\n` +
+        `(${owner.processMarker || "tanpa-token"}, pid ${owner.pid ?? "?"}).\n` +
         `   State workflow dipakai bersama antar sesi di mesin ini.\n` +
         `   Periksa apakah "Task:" di atas benar-benar milik Anda SEBELUM commit_and_push.`;
       if (disk.currentPhase && disk.currentPhase !== "idle" && disk.taskDescription) {

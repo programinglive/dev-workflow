@@ -29,6 +29,27 @@ node_modules/
 coverage/
 *.log
 *.tgz
+**/.npmrc
+**/.ssh/
+**/.docker/
+**/.aws/
+**/.kube/
+**/.config/gcloud/
+**/.git-credentials
+**/.netrc
+**/.aws/
+**/.kube/
+**/.config/gcloud/
+**/.git-credentials
+**/.netrc
+**/*credentials*.json
+**/service-account*.json
+**/id_rsa*
+**/id_ed25519*
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
 
 # Docs that are not useful to package consumers
 docs/

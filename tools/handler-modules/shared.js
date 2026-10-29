@@ -2,6 +2,7 @@ import fs from "fs/promises";
 import { existsSync } from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { sanitize } from '../../security/sanitizer.js';
 
 export const PROJECT_SUMMARY_FILENAME = "project-summary.json";
 
@@ -12,7 +13,7 @@ export const textResponse = (text) => ({
   content: [
     {
       type: "text",
-      text,
+      text: sanitize(text),
     },
   ],
 });
@@ -54,6 +55,7 @@ export function formatChecklist(checks) {
 }
 
 export function summarizeHistory(history, limit) {
+  history = sanitize(history);
   const recent = history.slice(-limit).reverse();
   if (recent.length === 0) {
     return null;
@@ -70,6 +72,7 @@ export function summarizeHistory(history, limit) {
 }
 
 export function generateProjectSummary(history) {
+  history = sanitize(history);
   if (!history || history.length === 0) {
     return "No workflow history available.";
   }
@@ -137,7 +140,7 @@ export async function loadProjectSummary(workflowState) {
   const summaryPath = path.join(path.dirname(workflowState.stateFile), PROJECT_SUMMARY_FILENAME);
   try {
     const data = await fs.readFile(summaryPath, "utf-8");
-    return JSON.parse(data);
+    return sanitize(JSON.parse(data));
   } catch (error) {
     if (error?.code === "ENOENT") {
       return null;

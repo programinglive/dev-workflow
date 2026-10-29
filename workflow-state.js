@@ -1,6 +1,9 @@
+import { safeLog } from './security/sanitizer.js';
 import fs from "fs/promises";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync } from "fs";
 import path from "path";
+import { assertSafeKnowledge } from './security/policy.js';
+import { sanitize } from './security/sanitizer.js';
 import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -29,6 +32,14 @@ let cachedUserStateDir = null;
  * yang sedang berjalan itu sebelum kita menimpanya.
  */
 const PROCESS_TOKEN = `proc-${process.pid}-${Math.random().toString(16).slice(2, 10)}`;
+
+function migrateOwnerMetadata(value) {
+  if(value?.owner && !value.owner.processMarker && /^proc-[A-Za-z0-9-]+$/.test(value.owner.token || '')) {
+    value.owner.processMarker=value.owner.token;
+    delete value.owner.token;
+  }
+  return value;
+}
 
 function generateUserId() {
   const timestamp = Date.now().toString(16);
@@ -249,6 +260,8 @@ async function migrateLegacyStateFile(targetPath) {
   }
 
   await fs.mkdir(stateDir, { recursive: true });
+  const migrated = migrateOwnerMetadata(JSON.parse(await fs.readFile(legacyPath, 'utf8')));
+  assertSafeKnowledge(migrated);
 
   try {
     await fs.access(targetPath);
@@ -258,7 +271,8 @@ async function migrateLegacyStateFile(targetPath) {
     // New state file doesn't exist yet; fall through to migrate.
   }
 
-  await fs.rename(legacyPath, targetPath);
+  await fs.writeFile(targetPath, JSON.stringify(migrated, null, 2), { flag: 'wx' });
+  await fs.unlink(legacyPath);
 }
 
 function isRootPath(candidate) {
@@ -338,6 +352,7 @@ async function ensureCompatibilityLinks(primaryPath) {
   if (!(await pathExists(resolvedPrimary))) {
     return;
   }
+  assertSafeKnowledge(JSON.parse(await fs.readFile(resolvedPrimary, 'utf8')));
 
   const compatibilityPaths = getCompatibilityPaths(resolvedPrimary);
 
@@ -446,6 +461,7 @@ export class WorkflowState {
     this.stateFile = stateFilePath;
     this.state = {
       currentPhase: "idle",
+      classification: "INTERNAL",
       taskDescription: "",
       bugFixed: false,
       testsCreated: false,
@@ -474,7 +490,7 @@ export class WorkflowState {
     await migrateLegacyStateFile(this.stateFile);
     try {
       const data = await fs.readFile(this.stateFile, "utf-8");
-      const parsed = JSON.parse(data);
+      const parsed = sanitize(migrateOwnerMetadata(JSON.parse(data)));
       this.state = {
         ...this.state,
         ...parsed,
@@ -534,6 +550,7 @@ export class WorkflowState {
   }
 
   async ensurePrimaryFile() {
+    assertSafeKnowledge(this.state);
     let created = false;
     try {
       await fs.access(this.stateFile);
@@ -551,9 +568,11 @@ export class WorkflowState {
   }
 
   async save() {
+    assertSafeKnowledge(this.state);
     const reconciled = await this.reconcileWithDisk();
+    assertSafeKnowledge(this.state);
     this.state.owner = {
-      token: PROCESS_TOKEN,
+      processMarker: PROCESS_TOKEN,
       pid: process.pid,
       updatedAt: new Date().toISOString(),
     };
@@ -572,7 +591,7 @@ export class WorkflowState {
   async readDiskState() {
     try {
       const data = await fs.readFile(this.stateFile, "utf-8");
-      return JSON.parse(data);
+      return sanitize(migrateOwnerMetadata(JSON.parse(data)));
     } catch {
       return null;
     }
@@ -580,7 +599,7 @@ export class WorkflowState {
 
   /** True kalau berkas di disk terakhir ditulis proses MCP lain. */
   isForeignWrite(diskState) {
-    const token = diskState?.owner?.token;
+    const token = diskState?.owner?.processMarker;
     return typeof token === "string" && token.length > 0 && token !== PROCESS_TOKEN;
   }
 
@@ -631,7 +650,7 @@ export class WorkflowState {
       return result;
     }
 
-    result.foreignToken = disk.owner.token;
+    result.foreignToken = disk.owner.processMarker;
 
     const hasRunningTask =
       typeof disk.taskDescription === "string" &&
@@ -651,6 +670,7 @@ export class WorkflowState {
     }
 
     this.state.history.push({
+      classification: disk.classification || "INTERNAL",
       taskDescription: disk.taskDescription,
       taskType: disk.taskType || "other",
       commitMessage: disk.lastCommitMessage || "",
@@ -659,7 +679,7 @@ export class WorkflowState {
       dropReason:
         "Ditimpa proses agen lain: state workflow dipakai bersama antar sesi di mesin ini",
       interruptedAtPhase: disk.currentPhase,
-      interruptedBy: disk.owner.token,
+      interruptedBy: disk.owner.processMarker,
       timestamp: new Date().toISOString(),
     });
     result.preservedTask = disk.taskDescription;
@@ -667,13 +687,16 @@ export class WorkflowState {
   }
 
   async updateProjectSummary() {
+    assertSafeKnowledge(this.state);
     const summaryPath = path.join(path.dirname(this.stateFile), PROJECT_SUMMARY_FILENAME);
     const summary = this.generateProjectSummaryData();
+    assertSafeKnowledge(summary);
     await fs.mkdir(path.dirname(summaryPath), { recursive: true });
     await fs.writeFile(summaryPath, JSON.stringify(summary, null, 2));
   }
 
   async syncToDatabase() {
+    assertSafeKnowledge(this.state);
     try {
       const { insertHistoryEntry, updateSummaryForUser, saveState } = await import("./db/index.js");
       const userId = getCurrentUserId();
@@ -709,7 +732,7 @@ export class WorkflowState {
       await saveState(userId, projectRoot, this.state);
     } catch (error) {
       // Database sync failed; log it but don't crash
-      console.error("Database sync failed:", error.message);
+      safeLog('error', "Database sync failed:", error.message);
     }
   }
 
@@ -775,6 +798,7 @@ export class WorkflowState {
     if (archive && hasRunningTask) {
       archivedTask = previous.taskDescription;
       history.push({
+        classification: previous.classification || "INTERNAL",
         taskDescription: previous.taskDescription,
         taskType: previous.taskType || "other",
         commitMessage: previous.lastCommitMessage || "",
@@ -789,6 +813,7 @@ export class WorkflowState {
 
     this.state = {
       currentPhase: "idle",
+      classification: "INTERNAL",
       taskDescription: "",
       bugFixed: false,
       testsCreated: false,
@@ -817,6 +842,7 @@ export class WorkflowState {
 
   addToHistory(entry) {
     this.state.history.push({
+      classification: this.state.classification || "INTERNAL",
       ...entry,
       timestamp: new Date().toISOString(),
     });

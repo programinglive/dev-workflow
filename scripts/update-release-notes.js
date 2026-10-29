@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { safeLog } from '../security/sanitizer.js';
 
 const fs = require('fs');
 const path = require('path');
@@ -12,32 +13,32 @@ function updateReleaseNotes({
 } = {}) {
   const releaseNotesPath = path.join(rootDir, releaseNotesRelativePath);
   if (!fs.existsSync(releaseNotesPath)) {
-    console.log(`ℹ️  Release notes file not found at ${releaseNotesPath}; skipping update.`);
+    safeLog('info', `ℹ️  Release notes file not found at ${releaseNotesPath}; skipping update.`);
     return false;
   }
 
   const packageJsonPath = path.join(rootDir, packageJsonRelativePath);
   if (!fs.existsSync(packageJsonPath)) {
-    console.log(`ℹ️  package.json not found at ${packageJsonPath}; skipping release notes update.`);
+    safeLog('info', `ℹ️  package.json not found at ${packageJsonPath}; skipping release notes update.`);
     return false;
   }
 
   const changelogPath = path.join(rootDir, changelogRelativePath);
   if (!fs.existsSync(changelogPath)) {
-    console.log(`ℹ️  CHANGELOG not found at ${changelogPath}; skipping release notes update.`);
+    safeLog('info', `ℹ️  CHANGELOG not found at ${changelogPath}; skipping release notes update.`);
     return false;
   }
 
   const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
   const version = packageJson.version;
   if (!version) {
-    console.log('ℹ️  package.json version is missing; skipping release notes update.');
+    safeLog('info', 'ℹ️  package.json version is missing; skipping release notes update.');
     return false;
   }
 
   const releaseNotesContent = fs.readFileSync(releaseNotesPath, 'utf8');
   if (releaseNotesContent.includes(`| ${version} `) || releaseNotesContent.includes(`## ${version}`)) {
-    console.log(`ℹ️  Release notes already contain version ${version}; skipping.`);
+    safeLog('info', `ℹ️  Release notes already contain version ${version}; skipping.`);
     return false;
   }
 
@@ -61,7 +62,7 @@ function updateReleaseNotes({
   });
 
   fs.writeFileSync(releaseNotesPath, updatedContent);
-  console.log(`✅ Added release notes entry for version ${version}.`);
+  safeLog('info', `✅ Added release notes entry for version ${version}.`);
   return true;
 }
 
@@ -176,7 +177,7 @@ if (require.main === module) {
   try {
     updateReleaseNotes();
   } catch (error) {
-    console.error(`❌ Failed to update release notes: ${error.message}`);
+    safeLog('error', `❌ Failed to update release notes: ${error.message}`);
     process.exit(1);
   }
 }
