@@ -6,6 +6,7 @@ import {
   findTask,
   claimTask,
   updateTaskStatus,
+  updateTaskDetails,
   createTask,
   listProjects,
   formatTaskList,
@@ -149,6 +150,7 @@ export async function handleClaimFactoryTask(args = {}, { workflowState } = {}) 
           : "",
         `Factory status is now running (work session ${session.id}).`,
         task.projectName ? `Project: ${task.projectName}` : "",
+        task.definitionOfDone ? `Definition of done:\n${task.definitionOfDone}` : "",
         "",
         "Local workflow started for this task.",
         "Use 'sync_task_status' with review, blocked or paused to close the session, or done to approve the task once it is in review.",
@@ -199,10 +201,23 @@ export async function handleSyncTaskStatus(args = {}) {
     // ditolak server dan hanya mengaburkan keadaan papan.
     stopKeeping();
 
+    // Checklist dibaca lagi setelah status berubah: DoD bisa saja dilengkapi
+    // sejak claim, dan agen perlu kriteria terbaru saat melaporkan selesai.
+    // Kegagalan bacaan tambahan ini tidak boleh membuat laporan status yang
+    // sudah berhasil terlihat gagal.
+    let definitionOfDone = "";
+    try {
+      const task = await findTask(config, recordId);
+      definitionOfDone = String(task?.definitionOfDone || "").trim();
+    } catch {
+      definitionOfDone = "";
+    }
+
     return textResponse(
       [
         `Updated ${recordId} to ${result.status}.`,
         result.session?.summary ? `Summary: ${result.session.summary}` : "",
+        definitionOfDone ? `Definition of done:\n${definitionOfDone}` : "",
         result.status === "review" ? "Waiting for human approval in Factory." : "",
       ]
         .filter(Boolean)
@@ -241,6 +256,7 @@ export async function handleCreateFactoryTask(args = {}) {
 
   const title = typeof args.title === "string" ? args.title.trim() : "";
   const acceptance = typeof args.acceptance === "string" ? args.acceptance.trim() : "";
+  const definitionOfDone = typeof args.definitionOfDone === "string" ? args.definitionOfDone.trim() : "";
 
   if (!title) {
     return textResponse("Provide 'title' for the task (3-140 characters).");
@@ -250,6 +266,17 @@ export async function handleCreateFactoryTask(args = {}) {
       [
         "Provide 'acceptance': what must be true for this task to count as done.",
         "Factory requires it, and it is what the next person checks.",
+      ].join("\n"),
+    );
+  }
+  if (!definitionOfDone) {
+    return textResponse(
+      [
+        "Provide 'definitionOfDone': the checklist that must be true before this task can be marked done.",
+        "Use one condition per line, for example:",
+        "- [ ] build lulus",
+        "- [ ] halaman login terverifikasi",
+        "It is stored separately from 'acceptance', which also carries the ```run block for the worker.",
       ].join("\n"),
     );
   }
@@ -265,6 +292,7 @@ export async function handleCreateFactoryTask(args = {}) {
       title,
       description: args.description,
       acceptance,
+      definitionOfDone,
       priority: args.priority,
       status: args.status,
     });
@@ -284,5 +312,61 @@ export async function handleCreateFactoryTask(args = {}) {
     );
   } catch (error) {
     return textResponse(`Could not create the task: ${error.message}`);
+  }
+}
+
+/**
+ * Edits an existing task, mainly to fill the definition of done of a task that
+ * was created before Factory required it.
+ *
+ * Local validation runs first so an empty request never reaches the network.
+ */
+export async function handleUpdateFactoryTask(args = {}) {
+  const { config, response } = requireConfig();
+  if (!config) return response;
+
+  const recordId = typeof args.recordId === "string" ? args.recordId.trim() : "";
+  if (!recordId) {
+    return textResponse("Provide the 'recordId' of the task to update (see list_factory_tasks).");
+  }
+
+  const hasField = ["title", "description", "acceptance", "definitionOfDone"].some(
+    (field) => typeof args[field] === "string",
+  );
+  if (!hasField) {
+    return textResponse(
+      [
+        "Provide at least one field to update: title, description, acceptance or definitionOfDone.",
+        "To fill a missing definition of done, pass definitionOfDone as a checklist, one condition per line.",
+      ].join("\n"),
+    );
+  }
+
+  try {
+    const result = await updateTaskDetails(config, {
+      recordId,
+      title: args.title,
+      description: args.description,
+      acceptance: args.acceptance,
+      definitionOfDone: args.definitionOfDone,
+    });
+
+    return textResponse(
+      [
+        `Updated ${recordId}.`,
+        result.updatedAt ? `Task version is now ${result.updatedAt}.` : "",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+  } catch (error) {
+    // Factory menjawab 409 kalau task berubah sejak dibaca. Menyebut ulang
+    // langkah yang harus diambil lebih berguna daripada kode HTTP saja.
+    if (error?.status === 409) {
+      return textResponse(
+        `Could not update the task: ${error.message}\nReload the task with list_factory_tasks and try again with the current version.`,
+      );
+    }
+    return textResponse(`Could not update the task: ${error.message}`);
   }
 }

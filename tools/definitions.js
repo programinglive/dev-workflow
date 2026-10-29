@@ -397,7 +397,7 @@ export function getToolList() {
     {
       name: "create_factory_task",
       description:
-        "Create a task on the Factory board through the official write path (POST /api/factory create_task). Defaults to status 'backlog', which records the work WITHOUT starting a worker run. Only pass status 'queued' when you really want the worker to execute it - Factory rejects a queued task (409) unless 'acceptance' contains a ```run block. Use list_factory_projects first to get a real projectId.",
+        "Create a task on the Factory board through the official write path (POST /api/factory create_task). Defaults to status 'backlog', which records the work WITHOUT starting a worker run. Only pass status 'queued' when you really want the worker to execute it - Factory rejects a queued task (409) unless 'acceptance' contains a ```run block. Every task needs a 'definitionOfDone' checklist: the concrete conditions that must be true before it can be marked done. Use list_factory_projects first to get a real projectId.",
       inputSchema: {
         type: "object",
         properties: {
@@ -418,6 +418,11 @@ export function getToolList() {
             description:
               "What must be true for this task to be done. 3-3000 characters. Required by Factory.",
           },
+          definitionOfDone: {
+            type: "string",
+            description:
+              "Checklist of the concrete conditions that must be true before the task can be marked done, one per line, for example '- [ ] build lulus'. 3-3000 characters. Required by Factory, and a task cannot move to done while it is empty. Different from 'acceptance', which also carries the ```run block for the worker.",
+          },
           priority: {
             type: "string",
             enum: ["low", "normal", "high"],
@@ -430,7 +435,40 @@ export function getToolList() {
               "Defaults to backlog. 'queued' also creates a worker run and requires a ```run block in acceptance.",
           },
         },
-        required: ["projectId", "title", "acceptance"],
+        required: ["projectId", "title", "acceptance", "definitionOfDone"],
+      },
+    },
+    {
+      name: "update_factory_task",
+      description:
+        "Edit the details of an existing Factory task (title, description, acceptance, definitionOfDone). Use it to fill the definition of done of a task created before Factory required it, because a task cannot move to 'done' while that checklist is empty. It reads the task's current version and lets Factory reject a stale edit with 409 instead of overwriting someone else's change. Supply at least one field.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          recordId: {
+            type: "string",
+            description: "Factory task id (UUID) from list_factory_tasks.",
+          },
+          title: {
+            type: "string",
+            description: "New title, 3-140 characters. Omit to keep the current one.",
+          },
+          description: {
+            type: "string",
+            description: "New context text, max 4000 characters. Omit to keep the current one.",
+          },
+          acceptance: {
+            type: "string",
+            description:
+              "New acceptance text, 3-3000 characters. This is also where the ```run block for the worker lives, so keep it intact unless you mean to change what the runner executes.",
+          },
+          definitionOfDone: {
+            type: "string",
+            description:
+              "New checklist of conditions that must be true before the task can be marked done, 3-3000 characters, one condition per line, for example '- [ ] build lulus'.",
+          },
+        },
+        required: ["recordId"],
       },
     },
     {

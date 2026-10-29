@@ -86,12 +86,14 @@ See [MCP client configuration](#mcp-client-configuration).
 | `project_summary_data` | Read the persisted `project-summary.json` |
 | `project_summary_db` | Read the per-user summary from SQLite |
 | `list_factory_tasks` | List your Factory task queue (requires config) |
+| `create_factory_task` | Record a new task with a required definition of done |
+| `update_factory_task` | Edit a task, including filling a missing definition of done |
 | `claim_factory_task` | Claim a Factory task and start a local workflow |
 | `sync_task_status` | Report a status change back to Factory |
 
 ### Factory task integration
 
-Three tools connect this server to the **Factory** board at
+Five tools connect this server to the **Factory** board at
 `factory.programinglive.com`. They read and write the real task table
 (`factory_tasks`), not the retired PocketBase `activity_tasks` collection
 (which still exists but holds 0 records and never reached the board).
@@ -127,6 +129,8 @@ account only sees its own tasks.
 | Tool | Writes? | What it does |
 |---|---|---|
 | `list_factory_tasks` | no | Reads `GET /api/factory`, maps tasks plus their latest work session, and orders them status → priority. Defaults to `running, queued, backlog, review, blocked` |
+| `create_factory_task` | yes | Creates a task (`POST /api/factory {action:create_task}`). Requires `acceptance` and `definitionOfDone`; defaults to `backlog` so recording work never starts a worker run |
+| `update_factory_task` | yes | Edits title, description, acceptance or definitionOfDone (`POST /api/factory {action:update_task}`), sending the task's current version so Factory can reject a stale edit with 409 |
 | `claim_factory_task` | yes | Opens a work session (`POST /api/work {action:start}`), which is what turns the task `running` on the board, then starts a local workflow |
 | `sync_task_status` | yes | Uses the only endpoint that can produce the status; see the table below |
 
@@ -143,9 +147,39 @@ the endpoint that actually supports it:
 | `done` | — rejected | A human approves the work in Factory |
 
 `review` requires an active work session. Asking for it without one fails with
-"no active work session" instead of silently doing nothing — the task must be
+"no active work session" instead of silently doing nothing - the task must be
 claimed first. Full behaviour, limits (summary 2000 chars, step 240 chars) and
 troubleshooting live in [docs/factory-integration.md](docs/factory-integration.md).
+
+#### Review is reported once, not twice
+
+Factory reads a second `review` report as an **approval**, so a task can jump to
+`done` without a human deciding anything. That happened on 29 October 2026 to
+four tasks whose earlier session was already `review` while the board still said
+`backlog`.
+
+The client now refuses `review` when the latest lifecycle event for that task is
+a `work.review` or `task.done`, and says what to do instead:
+
+```
+Task "..." sudah pernah dilaporkan untuk review (work.review pada ...).
+Melaporkan review kedua kali dibaca Factory sebagai approval, ...
+Minta pemilik memutuskan: set done bila pekerjaan diterima, atau kembalikan
+ke backlog bila perlu dikerjakan ulang.
+```
+
+`blocked` and `paused` are unaffected: only `review` carries approval semantics.
+
+A later `work.paused` event re-opens the task, so rework can be reported again.
+That matters because `paused` is the only supported way back from `review` to
+`backlog`; without the exception the guard would block legitimate second
+reviews forever.
+
+#### Task ids are UUIDs
+
+`list_factory_tasks` prints the full UUID, because `sync_task_status` and
+`claim_factory_task` reject the 8-character short key. Earlier versions printed
+the short key, which forced agents to call `GET /api/factory` by hand.
 
 
 ### Example session
@@ -518,8 +552,26 @@ installed. Run `npm install` in the repo.
 because there is no prebuild for your Node ABI. Either switch to a Node version
 that has one, or install Visual Studio Build Tools.
 
-**`EPERM ... better_sqlite3.node`** — a running process holds the file. Stop it,
+**`EPERM ... better_sqlite3.node`** - a running process holds the file. Stop it,
 then reinstall.
+
+**`commit_and_push` says "No changes detected" while the project clearly has
+changes** - git ran in the wrong repository. The server used to fall back to its
+own package directory, which is also a git repo, so commits landed there (or
+nowhere) instead of in your project. It now refuses to run git in the package
+repo and asks for the project explicitly:
+
+```bash
+export WORKFLOW_PROJECT_DIR=/path/to/your/project
+```
+
+Point it at any directory inside the project; the repo root is discovered
+upward. Non-git commands are unaffected.
+
+**A task jumped straight to `done` after reporting `review`** - it was reported
+twice. Factory treats the second report as approval. Current versions block that
+at the client, but if it already happened, review the task and move it back to
+`backlog` if the work is not accepted.
 
 **OpenCode does not load the server** — check the config shape. V2 requires
 `mcp.servers` and rejects `enabled`:
