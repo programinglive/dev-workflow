@@ -158,8 +158,8 @@ Factory reads a second `review` report as an **approval**, so a task can jump to
 four tasks whose earlier session was already `review` while the board still said
 `backlog`.
 
-The client now refuses `review` when the workspace already holds a `work.review`
-or `task.done` event for that task, and says what to do instead:
+The client now refuses `review` when the latest lifecycle event for that task is
+a `work.review` or `task.done`, and says what to do instead:
 
 ```
 Task "..." sudah pernah dilaporkan untuk review (work.review pada ...).
@@ -169,6 +169,11 @@ ke backlog bila perlu dikerjakan ulang.
 ```
 
 `blocked` and `paused` are unaffected: only `review` carries approval semantics.
+
+A later `work.paused` event re-opens the task, so rework can be reported again.
+That matters because `paused` is the only supported way back from `review` to
+`backlog`; without the exception the guard would block legitimate second
+reviews forever.
 
 #### Task ids are UUIDs
 

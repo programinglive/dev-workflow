@@ -37,25 +37,31 @@ export const VALID_STATUSES = ["backlog", "queued", "running", "review", "blocke
 const WORK_OUTCOMES = { review: "review", blocked: "blocked", paused: "paused" };
 
 /**
- * Event kinds that prove a task sudah pernah dilaporkan selesai.
+ * Event kinds yang menentukan apakah sebuah task sudah dilaporkan selesai.
  *
- * Dipakai untuk mencegah review kedua: Factory membacanya sebagai approval.
+ * `work.paused` ikut diperhitungkan karena itu satu-satunya jalan resmi
+ * mengembalikan task dari review ke backlog. Kalau event terakhir adalah
+ * paused, pekerjaan memang sedang dikerjakan ulang dan review baru sah.
  */
-export const PRIOR_REVIEW_KINDS = ["work.review", "task.done"];
+export const REVIEW_GATE_KINDS = ["work.review", "task.done", "work.paused"];
 
 /**
- * Mencari event review/done untuk satu task.
+ * Mengembalikan event yang memblokir laporan review, atau null bila boleh.
  *
- * Toleran terhadap workspace lama yang belum punya `events`: tanpa bukti
- * riwayat, agen tetap boleh melapor (tidak ada yang perlu diblokir).
+ * Memblokir bila event terakhir adalah review/done: Factory membacanya sebagai
+ * approval. Membiarkan bila event terakhir adalah paused (pekerjaan ulang).
+ * Toleran terhadap workspace lama tanpa `events`.
  */
-export function findPriorReviewEvent(events, taskId) {
+export function findBlockingReviewEvent(events, taskId) {
   if (!Array.isArray(events) || !taskId) return null;
-  return (
-    events.find(
-      (event) => event && event.targetId === taskId && PRIOR_REVIEW_KINDS.includes(event.kind),
-    ) || null
-  );
+
+  const relevant = events
+    .filter((event) => event && event.targetId === taskId && REVIEW_GATE_KINDS.includes(event.kind))
+    .sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || "")));
+
+  const last = relevant[relevant.length - 1];
+  if (!last) return null;
+  return last.kind === "work.paused" ? null : last;
 }
 
 /** Statuses reachable through POST /api/factory { action: move_task }. */
@@ -551,7 +557,7 @@ export async function finishWork(config, { taskId, outcome, summary, device } = 
   const task = mapTaskRecord(record, workspace.projects || []);
 
   if (outcome === "review") {
-    const prior = findPriorReviewEvent(workspace.events, taskId);
+    const prior = findBlockingReviewEvent(workspace.events, taskId);
     if (prior) {
       throw new Error(
         `Task "${task.title}" sudah pernah dilaporkan untuk review (${prior.kind} pada ${prior.createdAt || "waktu tidak tercatat"}). ` +

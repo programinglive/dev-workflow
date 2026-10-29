@@ -201,3 +201,47 @@ test("outcome blocked tidak terpengaruh riwayat review", async () => {
 
   assert.strictEqual(result.status, "blocked");
 });
+
+test("review setelah work.paused boleh: pekerjaan memang dikerjakan ulang", async () => {
+  // Alur sah: review -> pemilik menolak -> sesi di-pause (jalan satu-satunya
+  // untuk kembali ke backlog) -> dikerjakan lagi -> dilaporkan review lagi.
+  // Tanpa pengecualian ini, penjaga akan memblokir pekerjaan ulang selamanya.
+  const fetchImpl = fakeFetch([
+    (call) =>
+      call.url.endsWith("/api/factory")
+        ? json(
+            workspaceWith([
+              { id: "ev-6", kind: "work.review", targetId: TASK_ID, message: "Sesi review pertama.", createdAt: "2026-10-29T02:00:00.000Z" },
+              { id: "ev-7", kind: "work.paused", targetId: TASK_ID, message: "Dikembalikan: perlu perbaikan.", createdAt: "2026-10-29T03:00:00.000Z" },
+            ]),
+          )
+        : null,
+    (call) =>
+      call.url.endsWith("/api/work") && call.method === "POST"
+        ? json({ session: { id: "sess-new", state: "review" } })
+        : null,
+  ]);
+
+  const result = await updateTaskStatus(CONFIG, { recordId: TASK_ID, status: "review", reason: "Sudah diperbaiki." }, fetchImpl);
+
+  assert.strictEqual(result.status, "review");
+});
+
+test("review setelah paused lalu review lagi tetap diblokir", async () => {
+  const fetchImpl = fakeFetch([
+    (call) =>
+      call.url.endsWith("/api/factory")
+        ? json(
+            workspaceWith([
+              { id: "ev-8", kind: "work.paused", targetId: TASK_ID, message: "Dikembalikan.", createdAt: "2026-10-29T02:00:00.000Z" },
+              { id: "ev-9", kind: "work.review", targetId: TASK_ID, message: "Sesi review kedua.", createdAt: "2026-10-29T03:00:00.000Z" },
+            ]),
+          )
+        : null,
+  ]);
+
+  await assert.rejects(
+    () => updateTaskStatus(CONFIG, { recordId: TASK_ID, status: "review", reason: "Selesai." }, fetchImpl),
+    /review/i,
+  );
+});
