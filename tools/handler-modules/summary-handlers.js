@@ -1,5 +1,6 @@
 import fs from "fs/promises";
 import path from "path";
+import { sanitize } from '../../security/sanitizer.js';
 import { textResponse, generateProjectSummary, summarizeHistory, PROJECT_SUMMARY_FILENAME } from "./shared.js";
 
 export function handleProjectSummary(workflowState) {
@@ -11,7 +12,7 @@ export async function handleProjectSummaryData(workflowState) {
   const summaryPath = path.join(path.dirname(workflowState.stateFile), PROJECT_SUMMARY_FILENAME);
   try {
     const data = await fs.readFile(summaryPath, "utf-8");
-    const parsed = JSON.parse(data);
+    const parsed = sanitize(JSON.parse(data));
     const formatted = `🧠 Project Knowledge Summary (from persisted data)\n\n📊 Stats\n- Total tasks completed: ${parsed.totalTasks}\n- Recent task mix: ${Object.entries(parsed.taskTypes).map(([t, c]) => `${t}: ${c}`).join(", ")}\n- Last active: ${parsed.lastActive ? new Date(parsed.lastActive).toLocaleDateString() : "Never"}\n- Updated: ${new Date(parsed.updatedAt).toLocaleString()}\n\n📝 Recent tasks (last 5)\n${parsed.recentTasks.map((e, i) => `${i + 1}. ${e.description} (${e.type})`).join("\n")}`;
     return textResponse(formatted);
   } catch (error) {

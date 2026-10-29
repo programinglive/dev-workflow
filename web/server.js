@@ -1,3 +1,4 @@
+import { safeLog } from '../security/sanitizer.js';
 import { createServer } from 'http';
 import { parse } from 'url';
 import next from 'next';
@@ -8,6 +9,8 @@ import pg from 'pg';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { databaseConnectionUrl,requireSigningSecret } from '../security/config.js';
+import { securityJsonMiddleware,knowledgeInputMiddleware } from '../security/http.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -23,8 +26,10 @@ const hostname = 'localhost';
 const port = process.env.PORT || 3000;
 
 // Initialize PostgreSQL pool for sessions
-const dbUrl = process.env.DEV_WORKFLOW_DB_URL;
+const dbUrl = databaseConnectionUrl();
+const signingSecret = dbUrl ? requireSigningSecret('SESSION_SECRET') : null;
 const pool = dbUrl ? new Pool({ connectionString: dbUrl }) : null;
+if(pool) await pool.query("ALTER TABLE workflow_history ADD COLUMN IF NOT EXISTS classification TEXT NOT NULL DEFAULT 'INTERNAL'");
 
 // Initialize Next.js app
 const app = next({ dev, hostname, port });
@@ -44,6 +49,7 @@ app.prepare().then(() => {
 
     server.use(express.json());
     server.use(express.urlencoded({ extended: true }));
+    server.use(securityJsonMiddleware);
 
     // Session middleware
     if (pool) {
@@ -53,7 +59,7 @@ app.prepare().then(() => {
                     pool,
                     tableName: 'session'
                 }),
-                secret: process.env.SESSION_SECRET || 'dev-workflow-secret-change-in-production',
+                secret: signingSecret,
                 resave: false,
                 saveUninitialized: false,
                 cookie: {
@@ -89,7 +95,7 @@ app.prepare().then(() => {
 
             res.json({ success: true, user: { username: user.username, email: user.email } });
         } catch (error) {
-            console.error('Login error:', error);
+            safeLog('error', 'Login error:', error);
             res.status(500).json({ error: 'Internal server error' });
         }
     });
@@ -121,7 +127,7 @@ app.prepare().then(() => {
 
             res.json({ user: { username: user.username, email: user.email } });
         } catch (error) {
-            console.error('Get user error:', error);
+            safeLog('error', 'Get user error:', error);
             res.status(500).json({ error: 'Internal server error' });
         }
     });
@@ -144,6 +150,7 @@ app.prepare().then(() => {
 
             let query = `
                 SELECT 
+                    classification,
                     id, 
                     task_type, 
                     task_description as description, 
@@ -167,7 +174,7 @@ app.prepare().then(() => {
 
             res.json({ history: result.rows });
         } catch (error) {
-            console.error('Get history error:', error);
+            safeLog('error', 'Get history error:', error);
             res.status(500).json({ error: 'Internal server error' });
         }
     });
@@ -188,9 +195,9 @@ app.prepare().then(() => {
         });
     });
 
-    server.post('/api/factory/webhook', (req, res) => {
+    server.post('/api/factory/webhook', knowledgeInputMiddleware, (req, res) => {
         const payload = req.body;
-        console.log('🏭 [Factory Webhook Received]:', payload?.event || 'generic-trigger');
+        safeLog('info','Factory webhook received');
         res.json({
             success: true,
             message: 'Webhook received and queued for factory processing',
@@ -205,6 +212,6 @@ app.prepare().then(() => {
 
     server.listen(port, (err) => {
         if (err) throw err;
-        console.log(`> Ready on http://${hostname}:${port}`);
+        safeLog('info', `> Ready on http://${hostname}:${port}`);
     });
 });

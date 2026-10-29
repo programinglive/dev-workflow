@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { safeLog } from '../security/sanitizer.js';
 
 /**
  * Unified Setup Script for AI Agent Development Stack:
@@ -154,17 +155,17 @@ function backupConfig(configPath, configDir) {
 function ensureDependencies() {
   const nodeModules = path.join(projectRoot, 'node_modules');
   if (existsSync(nodeModules)) {
-    console.log('✓ Dependencies already installed.');
+    safeLog('info', '✓ Dependencies already installed.');
     return true;
   }
 
-  console.log('📥 Installing dependencies (required: the MCP server imports dotenv and others)...');
+  safeLog('info', '📥 Installing dependencies (required: the MCP server imports dotenv and others)...');
   try {
     execSync('npm install --no-audit --no-fund', { cwd: projectRoot, stdio: 'inherit' });
-    console.log('✓ Dependencies installed.');
+    safeLog('info', '✓ Dependencies installed.');
     return true;
   } catch {
-    console.error('✗ npm install failed. The MCP server cannot start without dependencies.');
+    safeLog('error', '✗ npm install failed. The MCP server cannot start without dependencies.');
     return false;
   }
 }
@@ -279,7 +280,7 @@ function verifyInstall(configPath) {
 function ensureAgentsMd(targetProjectRoot) {
   const agentsMdPath = path.join(targetProjectRoot, 'AGENTS.md');
   if (existsSync(agentsMdPath)) {
-    console.log('✓ AGENTS.md already exists in project root.');
+    safeLog('info', '✓ AGENTS.md already exists in project root.');
     return;
   }
 
@@ -308,25 +309,25 @@ Before taking any action or answering user requests regarding code changes, chec
 
   try {
     writeFileSync(agentsMdPath, defaultAgentsMd, 'utf8');
-    console.log(`✓ Created AGENTS.md rule enforcement at ${agentsMdPath}`);
+    safeLog('info', `✓ Created AGENTS.md rule enforcement at ${agentsMdPath}`);
   } catch (error) {
-    console.warn('⚠️ Could not create AGENTS.md:', error.message);
+    safeLog('warn', '⚠️ Could not create AGENTS.md:', error.message);
   }
 }
 
 export async function setupStack() {
-  console.log('🚀 Setting up Unified AI Agent Development Stack...\n');
+  safeLog('info', '🚀 Setting up Unified AI Agent Development Stack...\n');
 
   const configDir = resolveConfigDir({ probe: probeConfigDir });
   const opencodeJsonPath = path.join(configDir, 'opencode.json');
   const serverIndexPath = path.join(projectRoot, 'index.js');
 
-  console.log(`✓ OpenCode config directory: ${configDir}`);
+  safeLog('info', `✓ OpenCode config directory: ${configDir}`);
 
   mkdirSync(path.join(configDir, 'plugins'), { recursive: true });
 
   const backup = backupConfig(opencodeJsonPath, configDir);
-  if (backup) console.log(`✓ Backed up opencode.json → ${backup}`);
+  if (backup) safeLog('info', `✓ Backed up opencode.json → ${backup}`);
 
   const hasOpencodeCli = hasCommand('opencode');
   const command = ['node', serverIndexPath];
@@ -334,21 +335,21 @@ export async function setupStack() {
 
   if (hasOpencodeCli) {
     try {
-      console.log('\n🔌 Registering Superpowers via OpenCode CLI...');
+      safeLog('info', '\n🔌 Registering Superpowers via OpenCode CLI...');
       execSync(`opencode plugin add "${SUPERPOWERS_SPEC}"`, { stdio: 'inherit' });
-      console.log('✓ Superpowers plugin registered.');
+      safeLog('info', '✓ Superpowers plugin registered.');
 
-      console.log('\n🔌 Registering dev-workflow MCP server via OpenCode CLI...');
+      safeLog('info', '\n🔌 Registering dev-workflow MCP server via OpenCode CLI...');
       execSync(`opencode mcp add ${MCP_SERVER_NAME} --global -- node "${serverIndexPath}"`, {
         stdio: 'inherit',
       });
-      console.log('✓ dev-workflow MCP server registered.');
+      safeLog('info', '✓ dev-workflow MCP server registered.');
       usedCli = true;
     } catch (error) {
-      console.warn(`⚠️ OpenCode CLI registration failed (${error.message}). Falling back to direct config edit.`);
+      safeLog('warn', `⚠️ OpenCode CLI registration failed (${error.message}). Falling back to direct config edit.`);
     }
   } else {
-    console.warn('⚠️ `opencode` CLI not found on PATH. Falling back to direct config edit.');
+    safeLog('warn', '⚠️ `opencode` CLI not found on PATH. Falling back to direct config edit.');
   }
 
   if (!usedCli) {
@@ -356,7 +357,7 @@ export async function setupStack() {
     mergePluginEntry(config);
     mergeMcpServer(config, { name: MCP_SERVER_NAME, command });
     writeConfig(opencodeJsonPath, config);
-    console.log(`✓ opencode.json updated directly at ${opencodeJsonPath}`);
+    safeLog('info', `✓ opencode.json updated directly at ${opencodeJsonPath}`);
   }
 
   // Whatever path we took, confirm the on-disk config is V2-shaped.
@@ -364,61 +365,61 @@ export async function setupStack() {
   mergePluginEntry(finalConfig);
   mergeMcpServer(finalConfig, { name: MCP_SERVER_NAME, command });
   writeConfig(opencodeJsonPath, finalConfig);
-  console.log('✓ opencode.json verified (V2 `plugins` + `mcp.servers`).');
+  safeLog('info', '✓ opencode.json verified (V2 `plugins` + `mcp.servers`).');
 
-  console.log('\n⚡ Checking RTK (Rust Token Killer)...');
+  safeLog('info', '\n⚡ Checking RTK (Rust Token Killer)...');
   if (hasCommand('rtk')) {
     try {
       const version = run('rtk --version').trim();
-      console.log(`✓ Found ${version}`);
+      safeLog('info', `✓ Found ${version}`);
       execSync('rtk init -g --opencode --auto-patch --no-trust-filters', { stdio: 'inherit' });
-      console.log('✓ RTK OpenCode plugin registered.');
+      safeLog('info', '✓ RTK OpenCode plugin registered.');
     } catch {
-      console.warn('⚠️ Could not run `rtk init -g --opencode`. Run it manually.');
+      safeLog('warn', '⚠️ Could not run `rtk init -g --opencode`. Run it manually.');
     }
   } else {
-    console.warn('⚠️ `rtk` not found on PATH. Install it, then re-run this script:');
-    console.log(process.platform === 'win32' ? '  winget install rtk-ai.rtk' : '  brew install rtk');
+    safeLog('warn', '⚠️ `rtk` not found on PATH. Install it, then re-run this script:');
+    safeLog('info', process.platform === 'win32' ? '  winget install rtk-ai.rtk' : '  brew install rtk');
   }
 
   const depsOk = ensureDependencies();
 
-  console.log('\n🔎 Smoke testing the MCP server...');
+  safeLog('info', '\n🔎 Smoke testing the MCP server...');
   const smoke = depsOk
     ? await smokeTestServer()
     : { ok: false, reason: 'skipped: dependencies missing', stderr: '' };
   if (smoke.ok) {
-    console.log(`✓ MCP server healthy (${smoke.reason}).`);
+    safeLog('info', `✓ MCP server healthy (${smoke.reason}).`);
   } else {
-    console.error(`✗ MCP server failed to start (${smoke.reason}).`);
-    if (smoke.stderr) console.error(smoke.stderr.trim());
+    safeLog('error', `✗ MCP server failed to start (${smoke.reason}).`);
+    if (smoke.stderr) safeLog('error', smoke.stderr.trim());
   }
 
   ensureAgentsMd(process.env.INIT_CWD || process.cwd());
 
-  console.log('\n🧪 Verifying installation...');
+  safeLog('info', '\n🧪 Verifying installation...');
   const checks = verifyInstall(opencodeJsonPath);
   let allOk = smoke.ok;
 
   for (const check of checks) {
-    console.log(`  ${check.ok ? '✓' : '✗'} ${check.check}`);
+    safeLog('info', `  ${check.ok ? '✓' : '✗'} ${check.check}`);
     if (!check.ok) {
       allOk = false;
-      if (check.detail) console.log(`      ${check.detail.split('\n')[0]}`);
+      if (check.detail) safeLog('info', `      ${check.detail.split('\n')[0]}`);
     }
   }
 
-  console.log('\n============================================================');
+  safeLog('info', '\n============================================================');
   if (allOk) {
-    console.log('🎉 UNIFIED AI AGENT DEVELOPMENT STACK INSTALLED SUCCESSFULLY!');
-    console.log('============================================================');
-    console.log('• Workflow Discipline (dev-workflow MCP): Active');
-    console.log('• Agentic Skills (Superpowers): Registered');
-    console.log('• Token Compression (RTK): Configured');
-    console.log('\nRestart OpenCode to start developing with superpowers! 🚀');
+    safeLog('info', '🎉 UNIFIED AI AGENT DEVELOPMENT STACK INSTALLED SUCCESSFULLY!');
+    safeLog('info', '============================================================');
+    safeLog('info', '• Workflow Discipline (dev-workflow MCP): Active');
+    safeLog('info', '• Agentic Skills (Superpowers): Registered');
+    safeLog('info', '• Token Compression (RTK): Configured');
+    safeLog('info', '\nRestart OpenCode to start developing with superpowers! 🚀');
   } else {
-    console.log('⚠️ SETUP INCOMPLETE - see the failed checks above.');
-    console.log('============================================================');
+    safeLog('info', '⚠️ SETUP INCOMPLETE - see the failed checks above.');
+    safeLog('info', '============================================================');
   }
 
   return allOk;
@@ -430,7 +431,7 @@ if (isDirectRun) {
   setupStack()
     .then((ok) => process.exit(ok ? 0 : 1))
     .catch((error) => {
-      console.error('Setup encountered an error:', error);
+      safeLog('error', 'Setup encountered an error:', error);
       process.exit(1);
     });
 }

@@ -1,6 +1,18 @@
+import { assertSafeKnowledge } from '../../security/policy.js';
+import { securityOutputFilter } from '../../security/sanitizer.js';
+
 export class DbAdapter {
     constructor(config = {}) {
         this.config = config;
+        // Guard direct adapter use as well as the db/index facade.
+        for (const name of ['insertHistoryEntry','saveState','updateSummaryForUser']) {
+            const operation=this[name].bind(this);
+            this[name]=async(...args)=>{assertSafeKnowledge(args);return operation(...args);};
+        }
+        for (const name of ['getState','getHistoryForUser','getSummaryForUser','getHistorySummary']) {
+            const operation=this[name].bind(this);
+            this[name]=async(...args)=>securityOutputFilter(await operation(...args));
+        }
     }
 
     async connect() {

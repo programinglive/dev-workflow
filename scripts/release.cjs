@@ -1,6 +1,7 @@
 #!/usr/bin/env node
+const { ready, safeLog, flushLogs, assertSafeKnowledge, spawnLogged } = require('../security/log-bridge.cjs');
 
-const { spawnSync } = require('child_process');
+const spawnSync = spawnLogged;
 const fs = require('fs');
 const path = require('path');
 
@@ -130,17 +131,22 @@ function runProjectTests({ spawn = spawnSync, env = process.env, cwd = process.c
   const scripts = packageJson && packageJson.scripts ? packageJson.scripts : {};
 
   if (!scripts.test) {
-    console.log('ℹ️  Skipping tests: no "test" script detected in package.json');
+    safeLog('info', 'ℹ️  Skipping tests: no "test" script detected in package.json');
     return { status: 0 };
   }
 
   const packageManager = detectPackageManager({ env, cwd });
   const { command, args } = buildTestCommand(packageManager);
 
-  console.log(`🧪 Running tests with ${packageManager} ${args.join(' ')}`.trim());
-  return spawn(command, args, {
+  safeLog('info', `🧪 Running tests with ${packageManager} ${args.join(' ')}`.trim());
+  // Windows package-manager launchers are .cmd files, not native executables.
+  // Only the fixed, allowlisted manager and literal test subcommand enter cmd.
+  const executable = process.platform === 'win32' ? (env.ComSpec || 'cmd.exe') : command;
+  const testArgs = process.platform === 'win32' ? ['/d', '/s', '/c', `${command} test`] : args;
+  return spawn(executable, testArgs, {
     stdio: 'inherit',
-    env
+    env,
+    cwd
   });
 }
 
@@ -166,9 +172,9 @@ function runRelease({
 
   ensurePrdPresence({ cwd, dependencies });
 
-  const testResult = runProjectTests({ spawn, env });
-  if (testResult && typeof testResult.status === 'number' && testResult.status !== 0) {
-    return testResult;
+  const testResult = runProjectTests({ spawn, env, cwd });
+  if (!testResult || testResult.error || testResult.status !== 0) {
+    return { ...testResult, status: testResult?.status || 1 };
   }
 
   const standardVersionBin = require.resolve('standard-version/bin/cli.js');
@@ -179,8 +185,8 @@ function runRelease({
     cwd
   });
 
-  if (releaseResult && typeof releaseResult.status === 'number' && releaseResult.status !== 0) {
-    return releaseResult;
+  if (!releaseResult || releaseResult.error || releaseResult.status !== 0) {
+    return { ...releaseResult, status: releaseResult?.status || 1 };
   }
 
   const releaseNotesPath = dependencies.releaseNotesPath || path.join('docs', 'release-notes', 'RELEASE_NOTES.md');
@@ -190,28 +196,25 @@ function runRelease({
   try {
     notesUpdated = updateNotes();
   } catch (error) {
-    console.warn(`⚠️  Skipping release notes update: ${error.message}`);
+    safeLog('warn', `⚠️  Skipping release notes update: ${error.message}`);
   }
 
   if (notesUpdated) {
     const gitAddResult = spawnSync('git', ['add', releaseNotesPath], { stdio: 'inherit', cwd });
     if (!gitAddResult || typeof gitAddResult.status !== 'number' || gitAddResult.status !== 0) {
-      console.warn('⚠️  Release notes updated but failed to stage. Please add manually: git add ' + releaseNotesPath);
+      safeLog('warn', '⚠️  Release notes updated but failed to stage. Please add manually: git add ' + releaseNotesPath);
     }
   }
 
   return releaseResult;
 }
 if (require.main === module) {
-  try {
-    const result = runRelease();
-    if (result.status !== 0) {
-      process.exit(result.status ?? 1);
-    }
-  } catch (error) {
-    console.error(`❌ ${error.message}`);
-    process.exit(1);
-  }
+  (async()=>{
+    let exitCode=0;
+    try {await ready;const result=runRelease();exitCode=result.status ?? 1;}
+    catch(error){safeLog('error',error);exitCode=1;}
+    await flushLogs();process.exitCode=exitCode;
+  })();
 }
 
 module.exports = {
@@ -244,7 +247,7 @@ function ensurePrdPresence({ cwd = process.cwd(), dependencies = {} } = {}) {
     return true;
   }
 
-  const warn = typeof logger?.warn === 'function' ? logger.warn.bind(logger) : console.warn.bind(console);
+  const warn = typeof logger?.warn === 'function' ? logger.warn.bind(logger) : ((message)=>safeLog('warn',message));
   warn(`⚠️  Product Requirements Document missing (${prdDisplayPath}). Add ${DEFAULT_PRD_DISPLAY_PATH} so teams understand release expectations.`);
   return false;
 }

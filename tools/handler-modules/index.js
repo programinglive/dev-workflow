@@ -1,4 +1,9 @@
 import { textResponse, isReleaseSatisfied, isErrorResponse } from "./shared.js";
+import { assertSafeKnowledge } from '../../security/policy.js';
+import { safeLog, securityOutputFilter } from '../../security/sanitizer.js';
+import { securityAudit } from '../../security/audit.js';
+import path from 'node:path';
+import { assertSafeToolCommand } from '../../security/commands.js';
 import { sessionKeyFromRequest } from "../../workflow-state.js";
 import { handleStartTask, handleMarkBugFixed, handleCreateTests, handleSkipTests, handleRunTests, handleCreateDocumentation, handleCreateFeatureFlow } from "./workflow-handlers.js";
 import { handleSkipRelease, handlePerformRelease } from "./release-handlers.js";
@@ -157,7 +162,7 @@ async function handleRunFullWorkflow(args, { workflowState, exec, git, utils }) 
   return textResponse(message);
 }
 
-export async function handleToolCall({
+async function dispatchToolCall({
   request,
   normalizeRequestArgs,
   workflowState,
@@ -182,6 +187,14 @@ export async function handleToolCall({
     }
 
     switch (name) {
+      case 'security_audit': {
+        const file=workflowState?.stateFile;
+        const marker=file?.replaceAll('\\','/').lastIndexOf('/.state/');
+        const root=marker>=0 ? file.slice(0,marker) : file ? path.dirname(file) : process.cwd();
+        const userId=process.env.DEV_WORKFLOW_USER_ID || (marker>=0?path.basename(path.dirname(file)):'default');
+        const report=await securityAudit({root,state:workflowState?.state,stateFile:file,userId});
+        return textResponse(JSON.stringify(report));
+      }
       case "start_task":
         return handleStartTask(args, workflowState);
       case "mark_bug_fixed":
@@ -242,9 +255,27 @@ export async function handleToolCall({
         throw new Error(`Unknown tool: ${name}`);
     }
   } catch (error) {
-    console.error("Tool handler error:", error);
+    safeLog('error', "Tool handler error:", error);
     return textResponse(
       "⚠️ Internal server error while processing the tool request. Please try again."
     );
+  }
+}
+
+// Await every handler here so asynchronous rejections cannot bypass egress checks.
+export async function handleToolCall(context) {
+  try {
+    const {args,error}=context.normalizeRequestArgs(context.request.params.arguments);
+    if(error) return securityOutputFilter(textResponse(error));
+    assertSafeKnowledge({tool:context.request.params.name,args});
+    assertSafeToolCommand(context.request.params.name,args);
+    const response=await dispatchToolCall({...context,request:{...context.request,params:{...context.request.params,arguments:args}}});
+    return securityOutputFilter(response);
+  } catch(error) {
+    if(['SECRET_CONTENT_DENIED','UNSAFE_COMMAND_DENIED'].includes(error.code)) {
+      return {isError:true,content:[{type:'text',text:JSON.stringify({error:error.code,message:error.message,findings:error.findings})}]};
+    }
+    safeLog('error','Tool request failed',error);
+    return {isError:true,content:[{type:'text',text:'⚠️ Internal server error while processing the tool request.'}]};
   }
 }

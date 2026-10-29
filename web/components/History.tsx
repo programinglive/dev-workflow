@@ -30,10 +30,9 @@ export default function History() {
         endDate: ""
     });
 
-    const loadData = async () => {
-        try {
+    const loadData = () => {
             // Fetch workflow history from API via apiClient
-            const data = await apiClient.getHistory();
+        return apiClient.getHistory().then(data => {
 
             if (data?.history) {
                 setHistory(data.history || []);
@@ -53,7 +52,7 @@ export default function History() {
                     },
                 });
             }
-        } catch (error) {
+        }).catch(() => {
             // Silently handle errors - show empty state
             setHistory([]);
             setTotalPages(1);
@@ -62,7 +61,7 @@ export default function History() {
                     totalTasks: 0,
                 },
             });
-        }
+        });
     };
 
     useEffect(() => {

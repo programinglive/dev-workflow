@@ -1,10 +1,12 @@
-import { exec as execCallback } from "child_process";
+import { exec as execCallback, execFile as execFileCallback } from "child_process";
 import { existsSync } from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { promisify } from "util";
+import { sanitize } from './security/sanitizer.js';
 
 const execPromise = promisify(execCallback);
+const execFilePromise = promisify(execFileCallback);
 
 /**
  * Direktori paket server MCP ini.
@@ -99,7 +101,15 @@ function getDefaultCwd(command) {
   }
 }
 
-export function exec(command, options = {}) {
-  const execOptions = options.cwd ? options : { ...options, cwd: getDefaultCwd(command) };
-  return execPromise(command, execOptions);
+export async function exec(command, options = {}) {
+  const {executable,arguments:args,...runtimeOptions}=options;
+  const execOptions = runtimeOptions.cwd ? runtimeOptions : { ...runtimeOptions, cwd: getDefaultCwd(executable || command) };
+  try { return sanitize(await (executable ? execFilePromise(executable,args,{...execOptions,shell:false}) : execPromise(command, execOptions))); }
+  catch(error) {
+    const safe=new Error(sanitize(error.message));
+    safe.code=error.code;
+    safe.stdout=sanitize(error.stdout || '');
+    safe.stderr=sanitize(error.stderr || '');
+    throw safe;
+  }
 }

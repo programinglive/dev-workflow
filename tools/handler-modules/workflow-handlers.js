@@ -1,3 +1,4 @@
+import { classify } from '../../security/policy.js';
 import { textResponse, isReleaseSatisfied, isErrorResponse, ensurePrdExists } from "./shared.js";
 
 export async function handleStartTask(args, workflowState) {
@@ -8,6 +9,7 @@ export async function handleStartTask(args, workflowState) {
   const { archivedTask } = workflowState.reset({ archive: true });
 
   workflowState.state.currentPhase = "coding";
+  workflowState.state.classification = classify(args);
   workflowState.state.taskDescription = args.description;
   workflowState.state.taskType = args.type;
   workflowState.state.testsSkipped = false;

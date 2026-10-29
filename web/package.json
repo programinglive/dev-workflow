@@ -29,6 +29,7 @@
     "@types/pg": "^8.23.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@typescript/native": "npm:typescript@^7.0.2",
     "autoprefixer": "^10.6.1",
     "cross-env": "^10.1.0",
     "eslint": "^10.13.0",
@@ -37,7 +38,7 @@
     "postcss": "^8.5.31",
     "supertest": "^7.3.1",
     "tailwindcss": "^3.4.18",
-    "typescript": "^7.0.2"
+    "typescript": "npm:@typescript/typescript6@^6.0.2"
   },
   "overrides": {
     "postcss-selector-parser": "7.1.7"

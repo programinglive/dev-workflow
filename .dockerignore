@@ -12,6 +12,30 @@ yarn-error.log
 .env
 .env.local
 .env.*.local
+**/.env*
+**/.npmrc
+**/.ssh
+**/.docker
+**/.aws
+**/.kube
+**/.config/gcloud
+**/.git-credentials
+**/.netrc
+**/.aws
+**/.kube
+**/.config/gcloud
+**/.git-credentials
+**/.netrc
+**/*credentials*.json
+**/service-account*.json
+**/id_rsa*
+**/id_ed25519*
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+.state
+**/*.db*
 
 # Development files
 *.log

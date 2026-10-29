@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { safeLog } from './security/sanitizer.js';
 
 /**
  * Installation script for dev-workflow MCP server
@@ -21,7 +22,7 @@ async function install() {
     // If INIT_CWD points inside node_modules, this script is being executed
     // while installing the package itself. In that case, skip creating a state file.
     if (projectRoot.includes(`node_modules${path.sep}`)) {
-      console.log('ℹ️ Skipping workflow state creation inside node_modules.');
+      safeLog('info', 'ℹ️ Skipping workflow state creation inside node_modules.');
       return;
     }
 
@@ -34,7 +35,7 @@ async function install() {
     // Check if state file already exists
     try {
       await fs.access(stateFile);
-      console.log(`✓ Workflow state file already exists at ${stateFile}`);
+      safeLog('info', `✓ Workflow state file already exists at ${stateFile}`);
       return;
     } catch {
       // File doesn't exist, create it
@@ -62,10 +63,10 @@ async function install() {
     };
 
     await fs.writeFile(stateFile, JSON.stringify(initialState, null, 2));
-    console.log(`✓ Created workflow state file at ${stateFile}`);
-    console.log(`✓ Each project now has its own isolated workflow history`);
+    safeLog('info', `✓ Created workflow state file at ${stateFile}`);
+    safeLog('info', `✓ Each project now has its own isolated workflow history`);
   } catch (error) {
-    console.error('✗ Installation failed:', error.message);
+    safeLog('error', '✗ Installation failed:', error.message);
     process.exit(1);
   }
 }

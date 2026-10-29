@@ -16,13 +16,7 @@ export default function LoginPage() {
     const router = useRouter();
 
     useEffect(() => {
-        // Check if already logged in
-        const mightBeLoggedIn = localStorage.getItem('isLoggedIn') === 'true';
-        if (!mightBeLoggedIn) {
-            setAuthChecking(false);
-            return;
-        }
-
+        // The HttpOnly session cookie is authoritative, including after migration.
         apiClient.getCurrentUser()
             .then(user => {
                 if (user) {
@@ -48,8 +42,8 @@ export default function LoginPage() {
             } else {
                 setError('Login failed');
             }
-        } catch (err: any) {
-            setError(err.message || 'Network error. Please try again.');
+        } catch (err: unknown) {
+            setError(err instanceof Error ? err.message : 'Network error. Please try again.');
         } finally {
             setLoading(false);
         }
