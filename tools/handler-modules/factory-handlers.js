@@ -201,10 +201,23 @@ export async function handleSyncTaskStatus(args = {}) {
     // ditolak server dan hanya mengaburkan keadaan papan.
     stopKeeping();
 
+    // Checklist dibaca lagi setelah status berubah: DoD bisa saja dilengkapi
+    // sejak claim, dan agen perlu kriteria terbaru saat melaporkan selesai.
+    // Kegagalan bacaan tambahan ini tidak boleh membuat laporan status yang
+    // sudah berhasil terlihat gagal.
+    let definitionOfDone = "";
+    try {
+      const task = await findTask(config, recordId);
+      definitionOfDone = String(task?.definitionOfDone || "").trim();
+    } catch {
+      definitionOfDone = "";
+    }
+
     return textResponse(
       [
         `Updated ${recordId} to ${result.status}.`,
         result.session?.summary ? `Summary: ${result.session.summary}` : "",
+        definitionOfDone ? `Definition of done:\n${definitionOfDone}` : "",
         result.status === "review" ? "Waiting for human approval in Factory." : "",
       ]
         .filter(Boolean)
