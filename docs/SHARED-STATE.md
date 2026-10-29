@@ -307,20 +307,28 @@ sudah ditimpa.
 ### 4. Semua tool memberi tahu, bukan sebagian
 
 `handleToolCall` menempelkan peringatan ke respons tool mana pun bila
-penyimpanan terakhir kalah:
+penyimpanan terakhir kalah. Peringatan ditaruh **di depan**, dan menyebut terus
+terang bahwa aksinya tidak berlaku:
 
 ```
-⚠️ STATE TIDAK TERSIMPAN - proses MCP lain memulai task lebih baru.
+⚠️ AKSI TIDAK BERLAKU - proses MCP lain memulai task yang lebih baru.
    Task di disk : "<task di disk>"
    Task Anda    : "<task Anda>"
    State Anda sudah dimuat ulang dari disk, jadi langkah berikutnya mengikuti task di disk.
+   Jalankan ulang aksi ini bila memang untuk task tersebut, atau 'start_task' untuk menggantinya.
+
+--- pesan asli tool (TIDAK tersimpan) ---
 ```
+
+Urutannya penting. Versi pertama menempelkan peringatan **sesudah** pesan tool,
+sehingga yang terbaca lebih dulu adalah `✅ Feature/Bug marked as fixed!` -
+agen membaca baris pertama lalu melanjutkan seolah semuanya tersimpan.
 
 ## Cara memverifikasi
 
 ```bash
-node --no-deprecation --test tests/stale-write-guard.test.js   # 5 tes
-node --no-deprecation --test                                    # 323 tes
+node --no-deprecation --test tests/stale-write-guard.test.js   # 7 tes
+node --no-deprecation --test                                    # 325 tes
 ```
 
 Yang dikunci `tests/stale-write-guard.test.js`:
@@ -329,7 +337,10 @@ Yang dikunci `tests/stale-write-guard.test.js`:
 2. setelah konflik, instance basi memakai state dari disk;
 3. `start_task` tetap boleh mengganti task dan mengarsipkan yang lama;
 4. `verifyPersisted()` melempar kalau isi disk bukan yang kita tulis;
-5. penulisan berurutan di sesi yang sama **tidak** dianggap konflik.
+5. penulisan berurutan di sesi yang sama **tidak** dianggap konflik;
+6. tool memberi tahu "AKSI TIDAK BERLAKU", dan peringatannya mendahului pesan
+   asli tool;
+7. tool yang tidak menyimpan tidak menampilkan peringatan.
 
 ## Sisa risiko
 
