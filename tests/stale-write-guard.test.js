@@ -6,6 +6,8 @@ import path from "node:path";
 
 import { WorkflowState } from "../workflow-state.js";
 import { handleStartTask } from "../tools/handler-modules/workflow-handlers.js";
+import { handleToolCall } from "../tools/handlers.js";
+import { normalizeRequestArgs } from "../utils.js";
 
 /**
  * Tes untuk bug "start_task melaporkan sukses, tetapi task-nya hilang".
@@ -161,5 +163,50 @@ test("penulisan normal di sesi yang sama tidak dianggap konflik", async () => {
     const disk = await readDisk(stateFile);
     assert.equal(disk.taskDescription, "[TASK] normal");
     assert.equal(disk.bugFixed, true);
+  });
+});
+
+function ctx(workflowState, name, args) {
+  return { request: { params: { name, arguments: args } }, workflowState, normalizeRequestArgs };
+}
+
+test("tool memberi tahu bahwa aksinya TIDAK berlaku, bukan 'berhasil'", async () => {
+  await withStateFile(async (stateFile) => {
+    // Proses basi memegang task lamanya sendiri.
+    const stale = new WorkflowState(stateFile);
+    await stale.load();
+    stale.state.currentPhase = "coding";
+    stale.state.taskDescription = "[A] task lama yang sudah usang";
+
+    // Proses lain memulai task baru sesudahnya.
+    const worker = await otherProcess(stateFile);
+    await handleStartTask({ description: "[B] task yang benar-benar jalan", type: "bugfix" }, worker);
+
+    // Proses basi menjalankan tool yang menyimpan.
+    const response = await handleToolCall(
+      ctx(stale, "mark_bug_fixed", { summary: "dari state basi" }),
+    );
+    const text = response.content[0].text;
+
+    assert.match(text, /AKSI TIDAK BERLAKU/, "pengguna harus diberi tahu aksinya gagal");
+    assert.ok(
+      text.indexOf("AKSI TIDAK BERLAKU") < text.indexOf("marked as fixed"),
+      "peringatan harus di DEPAN, jangan 'berhasil' dulu lalu peringatan",
+    );
+    assert.match(text, /\[B\] task yang benar-benar jalan/);
+
+    const disk = await readDisk(stateFile);
+    assert.equal(disk.taskDescription, "[B] task yang benar-benar jalan");
+  });
+});
+
+test("tool yang tidak menyimpan tidak menampilkan peringatan", async () => {
+  await withStateFile(async (stateFile) => {
+    const ws = new WorkflowState(stateFile);
+    await ws.load();
+    await handleStartTask({ description: "[TASK] normal", type: "other" }, ws);
+
+    const response = await handleToolCall(ctx(ws, "get_workflow_status", {}));
+    assert.doesNotMatch(response.content[0].text, /AKSI TIDAK BERLAKU/);
   });
 });

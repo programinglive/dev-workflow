@@ -297,14 +297,18 @@ function withConflictNotice(response, workflowState) {
   if (typeof text !== "string") {
     return response;
   }
+  // Peringatan ditaruh DI DEPAN, dan menyebut terus terang bahwa aksi tadi
+  // tidak berlaku. Menempelkan "✅ berhasil" di atas peringatan membuat agen
+  // membaca baris pertama lalu melanjutkan seolah semuanya tersimpan.
   const notice =
-    `\n\n⚠️ STATE TIDAK TERSIMPAN - proses MCP lain memulai task lebih baru.\n` +
+    `⚠️ AKSI TIDAK BERLAKU - proses MCP lain memulai task yang lebih baru.\n` +
     `   Task di disk : "${conflict.diskTask}"\n` +
     `   Task Anda    : "${conflict.staleTask || '(kosong)'}"\n` +
     `   State Anda sudah dimuat ulang dari disk, jadi langkah berikutnya mengikuti task di disk.\n` +
-    `   Jalankan ulang 'start_task' bila memang ingin mengganti task.`;
+    `   Jalankan ulang aksi ini bila memang untuk task tersebut, atau 'start_task' untuk menggantinya.\n\n` +
+    `--- pesan asli tool (TIDAK tersimpan) ---\n`;
   return {
     ...response,
-    content: [{ ...response.content[0], text: text + notice }, ...response.content.slice(1)],
+    content: [{ ...response.content[0], text: notice + text }, ...response.content.slice(1)],
   };
 }
