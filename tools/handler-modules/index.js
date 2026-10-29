@@ -269,8 +269,9 @@ export async function handleToolCall(context) {
     if(error) return securityOutputFilter(textResponse(error));
     assertSafeKnowledge({tool:context.request.params.name,args});
     assertSafeToolCommand(context.request.params.name,args);
+    if (context.workflowState) context.workflowState.lastConflict = null;
     const response=await dispatchToolCall({...context,request:{...context.request,params:{...context.request.params,arguments:args}}});
-    return securityOutputFilter(response);
+    return securityOutputFilter(withConflictNotice(response, context.workflowState));
   } catch(error) {
     if(['SECRET_CONTENT_DENIED','UNSAFE_COMMAND_DENIED'].includes(error.code)) {
       return {isError:true,content:[{type:'text',text:JSON.stringify({error:error.code,message:error.message,findings:error.findings})}]};
@@ -278,4 +279,32 @@ export async function handleToolCall(context) {
     safeLog('error','Tool request failed',error);
     return {isError:true,content:[{type:'text',text:'⚠️ Internal server error while processing the tool request.'}]};
   }
+}
+
+/**
+ * Tempelkan peringatan bila penyimpanan terakhir kalah dari proses lain.
+ *
+ * Tanpa ini, tool menjawab "berhasil" untuk state yang sebenarnya tidak
+ * tersimpan. Kejadian 29 Okt 2026: `start_task` menjawab "✅ Task Started",
+ * tetapi `get_workflow_status` berikutnya menampilkan task lain.
+ */
+function withConflictNotice(response, workflowState) {
+  const conflict = workflowState?.lastConflict;
+  if (!conflict) {
+    return response;
+  }
+  const text = response?.content?.[0]?.text;
+  if (typeof text !== "string") {
+    return response;
+  }
+  const notice =
+    `\n\n⚠️ STATE TIDAK TERSIMPAN - proses MCP lain memulai task lebih baru.\n` +
+    `   Task di disk : "${conflict.diskTask}"\n` +
+    `   Task Anda    : "${conflict.staleTask || '(kosong)'}"\n` +
+    `   State Anda sudah dimuat ulang dari disk, jadi langkah berikutnya mengikuti task di disk.\n` +
+    `   Jalankan ulang 'start_task' bila memang ingin mengganti task.`;
+  return {
+    ...response,
+    content: [{ ...response.content[0], text: text + notice }, ...response.content.slice(1)],
+  };
 }

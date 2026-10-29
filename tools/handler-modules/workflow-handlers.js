@@ -17,7 +17,10 @@ export async function handleStartTask(args, workflowState) {
   workflowState.state.commitAndPushCompleted = false;
   workflowState.state.lastCommitMessage = "";
   workflowState.state.lastPushBranch = "";
-  const reconciled = await workflowState.save();
+  // start_task memang bermaksud MENGGANTI task, jadi ia boleh menang atas
+  // task berjalan. Task yang diganti tetap diarsipkan oleh reconcileWithDisk,
+  // bukan dihapus.
+  const reconciled = await workflowState.save({ allowReplaceRunningTask: true });
 
   const warnings = [];
   const preservedForeign = reconciled?.preservedTask || preservedBeforeSave?.preservedTask;

@@ -560,6 +560,13 @@ export class WorkflowState {
     // History milik proyek, state milik sesi. Dalam tata letak nyata keduanya
     // berkas berbeda; untuk path eksplisit keduanya menunjuk berkas yang sama.
     this.historyFile = resolveHistoryFile(stateFilePath);
+    // Task yang terakhir kita baca dari / tulis ke disk. Dipakai untuk
+    // membedakan "task ini milik kita" dari "task ini ditulis proses lain
+    // sesudah kita memuat" - tanpa ini penulis basi menang tanpa perlawanan.
+    this.loadedTask = "";
+    // Konflik penyimpanan terakhir, dibaca oleh lapisan tool untuk memberi tahu
+    // pengguna. Null berarti penyimpanan terakhir aman.
+    this.lastConflict = null;
     this.state = {
       currentPhase: "idle",
       classification: "INTERNAL",
@@ -643,6 +650,7 @@ export class WorkflowState {
       // Run this as non-blocking to speed up startup
       ensureCompatibilityLinks(this.stateFile).catch(() => { });
       await this.mergeSharedHistory();
+      this.loadedTask = this.state.taskDescription || "";
       if (typeof this.state.testsCreated !== "boolean") {
         this.state.testsCreated = false;
       }
@@ -766,10 +774,25 @@ export class WorkflowState {
     return created;
   }
 
-  async save() {
+  async save(options = {}) {
     assertSafeKnowledge(this.state);
     const reconciled = await this.reconcileWithDisk();
     assertSafeKnowledge(this.state);
+
+    // Penulis basi tidak boleh menang.
+    //
+    // Bug 29 Okt 2026: satu proses MCP memegang state lama, lalu menyimpan
+    // sesudah proses lain memulai task baru. Task baru tertimpa dan pemanggil
+    // tetap diberi tahu "berhasil" - `get_workflow_status` berikutnya
+    // menampilkan task yang sama sekali lain.
+    const conflict = this.detectStaleOverwrite(reconciled, options);
+    if (conflict) {
+      await this.adoptDiskState();
+      this.lastConflict = conflict;
+      return { ...reconciled, conflict, verified: false };
+    }
+    this.lastConflict = null;
+
     this.state.owner = {
       processMarker: PROCESS_TOKEN,
       pid: process.pid,
@@ -783,7 +806,80 @@ export class WorkflowState {
     await this.updateProjectSummary();
     await this.syncToDatabase();
     this.lastReconcile = reconciled;
+    this.loadedTask = this.state.taskDescription || "";
+    await this.verifyPersisted(this.loadedTask);
     return reconciled;
+  }
+
+  /**
+   * Apakah penyimpanan ini akan menimpa task berjalan milik proses lain?
+   *
+   * Konflik hanya kalau SEMUA ini benar:
+   *   - disk memuat task yang SEDANG berjalan (bukan idle),
+   *   - task di disk bukan task yang terakhir kita muat (jadi ditulis orang
+   *     lain sesudah kita membaca),
+   *   - task di disk bukan task yang akan kita tulis (jadi bukan kita sendiri),
+   *   - pemanggil tidak menyatakan maksud mengganti task.
+   *
+   * `start_task` memang bermaksud mengganti task, jadi ia memakai
+   * `allowReplaceRunningTask: true` dan tetap menang - tetapi task yang diganti
+   * diarsipkan oleh `reconcileWithDisk`, bukan dihapus.
+   */
+  detectStaleOverwrite(reconciled, options = {}) {
+    if (options.allowReplaceRunningTask === true) {
+      return null;
+    }
+    const diskTask = reconciled?.diskTask || "";
+    const diskPhase = reconciled?.diskPhase || "idle";
+    if (!diskTask || diskPhase === "idle") {
+      return null;
+    }
+    if (diskTask === this.loadedTask) {
+      return null;
+    }
+    if (diskTask === (this.state.taskDescription || "")) {
+      return null;
+    }
+    return {
+      diskTask,
+      staleTask: this.state.taskDescription || "",
+      diskPhase,
+    };
+  }
+
+  /** Ambil state dari disk apa adanya, dengan history digabung, tanpa menulis. */
+  async adoptDiskState() {
+    const disk = await this.readDiskState();
+    if (!disk) {
+      return false;
+    }
+    const mergedHistory = this.state.history || [];
+    this.state = { ...disk, history: mergedHistory };
+    this.mergeDiskHistory(disk);
+    this.loadedTask = this.state.taskDescription || "";
+    return true;
+  }
+
+  /**
+   * Pastikan tulisan kita benar-benar bertahan.
+   *
+   * Tanpa ini, proses yang kalah balapan tetap melaporkan sukses. Lebih baik
+   * gagal terang-terangan daripada memberi tahu "berhasil" untuk state yang
+   * sudah ditimpa proses lain.
+   */
+  async verifyPersisted(expectedTask) {
+    const disk = await this.readDiskState();
+    if (!disk) {
+      return true;
+    }
+    const actual = disk.taskDescription || "";
+    if (actual !== (expectedTask || "")) {
+      throw new Error(
+        `State workflow tidak bertahan: yang ditulis "${expectedTask}" tetapi di disk "${actual}". ` +
+        `Proses MCP lain menimpanya. Muat ulang state sebelum melanjutkan.`
+      );
+    }
+    return true;
   }
 
   /**
@@ -840,12 +936,20 @@ export class WorkflowState {
    * pekerjaan resize docker-alma tidak pernah muncul di view_history.
    */
   async reconcileWithDisk() {
-    const result = { mergedHistory: 0, preservedTask: null, foreignToken: null };
+    const result = {
+      mergedHistory: 0,
+      preservedTask: null,
+      foreignToken: null,
+      diskTask: "",
+      diskPhase: "idle",
+    };
     const disk = await this.readDiskState();
     if (!disk) {
       return result;
     }
 
+    result.diskTask = disk.taskDescription || "";
+    result.diskPhase = disk.currentPhase || "idle";
     result.mergedHistory = this.mergeDiskHistory(disk);
 
     if (!this.isForeignWrite(disk)) {
