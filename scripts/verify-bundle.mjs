@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { safeLog } from '../security/sanitizer.js';
 
 /**
  * Verifies that the built bundle actually starts.
@@ -29,12 +30,12 @@ const STARTUP_PATTERN = /running on stdio|MCP Server starting/i;
 const TIMEOUT_MS = 15000;
 
 if (!existsSync(entry)) {
-  console.error(`✖ Bundle not found: ${entry}`);
-  console.error('  Run "npm run build:server" first.');
+  safeLog('error', `✖ Bundle not found: ${entry}`);
+  safeLog('error', '  Run "npm run build:server" first.');
   process.exit(1);
 }
 
-console.log(`Verifying ${path.relative(process.cwd(), entry)}`);
+safeLog('info', `Verifying ${path.relative(process.cwd(), entry)}`);
 
 const child = spawn(process.execPath, [entry], {
   stdio: ['pipe', 'pipe', 'pipe'],
@@ -63,13 +64,13 @@ function finish(ok, reason) {
 
   const output = `${stdout}${stderr}`;
   if (ok) {
-    console.log(`✓ ${reason}`);
+    safeLog('info', `✓ ${reason}`);
     process.exit(0);
   }
 
-  console.error(`✖ ${reason}`);
-  console.error('--- bundle output ---');
-  console.error(output.trim() || '(no output)');
+  safeLog('error', `✖ ${reason}`);
+  safeLog('error', '--- bundle output ---');
+  safeLog('error', output.trim() || '(no output)');
   process.exit(1);
 }
 

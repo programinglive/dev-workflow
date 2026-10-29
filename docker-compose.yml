@@ -7,7 +7,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-devworkflow}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devworkflow_secure_password_change_me}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Provision POSTGRES_PASSWORD privately}
       POSTGRES_DB: ${POSTGRES_DB:-devworkflow}
     ports:
       - "5432:5432"
@@ -21,14 +21,16 @@ services:
 
   api:
     build:
-      context: ./web
-      dockerfile: Dockerfile.api
+      context: .
+      dockerfile: web/Dockerfile.api
     container_name: dev-workflow-api
     ports:
       - "8080:8080"
     environment:
-      - DEV_WORKFLOW_DB_URL=${DEV_WORKFLOW_DB_URL}
-      - SESSION_SECRET=${SESSION_SECRET:-dev-workflow-secret-change-in-production}
+      - DEV_WORKFLOW_DB_URL_ENV=PROJECT_DATABASE_URL
+      - PROJECT_DATABASE_URL=${PROJECT_DATABASE_URL:?Provision PROJECT_DATABASE_URL privately}
+      - JWT_SECRET=${JWT_SECRET:?Provision JWT_SECRET privately}
+      - DEV_WORKFLOW_SECURITY_MODE=strict
       - NODE_ENV=${NODE_ENV:-production}
       - API_PORT=8080
     depends_on:

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { safeLog } from '../security/sanitizer.js';
 
 const { spawnSync } = require('child_process');
 const fs = require('fs');
@@ -120,14 +121,14 @@ function runProjectTests({ spawn = spawnSync, env = process.env, cwd = process.c
   const scripts = packageJson && packageJson.scripts ? packageJson.scripts : {};
 
   if (!scripts.test) {
-    console.log('ℹ️  Skipping tests: no "test" script detected in package.json');
+    safeLog('info', 'ℹ️  Skipping tests: no "test" script detected in package.json');
     return { status: 0 };
   }
 
   const packageManager = detectPackageManager({ env, cwd });
   const { command, args } = buildTestCommand(packageManager);
 
-  console.log(`🧪 Running tests with ${packageManager} ${args.join(' ')}`.trim());
+  safeLog('info', `🧪 Running tests with ${packageManager} ${args.join(' ')}`.trim());
   return spawn(command, args, {
     stdio: 'inherit',
     env
@@ -178,13 +179,13 @@ function runRelease({
   try {
     notesUpdated = updateNotes();
   } catch (error) {
-    console.warn(`⚠️  Skipping release notes update: ${error.message}`);
+    safeLog('warn', `⚠️  Skipping release notes update: ${error.message}`);
   }
 
   if (notesUpdated) {
     const gitAddResult = spawnSync('git', ['add', releaseNotesPath], { stdio: 'inherit', cwd });
     if (!gitAddResult || typeof gitAddResult.status !== 'number' || gitAddResult.status !== 0) {
-      console.warn('⚠️  Release notes updated but failed to stage. Please add manually: git add ' + releaseNotesPath);
+      safeLog('warn', '⚠️  Release notes updated but failed to stage. Please add manually: git add ' + releaseNotesPath);
     }
   }
 
@@ -198,7 +199,7 @@ if (require.main === module) {
       process.exit(result.status ?? 1);
     }
   } catch (error) {
-    console.error(`❌ ${error.message}`);
+    safeLog('error', `❌ ${error.message}`);
     process.exit(1);
   }
 }

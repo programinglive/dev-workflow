@@ -1,7 +1,9 @@
+import { safeLog } from '../../security/sanitizer.js';
 import Database from "better-sqlite3";
 import { existsSync } from "fs";
 import path from "path";
 import { DbAdapter } from "./base.js";
+import { assertSafeKnowledge, classify } from '../../security/policy.js';
 
 const DB_FILENAME = "dev-workflow.db";
 const FREQUENCY_FORMATS = {
@@ -32,7 +34,7 @@ export class SqliteAdapter extends DbAdapter {
             limit--;
         }
         if (limit === 0) {
-            console.error("Warning: Could not find project root effectively, defaulting to INIT_CWD");
+            safeLog('error', "Warning: Could not find project root effectively, defaulting to INIT_CWD");
             projectRoot = initCwd;
         }
         return path.join(projectRoot, ".state", DB_FILENAME);
@@ -89,6 +91,9 @@ export class SqliteAdapter extends DbAdapter {
     `;
 
         this.db.exec(createHistory);
+        if(!this.db.prepare('PRAGMA table_info(workflow_history)').all().some(col=>col.name==='classification')) {
+            this.db.exec("ALTER TABLE workflow_history ADD COLUMN classification TEXT NOT NULL DEFAULT 'INTERNAL'");
+        }
 
         // 2. MIGRATION: Handle existing databases (workflow_history)
         try {
@@ -104,7 +109,7 @@ export class SqliteAdapter extends DbAdapter {
                 // Duplicate entries from old schema (with no project_path) effectively mean project_path='' which matches new default.
             }
         } catch (e) {
-            console.error("Migration error (workflow_history):", e.message);
+            safeLog('error', "Migration error (workflow_history):", e.message);
         }
 
         // 3. MIGRATION: Handle project_summary (Drop and Recreate if schema mismatch)
@@ -147,14 +152,14 @@ export class SqliteAdapter extends DbAdapter {
         // SQLite upsert syntax
         const stmt = this.db.prepare(`
       INSERT INTO workflow_history
-      (user_id, project_path, task_description, task_type, commit_message, timestamp, forced, force_reason, dropped, drop_reason)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (user_id, project_path, task_description, task_type, commit_message, timestamp, forced, force_reason, dropped, drop_reason, classification)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(user_id, project_path, timestamp, task_description) DO UPDATE SET
         commit_message=excluded.commit_message,
         forced=excluded.forced,
         force_reason=excluded.force_reason,
         dropped=excluded.dropped,
-        drop_reason=excluded.drop_reason
+        drop_reason=excluded.drop_reason, classification=excluded.classification
     `);
 
         stmt.run(
@@ -167,7 +172,8 @@ export class SqliteAdapter extends DbAdapter {
             entry.forced ? 1 : 0,
             entry.forceReason || null,
             entry.dropped ? 1 : 0,
-            entry.dropReason || null
+            entry.dropReason || null,
+            classify(entry)
         );
 
         await this.updateSummaryForUser(userId, normalizedProjectPath);
@@ -178,7 +184,7 @@ export class SqliteAdapter extends DbAdapter {
         const normalizedProjectPath = projectPath || '';
 
         const getHistory = this.db.prepare(`
-      SELECT task_type, timestamp, task_description
+      SELECT classification, task_type, timestamp, task_description
       FROM workflow_history
       WHERE user_id = ? AND project_path = ?
       ORDER BY timestamp DESC
@@ -191,7 +197,9 @@ export class SqliteAdapter extends DbAdapter {
             taskTypes[row.task_type] = (taskTypes[row.task_type] || 0) + 1;
         }
 
+        assertSafeKnowledge(rows);
         const recentTasks = rows.slice(0, 5).map(r => ({
+            classification: r.classification,
             description: r.task_description,
             type: r.task_type,
             timestamp: r.timestamp,

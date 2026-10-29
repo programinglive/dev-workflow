@@ -6,24 +6,15 @@ import { Menu, X, Moon, Sun, LogOut } from "lucide-react";
 import { GithubIcon } from "./GithubIcon";
 import Image from "next/image";
 import { apiClient } from "@/lib/api-client";
+import { useTheme } from "./ThemeProvider";
 
 export default function Navbar() {
     const [isOpen, setIsOpen] = useState(false);
-    const [theme, setTheme] = useState<"light" | "dark">("dark");
+    const { theme, toggleTheme } = useTheme();
     const [isAuthenticated, setIsAuthenticated] = useState(false);
     const [username, setUsername] = useState<string | null>(null);
 
     useEffect(() => {
-        // Get theme from localStorage or system preference
-        const savedTheme = localStorage.getItem("theme") as "light" | "dark" | null;
-        const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-
-        const initialTheme = savedTheme || (prefersDark ? "dark" : "light");
-        setTheme(initialTheme);
-
-        // Apply the class immediately
-        document.documentElement.classList.toggle("dark", initialTheme === "dark");
-
         // Check authentication status
         const checkAuth = () => {
             // Check authentication status ONLY if we think we're logged in OR if we just received an update event
@@ -64,13 +55,6 @@ export default function Navbar() {
             window.removeEventListener('authUpdate', checkAuth);
         };
     }, []);
-
-    const toggleTheme = () => {
-        const newTheme = theme === "dark" ? "light" : "dark";
-        setTheme(newTheme);
-        localStorage.setItem("theme", newTheme);
-        document.documentElement.classList.toggle("dark", newTheme === "dark");
-    };
 
     const handleLogout = async () => {
         try {

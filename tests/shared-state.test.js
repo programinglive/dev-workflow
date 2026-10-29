@@ -45,7 +45,7 @@ async function writeForeignState(stateFile, overrides = {}) {
     lastCommitMessage: "",
     history: [],
     owner: {
-      token: "proc-other-session",
+      processMarker: "proc-other-session",
       pid: 4242,
       updatedAt: new Date().toISOString(),
     },
@@ -135,7 +135,7 @@ test("isForeignWrite: false untuk state yang belum punya owner", async () => {
 
 test("isForeignWrite: true untuk token proses lain", async () => {
   await withState(async (state) => {
-    assert.equal(state.isForeignWrite({ owner: { token: "proc-other-session" } }), true);
+    assert.equal(state.isForeignWrite({ owner: { processMarker: "proc-other-session" } }), true);
   });
 });
 
@@ -147,7 +147,7 @@ test("isForeignWrite: false untuk token proses sendiri", async () => {
 
     const disk = await state.readDiskState();
     assert.equal(state.isForeignWrite(disk), false, "state sendiri bukan 'foreign'");
-    assert.ok(disk.owner.token, "owner harus tercap ke disk");
+    assert.ok(disk.owner.processMarker, "owner harus tercap ke disk");
     assert.equal(disk.owner.pid, process.pid);
   });
 });

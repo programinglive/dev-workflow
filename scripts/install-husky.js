@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { safeLog } from '../security/sanitizer.js';
 
 /**
  * Installs husky git hooks when running inside a git checkout, and does
@@ -19,7 +20,7 @@ import { fileURLToPath } from 'node:url';
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 if (!existsSync(path.join(projectRoot, '.git'))) {
-  console.log('Not a git checkout - skipping husky install.');
+  safeLog('info', 'Not a git checkout - skipping husky install.');
   process.exit(0);
 }
 
@@ -37,7 +38,7 @@ try {
   execSync(command, { cwd: projectRoot, stdio: 'inherit', shell: true });
 } catch (error) {
   // Never fail an install because git hooks could not be set up.
-  console.warn(`Could not install husky hooks: ${error.message}`);
+  safeLog('warn', `Could not install husky hooks: ${error.message}`);
 }
 
 process.exit(0);

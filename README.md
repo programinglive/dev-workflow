@@ -1,5 +1,56 @@
 # Dev Workflow MCP Server
 
+## Credential isolation
+
+Never commit real credentials. Never store raw secrets inside the workflow
+knowledge database. Use environment variables or a secret manager.
+
+`DEV_WORKFLOW_SECURITY_MODE=strict` is the default and only supported mode.
+Knowledge may describe credential locations and requirements using SecretReference:
+
+```yaml
+database:
+  host: db.internal
+  secret_ref: env://PROJECT_DATABASE_URL
+  classification: INTERNAL
+```
+
+Supported reference metadata: `env://VARIABLE_NAME`, `op://vault/item/field`,
+`vault://path/to/secret`, `aws-secrets://secret-name`, `gcp-secret://secret-name`,
+`bitwarden://item/field`. MCP does not resolve these references.
+
+For PostgreSQL/MySQL, client configuration should specify the variable name only:
+
+```json
+{"DEV_WORKFLOW_DB_TYPE":"postgres","DEV_WORKFLOW_DB_URL_ENV":"PROJECT_DATABASE_URL"}
+```
+
+Provision that variable in the server's service manager, shell or secret-manager
+launcher outside the model and client JSON. The legacy direct URL setting remains
+supported with a value-free deprecation warning. SQLite needs neither URL setting.
+
+Raw secret input and writes are rejected with sanitized findings. SECRET-labelled
+records are never returned; PUBLIC, INTERNAL (default) and CONFIDENTIAL records
+still pass through the output scanner. Use `npm run security:audit` or MCP
+`security_audit` for bounded, current-user/project findings. Protected files return
+metadata only; the audit does not read their content, resolve secrets or repair data.
+
+Migration: supply explicit `JWT_SECRET`, `SESSION_SECRET` (32+ characters) for their
+respective web servers and `ADMIN_PASSWORD` (16+ characters) to create an admin.
+Login now uses an HttpOnly cookie; `token` is no longer returned in JSON. Previously
+issued bearer tokens remain accepted until expiry. Update custom clients to cookie
+authentication. Browser cross-site cookie policies may require a same-site API domain.
+Compose requires explicit database credentials and `JWT_SECRET`; build its API from
+the repository root. Strict release tools accept the established `npm run release`
+syntax only; run other deployment commands in a trusted operator session.
+
+Read the [audit, threat model and migration plan](docs/security-audit.md) and
+[verification and remaining risks](docs/security-verification.md). Passing tests
+does not prove that all secrets are detected. Trusted executable repository scripts,
+external tools, runtime authentication stores, historical Git and backups still
+require operational controls. A credential already pasted into a model cannot be
+removed by this server.
+
 An MCP server that enforces development workflow discipline: **tests → documentation → commit → release**, with no way to skip a step.
 
 ```mermaid
@@ -309,7 +360,7 @@ supported:
 ```bash
 # .env or environment variable
 DEV_WORKFLOW_DB_TYPE=postgres
-DEV_WORKFLOW_DB_URL=postgresql://user:pass@localhost:5432/devworkflow
+DEV_WORKFLOW_DB_URL=postgresql://USER:[REDACTED]@HOST:5432/database
 ```
 
 | Variable | Default | Description |
@@ -407,8 +458,8 @@ The two skipped tests are the MySQL and PostgreSQL adapters. They run only when 
 database is reachable:
 
 ```bash
-TEST_MYSQL_URL=mysql://user:pass@localhost:3306/db npm test
-TEST_POSTGRES_URL=postgres://user:pass@localhost:5432/db npm test
+TEST_MYSQL_URL=mysql://USER:[REDACTED]@HOST:5432/database npm test
+TEST_POSTGRES_URL=postgres://USER:[REDACTED]@HOST:5432/database npm test
 ```
 
 To exercise them against real servers without exposing them publicly:

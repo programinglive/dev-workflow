@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
 import "dotenv/config";
+import { safeLog, sanitize, securityOutputFilter } from './security/sanitizer.js';
+import { securityMode } from './security/policy.js';
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -18,7 +20,7 @@ import {
   createCommitMessageParts,
   determineReleaseTypeFromCommit,
 } from "./commit-helpers.js";
-import { WorkflowState } from "./workflow-state.js";
+import { WorkflowState, sessionKeyFromRequest } from "./workflow-state.js";
 import { getToolList } from "./tools/definitions.js";
 import { handleToolCall } from "./tools/handlers.js";
 
@@ -52,18 +54,25 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 
 // Handle tool calls
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  try {
   // Reload state from disk before each request to ensure consistency
   if (workflowState) {
+    const sessionId = sessionKeyFromRequest(request);
+    if (sessionId) await workflowState.useSession(sessionId);
     await workflowState.load();
   }
-  return handleToolCall({
+  return securityOutputFilter(await handleToolCall({
     request,
     normalizeRequestArgs,
     workflowState,
     exec,
     git: createGitFacade(),
     utils: { shellEscape, determineReleaseTypeFromCommit, createCommitMessageParts },
-  });
+  }));
+  } catch(error) {
+    safeLog('error','MCP request failed',error);
+    return {isError:true,content:[{type:'text',text:'Request failed; inspect sanitized server diagnostics.'}]};
+  }
 });
 
 // Helper function
@@ -175,30 +184,30 @@ Use 'check_ready_to_commit' to verify workflow completion.
 
 // Start server
 export async function main() {
+  securityMode();
   const startTime = Date.now();
-  console.error(`[${new Date().toISOString()}] MCP Server starting...`);
+  safeLog('error', `[${new Date().toISOString()}] MCP Server starting...`);
 
   try {
     // Initialize workflow state
     workflowState = new WorkflowState();
-    console.error(`[${new Date().toISOString()}] Loading workflow state...`);
-    await workflowState.load();
-    console.error(`[${new Date().toISOString()}] Workflow state loaded.`);
-
-    console.error(`[${new Date().toISOString()}] Ensuring primary file...`);
-    await workflowState.ensurePrimaryFile();
-    console.error(`[${new Date().toISOString()}] Workflow state initialization complete.`);
+    // Select request metadata before the first disk write. Creating an idle
+    // PID fallback here leaves a phantom session alongside the real sessions.
+    safeLog('error', `[${new Date().toISOString()}] Workflow state initialization complete.`);
   } catch (error) {
-    console.error(`[${new Date().toISOString()}] Warning: Failed to initialize workflow state:`, error.message);
+    safeLog('error', `[${new Date().toISOString()}] Warning: Failed to initialize workflow state:`, error.message);
     // Continue anyway - workflow state is optional for MCP to function
     workflowState = new WorkflowState();
   }
 
   const transport = new StdioServerTransport();
-  console.error(`[${new Date().toISOString()}] Connecting transport...`);
+  // Cover SDK-generated protocol errors as well as tool-handler responses.
+  const send = transport.send.bind(transport);
+  transport.send = message => send(securityOutputFilter(message));
+  safeLog('error', `[${new Date().toISOString()}] Connecting transport...`);
   await server.connect(transport);
   const duration = Date.now() - startTime;
-  console.error(`[${new Date().toISOString()}] Dev Workflow MCP Server running on stdio (startup took ${duration}ms)`);
+  safeLog('error', `[${new Date().toISOString()}] Dev Workflow MCP Server running on stdio (startup took ${duration}ms)`);
 }
 
 // --- Lightweight CLI: dev-workflow-mcp call <toolName> [--args '<json>'] ---
@@ -207,7 +216,7 @@ async function cliMain(argv) {
   if (subcommand !== "call") return false;
 
   if (!toolName || typeof toolName !== "string" || toolName.trim() === "") {
-    console.error("Usage: dev-workflow-mcp call <toolName> [--args '<json>']");
+    safeLog('error', "Usage: dev-workflow-mcp call <toolName> [--args '<json>']");
     process.exit(2);
   }
 
@@ -243,11 +252,11 @@ async function cliMain(argv) {
     });
 
     const text = response?.content?.[0]?.text || "";
-    console.log(text);
-    const isError = /^\s*[⚠️❌]/u.test(text);
+    console.log(sanitize(text));
+    const isError = response?.isError === true || /^\s*[⚠️❌]/u.test(text);
     process.exit(isError ? 1 : 0);
   } catch (error) {
-    console.error("CLI error:", error.message || String(error));
+    safeLog('error', "CLI error:", error.message || String(error));
     process.exit(1);
   }
 }
@@ -259,7 +268,7 @@ if (isDirectRun) {
     cliMain(process.argv);
   } else {
     main().catch((error) => {
-      console.error("Server error:", error);
+      safeLog('error', "Server error:", error);
       process.exit(1);
     });
   }

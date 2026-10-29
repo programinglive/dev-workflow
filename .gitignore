@@ -24,7 +24,6 @@ Thumbs.db
 .env
 .env.*
 !.env.example
-!.env.production
 .vscode/
 .idea/
 .state/
@@ -41,3 +40,26 @@ Thumbs.db
 .ssh/*.pem
 !.ssh/config
 !.ssh/known_hosts
+
+# Credential material and local security work
+**/credentials.json
+**/service-account*.json
+**/id_rsa*
+**/id_ed25519*
+*.pem
+*.key
+*.p12
+*.pfx
+.npmrc
+.docker/
+.aws/
+.kube/
+.config/gcloud/
+.git-credentials
+.netrc
+.aws/
+.kube/
+.config/gcloud/
+.git-credentials
+.netrc
+.superpowers/
