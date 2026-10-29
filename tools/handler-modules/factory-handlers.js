@@ -6,6 +6,7 @@ import {
   findTask,
   claimTask,
   updateTaskStatus,
+  updateTaskDetails,
   createTask,
   listProjects,
   formatTaskList,
@@ -298,5 +299,61 @@ export async function handleCreateFactoryTask(args = {}) {
     );
   } catch (error) {
     return textResponse(`Could not create the task: ${error.message}`);
+  }
+}
+
+/**
+ * Edits an existing task, mainly to fill the definition of done of a task that
+ * was created before Factory required it.
+ *
+ * Local validation runs first so an empty request never reaches the network.
+ */
+export async function handleUpdateFactoryTask(args = {}) {
+  const { config, response } = requireConfig();
+  if (!config) return response;
+
+  const recordId = typeof args.recordId === "string" ? args.recordId.trim() : "";
+  if (!recordId) {
+    return textResponse("Provide the 'recordId' of the task to update (see list_factory_tasks).");
+  }
+
+  const hasField = ["title", "description", "acceptance", "definitionOfDone"].some(
+    (field) => typeof args[field] === "string",
+  );
+  if (!hasField) {
+    return textResponse(
+      [
+        "Provide at least one field to update: title, description, acceptance or definitionOfDone.",
+        "To fill a missing definition of done, pass definitionOfDone as a checklist, one condition per line.",
+      ].join("\n"),
+    );
+  }
+
+  try {
+    const result = await updateTaskDetails(config, {
+      recordId,
+      title: args.title,
+      description: args.description,
+      acceptance: args.acceptance,
+      definitionOfDone: args.definitionOfDone,
+    });
+
+    return textResponse(
+      [
+        `Updated ${recordId}.`,
+        result.updatedAt ? `Task version is now ${result.updatedAt}.` : "",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+  } catch (error) {
+    // Factory menjawab 409 kalau task berubah sejak dibaca. Menyebut ulang
+    // langkah yang harus diambil lebih berguna daripada kode HTTP saja.
+    if (error?.status === 409) {
+      return textResponse(
+        `Could not update the task: ${error.message}\nReload the task with list_factory_tasks and try again with the current version.`,
+      );
+    }
+    return textResponse(`Could not update the task: ${error.message}`);
   }
 }

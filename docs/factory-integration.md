@@ -6,6 +6,8 @@ Three MCP tools connect this server to the Factory board at
 | Tool | Direction | Endpoint |
 |---|---|---|
 | `list_factory_tasks` | read | `GET /api/factory` |
+| `create_factory_task` | write | `POST /api/factory` (`action: create_task`) |
+| `update_factory_task` | write | `POST /api/factory` (`action: update_task`) |
 | `claim_factory_task` | write | `POST /api/work` (`action: start`) |
 | `sync_task_status` | write | `POST /api/work` (`action: finish`) or `POST /api/factory` (`action: move_task`) |
 
@@ -132,6 +134,9 @@ whole design:
 - `running` → rejected: *"Use claim_factory_task… Factory records that as a work session, not a status edit."*
 - `done` → sent as `move_task`. Factory accepts it **only** when the task is
   currently in `review`, and requires a reason; otherwise it answers `409`.
+  Factory also answers `409` while the task's `definitionOfDone` is empty, so a
+  task created before that field existed must be completed with
+  `update_factory_task` first.
 - `done` / `cancelled` → the reason **must** travel in the `move_task` body
   (trimmed, max 500). Factory rejects a close without it:
   *"Alasan wajib diisi (minimal 3 karakter)…"*. Before this was fixed the reason
@@ -155,12 +160,31 @@ task-status list.
 ## 3. Typical flow
 
 ```
-list_factory_tasks                      → pick a task, note its id
+list_factory_tasks                      → pick a task, note its id and its DoD
 claim_factory_task { recordId, step }    → task becomes running, session opens
 … work …
 sync_task_status { recordId, status: "review", reason: "…" }
                                          → session closes, task waits for approval
 ```
+
+Before claiming, read the task's `definitionOfDone`: that checklist is what the
+owner will check when approving. If a task has none (it was created before the
+field existed), fill it with `update_factory_task` — otherwise `done` is
+rejected with `409` no matter how much evidence the summary carries.
+
+### Filling a missing definition of done
+
+```
+update_factory_task {
+  recordId: "<uuid>",
+  definitionOfDone: "- [ ] build lulus\n- [ ] halaman login terverifikasi"
+}
+```
+
+The tool reads the task's current version first and sends it as
+`expectedUpdatedAt`. If another session changed the task in between, Factory
+answers `409` and the tool tells the agent to reload instead of overwriting that
+change.
 
 ### Taking over a task held by another device
 

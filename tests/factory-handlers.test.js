@@ -5,6 +5,7 @@ import {
   handleListFactoryTasks,
   handleClaimFactoryTask,
   handleSyncTaskStatus,
+  handleUpdateFactoryTask,
 } from "../tools/handler-modules/factory-handlers.js";
 import { clearTokenCache } from "../factory-client.js";
 
@@ -349,6 +350,58 @@ test("sync handler reports a Factory error instead of claiming success", async (
     const out = text(await handleSyncTaskStatus({ recordId: TASK_ID, status: "review", reason: "Selesai." }));
     assert.doesNotMatch(out, /Updated/);
     assert.match(out, /perangkat lain|Could not update/);
+  } finally {
+    stub.restore();
+    clearEnv();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// update_factory_task
+// ---------------------------------------------------------------------------
+
+test("update tool refuses a request without any field, without touching the network", async () => {
+  setEnv();
+  const stub = stubFetch(() => json(WORKSPACE));
+  try {
+    const out = text(await handleUpdateFactoryTask({ recordId: BACKLOG_ID }));
+    assert.match(out, /at least one field/i);
+    assert.equal(stub.calls.length, 0, "tidak boleh menghubungi Factory untuk permintaan kosong");
+  } finally {
+    stub.restore();
+    clearEnv();
+  }
+});
+
+test("update tool fills the definition of done of an existing task", async () => {
+  setEnv();
+  const stub = stubFetch((call) => {
+    if (call.method === "GET") return json(WORKSPACE);
+    return json({ ok: true, id: BACKLOG_ID, updatedAt: "2026-10-29T00:00:01.000Z" });
+  });
+  try {
+    const out = text(await handleUpdateFactoryTask({ recordId: BACKLOG_ID, definitionOfDone: "- [ ] tes lulus" }));
+    assert.match(out, /Updated/);
+    const post = stub.calls.find((call) => call.method === "POST");
+    assert.equal(post.body.action, "update_task");
+    assert.deepEqual(post.body.task, { definitionOfDone: "- [ ] tes lulus" });
+    assert.equal(post.body.expectedUpdatedAt, "2026-10-25T00:00:00.000Z");
+  } finally {
+    stub.restore();
+    clearEnv();
+  }
+});
+
+test("update tool tells the agent to reload when Factory reports a stale task", async () => {
+  setEnv();
+  const stub = stubFetch((call) => {
+    if (call.method === "GET") return json(WORKSPACE);
+    return json({ error: "Task sudah berubah. Muat ulang sebelum mengedit." }, 409);
+  });
+  try {
+    const out = text(await handleUpdateFactoryTask({ recordId: BACKLOG_ID, definitionOfDone: "- [ ] tes lulus" }));
+    assert.match(out, /Could not update the task/);
+    assert.match(out, /Reload the task/);
   } finally {
     stub.restore();
     clearEnv();

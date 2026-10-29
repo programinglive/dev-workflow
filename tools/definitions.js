@@ -439,6 +439,39 @@ export function getToolList() {
       },
     },
     {
+      name: "update_factory_task",
+      description:
+        "Edit the details of an existing Factory task (title, description, acceptance, definitionOfDone). Use it to fill the definition of done of a task created before Factory required it, because a task cannot move to 'done' while that checklist is empty. It reads the task's current version and lets Factory reject a stale edit with 409 instead of overwriting someone else's change. Supply at least one field.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          recordId: {
+            type: "string",
+            description: "Factory task id (UUID) from list_factory_tasks.",
+          },
+          title: {
+            type: "string",
+            description: "New title, 3-140 characters. Omit to keep the current one.",
+          },
+          description: {
+            type: "string",
+            description: "New context text, max 4000 characters. Omit to keep the current one.",
+          },
+          acceptance: {
+            type: "string",
+            description:
+              "New acceptance text, 3-3000 characters. This is also where the ```run block for the worker lives, so keep it intact unless you mean to change what the runner executes.",
+          },
+          definitionOfDone: {
+            type: "string",
+            description:
+              "New checklist of conditions that must be true before the task can be marked done, 3-3000 characters, one condition per line, for example '- [ ] build lulus'.",
+          },
+        },
+        required: ["recordId"],
+      },
+    },
+    {
       name: "claim_factory_task",
       description:
         "Claim a task by opening a Factory work session. This is what moves the task to 'running' on the board, because Factory has no plain status edit for it. Also starts the local workflow for that task. Use the task id from list_factory_tasks. If the task is held by another device, pass 'takeoverReason' to take it over; Factory records that reason on the board and locks the previous holder out.",

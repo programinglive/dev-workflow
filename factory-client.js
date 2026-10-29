@@ -616,8 +616,62 @@ export async function createTask(config, input = {}, fetchImpl = fetch) {
   return { id: body.id ?? null, runId: body.runId ?? null, status };
 }
 
-/** Lists the owner's projects so a task can reference a real projectId. */
-export async function listProjects(config, fetchImpl = fetch) {
+/**
+ * Edits the details of an existing task.
+ *
+ * Dipakai untuk melengkapi `definitionOfDone` pada task yang dibuat sebelum
+ * kolom itu ada: Factory menolak `done` selama DoD kosong, jadi agen butuh cara
+ * mengisinya tanpa meninggalkan MCP. `expectedUpdatedAt` diambil dari workspace
+ * terbaru supaya dua agen tidak saling menimpa; Factory menjawab 409 bila basi.
+ */
+export async function updateTaskDetails(
+  config,
+  { recordId, title, description, acceptance, definitionOfDone } = {},
+  fetchImpl = fetch,
+) {
+  if (!recordId) throw new Error("recordId is required to update a task.");
+
+  const changes = {};
+
+  if (title !== undefined) {
+    const value = String(title).trim();
+    if (value.length < 3 || value.length > 140) throw new Error("title must be 3-140 characters.");
+    changes.title = value;
+  }
+
+  if (description !== undefined) {
+    const value = String(description).trim();
+    if (value.length > 4000) throw new Error("description must be at most 4000 characters.");
+    changes.description = value;
+  }
+
+  if (acceptance !== undefined) {
+    const value = String(acceptance).trim();
+    if (value.length < 3 || value.length > 3000) throw new Error("acceptance must be 3-3000 characters.");
+    changes.acceptance = value;
+  }
+
+  if (definitionOfDone !== undefined) {
+    const value = String(definitionOfDone).trim();
+    if (value.length < 3 || value.length > 3000) throw new Error("definitionOfDone must be 3-3000 characters.");
+    changes.definitionOfDone = value;
+  }
+
+  if (Object.keys(changes).length === 0) throw new Error("Provide at least one field to update.");
+
+  const task = await findTask(config, recordId, fetchImpl);
+  if (!task) throw new Error(`No task with id "${recordId}" is visible to this account.`);
+
+  const body = await request(config, "/api/factory", {
+    method: "POST",
+    body: { action: "update_task", id: recordId, expectedUpdatedAt: task.updatedAt, task: changes },
+    fetchImpl,
+  });
+
+  return { id: body.id ?? recordId, updatedAt: body.updatedAt ?? null };
+}
+
+/** Lists the owner's projects so a task can reference a real projectId. */export async function listProjects(config, fetchImpl = fetch) {
   const workspace = await readWorkspace(config, fetchImpl);
   return (workspace.projects || []).map((project) => ({
     id: project.id ?? null,
