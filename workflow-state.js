@@ -423,7 +423,105 @@ async function ensureCompatibilityLinks(primaryPath) {
   }
 }
 
-export function resolveStateFile() {
+/**
+ * Identitas sesi agen ini.
+ *
+ * MENGAPA ADA
+ * -----------
+ * Berkas state dulu disimpan per USER, jadi beberapa proses MCP berbagi satu
+ * `workflow-state.json`. Akibatnya `start_task` di satu sesi mengganti task
+ * sesi lain di tengah jalan, dan gerbang kualitas (ready check, tests, docs)
+ * ikut dibagi sehingga sesi B bisa memakai hasil sesi A untuk commit.
+ *
+ * Sekarang task dan gerbangnya milik SESI; `history` tetap milik PROYEK.
+ *
+ * MENGAPA BUKAN ENV SAJA
+ * ----------------------
+ * Percobaan pertama membaca `OPENCODE_SESSION_ID` dari environment. OpenCode
+ * tidak men-set variabel itu, sehingga hampir semua berkas jatuh ke
+ * `pid-<pid>`; karena satu proses MCP dipakai bergantian oleh beberapa sesi,
+ * sesi-sesi itu tetap berbagi satu berkas dan saling menimpa.
+ *
+ * OpenCode v2 mengirim identitas sesi per panggilan di
+ * `CallToolRequest.params._meta["ai.opencode/sessionID"]`. Itu sumber utama
+ * sekarang; env tetap dibaca sebagai cadangan untuk tes dan pemanggil lain.
+ */
+export const SESSION_META_KEY = "ai.opencode/sessionID";
+
+/** Mengambil identitas sesi dari request metadata MCP, atau null. */
+export function sessionKeyFromRequest(request) {
+  const value = request?.params?._meta?.[SESSION_META_KEY];
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed === "" ? null : trimmed;
+}
+
+export function resolveSessionKey(env = process.env, explicitSessionId = null) {
+  const fromRequest = typeof explicitSessionId === "string" ? explicitSessionId.trim() : "";
+  if (fromRequest) return sanitizeSessionKey(fromRequest);
+
+  for (const candidate of [env.DEV_WORKFLOW_SESSION_ID, env.OPENCODE_SESSION_ID, env.CLIENT_SESSION_ID]) {
+    const value = typeof candidate === "string" ? candidate.trim() : "";
+    if (value) return sanitizeSessionKey(value);
+  }
+  return `pid-${process.pid}`;
+}
+
+function sanitizeSessionKey(value) {
+  const cleaned = String(value).replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
+  return (cleaned || "session").slice(0, 64);
+}
+
+/** Nama berkas state untuk sesi ini, di direktori user yang sama. */
+function sessionStateFilename(env = process.env, explicitSessionId = null) {
+  return `workflow-state.${resolveSessionKey(env, explicitSessionId)}.json`;
+}
+
+/**
+ * Berkas tempat `history` bersama disimpan.
+ *
+ * Dalam tata letak nyata (`.state/users/<user>/`) history dipisahkan dari state
+ * sesi supaya catatan proyek tidak terpecah per sesi. Pemanggil yang memberi
+ * path eksplisit di luar tata letak itu tetap memakai satu berkas, persis
+ * seperti sebelumnya.
+ */
+export function resolveHistoryFile(stateFilePath) {
+  const resolved = path.resolve(stateFilePath);
+  const dir = path.dirname(resolved);
+  const inUserTree = path.basename(path.dirname(dir)) === "users";
+  return inUserTree ? path.join(dir, STATE_FILENAME) : resolved;
+}
+
+/**
+ * Induk direktori `.state` untuk sebuah berkas state.
+ *
+ * Dulu ini dihitung dengan empat `dirname` berurutan, yang hanya benar selama
+ * tata letaknya tepat `<root>/.state/users/<user>/<berkas>`. Begitu kedalaman
+ * berubah (mis. state sesi ditaruh di subdirektori), angka itu diam-diam
+ * menghasilkan root yang salah dan baris database tercatat di proyek lain.
+ *
+ * Sekarang dicari dengan sengaja: naik sampai menemukan direktori `.state`,
+ * lalu ambil induknya. Tidak bergantung pada kedalaman.
+ */
+export function resolveProjectRootForState(stateFilePath) {
+  const resolved = path.resolve(stateFilePath);
+  let current = path.dirname(resolved);
+
+  for (;;) {
+    if (path.basename(current) === STATE_DIR) {
+      return path.dirname(current);
+    }
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+
+  // Di luar tata letak `.state` (mis. path eksplisit untuk tes): pakai
+  // direktori yang memuat berkasnya.
+  return path.dirname(resolved);
+}
+
+export function resolveStateFile({ sessionId = null } = {}) {
   const customPath = process.env.DEV_WORKFLOW_STATE_FILE;
   if (customPath) {
     return path.resolve(customPath);
@@ -453,12 +551,15 @@ export function resolveStateFile() {
 
   const stateDir = path.join(projectRoot, STATE_DIR);
   const userDir = getUserScopedDir(stateDir);
-  return path.join(userDir, STATE_FILENAME);
+  return path.join(userDir, sessionStateFilename(process.env, sessionId));
 }
 
 export class WorkflowState {
   constructor(stateFilePath = resolveStateFile()) {
     this.stateFile = stateFilePath;
+    // History milik proyek, state milik sesi. Dalam tata letak nyata keduanya
+    // berkas berbeda; untuk path eksplisit keduanya menunjuk berkas yang sama.
+    this.historyFile = resolveHistoryFile(stateFilePath);
     this.state = {
       currentPhase: "idle",
       classification: "INTERNAL",
@@ -486,6 +587,49 @@ export class WorkflowState {
     };
   }
 
+  /**
+   * Berpindah ke state milik sesi tertentu.
+   *
+   * Satu proses MCP bisa melayani beberapa sesi bergantian, jadi state harus
+   * ditentukan per panggilan - bukan sekali saat proses start. Mengembalikan
+   * true bila berkas benar-benar berpindah.
+   */
+  async useSession(sessionId) {
+    const target = resolveStateFile({ sessionId });
+    if (target === this.stateFile) return false;
+
+    this.stateFile = target;
+    this.historyFile = resolveHistoryFile(target);
+    // Mulai dari state bersih, lalu muat milik sesi itu. Menyalin state sesi
+    // sebelumnya akan membuat sesi baru mewarisi gerbang kualitas sesi lain.
+    this.state = {
+      currentPhase: "idle",
+      taskDescription: "",
+      bugFixed: false,
+      testsCreated: false,
+      testsPassed: false,
+      testsSkipped: false,
+      testsSkippedReason: "",
+      documentationCreated: false,
+      readyToCommit: false,
+      readyCheckCompleted: false,
+      released: false,
+      releaseSkipped: false,
+      releaseSkippedReason: "",
+      releaseCommand: "",
+      releaseNotes: "",
+      commitAndPushCompleted: false,
+      lastCommitMessage: "",
+      lastPushBranch: "",
+      featureFlowCreated: false,
+      featureFlowDescription: "",
+      history: [],
+      taskType: "",
+    };
+    await this.load();
+    return true;
+  }
+
   async load() {
     await migrateLegacyStateFile(this.stateFile);
     try {
@@ -498,6 +642,7 @@ export class WorkflowState {
       // Ensure compatibility mirrors exist whenever the primary file is present
       // Run this as non-blocking to speed up startup
       ensureCompatibilityLinks(this.stateFile).catch(() => { });
+      await this.mergeSharedHistory();
       if (typeof this.state.testsCreated !== "boolean") {
         this.state.testsCreated = false;
       }
@@ -546,7 +691,61 @@ export class WorkflowState {
       }
       // Missing file is fine; bootstrap fresh artifacts for downstream consumers.
       await this.ensurePrimaryFile();
+      // Sesi baru tetap harus melihat riwayat proyek yang sudah ada.
+      await this.mergeSharedHistory();
     }
+  }
+
+  /**
+   * Menyatukan `history` sesi ini dengan `history` bersama.
+   *
+   * History adalah catatan proyek: task yang selesai di satu sesi harus
+   * terlihat dari sesi lain, dan entri yang sama tidak boleh berganda walau
+   * berkali-kali disimpan.
+   */
+  async mergeSharedHistory() {
+    if (this.historyFile === this.stateFile) {
+      return 0;
+    }
+
+    const shared = await this.readHistoryFile();
+    const merged = this.mergeDiskHistory(shared);
+    if (merged > 0) {
+      await this.writeHistoryFile();
+    }
+    return merged;
+  }
+
+  async readHistoryFile() {
+    try {
+      const data = await fs.readFile(this.historyFile, "utf-8");
+      return JSON.parse(data);
+    } catch {
+      return null;
+    }
+  }
+
+  /** Menulis hanya `history` ke berkas bersama, tanpa task milik sesi ini. */
+  async writeHistoryFile() {
+    if (this.historyFile === this.stateFile) {
+      return;
+    }
+
+    const shared = (await this.readHistoryFile()) || {};
+    const merged = Array.isArray(shared.history) ? shared.history.slice() : [];
+    const seen = new Set(merged.map((entry) => this.historyKey(entry)));
+    for (const entry of this.state.history || []) {
+      const key = this.historyKey(entry);
+      if (!seen.has(key)) {
+        merged.push(entry);
+        seen.add(key);
+      }
+    }
+
+    const payload = { ...shared, history: merged };
+    assertSafeKnowledge(payload);
+    await fs.mkdir(path.dirname(this.historyFile), { recursive: true });
+    await fs.writeFile(this.historyFile, JSON.stringify(payload, null, 2));
   }
 
   async ensurePrimaryFile() {
@@ -577,6 +776,9 @@ export class WorkflowState {
       updatedAt: new Date().toISOString(),
     };
     await fs.writeFile(this.stateFile, JSON.stringify(this.state, null, 2));
+    // History ditulis ke berkas bersama supaya sesi lain melihat task yang
+    // selesai di sini, sementara task yang sedang berjalan tetap milik sesi.
+    await this.writeHistoryFile();
     await ensureCompatibilityLinks(this.stateFile);
     await this.updateProjectSummary();
     await this.syncToDatabase();
@@ -700,30 +902,10 @@ export class WorkflowState {
     try {
       const { insertHistoryEntry, updateSummaryForUser, saveState } = await import("./db/index.js");
       const userId = getCurrentUserId();
-      // Use the project directory (parent of .state) as the project identifier
-      // this.stateFile is .../.state/users/<user>/workflow-state.json
-      // so we want resolution logic. For now, let's use the absolute path to the project root.
-      // We can derive it from stateFile path logic in resolveStateFile or just use the directory we are in.
-      // A safe bet that is unique per project on this machine is the project root found by resolveStateFile.
-      // Let's perform a simple resolution:
-
-      const stateDir = path.dirname(path.dirname(path.dirname(this.stateFile)));
-      // stateFile = <root>/.state/users/<user>/workflow-state.json
-      // dirname = <root>/.state/users/<user>
-      // dirname = <root>/.state/users
-      // dirname = <root>/.state
-      // dirname = <root>
-
-      // Wait, let's look at the path structure from resolveStateFile:
-      // path.join(userDir, STATE_FILENAME); where userDir is path.join(stateDir, "users", userId);
-      // and stateDir is path.join(projectRoot, STATE_DIR);
-      // So: projectRoot/.state/users/userId/workflow-state.json
-      // 1. dirname -> .../userId
-      // 2. dirname -> .../users
-      // 3. dirname -> .../.state
-      // 4. dirname -> .../projectRoot
-
-      const projectRoot = path.dirname(path.dirname(path.dirname(path.dirname(this.stateFile))));
+      // projectRoot dipakai sebagai identitas proyek di database. Ditentukan
+      // lewat resolveProjectRootForState, bukan dengan menghitung `dirname`
+      // berkali-kali: jumlah itu hanya benar untuk satu kedalaman tertentu.
+      const projectRoot = resolveProjectRootForState(this.stateFile);
 
       for (const entry of this.state.history || []) {
         await insertHistoryEntry(userId, projectRoot, entry);

@@ -1,10 +1,12 @@
 import { textResponse } from "./shared.js";
+import { startKeeping, stopKeeping } from "../../session-keeper.js";
 import {
   readFactoryConfig,
   listTasks,
   findTask,
   claimTask,
   updateTaskStatus,
+  updateTaskDetails,
   createTask,
   listProjects,
   formatTaskList,
@@ -87,18 +89,19 @@ function formatLastSeen(value) {
  */
 function takeoverRequiredMessage(title, holder = {}) {
   const seen = formatLastSeen(holder.lastSeenAt);
-  const holderText = [holder.deviceName, holder.agent].filter(Boolean).join(" (") + (holder.agent ? ")" : "");
+  const name = String(holder.deviceName || "").trim();
+  const agent = String(holder.agent || "").trim();
+  const holderText = name && agent ? `${name} (${agent})` : name || agent;
   return [
-    `"${title}" sedang dikerjakan oleh perangkat lain.`,
+    `"${title}" is being worked on by another device.`,
+    holderText ? `Holder: ${holderText}${seen ? `, last seen ${seen}` : ""}.` : "",
     "",
-    holderText ? `Pemegang sesi: ${holderText}${seen ? `, terakhir terlihat ${seen}` : ""}.` : "",
+    "To take it over, call claim_factory_task again with a takeoverReason of 3-500 characters:",
+    '  claim_factory_task { "recordId": "<id>", "step": "<step>", "takeoverReason": "<why you are taking over>" }',
     "",
-    "Ambil alih dengan menyertakan alasan (3-500 karakter):",
-    `  claim_factory_task { "recordId": "<id>", "step": "<langkah>", "takeoverReason": "<alasanmu>" }`,
-    "",
-    "Alasannya dicatat di papan, jadi orang berikutnya tahu kenapa pekerjaan berpindah tangan.",
+    "The reason is stored on the board so the next person knows why the work changed hands.",
   ]
-    .filter((line) => line !== "")
+    .filter((line) => line !== null && line !== undefined)
     .join("\n");
 }
 
@@ -127,6 +130,10 @@ export async function handleClaimFactoryTask(args = {}, { workflowState } = {}) 
     const session = await claimTask(config, { recordId, step, takeoverReason });
     if (!session) throw new Error("Factory accepted the claim but returned no work session.");
 
+    // Tanpa ini sesi jadi "tidak ada kabar" dalam 120 detik padahal sedang
+    // dikerjakan, dan papan terlihat penuh task mati.
+    startKeeping(config, session, step);
+
     if (workflowState) {
       workflowState.reset();
       workflowState.state.currentPhase = "coding";
@@ -138,8 +145,12 @@ export async function handleClaimFactoryTask(args = {}, { workflowState } = {}) 
     return textResponse(
       [
         `Claimed [${task.taskKey || task.id}] ${task.title}`,
+        session.tookOver && session.previousHolder
+          ? `Took over from ${session.previousHolder.deviceName} (${session.previousHolder.agent}). The reason is recorded on the board.`
+          : "",
         `Factory status is now running (work session ${session.id}).`,
         task.projectName ? `Project: ${task.projectName}` : "",
+        task.definitionOfDone ? `Definition of done:\n${task.definitionOfDone}` : "",
         "",
         "Local workflow started for this task.",
         "Use 'sync_task_status' with review, blocked or paused to close the session, or done to approve the task once it is in review.",
@@ -186,11 +197,27 @@ export async function handleSyncTaskStatus(args = {}) {
 
   try {
     const result = await updateTaskStatus(config, { recordId, status, reason, nextAction });
+    // Sesi ditutup, jadi berhenti melaporkan: heartbeat setelah ini akan
+    // ditolak server dan hanya mengaburkan keadaan papan.
+    stopKeeping();
+
+    // Checklist dibaca lagi setelah status berubah: DoD bisa saja dilengkapi
+    // sejak claim, dan agen perlu kriteria terbaru saat melaporkan selesai.
+    // Kegagalan bacaan tambahan ini tidak boleh membuat laporan status yang
+    // sudah berhasil terlihat gagal.
+    let definitionOfDone = "";
+    try {
+      const task = await findTask(config, recordId);
+      definitionOfDone = String(task?.definitionOfDone || "").trim();
+    } catch {
+      definitionOfDone = "";
+    }
 
     return textResponse(
       [
         `Updated ${recordId} to ${result.status}.`,
         result.session?.summary ? `Summary: ${result.session.summary}` : "",
+        definitionOfDone ? `Definition of done:\n${definitionOfDone}` : "",
         result.status === "review" ? "Waiting for human approval in Factory." : "",
       ]
         .filter(Boolean)
@@ -229,6 +256,7 @@ export async function handleCreateFactoryTask(args = {}) {
 
   const title = typeof args.title === "string" ? args.title.trim() : "";
   const acceptance = typeof args.acceptance === "string" ? args.acceptance.trim() : "";
+  const definitionOfDone = typeof args.definitionOfDone === "string" ? args.definitionOfDone.trim() : "";
 
   if (!title) {
     return textResponse("Provide 'title' for the task (3-140 characters).");
@@ -238,6 +266,17 @@ export async function handleCreateFactoryTask(args = {}) {
       [
         "Provide 'acceptance': what must be true for this task to count as done.",
         "Factory requires it, and it is what the next person checks.",
+      ].join("\n"),
+    );
+  }
+  if (!definitionOfDone) {
+    return textResponse(
+      [
+        "Provide 'definitionOfDone': the checklist that must be true before this task can be marked done.",
+        "Use one condition per line, for example:",
+        "- [ ] build lulus",
+        "- [ ] halaman login terverifikasi",
+        "It is stored separately from 'acceptance', which also carries the ```run block for the worker.",
       ].join("\n"),
     );
   }
@@ -253,6 +292,7 @@ export async function handleCreateFactoryTask(args = {}) {
       title,
       description: args.description,
       acceptance,
+      definitionOfDone,
       priority: args.priority,
       status: args.status,
     });
@@ -272,5 +312,61 @@ export async function handleCreateFactoryTask(args = {}) {
     );
   } catch (error) {
     return textResponse(`Could not create the task: ${error.message}`);
+  }
+}
+
+/**
+ * Edits an existing task, mainly to fill the definition of done of a task that
+ * was created before Factory required it.
+ *
+ * Local validation runs first so an empty request never reaches the network.
+ */
+export async function handleUpdateFactoryTask(args = {}) {
+  const { config, response } = requireConfig();
+  if (!config) return response;
+
+  const recordId = typeof args.recordId === "string" ? args.recordId.trim() : "";
+  if (!recordId) {
+    return textResponse("Provide the 'recordId' of the task to update (see list_factory_tasks).");
+  }
+
+  const hasField = ["title", "description", "acceptance", "definitionOfDone"].some(
+    (field) => typeof args[field] === "string",
+  );
+  if (!hasField) {
+    return textResponse(
+      [
+        "Provide at least one field to update: title, description, acceptance or definitionOfDone.",
+        "To fill a missing definition of done, pass definitionOfDone as a checklist, one condition per line.",
+      ].join("\n"),
+    );
+  }
+
+  try {
+    const result = await updateTaskDetails(config, {
+      recordId,
+      title: args.title,
+      description: args.description,
+      acceptance: args.acceptance,
+      definitionOfDone: args.definitionOfDone,
+    });
+
+    return textResponse(
+      [
+        `Updated ${recordId}.`,
+        result.updatedAt ? `Task version is now ${result.updatedAt}.` : "",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+  } catch (error) {
+    // Factory menjawab 409 kalau task berubah sejak dibaca. Menyebut ulang
+    // langkah yang harus diambil lebih berguna daripada kode HTTP saja.
+    if (error?.status === 409) {
+      return textResponse(
+        `Could not update the task: ${error.message}\nReload the task with list_factory_tasks and try again with the current version.`,
+      );
+    }
+    return textResponse(`Could not update the task: ${error.message}`);
   }
 }

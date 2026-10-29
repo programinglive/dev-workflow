@@ -4,6 +4,11 @@ Authoritative history of user-visible changes for the Development Workflow MCP S
 
 | Version | Date | Notes |
 |---------|------|-------|
+| 1.12.3 | 2026-10-28 | **release:** catat rilis 1.12.2 (5c67101) |
+| 1.12.2 | 2026-10-28 | **release:** catat rilis 1.12.1 (3beaa23) |
+| 1.12.1 | 2026-10-28 | **release:** catat rilis 1.12.0 (bb8624b) |
+| 1.12.0 | 2026-10-28 | See CHANGELOG for details. |
+| 1.11.0 | 2026-10-28 | See CHANGELOG for details. |
 | 1.10.0 | 2026-10-28 | See CHANGELOG for details. |
 | 1.9.1 | 2026-01-29 | **workflow:** add mermaid diagram and fix high severity tar vulnerability (32b47fa) |
 | 1.9.0 | 2026-01-29 | See CHANGELOG for details. |
@@ -56,6 +61,99 @@ Authoritative history of user-visible changes for the Development Workflow MCP S
 
 
 
+
+
+
+
+
+
+## 1.12.3 – 📝 Documentation
+
+Released on **2026-10-28**.
+
+- **release:** catat rilis 1.12.2 (5c67101)
+- **factory:** kirim alasan pada move_task agar task bisa ditutup (88f6b48)
+
+## 1.12.2 – 📝 Documentation
+
+Released on **2026-10-28**.
+
+- **release:** catat rilis 1.12.1 (3beaa23)
+- **state:** ambil identitas sesi dari request metadata, bukan env (f879938)
+
+## 1.12.1 – 📝 Documentation
+
+Released on **2026-10-28**.
+
+- **release:** catat rilis 1.12.0 (bb8624b)
+- **state:** tentukan projectRoot dari letak .state, bukan jumlah dirname (7ba5755)
+- **release:** catat rilis 1.11.0 (44d6657)
+- **state:** pisahkan state workflow per sesi, history tetap milik proyek (f6da2a6)
+- **release:** catat rilis 1.10.0 (a57dba4)
+- **mcp:** laporkan pengambil alihan dan rapikan pesan penolakan (02b9e33)
+- **mcp:** heartbeat otomatis dan identitas perangkat bersama CLI (11e73e0)
+- **license:** make Clinic proprietary and refresh README (7cd2bda)
+- run MySQL and PostgreSQL adapters against real servers (#31) (9b6aaef)
+- build releases on MMCH, publish on a hosted runner (#9) (e975796), closes #7
+- publish without provenance while the repo stays private (#12) (6dbc16f)
+- run tests on the self-hosted MMCH runner (#7) (ad296f1)
+- verify the built bundle actually starts (#44) (dbaa2a8)
+- **ci:** add dependabot configuration (#15) (80ca440)
+- **ci:** bump actions/checkout from 4 to 7 (#16) (cea2089)
+- **ci:** bump actions/download-artifact from 4 to 8 (#18) (a957d40)
+- **ci:** bump actions/github-script from 7 to 9 (#17) (1cdeda5)
+- **ci:** bump actions/setup-node from 4 to 7 (#19) (d147a9e)
+- **ci:** bump actions/upload-artifact from 4 to 7 (#20) (01f4902)
+- **ci:** keep tailwind on v3 and stop dependabot proposing v4 (#46) (71193a7)
+- **deps)(deps:** bump the minor-and-patch group with 5 updates (#21) (65be648)
+- **deps:** bump commitlint to 21 and align config-conventional (#32) (df59f39)
+- **deps:** bump dotenv to 18 (#41) (b8ee057)
+- **deps:** bump typescript to 7 (#33) (0b292fc)
+- **deps:** drop root dependencies that only the dashboard uses (#34) (cf2a529)
+- regenerate package-lock.json to fix ECOMPROMISED error (83c9ba0)
+- **web-deps)(deps:** bump dotenv from 17.2.3 to 18.0.9 in /web (#27) (baa2d5c)
+- **web-deps)(deps:** bump the minor-and-patch group (#26) (9deefc1)
+- **web-deps:** bump @types/node to 26 in web (#42) (0f4f5e2)
+- **web-deps:** bump eslint to 10 and fix the lint script (#39) (6477024)
+- **web-deps:** bump lucide-react to 1.x and replace the removed Github icon (#40) (a4db628)
+- **web-deps:** bump typescript to 7 in web and migrate import assertions (#43) (3e00a26)
+- **web:** update version to 1.9.1 (6b0eb38)
+- **build:** keep dotenv external so the bundle can start (#45) (d889c8f)
+- **ci:** do not fail release when the bundle exits after stdin closes (#10) (033ea9a)
+- **ci:** use Node 24 in the publish job so npm@latest can install (#11) (283b7d5)
+- clear remaining devDependency advisories (#5) (97deb5f)
+- repair stale test assertions and clear production audit (#4) (b018012)
+- **scripts:** make stack setup work on OpenCode V2 (#3) (a2a1618)
+- **state:** stop losing in-progress work when workflow state is shared between sessions (3cb34f1)
+- **web:** clear dashboard advisories and add CI coverage (#8) (790e551)
+- add AGENTS.md enforcement rules and auto-creation during stack setup (08633a6)
+- add remote bootstrap scripts for Windows (HELLOWORLD) and macOS (Mac) (4bb5db5)
+- add Software Factory architecture docs and API endpoints for factory.programinglive.com (fde59aa)
+- add unified setup script for AI Agent Development Stack (Workflow + Superpowers + RTK) (6c9a0a8)
+- **factory:** izinkan agen menandai task selesai (approve) dari sync_task_status (38e7343)
+- **factory:** read and update your Factory task queue from MCP (#14) (482ef5a)
+- **factory:** tambah create_factory_task dan list_factory_projects (1c5ed69)
+- **factory:** wire MCP to the real Factory API instead of PocketBase activity_tasks (fa841c6)
+- **mcp:** kirim alasan takeover dan ekspos respons 409 Factory (caf1c30)
+- **mcp:** kirim identitas sesi editor, dan izinkan status done (58929f1)
+- **mcp:** takeover task milik perangkat lain lewat alasan (d35c777)
+- **web:** add mermaid visual planning to landing page (519868e)
+- **mcp:** dokumentasikan parameter takeoverReason (6e96422)
+- rewrite README in English and correct stale claims (#13) (d88951b)
+- rewrite README with quickstart guide, add homelab docs, fix Windows path tests (f6f4910)
+- **web:** add mermaid feature flow to documentation (83ab683)
+
+## 1.12.0
+
+Released on **2026-10-28**.
+
+- See CHANGELOG for details.
+
+## 1.11.0
+
+Released on **2026-10-28**.
+
+- See CHANGELOG for details.
 
 ## 1.10.0
 

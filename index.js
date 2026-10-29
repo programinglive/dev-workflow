@@ -20,7 +20,7 @@ import {
   createCommitMessageParts,
   determineReleaseTypeFromCommit,
 } from "./commit-helpers.js";
-import { WorkflowState } from "./workflow-state.js";
+import { WorkflowState, sessionKeyFromRequest } from "./workflow-state.js";
 import { getToolList } from "./tools/definitions.js";
 import { handleToolCall } from "./tools/handlers.js";
 
@@ -57,6 +57,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
   // Reload state from disk before each request to ensure consistency
   if (workflowState) {
+    const sessionId = sessionKeyFromRequest(request);
+    if (sessionId) await workflowState.useSession(sessionId);
     await workflowState.load();
   }
   return securityOutputFilter(await handleToolCall({
@@ -189,12 +191,8 @@ export async function main() {
   try {
     // Initialize workflow state
     workflowState = new WorkflowState();
-    safeLog('error', `[${new Date().toISOString()}] Loading workflow state...`);
-    await workflowState.load();
-    safeLog('error', `[${new Date().toISOString()}] Workflow state loaded.`);
-
-    safeLog('error', `[${new Date().toISOString()}] Ensuring primary file...`);
-    await workflowState.ensurePrimaryFile();
+    // Select request metadata before the first disk write. Creating an idle
+    // PID fallback here leaves a phantom session alongside the real sessions.
     safeLog('error', `[${new Date().toISOString()}] Workflow state initialization complete.`);
   } catch (error) {
     safeLog('error', `[${new Date().toISOString()}] Warning: Failed to initialize workflow state:`, error.message);

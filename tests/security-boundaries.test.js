@@ -131,6 +131,17 @@ test('legacy owner markers migrate before knowledge validation',async()=>tempora
   assert.equal(saved.owner.token,undefined);
 }));
 
+test('shared project history rejects unsafe direct writes after session integration',async()=>temporary(async dir=>{
+  const userDir=path.join(dir,'.state','users','fixture-user');
+  await fs.mkdir(userDir,{recursive:true});
+  const state=new WorkflowState(path.join(userDir,'workflow-state.ses_fixture.json'));
+  await state.load();
+  state.state.history=[{taskDescription:key,taskType:'feature',timestamp:new Date().toISOString()}];
+  await assert.rejects(state.writeHistoryFile(),{code:'SECRET_CONTENT_DENIED'});
+  const persisted=await fs.readFile(state.historyFile,'utf8').catch(()=> '');
+  assert.ok(!persisted.includes(key));
+}));
+
 test('actual stdio MCP response and stderr exclude rejected secret material',async()=>temporary(async dir=>{
   const transport=new StdioClientTransport({command:process.execPath,args:[path.resolve('index.js')],cwd:dir,stderr:'pipe',env:{...process.env,DEV_WORKFLOW_USER_ID:'wire-security-test'}});
   const client=new Client({name:'security-regression',version:'1.0.0'});

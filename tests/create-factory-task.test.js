@@ -57,6 +57,7 @@ test("createTask posts create_task with the exact shape Factory validates", asyn
       title: "Catat pekerjaan",
       description: "konteks",
       acceptance: "task muncul di board",
+      definitionOfDone: "- [ ] build lulus",
       priority: "high",
       status: "backlog",
     },
@@ -73,6 +74,7 @@ test("createTask posts create_task with the exact shape Factory validates", asyn
       title: "Catat pekerjaan",
       description: "konteks",
       acceptance: "task muncul di board",
+      definitionOfDone: "- [ ] build lulus",
       priority: "high",
       status: "backlog",
     },
@@ -84,7 +86,7 @@ test("createTask defaults to backlog so recording work never starts a worker run
 
   const created = await createTask(
     CONFIG,
-    { projectId: PROJECT_ID, title: "Catat saja", acceptance: "tercatat" },
+    { projectId: PROJECT_ID, title: "Catat saja", acceptance: "tercatat", definitionOfDone: "- [ ] tercatat" },
     impl,
   );
 
@@ -99,7 +101,7 @@ test("createTask returns the runId when Factory enqueues a run", async () => {
 
   const created = await createTask(
     CONFIG,
-    { projectId: PROJECT_ID, title: "Jalankan", acceptance: "```run\nnpm test\n```", status: "queued" },
+    { projectId: PROJECT_ID, title: "Jalankan", acceptance: "```run\\nnpm test\\n```", definitionOfDone: "- [ ] tes lulus", status: "queued" },
     impl,
   );
 
@@ -110,7 +112,7 @@ test("createTask returns the runId when Factory enqueues a run", async () => {
 test("createTask omits an empty description rather than sending undefined", async () => {
   const { impl, calls } = fakeFetch(() => ({ status: 201, body: { id: PROJECT_ID } }));
 
-  await createTask(CONFIG, { projectId: PROJECT_ID, title: "Tanpa deskripsi", acceptance: "selesai" }, impl);
+  await createTask(CONFIG, { projectId: PROJECT_ID, title: "Tanpa deskripsi", acceptance: "selesai", definitionOfDone: "- [ ] selesai" }, impl);
 
   assert.equal(calls[0].body.task.description, "");
 });
@@ -147,7 +149,7 @@ test("createTask enforces title length 3-140", async () => {
     /title must be 3-140/,
   );
   await assert.rejects(
-    () => createTask(CONFIG, { projectId: PROJECT_ID, title: "x".repeat(141), acceptance: "selesai" }, impl),
+    () => createTask(CONFIG, { projectId: PROJECT_ID, title: "x".repeat(141), acceptance: "selesai", definitionOfDone: "- [ ] selesai" }, impl),
     /title must be 3-140/,
   );
   assert.equal(calls.length, 0);
@@ -163,15 +165,33 @@ test("createTask requires acceptance, because Factory rejects a task without it"
   assert.equal(calls.length, 0);
 });
 
+test("createTask requires definitionOfDone, because Factory rejects a task without it", async () => {
+  const { impl, calls } = fakeFetch(() => ({ status: 201, body: {} }));
+
+  await assert.rejects(
+    () => createTask(CONFIG, { projectId: PROJECT_ID, title: "Judul", acceptance: "kriteria selesai" }, impl),
+    /definitionOfDone must be 3-3000/,
+  );
+  await assert.rejects(
+    () => createTask(CONFIG, { projectId: PROJECT_ID, title: "Judul", acceptance: "kriteria selesai", definitionOfDone: "  x " }, impl),
+    /definitionOfDone must be 3-3000/,
+  );
+  await assert.rejects(
+    () => createTask(CONFIG, { projectId: PROJECT_ID, title: "Judul", acceptance: "kriteria selesai", definitionOfDone: "x".repeat(3001) }, impl),
+    /definitionOfDone must be 3-3000/,
+  );
+  assert.equal(calls.length, 0, "must not hit the network without a definition of done");
+});
+
 test("createTask rejects unknown priority and status instead of forwarding them", async () => {
   const { impl, calls } = fakeFetch(() => ({ status: 201, body: {} }));
 
   await assert.rejects(
-    () => createTask(CONFIG, { projectId: PROJECT_ID, title: "Judul", acceptance: "kriteria selesai", priority: "urgent" }, impl),
+    () => createTask(CONFIG, { projectId: PROJECT_ID, title: "Judul", acceptance: "kriteria selesai", definitionOfDone: "- [ ] selesai", priority: "urgent" }, impl),
     /priority must be one of/,
   );
   await assert.rejects(
-    () => createTask(CONFIG, { projectId: PROJECT_ID, title: "Judul", acceptance: "kriteria selesai", status: "running" }, impl),
+    () => createTask(CONFIG, { projectId: PROJECT_ID, title: "Judul", acceptance: "kriteria selesai", definitionOfDone: "- [ ] selesai", status: "running" }, impl),
     /status must be one of/,
   );
   assert.equal(calls.length, 0);
@@ -192,7 +212,7 @@ test("createTask surfaces Factory's own error message", async () => {
     () =>
       createTask(
         CONFIG,
-        { projectId: PROJECT_ID, title: "Judul", acceptance: "kriteria selesai", status: "queued" },
+        { projectId: PROJECT_ID, title: "Judul", acceptance: "kriteria selesai", definitionOfDone: "- [ ] selesai", status: "queued" },
         impl,
       ),
     /belum punya perintah/,

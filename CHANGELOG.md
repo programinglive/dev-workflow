@@ -2,6 +2,76 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.12.3](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.12.2...v1.12.3) (2026-10-28)
+
+
+### 📝 Documentation
+
+* **release:** catat rilis 1.12.2 ([5c67101](https://github.com/programinglive/dev-workflow-mcp-server/commit/5c6710192a70efbc38af7d7bb31ac8a6baae6dfb))
+
+
+### 🐛 Bug Fixes
+
+* **factory:** kirim alasan pada move_task agar task bisa ditutup ([88f6b48](https://github.com/programinglive/dev-workflow-mcp-server/commit/88f6b48cc056166e198f248ac43a79351efe33d3))
+
+### [1.12.2](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.12.1...v1.12.2) (2026-10-28)
+
+
+### 📝 Documentation
+
+* **release:** catat rilis 1.12.1 ([3beaa23](https://github.com/programinglive/dev-workflow-mcp-server/commit/3beaa23c4a3115f3e57281c5f516fb4b86c22d89))
+
+
+### 🐛 Bug Fixes
+
+* **state:** ambil identitas sesi dari request metadata, bukan env ([f879938](https://github.com/programinglive/dev-workflow-mcp-server/commit/f8799383421f7ebe2b59f2d3f4daa5fdff0d8e9d))
+
+### [1.12.1](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.12.0...v1.12.1) (2026-10-28)
+
+
+### 📝 Documentation
+
+* **release:** catat rilis 1.12.0 ([bb8624b](https://github.com/programinglive/dev-workflow-mcp-server/commit/bb8624b635768df999c5d7986072cb118b324a36))
+
+
+### ♻️ Refactors
+
+* **state:** tentukan projectRoot dari letak .state, bukan jumlah dirname ([7ba5755](https://github.com/programinglive/dev-workflow-mcp-server/commit/7ba5755d2932e029dd2d6c61ee2e1cf5d2aaf582))
+
+## [1.12.0](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.11.0...v1.12.0) (2026-10-28)
+
+
+### 📝 Documentation
+
+* **release:** catat rilis 1.11.0 ([44d6657](https://github.com/programinglive/dev-workflow-mcp-server/commit/44d665717f226ba44f83a76ec8882e2a14aa98e9))
+
+
+### ✨ Features
+
+* **state:** pisahkan state workflow per sesi, history tetap milik proyek ([f6da2a6](https://github.com/programinglive/dev-workflow-mcp-server/commit/f6da2a65b5e1ffa6c3199fe198a06100edc50816))
+
+## [1.11.0](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.10.0...v1.11.0) (2026-10-28)
+
+
+### 📝 Documentation
+
+* **release:** catat rilis 1.10.0 ([a57dba4](https://github.com/programinglive/dev-workflow-mcp-server/commit/a57dba414505e2fc585d5b839cae976208dd2ee1))
+
+
+### 🐛 Bug Fixes
+
+* **mcp:** laporkan pengambil alihan dan rapikan pesan penolakan ([02b9e33](https://github.com/programinglive/dev-workflow-mcp-server/commit/02b9e33218775a72a4c1834b2cc68213e2facf3f))
+
+
+### ✨ Features
+
+* **mcp:** heartbeat otomatis dan identitas perangkat bersama CLI ([11e73e0](https://github.com/programinglive/dev-workflow-mcp-server/commit/11e73e03c0f7d8cc2f8446fb6a2bb22fb158bff2))
+
+
+### 🧹 Chores
+
+* **license:** make Clinic proprietary and refresh README ([7cd2bda](https://github.com/programinglive/dev-workflow-mcp-server/commit/7cd2bdad9ee6792636c5be4c89682e04022a50bf))
+
 ## [1.10.0](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.9.1...v1.10.0) (2026-10-28)
 
 
