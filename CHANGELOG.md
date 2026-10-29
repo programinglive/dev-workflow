@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.13.0](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.12.3...v1.13.0) (2026-10-29)
+
+
+### 📝 Documentation
+
+* **release:** catat rilis 1.12.3 ([678f105](https://github.com/programinglive/dev-workflow-mcp-server/commit/678f1051e285273b5ee5aa50c00ec32663e3018a))
+
+
+### 🐛 Bug Fixes
+
+* **factory:** izinkan review ulang setelah work.paused ([e81c236](https://github.com/programinglive/dev-workflow-mcp-server/commit/e81c2364822942296a7dde314b5622afc29f96b5))
+* **mcp:** cegah review ganda, tampilkan UUID penuh, jangan commit di repo paket ([c94fe30](https://github.com/programinglive/dev-workflow-mcp-server/commit/c94fe30d3b1703c9823f13199d188cf2e0b6b825))
+* **mcp:** tampilkan definisi selesai saat melaporkan status ([ad460f2](https://github.com/programinglive/dev-workflow-mcp-server/commit/ad460f26f0121aa0a4fbf8fd8833280193fd90c3))
+
+
+### ✨ Features
+
+* **mcp:** kirim dan tampilkan definisi selesai task ([9fbd03b](https://github.com/programinglive/dev-workflow-mcp-server/commit/9fbd03b85e88d2fb88cd6f81de6c937825957a43))
+* **mcp:** tambah tool update_factory_task ([a087aee](https://github.com/programinglive/dev-workflow-mcp-server/commit/a087aee2ef8a444546660f74b2bda3d3de5872e1))
+* **security:** enforce credential isolation across workflow boundaries ([fd225a8](https://github.com/programinglive/dev-workflow-mcp-server/commit/fd225a848654f974113810419ed5322fda9d5eae))
+* **security:** integrate session-aware workflow and guard shared history ([0fb9a45](https://github.com/programinglive/dev-workflow-mcp-server/commit/0fb9a45022d5c60e79fc5a4b7b1481b852a6fa37))
+
 ### [1.12.3](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.12.2...v1.12.3) (2026-10-28)
 
 
