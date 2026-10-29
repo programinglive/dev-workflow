@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite';
 import { fileURLToPath } from 'url';
 import path from 'path';
+import { builtinModules } from 'node:module';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -17,6 +18,9 @@ export default defineConfig({
         format: 'es',
       },
       external: [
+        ...builtinModules,
+        ...builtinModules.map(name=>`node:${name}`),
+        'pg','mysql2','mysql2/promise','better-sqlite3',
         '@modelcontextprotocol/sdk',
         // dotenv ships CommonJS only (dist/index.cjs). Bundling it into an ES
         // module leaks its `require.main === module` guard, which throws

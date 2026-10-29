@@ -1,9 +1,12 @@
+import { safeLog } from '../../security/sanitizer.js';
 import pg from 'pg';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { createRequire } from 'module';
+import { databaseConnectionUrl } from '../../security/config.js';
+import { sanitize } from '../../security/sanitizer.js';
 
 const require = createRequire(import.meta.url);
 const { Pool } = pg;
@@ -27,8 +30,7 @@ try {
     process.stdout.write = originalWrite;
 }
 
-const defaultUrl = 'postgres://devworkflow:devworkflow_secure_password_change_me@localhost:5432/devworkflow';
-const connectionString = process.env.DEV_WORKFLOW_DB_URL || defaultUrl;
+const connectionString = databaseConnectionUrl();
 const rawSid = process.argv[2]; // Passed from API
 
 // DEBUG: output connection details to stderr (so it doesn't break JSON on stdout)
@@ -36,14 +38,14 @@ try {
     const urlStr = connectionString.startsWith('postgres') ? connectionString : `postgres://${connectionString}`; // handle simpler strings if needed
     // Simple heuristic parsing or URL object
     const u = new URL(urlStr);
-    console.error(`DEBUG: Connecting to Host: ${u.hostname}, Port: ${u.port}, User: ${u.username}`);
+    safeLog('error', `DEBUG: Connecting to Host: ${u.hostname}, Port: ${u.port}, User: ${u.username}`);
 } catch (err) {
-    console.error('DEBUG: Could not parse connection string for logging');
+    safeLog('error', 'DEBUG: Could not parse connection string for logging');
 }
 
 if (!connectionString) {
     // Should be unreachable with defaultUrl, but good for safety
-    console.error(JSON.stringify({ error: 'Database configuration missing' }));
+    safeLog('error', JSON.stringify({ error: 'Database configuration missing' }));
     process.exit(1);
 }
 
@@ -75,26 +77,13 @@ async function run() {
             }
         }
 
-        // 2. Fallback if no valid session found (for dev/recovery comfort)
-        if (!userId) {
-            // Try admin
-            const userRes = await pool.query("SELECT id FROM users WHERE LOWER(username) = 'admin'");
-            if (userRes.rows.length > 0) {
-                userId = userRes.rows[0].id;
-            } else {
-                const anyUser = await pool.query("SELECT id FROM users LIMIT 1");
-                if (anyUser.rows.length > 0) {
-                    userId = anyUser.rows[0].id;
-                } else {
-                    throw new Error('No user found');
-                }
-            }
-        }
+        if(!userId) throw new Error('Authenticated session required; automatic admin fallback is denied');
 
         // 3. (Self-healing removed as it was causing schema errors)
 
         const result = await pool.query(`
             SELECT 
+                classification,
                 id, 
                 task_type, 
                 description, 
@@ -107,10 +96,10 @@ async function run() {
             ORDER BY completed_at DESC LIMIT 100
         `, [userId]);
 
-        console.log(JSON.stringify({ history: result.rows }));
+        console.log(JSON.stringify(sanitize({ history: result.rows })));
 
     } catch (error) {
-        console.error(JSON.stringify({ error: error.message, stack: error.stack }));
+        safeLog('error', JSON.stringify({ error: error.message, stack: error.stack }));
         process.exit(1);
     } finally {
         await pool.end();

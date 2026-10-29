@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { safeLog } from '../../security/sanitizer.js';
 
 /**
  * Manual smoke test for the dashboard auth flow.
@@ -23,7 +24,7 @@ const USERNAME = process.env.AUTH_USERNAME;
 const PASSWORD = process.env.AUTH_PASSWORD;
 
 function fail(message) {
-  console.error(`✖ ${message}`);
+  safeLog('error', `✖ ${message}`);
   process.exit(1);
 }
 
@@ -35,7 +36,7 @@ if (!USERNAME || !PASSWORD) {
 }
 
 async function testAuthFlow() {
-  console.log(`Starting auth flow test against ${API_BASE_URL}\n`);
+  safeLog('info', `Starting auth flow test against ${API_BASE_URL}\n`);
 
   const loginRes = await fetch(`${API_BASE_URL}/api/auth/login`, {
     method: 'POST',
@@ -43,35 +44,35 @@ async function testAuthFlow() {
     body: JSON.stringify({ username: USERNAME, password: PASSWORD }),
   });
 
-  console.log(`1. login            -> ${loginRes.status}`);
+  safeLog('info', `1. login            -> ${loginRes.status}`);
   if (!loginRes.ok) {
     throw new Error(`Login failed: ${loginRes.status} ${loginRes.statusText}`);
   }
 
   const loginData = await loginRes.json();
   const token = loginData.token;
-  console.log(token ? '   token received' : '   no token (cookie session mode)');
+  safeLog('info', token ? '   token received' : '   no token (cookie session mode)');
 
   const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
   const meRes = await fetch(`${API_BASE_URL}/api/auth/me`, { headers });
-  console.log(`2. /api/auth/me     -> ${meRes.status}`);
+  safeLog('info', `2. /api/auth/me     -> ${meRes.status}`);
   if (meRes.ok) {
     const me = await meRes.json();
-    console.log(`   authenticated as ${me.username}`);
+    safeLog('info', `   authenticated as ${me.username}`);
   } else {
-    console.log(`   ${(await meRes.text()).slice(0, 200)}`);
+    safeLog('info', `   ${(await meRes.text()).slice(0, 200)}`);
   }
 
   const historyRes = await fetch(`${API_BASE_URL}/api/history`, { headers });
-  console.log(`3. /api/history     -> ${historyRes.status}`);
+  safeLog('info', `3. /api/history     -> ${historyRes.status}`);
   if (historyRes.ok) {
     const data = await historyRes.json();
-    console.log(`   entries: ${Array.isArray(data.history) ? data.history.length : 0}`);
+    safeLog('info', `   entries: ${Array.isArray(data.history) ? data.history.length : 0}`);
   }
 }
 
 testAuthFlow().catch((error) => {
-  console.error(`\n✖ Test failed: ${error.message}`);
+  safeLog('error', `\n✖ Test failed: ${error.message}`);
   process.exit(1);
 });

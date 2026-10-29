@@ -3,6 +3,7 @@ const isWindows = process.platform === "win32";
 export function shellEscape(value) {
   const stringValue = String(value);
   if (isWindows) {
+    if(/["%!\r\n]/.test(stringValue)) throw new Error('Unsafe Windows shell argument denied; use a trusted operator session for complex messages.');
     // Windows cmd.exe requires double quotes for arguments with spaces.
     // Escape existing double quotes with backslash.
     return `"${stringValue.replace(/"/g, '\\"')}"`;

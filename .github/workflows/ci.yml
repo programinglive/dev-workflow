@@ -49,6 +49,12 @@ jobs:
         shell: powershell
         run: npm test
 
+      - name: Security boundary tests and source lint
+        shell: powershell
+        run: |
+          npm run test:security
+          npm run lint
+
       - name: Build server bundle
         shell: powershell
         run: npm run build:server
@@ -65,16 +71,8 @@ jobs:
         shell: powershell
         run: node --test tests/setup-stack.test.js
 
-      - name: Upload test output on failure
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: ci-failure-logs
-          path: |
-            npm-debug.log
-            *.log
-          if-no-files-found: ignore
-          retention-days: 7
+      # Do not upload arbitrary logs: dependencies and external commands may write
+      # credentials. Review sanitized diagnostics locally instead.
 
   web:
     name: Web dashboard build and audit
@@ -96,6 +94,10 @@ jobs:
       - name: Build static export
         shell: powershell
         run: npm run build
+
+      - name: Lint dashboard
+        shell: powershell
+        run: npm run lint
 
       - name: Verify static export output
         shell: powershell

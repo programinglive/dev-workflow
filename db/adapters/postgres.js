@@ -1,5 +1,6 @@
 import pg from "pg";
 import { DbAdapter } from "./base.js";
+import { assertSafeKnowledge, classify } from '../../security/policy.js';
 
 const { Pool } = pg;
 
@@ -59,6 +60,7 @@ export class PostgresAdapter extends DbAdapter {
         )
       `);
 
+            await client.query("ALTER TABLE workflow_history ADD COLUMN IF NOT EXISTS classification TEXT NOT NULL DEFAULT 'INTERNAL'");
             // Migration: Add columns to existing table if they don't exist
             const columns = await client.query(`
                 SELECT column_name FROM information_schema.columns WHERE table_name = 'workflow_history'
@@ -125,14 +127,14 @@ export class PostgresAdapter extends DbAdapter {
 
         const query = `
       INSERT INTO workflow_history
-      (user_id, project_path, description, task_type, commit_message, completed_at, forced, force_reason, dropped, drop_reason)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      (user_id, project_path, description, task_type, commit_message, completed_at, forced, force_reason, dropped, drop_reason, classification)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       ON CONFLICT (user_id, project_path, completed_at, description) DO UPDATE SET
         commit_message=EXCLUDED.commit_message,
         forced=EXCLUDED.forced,
         force_reason=EXCLUDED.force_reason,
         dropped=EXCLUDED.dropped,
-        drop_reason=EXCLUDED.drop_reason
+        drop_reason=EXCLUDED.drop_reason, classification=EXCLUDED.classification
     `;
 
         await this.pool.query(query, [
@@ -145,7 +147,8 @@ export class PostgresAdapter extends DbAdapter {
             entry.forced || false,
             entry.forceReason || null,
             entry.dropped || false,
-            entry.dropReason || null
+            entry.dropReason || null,
+            classify(entry)
         ]);
 
         await this.updateSummaryForUser(userId, normalizedProjectPath);
@@ -157,7 +160,7 @@ export class PostgresAdapter extends DbAdapter {
         const numericUserId = this.getNumericUserId(userId);
 
         const res = await this.pool.query(`
-      SELECT task_type, completed_at as timestamp, description as task_description
+      SELECT classification, task_type, completed_at as timestamp, description as task_description
       FROM workflow_history
       WHERE user_id = $1 AND project_path = $2
       ORDER BY completed_at DESC
@@ -172,7 +175,9 @@ export class PostgresAdapter extends DbAdapter {
             taskTypes[row.task_type] = (taskTypes[row.task_type] || 0) + 1;
         }
 
+        assertSafeKnowledge(rows);
         const recentTasks = rows.slice(0, 5).map(r => ({
+            classification: r.classification,
             description: r.task_description,
             type: r.task_type,
             timestamp: r.timestamp,

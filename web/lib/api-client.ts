@@ -19,10 +19,7 @@ export const apiClient = {
 
         const data = await response.json();
 
-        // Store JWT token if present
-        if (data.token) {
-            localStorage.setItem('token', data.token);
-        }
+        localStorage.removeItem('token');
 
         return data;
     },

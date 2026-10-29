@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { safeLog } from './security/sanitizer.js';
 
 /**
  * Build Verification Script
@@ -22,16 +23,16 @@ let failedTests = 0;
 function test(name, fn) {
   try {
     fn();
-    console.log(`✓ ${name}`);
+    safeLog('info', `✓ ${name}`);
     passedTests++;
   } catch (error) {
-    console.error(`✗ ${name}`);
-    console.error(`  Error: ${error.message}`);
+    safeLog('error', `✗ ${name}`);
+    safeLog('error', `  Error: ${error.message}`);
     failedTests++;
   }
 }
 
-console.log('\n🧪 Running Build Verification Tests...\n');
+safeLog('info', '\n🧪 Running Build Verification Tests...\n');
 
 // Test 1: Build succeeds
 test('Build completes successfully', () => {
@@ -166,11 +167,11 @@ test('Vertical monitor responsive design', () => {
   }
 });
 
-console.log(`\n📊 Test Results: ${passedTests} passed, ${failedTests} failed\n`);
+safeLog('info', `\n📊 Test Results: ${passedTests} passed, ${failedTests} failed\n`);
 
 if (failedTests > 0) {
   process.exit(1);
 } else {
-  console.log('✅ All tests passed!\n');
+  safeLog('info', '✅ All tests passed!\n');
   process.exit(0);
 }

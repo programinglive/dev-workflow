@@ -1,6 +1,7 @@
 import { SqliteAdapter } from "./adapters/sqlite.js";
 import { MysqlAdapter } from "./adapters/mysql.js";
 import { PostgresAdapter } from "./adapters/postgres.js";
+import { databaseConnectionUrl } from '../security/config.js';
 
 let adapterInstance = null;
 
@@ -11,7 +12,7 @@ export async function getAdapter() {
 
   const type = (process.env.DEV_WORKFLOW_DB_TYPE || "sqlite").toLowerCase();
   const config = {
-    connectionUrl: process.env.DEV_WORKFLOW_DB_URL,
+    connectionUrl: databaseConnectionUrl(),
     dbPath: process.env.DEV_WORKFLOW_DB_PATH // optional override for sqlite
   };
 

@@ -3,16 +3,17 @@ FROM node:20-alpine
 # Install dependencies for native modules
 RUN apk add --no-cache python3 make g++ postgresql-client
 
-WORKDIR /app
+WORKDIR /app/web
 
 # Copy package files
-COPY package*.json ./
+COPY web/package*.json ./
 
 # Install dependencies
-RUN npm install --only=production
+RUN npm ci --omit=dev
 
 # Copy application code
-COPY . .
+COPY web/ .
+COPY security/ /app/security/
 
 # Expose API port
 EXPOSE 8080

@@ -97,11 +97,22 @@ test("release-wrapper marks release after validation passes", async () => {
   });
 
   assert.equal(result.code, 0);
-  assert.ok(result.stdout.includes("Release recorded"));
+  assert.ok(result.stderr.includes("Release recorded"));
   assert.equal(result.updatedState.released, true);
   assert.equal(result.updatedState.currentPhase, "ready_to_complete");
   assert.equal(
     result.updatedState.releaseCommand,
     "node node_modules/@programinglive/commiter/scripts/release.js patch"
   );
+});
+
+test("release-wrapper rejects contaminated legacy knowledge before recording release", async () => {
+  const result = await runWrapper({ state: {
+    currentPhase: "release", readyCheckCompleted: true,
+    commitAndPushCompleted: true, released: false,
+    taskDescription: "PASSWORD=legacy-release-regression-fixture",
+  }});
+  assert.equal(result.code, 1);
+  assert.equal(result.updatedState.released, false);
+  assert.ok(!result.stderr.includes("legacy-release-regression-fixture"));
 });
