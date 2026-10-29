@@ -50,6 +50,14 @@ server. Mencatat ≠ mengeksekusi, jadi default-nya `backlog`.
 `queued` tetap tersedia sebagai opt-in eksplisit, dan Factory sendiri menolak
 (409) task `queued` tanpa blok ` ```run `.
 
+**`definitionOfDone` wajib.** Sejak 29 Oktober 2026 Factory menyimpan definisi
+selesai sebagai kolom sendiri (`definition_of_done`), terpisah dari
+`acceptance`. Isinya checklist kondisi konkret, satu per baris, misalnya
+`- [ ] build lulus`. Alasannya: `acceptance` memikul dua tugas sekaligus -
+kriteria diterima **dan** blok ` ```run ` untuk worker - sehingga agen harus
+menebak kapan pekerjaan benar-benar selesai. Task tidak bisa dipindah ke `done`
+selama kolom ini kosong, termasuk task lama yang dibuat sebelum kolom itu ada.
+
 ### Validasi lokal
 
 Payload Factory divalidasi ketat oleh zod. Batas yang sama diterapkan di client
@@ -60,6 +68,7 @@ supaya agen dapat pesan yang bisa ditindaklanjuti, bukan HTTP 400 opaque:
 | `projectId` | wajib, harus UUID |
 | `title` | 3-140 karakter |
 | `acceptance` | 3-3000 karakter, wajib |
+| `definitionOfDone` | 3-3000 karakter, wajib |
 | `description` | maks 4000 karakter |
 | `priority` | `low` / `normal` / `high` |
 | `status` | `backlog` / `queued` |

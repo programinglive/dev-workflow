@@ -397,7 +397,7 @@ export function getToolList() {
     {
       name: "create_factory_task",
       description:
-        "Create a task on the Factory board through the official write path (POST /api/factory create_task). Defaults to status 'backlog', which records the work WITHOUT starting a worker run. Only pass status 'queued' when you really want the worker to execute it - Factory rejects a queued task (409) unless 'acceptance' contains a ```run block. Use list_factory_projects first to get a real projectId.",
+        "Create a task on the Factory board through the official write path (POST /api/factory create_task). Defaults to status 'backlog', which records the work WITHOUT starting a worker run. Only pass status 'queued' when you really want the worker to execute it - Factory rejects a queued task (409) unless 'acceptance' contains a ```run block. Every task needs a 'definitionOfDone' checklist: the concrete conditions that must be true before it can be marked done. Use list_factory_projects first to get a real projectId.",
       inputSchema: {
         type: "object",
         properties: {
@@ -418,6 +418,11 @@ export function getToolList() {
             description:
               "What must be true for this task to be done. 3-3000 characters. Required by Factory.",
           },
+          definitionOfDone: {
+            type: "string",
+            description:
+              "Checklist of the concrete conditions that must be true before the task can be marked done, one per line, for example '- [ ] build lulus'. 3-3000 characters. Required by Factory, and a task cannot move to done while it is empty. Different from 'acceptance', which also carries the ```run block for the worker.",
+          },
           priority: {
             type: "string",
             enum: ["low", "normal", "high"],
@@ -430,7 +435,7 @@ export function getToolList() {
               "Defaults to backlog. 'queued' also creates a worker run and requires a ```run block in acceptance.",
           },
         },
-        required: ["projectId", "title", "acceptance"],
+        required: ["projectId", "title", "acceptance", "definitionOfDone"],
       },
     },
     {
