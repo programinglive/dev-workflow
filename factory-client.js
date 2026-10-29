@@ -36,6 +36,28 @@ export const VALID_STATUSES = ["backlog", "queued", "running", "review", "blocke
 /** Statuses reachable by finishing a work session, and the matching outcome. */
 const WORK_OUTCOMES = { review: "review", blocked: "blocked", paused: "paused" };
 
+/**
+ * Event kinds that prove a task sudah pernah dilaporkan selesai.
+ *
+ * Dipakai untuk mencegah review kedua: Factory membacanya sebagai approval.
+ */
+export const PRIOR_REVIEW_KINDS = ["work.review", "task.done"];
+
+/**
+ * Mencari event review/done untuk satu task.
+ *
+ * Toleran terhadap workspace lama yang belum punya `events`: tanpa bukti
+ * riwayat, agen tetap boleh melapor (tidak ada yang perlu diblokir).
+ */
+export function findPriorReviewEvent(events, taskId) {
+  if (!Array.isArray(events) || !taskId) return null;
+  return (
+    events.find(
+      (event) => event && event.targetId === taskId && PRIOR_REVIEW_KINDS.includes(event.kind),
+    ) || null
+  );
+}
+
 /** Statuses reachable through POST /api/factory { action: move_task }. */
 const MOVABLE_STATUSES = ["backlog", "queued", "cancelled", "done"];
 
@@ -268,7 +290,10 @@ export function formatTaskList(tasks = []) {
 
   tasks.forEach((task, index) => {
     const meta = [task.status, task.priority, task.projectName].filter(Boolean).join(" · ");
-    lines.push(`${index + 1}. [${task.taskKey || task.id}] ${task.title}`);
+    // UUID penuh, bukan potongan 8 karakter: `sync_task_status` menuntut UUID,
+    // dan sebelumnya agen harus membaca API sendiri untuk mendapatkannya.
+    const label = task.id || task.taskKey || "tanpa-id";
+    lines.push(`${index + 1}. [${label}] ${task.title}`);
     if (meta) lines.push(`   ${meta}`);
     if (task.work?.state === "active") {
       const who = task.work.deviceName ? ` on ${task.work.deviceName}` : "";
@@ -512,11 +537,29 @@ export async function heartbeatWork(config, { sessionId, deviceId, step, clientS
  *
  * Factory only accepts an outcome for a session that exists and belongs to the
  * caller's device, so both are checked first to produce a clear message.
+ *
+ * Satu penjagaan tambahan: outcome `review` ditolak bila task sudah punya
+ * riwayat review. Factory membaca review kedua sebagai approval, sehingga task
+ * melompat ke `done` tanpa keputusan pemilik - persis yang terjadi 29 Okt 2026
+ * pada empat task (sesi lama sudah review, board masih backlog).
  */
 export async function finishWork(config, { taskId, outcome, summary, device } = {}, fetchImpl = fetch) {
   const deviceId = (device || deviceFromConfig(config)).id;
-  const task = await findTask(config, taskId, fetchImpl);
-  if (!task) throw new Error(`No task with id "${taskId}" is visible to this account.`);
+  const workspace = await readWorkspace(config, fetchImpl);
+  const record = (workspace.tasks || []).find((task) => task.id === taskId);
+  if (!record) throw new Error(`No task with id "${taskId}" is visible to this account.`);
+  const task = mapTaskRecord(record, workspace.projects || []);
+
+  if (outcome === "review") {
+    const prior = findPriorReviewEvent(workspace.events, taskId);
+    if (prior) {
+      throw new Error(
+        `Task "${task.title}" sudah pernah dilaporkan untuk review (${prior.kind} pada ${prior.createdAt || "waktu tidak tercatat"}). ` +
+        "Melaporkan review kedua kali dibaca Factory sebagai approval, sehingga task bisa melompat ke done tanpa persetujuan pemilik. " +
+        "Minta pemilik memutuskan: set done bila pekerjaan diterima, atau kembalikan ke backlog bila perlu dikerjakan ulang.",
+      );
+    }
+  }
 
   const session = task.work;
   if (!session || session.state !== "active") {

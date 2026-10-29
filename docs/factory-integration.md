@@ -131,6 +131,13 @@ whole design:
 
 `sync_task_status` enforces this:
 
+- `review` → **refused when the task already has a `work.review` or `task.done`
+  event**. Factory reads a second review as an approval, so repeating it moves
+  the task to `done` without a human decision. This happened on 29 October 2026:
+  a session left in `review` while the board still showed `backlog` meant the
+  next `review` report approved the task. The client now stops before the
+  network call and tells the caller to ask the owner for `done` (or to send the
+  task back to `backlog`).
 - `running` → rejected: *"Use claim_factory_task… Factory records that as a work session, not a status edit."*
 - `done` → sent as `move_task`. Factory accepts it **only** when the task is
   currently in `review`, and requires a reason; otherwise it answers `409`.
