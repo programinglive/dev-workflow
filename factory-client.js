@@ -36,6 +36,34 @@ export const VALID_STATUSES = ["backlog", "queued", "running", "review", "blocke
 /** Statuses reachable by finishing a work session, and the matching outcome. */
 const WORK_OUTCOMES = { review: "review", blocked: "blocked", paused: "paused" };
 
+/**
+ * Event kinds yang menentukan apakah sebuah task sudah dilaporkan selesai.
+ *
+ * `work.paused` ikut diperhitungkan karena itu satu-satunya jalan resmi
+ * mengembalikan task dari review ke backlog. Kalau event terakhir adalah
+ * paused, pekerjaan memang sedang dikerjakan ulang dan review baru sah.
+ */
+export const REVIEW_GATE_KINDS = ["work.review", "task.done", "work.paused"];
+
+/**
+ * Mengembalikan event yang memblokir laporan review, atau null bila boleh.
+ *
+ * Memblokir bila event terakhir adalah review/done: Factory membacanya sebagai
+ * approval. Membiarkan bila event terakhir adalah paused (pekerjaan ulang).
+ * Toleran terhadap workspace lama tanpa `events`.
+ */
+export function findBlockingReviewEvent(events, taskId) {
+  if (!Array.isArray(events) || !taskId) return null;
+
+  const relevant = events
+    .filter((event) => event && event.targetId === taskId && REVIEW_GATE_KINDS.includes(event.kind))
+    .sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || "")));
+
+  const last = relevant[relevant.length - 1];
+  if (!last) return null;
+  return last.kind === "work.paused" ? null : last;
+}
+
 /** Statuses reachable through POST /api/factory { action: move_task }. */
 const MOVABLE_STATUSES = ["backlog", "queued", "cancelled", "done"];
 
@@ -229,6 +257,7 @@ export function mapTaskRecord(record = {}, projects = []) {
     projectName: byId.get(record.projectId) ?? null,
     description: record.description || null,
     acceptance: record.acceptance || null,
+    definitionOfDone: record.definitionOfDone || null,
     createdAt: record.createdAt ?? null,
     updatedAt: record.updatedAt ?? null,
     work: work
@@ -267,13 +296,17 @@ export function formatTaskList(tasks = []) {
 
   tasks.forEach((task, index) => {
     const meta = [task.status, task.priority, task.projectName].filter(Boolean).join(" · ");
-    lines.push(`${index + 1}. [${task.taskKey || task.id}] ${task.title}`);
+    // UUID penuh, bukan potongan 8 karakter: `sync_task_status` menuntut UUID,
+    // dan sebelumnya agen harus membaca API sendiri untuk mendapatkannya.
+    const label = task.id || task.taskKey || "tanpa-id";
+    lines.push(`${index + 1}. [${label}] ${task.title}`);
     if (meta) lines.push(`   ${meta}`);
     if (task.work?.state === "active") {
       const who = task.work.deviceName ? ` on ${task.work.deviceName}` : "";
       lines.push(`   active session${who}${task.work.step ? `: ${task.work.step}` : ""}`);
     }
     if (task.acceptance) lines.push(`   acceptance: ${firstLine(task.acceptance)}`);
+    if (task.definitionOfDone) lines.push(`   DoD: ${firstLine(task.definitionOfDone)}`);
   });
 
   return lines.join("\n");
@@ -510,11 +543,29 @@ export async function heartbeatWork(config, { sessionId, deviceId, step, clientS
  *
  * Factory only accepts an outcome for a session that exists and belongs to the
  * caller's device, so both are checked first to produce a clear message.
+ *
+ * Satu penjagaan tambahan: outcome `review` ditolak bila task sudah punya
+ * riwayat review. Factory membaca review kedua sebagai approval, sehingga task
+ * melompat ke `done` tanpa keputusan pemilik - persis yang terjadi 29 Okt 2026
+ * pada empat task (sesi lama sudah review, board masih backlog).
  */
 export async function finishWork(config, { taskId, outcome, summary, device } = {}, fetchImpl = fetch) {
   const deviceId = (device || deviceFromConfig(config)).id;
-  const task = await findTask(config, taskId, fetchImpl);
-  if (!task) throw new Error(`No task with id "${taskId}" is visible to this account.`);
+  const workspace = await readWorkspace(config, fetchImpl);
+  const record = (workspace.tasks || []).find((task) => task.id === taskId);
+  if (!record) throw new Error(`No task with id "${taskId}" is visible to this account.`);
+  const task = mapTaskRecord(record, workspace.projects || []);
+
+  if (outcome === "review") {
+    const prior = findBlockingReviewEvent(workspace.events, taskId);
+    if (prior) {
+      throw new Error(
+        `Task "${task.title}" sudah pernah dilaporkan untuk review (${prior.kind} pada ${prior.createdAt || "waktu tidak tercatat"}). ` +
+        "Melaporkan review kedua kali dibaca Factory sebagai approval, sehingga task bisa melompat ke done tanpa persetujuan pemilik. " +
+        "Minta pemilik memutuskan: set done bila pekerjaan diterima, atau kembalikan ke backlog bila perlu dikerjakan ulang.",
+      );
+    }
+  }
 
   const session = task.work;
   if (!session || session.state !== "active") {
@@ -580,6 +631,7 @@ export async function createTask(config, input = {}, fetchImpl = fetch) {
   const title = clean(input.title) || "";
   const description = clean(input.description) || "";
   const acceptance = clean(input.acceptance) || "";
+  const definitionOfDone = clean(input.definitionOfDone) || "";
   const priority = clean(input.priority) || "normal";
   const status = clean(input.status) || "backlog";
 
@@ -591,6 +643,11 @@ export async function createTask(config, input = {}, fetchImpl = fetch) {
   if (acceptance.length < 3 || acceptance.length > 3000) {
     throw new Error("acceptance must be 3-3000 characters and should state what proves the work is done.");
   }
+  if (definitionOfDone.length < 3 || definitionOfDone.length > 3000) {
+    throw new Error(
+      "definitionOfDone must be 3-3000 characters and must list what proves the task is done, for example '- [ ] build lulus'.",
+    );
+  }
   if (description.length > 4000) throw new Error("description must be at most 4000 characters.");
   if (!CREATABLE_PRIORITIES.includes(priority)) {
     throw new Error(`priority must be one of: ${CREATABLE_PRIORITIES.join(", ")}.`);
@@ -601,15 +658,69 @@ export async function createTask(config, input = {}, fetchImpl = fetch) {
 
   const body = await request(config, "/api/factory", {
     method: "POST",
-    body: { action: "create_task", task: { projectId, title, description, acceptance, priority, status } },
+    body: { action: "create_task", task: { projectId, title, description, acceptance, definitionOfDone, priority, status } },
     fetchImpl,
   });
 
   return { id: body.id ?? null, runId: body.runId ?? null, status };
 }
 
-/** Lists the owner's projects so a task can reference a real projectId. */
-export async function listProjects(config, fetchImpl = fetch) {
+/**
+ * Edits the details of an existing task.
+ *
+ * Dipakai untuk melengkapi `definitionOfDone` pada task yang dibuat sebelum
+ * kolom itu ada: Factory menolak `done` selama DoD kosong, jadi agen butuh cara
+ * mengisinya tanpa meninggalkan MCP. `expectedUpdatedAt` diambil dari workspace
+ * terbaru supaya dua agen tidak saling menimpa; Factory menjawab 409 bila basi.
+ */
+export async function updateTaskDetails(
+  config,
+  { recordId, title, description, acceptance, definitionOfDone } = {},
+  fetchImpl = fetch,
+) {
+  if (!recordId) throw new Error("recordId is required to update a task.");
+
+  const changes = {};
+
+  if (title !== undefined) {
+    const value = String(title).trim();
+    if (value.length < 3 || value.length > 140) throw new Error("title must be 3-140 characters.");
+    changes.title = value;
+  }
+
+  if (description !== undefined) {
+    const value = String(description).trim();
+    if (value.length > 4000) throw new Error("description must be at most 4000 characters.");
+    changes.description = value;
+  }
+
+  if (acceptance !== undefined) {
+    const value = String(acceptance).trim();
+    if (value.length < 3 || value.length > 3000) throw new Error("acceptance must be 3-3000 characters.");
+    changes.acceptance = value;
+  }
+
+  if (definitionOfDone !== undefined) {
+    const value = String(definitionOfDone).trim();
+    if (value.length < 3 || value.length > 3000) throw new Error("definitionOfDone must be 3-3000 characters.");
+    changes.definitionOfDone = value;
+  }
+
+  if (Object.keys(changes).length === 0) throw new Error("Provide at least one field to update.");
+
+  const task = await findTask(config, recordId, fetchImpl);
+  if (!task) throw new Error(`No task with id "${recordId}" is visible to this account.`);
+
+  const body = await request(config, "/api/factory", {
+    method: "POST",
+    body: { action: "update_task", id: recordId, expectedUpdatedAt: task.updatedAt, task: changes },
+    fetchImpl,
+  });
+
+  return { id: body.id ?? recordId, updatedAt: body.updatedAt ?? null };
+}
+
+/** Lists the owner's projects so a task can reference a real projectId. */export async function listProjects(config, fetchImpl = fetch) {
   const workspace = await readWorkspace(config, fetchImpl);
   return (workspace.projects || []).map((project) => ({
     id: project.id ?? null,
