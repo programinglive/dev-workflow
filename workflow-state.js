@@ -624,6 +624,9 @@ export class WorkflowState {
       commitAndPushCompleted: false,
       lastCommitMessage: "",
       lastPushBranch: "",
+      // Repo proyek untuk sesi ini. Ditentukan saat start_task, dipakai semua
+      // operasi git berikutnya. Kosong berarti ikuti urutan resolusi di exec.js.
+      projectDir: "",
       featureFlowCreated: false,
       featureFlowDescription: "",
       history: [],
@@ -665,6 +668,9 @@ export class WorkflowState {
       commitAndPushCompleted: false,
       lastCommitMessage: "",
       lastPushBranch: "",
+      // Repo proyek untuk sesi ini. Ditentukan saat start_task, dipakai semua
+      // operasi git berikutnya. Kosong berarti ikuti urutan resolusi di exec.js.
+      projectDir: "",
       featureFlowCreated: false,
       featureFlowDescription: "",
       history: [],
@@ -723,6 +729,9 @@ export class WorkflowState {
       }
       if (typeof this.state.lastPushBranch !== "string") {
         this.state.lastPushBranch = "";
+      }
+      if (typeof this.state.projectDir !== "string") {
+        this.state.projectDir = "";
       }
       if (typeof this.state.featureFlowCreated !== "boolean") {
         this.state.featureFlowCreated = false;
@@ -1174,6 +1183,9 @@ export class WorkflowState {
       commitAndPushCompleted: false,
       lastCommitMessage: "",
       lastPushBranch: "",
+      // Repo proyek untuk sesi ini. Ditentukan saat start_task, dipakai semua
+      // operasi git berikutnya. Kosong berarti ikuti urutan resolusi di exec.js.
+      projectDir: "",
       featureFlowCreated: false,
       featureFlowDescription: "",
       history,
