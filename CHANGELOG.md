@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.13.10](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.13.9...v1.13.10) (2026-10-30)
+
+
+### 🐛 Bug Fixes
+
+* **exec:** pin repo proyek per sesi, jangan biarkan WORKFLOW_PROJECT_DIR global membajak ([6ba05ff](https://github.com/programinglive/dev-workflow-mcp-server/commit/6ba05ff4fced1b24cbf600dd8a5d27d5f516e81b))
+
 ### [1.13.9](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.13.8...v1.13.9) (2026-10-30)
 
 
