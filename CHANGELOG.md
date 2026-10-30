@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.13.7](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.13.6...v1.13.7) (2026-10-30)
+
+
+### 📝 Documentation
+
+* **security:** analisis allowlist shell berbasis 21k perintah agen ([a1e1bfd](https://github.com/programinglive/dev-workflow-mcp-server/commit/a1e1bfdc1f2df182938a9fbd7bbbc8828d2a12ef))
+
 ### [1.13.6](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.13.5...v1.13.6) (2026-10-30)
 
 
