@@ -1,5 +1,5 @@
 import mysql from "mysql2/promise";
-import { DbAdapter } from "./base.js";
+import { DbAdapter, normalizeTaskType } from "./base.js";
 import { assertSafeKnowledge, classify } from '../../security/policy.js';
 
 const FREQUENCY_FORMATS = {
@@ -106,7 +106,7 @@ export class MysqlAdapter extends DbAdapter {
             userId,
             normalizedProjectPath,
             entry.taskDescription,
-            entry.taskType,
+            normalizeTaskType(entry.taskType),
             entry.commitMessage,
             this.formatDate(entry.timestamp),
             entry.forced ? 1 : 0,

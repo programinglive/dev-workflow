@@ -1,6 +1,26 @@
 import { assertSafeKnowledge } from '../../security/policy.js';
 import { securityOutputFilter } from '../../security/sanitizer.js';
 
+/**
+ * Nilai `task_type` yang selalu boleh masuk kolom NOT NULL.
+ *
+ * MENGAPA ADA
+ * -----------
+ * Kolom `workflow_history.task_type` adalah NOT NULL, tetapi entri history
+ * yang lebih tua tidak selalu punya nilainya: penanda `dropped` versi lama
+ * ditulis tanpa `taskType` sama sekali, dan sebagian entri `forced` menyimpan
+ * string kosong. Saat `undefined` di-bind, driver mengubahnya menjadi NULL dan
+ * SQLite menolak dengan `NOT NULL constraint failed: workflow_history.task_type`.
+ *
+ * Dulu kegagalan itu membatalkan seluruh `syncToDatabase()`: ringkasan proyek
+ * dan state workflow ikut tidak pernah ditulis, jadi riwayat proyek diam-diam
+ * berhenti tersimpan. Normalisasi di sini membuat data lama tetap dapat
+ * disinkronkan tanpa menebak isi aslinya.
+ */
+export function normalizeTaskType(value) {
+    return typeof value === 'string' && value.trim() !== '' ? value.trim() : 'other';
+}
+
 export class DbAdapter {
     constructor(config = {}) {
         this.config = config;

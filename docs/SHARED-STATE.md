@@ -360,3 +360,82 @@ menganggap dirinya benar. Belum ada bukti kejadian ini, tetapi belum tertutup.
 `taskDescription` dari state di memori. Kalau konflik terjadi tepat di antara
 `check_ready_to_commit` dan `commit_and_push`, commit bisa memakai pesan task
 yang salah. Peringatan di respons adalah jaringnya, bukan pencegahan.
+
+# Sinkronisasi database berhenti total karena entri lama tanpa `task_type` (dikerjakan 30 Oktober 2026)
+
+## Masalah
+
+Log server berulang kali menulis:
+
+```text
+{"level":"error","values":["Database sync failed:","NOT NULL constraint failed: workflow_history.task_type"]}
+```
+
+Pesan itu terlihat seperti gangguan kosmetik karena `syncToDatabase()` menangkap
+error-nya sendiri. Kenyataannya seluruh sinkronisasi berhenti: riwayat proyek
+tidak lagi masuk ke database, ringkasan proyek tidak pernah diperbarui, dan
+state workflow tidak pernah disimpan ke SQLite.
+
+## Bukti
+
+Pada proyek `C:\Users\DHIKA\Documents\Default Project`, state memuat 150 entri
+tetapi tabel `workflow_history` hanya berisi **25 baris**. Dua puluh lima itu
+tepat entri indeks 0–24; entri indeks 25 adalah entri lama tanpa `taskType`,
+sehingga loop berhenti di situ dan 125 entri sesudahnya tidak pernah dicoba.
+
+## Reproduksi
+
+```js
+const stmt = db.prepare("INSERT INTO workflow_history (user_id, project_path, task_description, task_type) VALUES (?,?,?,?)");
+stmt.run("u", "p", "x", undefined); // => SqliteError: NOT NULL constraint failed: workflow_history.task_type
+```
+
+`better-sqlite3` mengubah `undefined` menjadi `NULL`, dan kolom
+`task_type` dideklarasikan `NOT NULL`.
+
+## Akar masalah
+
+Penanda `dropped` versi lama (`reset()`/`start_task` sebelum perbaikan 26–27
+Oktober) ditulis **tanpa** `taskType` sama sekali, dan sebagian entri `forced`
+menyimpan string kosong. `insertHistoryEntry()` meneruskan nilai itu apa adanya
+ke driver.
+
+## Yang diperbaiki
+
+### 1. Normalisasi di batas database
+
+`normalizeTaskType()` di `db/adapters/base.js` mengubah nilai yang bukan string
+atau string kosong menjadi `"other"`, dan dipakai oleh adapter SQLite, MySQL,
+serta PostgreSQL. Entri lama tetap dapat disinkronkan tanpa menebak isi
+aslinya.
+
+### 2. Satu entri gagal tidak menghentikan sisanya
+
+`syncToDatabase()` sekarang membungkus setiap `insertHistoryEntry()` dengan
+`try/catch` sendiri, mencatat berapa entri yang dilewati, lalu **tetap**
+menjalankan `updateSummaryForUser()` dan `saveState()`. Fungsi ini juga menerima
+`options.db` supaya dapat diuji tanpa monkeypatch modul ESM.
+
+## Cara memverifikasi
+
+`npm test` menjalankan `tests/legacy-task-type.test.js` dan
+`tests/sync-resilience.test.js`:
+
+1. entri tanpa `taskType`, `null`, dan string kosong dapat disimpan;
+2. nilai tersimpan adalah `other`, dan tidak ada `task_type` NULL/kosong;
+3. entri sesudah entri yang gagal tetap disimpan;
+4. ringkasan proyek dan state tetap ditulis walau semua insert gagal.
+
+Pada data nyata, setelah server dimuat ulang: 150 → 151 baris, 0 `task_type`
+NULL, `project_summary.total_tasks` ikut terisi.
+
+## Sisa risiko
+
+**Entri lama tetap tercatat sebagai `other`.** Tipe aslinya tidak tersimpan di
+mana pun, jadi tidak dapat dipulihkan. Ini pilihan sadar: menebak dari
+`taskDescription` akan mengarang data.
+
+**`user_id` bergantung konteks.** Menjalankan sinkronisasi dari `cwd` berbeda
+menghasilkan `user_id` berbeda untuk proyek yang sama (`default` vs
+`user-…`). Belum diperbaiki di sini; saat mereparasi data lama, jalankan dari
+`cwd` proyek yang benar.
