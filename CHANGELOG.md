@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.13.8](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.13.7...v1.13.8) (2026-10-30)
+
+
+### 📝 Documentation
+
+* **mcp:** persempit guard ke 6 pola yang hanya menyasar proses node ([bac6721](https://github.com/programinglive/dev-workflow-mcp-server/commit/bac67219db3f0ea1d4a7d4000ec603f282076a9d))
+
 ### [1.13.7](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.13.6...v1.13.7) (2026-10-30)
 
 
