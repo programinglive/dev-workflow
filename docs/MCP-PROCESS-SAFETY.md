@@ -63,7 +63,7 @@ server yang dimaksud dari MCP server yang tidak ada urusannya.
 
 ## Pencegahan
 
-Aturan permission global menolak bentuk kill by image name. Ditambahkan ke
+Aturan permission global menolak bentuk **kill by name**, apa pun alatnya. Ditambahkan ke
 `~/.config/opencode/opencode.json`:
 
 ```jsonc
@@ -71,33 +71,67 @@ Aturan permission global menolak bentuk kill by image name. Ditambahkan ke
   { "action": "shell", "resource": "taskkill */IM *", "effect": "deny" },
   { "action": "shell", "resource": "taskkill */im *", "effect": "deny" },
   { "action": "shell", "resource": "taskkill */F /IM *", "effect": "deny" },
-  { "action": "shell", "resource": "taskkill */f /im *", "effect": "deny" }
+  { "action": "shell", "resource": "taskkill */f /im *", "effect": "deny" },
+  { "action": "shell", "resource": "Stop-Process *-Name*", "effect": "deny" },
+  { "action": "shell", "resource": "stop-process *-name*", "effect": "deny" },
+  { "action": "shell", "resource": "ps *Stop-Process*-Name*", "effect": "deny" },
+  { "action": "shell", "resource": "Get-Process *| Stop-Process*", "effect": "deny" },
+  { "action": "shell", "resource": "Get-Process *|Stop-Process*", "effect": "deny" },
+  { "action": "shell", "resource": "gps *| spps*", "effect": "deny" },
+  { "action": "shell", "resource": "killall *", "effect": "deny" },
+  { "action": "shell", "resource": "pkill *", "effect": "deny" },
+  { "action": "shell", "resource": "wmic process *delete*", "effect": "deny" }
 ]
 ```
 
-Yang tetap diizinkan:
+Alasannya per bentuk:
 
-- `taskkill /PID <pid> /F` - menyasar satu proses, tidak menyentuh yang lain;
-- `Stop-Process -Id <pid>` untuk proses yang sudah dipastikan identitasnya.
+| Pola | Menutup |
+| --- | --- |
+| `taskkill */IM *` (+ varian huruf besar/kecil, `/F`) | kill by image name |
+| `Stop-Process *-Name*` (+ alias `ps`, `spps`) | kill by name di PowerShell |
+| `Get-Process *\| Stop-Process*` (+ `gps`) | bentuk pipa, termasuk yang memilih berdasarkan nama |
+| `killall *`, `pkill *` | kill by name di Unix/WSL |
+| `wmic process *delete*` | menghapus proses lewat WMI |
+
+`pkill`, `killall`, dan `wmic` tidak ada di mesin ini (`Get-Command` mengembalikan
+kosong). Aturannya tetap dipasang karena WSL dan instalasi lain bisa
+menambahkannya, dan biayanya nol bila tidak dipakai.
+
+Yang tetap diizinkan - bentuk per-PID, yang hanya menyentuh satu proses:
+
+- `taskkill /PID <pid> /F`
+- `Stop-Process -Id <pid> -Force`
+- `Get-Process -Id <pid>` (tanpa pipa ke Stop-Process)
+
+**Bentuk pipa sengaja diblokir seluruhnya.** Pola teks tidak bisa membedakan
+`Get-Process -Id 12345 | Stop-Process` (sah) dari `Get-Process node | Stop-Process`
+(mematikan semua MCP). Karena keduanya berbentuk sama, keduanya ditolak, dan
+pemakaian yang sah diarahkan memakai `Stop-Process -Id <pid>` langsung.
 
 ## Cara memverifikasi
 
-Dua perintah, keduanya aman dijalankan:
+Empat perintah. Yang pertama memakai nama proses palsu, jadi aman walau aturan
+gagal:
 
 ```text
+$ Stop-Process -Name definitely-not-a-real-process-xyz -Force
+{"error":{"type":"permission.rejected","message":"Permission denied: shell"}}
+
 $ taskkill /F /IM definitely-not-a-real-process-xyz.exe
 {"error":{"type":"permission.rejected","message":"Permission denied: shell"}}
 
-$ taskkill /PID 999999 /F
-ERROR: The process "999999" not found.
+$ Stop-Process -Id 999999 -Force      -> berjalan (tidak diblokir)
+$ taskkill /PID 999998 /F             -> berjalan (tidak diblokir)
 ```
 
-Yang pertama membuktikan bentuk `/IM` diblokir sebelum eksekusi. Yang kedua
-membuktikan bentuk per-PID masih berjalan - perbaikannya tidak melumpuhkan
-pembersihan proses yang sah.
+Dua yang pertama membuktikan kill-by-name diblokir sebelum eksekusi. Dua yang
+terakhir membuktikan bentuk per-PID masih berjalan - perbaikannya tidak
+melumpuhkan pembersihan proses yang sah.
 
-`npm test` menjalankan `tests/process-kill-guard.test.js`, yang memastikan aturan
-penjaga masih ada dan masih cocok dengan bentuk perintah berbahaya.
+`npm test` menjalankan `tests/process-kill-guard.test.js`, yang memastikan
+aturan penjaga masih ada di config, masih menangkap sembilan bentuk perintah
+berbahaya, dan tidak menangkap bentuk per-PID yang sah.
 
 ## Kalau MCP sudah terlanjur mati
 
@@ -113,15 +147,21 @@ Atau lewat `/mcps` di TUI.
 
 ## Sisa risiko
 
-**Aturan ini menyasar satu bentuk perintah.** `Stop-Process -Name node` atau
-`wmic process where "name='node.exe'" delete` melakukan hal yang sama dan belum
-diblokir. Dokumentasi OpenCode sendiri memperingatkan bahwa pola untuk mengenali
-"setiap perintah berbahaya" tidak dapat diandalkan; yang benar-benar aman adalah
-allowlist sempit.
+**Bentuk pipa yang sah ikut diblokir.** `Get-Process -Id 12345 | Stop-Process`
+ditolak bersama bentuk berbahayanya, karena pola teks tidak bisa membedakan
+keduanya. Ini pilihan sadar: menolak pemakaian sah yang mudah diganti lebih baik
+daripada meloloskan satu perintah yang mematikan semua MCP. Penggantinya
+`Stop-Process -Id <pid>`.
 
 **Kill per-PID tetap bisa membunuh MCP.** Klaster B melakukan itu dengan sengaja
 dan hasilnya benar sesuai maksudnya - hanya `dev-workflow` yang mati. Setelah
 tindakan seperti itu, server perlu dihubungkan ulang secara manual.
+
+**Pola teks bukan batas keamanan.** Perintah yang dibangun secara dinamis
+(`$cmd = "Stop-Pro" + "cess"; & $cmd -Name node`) tidak akan cocok dengan pola
+mana pun. Dokumentasi OpenCode sendiri memperingatkan bahwa pola untuk mengenali
+"setiap perintah berbahaya" tidak dapat diandalkan. Yang benar-benar aman adalah
+allowlist sempit untuk perintah yang memang dibutuhkan.
 
 **`@playwright/mcp@latest` tetap tidak dipin.** Ini bukan penyebab crash, tetapi
 membuat versi yang dipakai berubah tanpa catatan. Memakai versi tetap akan lebih

@@ -25,13 +25,29 @@ const DANGEROUS_COMMANDS = [
   "taskkill /F /IM node.exe",
   "taskkill /f /im codex.exe",
   "taskkill /IM node.exe /T",
+  "Stop-Process -Name node -Force",
+  "Stop-Process -Name node.exe",
+  "stop-process -name node",
+  "Get-Process node | Stop-Process -Force",
+  "Get-Process -Name node | Stop-Process",
 ];
 
-/** Bentuk yang harus tetap boleh berjalan. */
+/**
+ * Bentuk yang harus tetap boleh berjalan.
+ *
+ * Catatan: bentuk pipa `Get-Process -Id 12345 | Stop-Process` sengaja TIDAK
+ * ada di sini. Aturan pipa tidak bisa membedakan pemilihan berdasarkan `-Id`
+ * dari pemilihan berdasarkan nama, jadi bentuk pipa diblokir seluruhnya dan
+ * pemakaian yang sah diminta memakai `Stop-Process -Id <pid>` langsung.
+ */
 const SAFE_COMMANDS = [
   "taskkill /PID 12345 /F",
   "taskkill /pid 12345 /f",
   "taskkill /PID 999999 /F /T",
+  "Stop-Process -Id 12345 -Force",
+  "Stop-Process -Id 12345",
+  "npm test",
+  "git status",
 ];
 
 /**
@@ -117,6 +133,15 @@ test("pola guard yang didokumentasikan menutup bentuk perintah yang pernah gagal
     "taskkill */im *",
     "taskkill */F /IM *",
     "taskkill */f /im *",
+    "Stop-Process *-Name*",
+    "stop-process *-name*",
+    "ps *Stop-Process*-Name*",
+    "Get-Process *| Stop-Process*",
+    "Get-Process *|Stop-Process*",
+    "gps *| spps*",
+    "killall *",
+    "pkill *",
+    "wmic process *delete*",
   ];
 
   await t.test("menangkap semua bentuk berbahaya", () => {
@@ -135,6 +160,23 @@ test("pola guard yang didokumentasikan menutup bentuk perintah yang pernah gagal
         documented.some((pattern) => matches(pattern, command)),
         false,
         `pola terdokumentasi terlalu luas untuk ${JSON.stringify(command)}`,
+      );
+    }
+  });
+
+  await t.test("bentuk pipa diblokir walau memilih berdasarkan -Id", () => {
+    // Keterbatasan yang disengaja: aturan pola tidak bisa membedakan
+    // `Get-Process -Id 1` dari `Get-Process -Name node` di dalam pipa.
+    // Bentuk pipa diblokir seluruhnya, dan pemakaian sah diarahkan ke
+    // `Stop-Process -Id <pid>`.
+    for (const command of [
+      "Get-Process -Id 12345 | Stop-Process",
+      "Get-Process node | Stop-Process -Force",
+    ]) {
+      assert.equal(
+        documented.some((pattern) => matches(pattern, command)),
+        true,
+        `bentuk pipa harus diblokir: ${JSON.stringify(command)}`,
       );
     }
   });
