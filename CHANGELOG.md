@@ -2,13 +2,6 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
-## [](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.13.2...v) (2026-10-30)
-
-
-### 🐛 Bug Fixes
-
-* **exec:** izinkan repo paket sebagai direktori kerja bila cwd memang di dalamnya ([68b7944](https://github.com/programinglive/dev-workflow-mcp-server/commit/68b79440806fb47d3fbfb2534085a9ae0c77b4a4))
-
 ### [1.13.2](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.13.1...v1.13.2) (2026-10-30)
 
 
