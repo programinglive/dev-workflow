@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.13.5](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.13.4...v1.13.5) (2026-10-30)
+
+
+### 📝 Documentation
+
+* **mcp:** catat bahwa MCP mati karena kill node.exe, bukan bug playwright ([49ad25f](https://github.com/programinglive/dev-workflow-mcp-server/commit/49ad25f38b0626a26f6537333d10c54149bb6fb8))
+
 ### [1.13.4](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.13.3...v1.13.4) (2026-10-30)
 
 
