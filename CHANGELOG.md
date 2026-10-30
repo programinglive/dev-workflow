@@ -2,6 +2,38 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.13.1](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.12.3...v1.13.1) (2026-10-30)
+
+
+### ✨ Features
+
+* **mcp:** kirim dan tampilkan definisi selesai task ([9fbd03b](https://github.com/programinglive/dev-workflow-mcp-server/commit/9fbd03b85e88d2fb88cd6f81de6c937825957a43))
+* **mcp:** tambah tool update_factory_task ([a087aee](https://github.com/programinglive/dev-workflow-mcp-server/commit/a087aee2ef8a444546660f74b2bda3d3de5872e1))
+* **security:** enforce credential isolation across workflow boundaries ([fd225a8](https://github.com/programinglive/dev-workflow-mcp-server/commit/fd225a848654f974113810419ed5322fda9d5eae))
+* **security:** integrate session-aware workflow and guard shared history ([0fb9a45](https://github.com/programinglive/dev-workflow-mcp-server/commit/0fb9a45022d5c60e79fc5a4b7b1481b852a6fa37))
+
+
+### 🧹 Chores
+
+* **release:** 1.13.0 🚀 ([d36e23e](https://github.com/programinglive/dev-workflow-mcp-server/commit/d36e23ebf9235cee70487f0d50200e2f448782a7))
+
+
+### 📝 Documentation
+
+* **release:** catat rilis 1.12.3 ([678f105](https://github.com/programinglive/dev-workflow-mcp-server/commit/678f1051e285273b5ee5aa50c00ec32663e3018a))
+* **state:** samakan teks peringatan konflik dengan perilaku sebenarnya ([c9489a7](https://github.com/programinglive/dev-workflow-mcp-server/commit/c9489a7f3e4e9cef2f1f2d87c124b67fd6ffb62e))
+
+
+### 🐛 Bug Fixes
+
+* **db:** normalisasi taskType dan jangan hentikan sync saat satu entri gagal ([20975cd](https://github.com/programinglive/dev-workflow-mcp-server/commit/20975cddac3cceb9bd7b3292c44780b2075d404f))
+* **deps:** benahi penempatan conventional-commits-filter di lockfile ([d401129](https://github.com/programinglive/dev-workflow-mcp-server/commit/d401129f77c53e17024251c44cd0e85c7834fe5c))
+* **factory:** izinkan review ulang setelah work.paused ([e81c236](https://github.com/programinglive/dev-workflow-mcp-server/commit/e81c2364822942296a7dde314b5622afc29f96b5))
+* **mcp:** cegah review ganda, tampilkan UUID penuh, jangan commit di repo paket ([c94fe30](https://github.com/programinglive/dev-workflow-mcp-server/commit/c94fe30d3b1703c9823f13199d188cf2e0b6b825))
+* **mcp:** tampilkan definisi selesai saat melaporkan status ([ad460f2](https://github.com/programinglive/dev-workflow-mcp-server/commit/ad460f26f0121aa0a4fbf8fd8833280193fd90c3))
+* **state:** cegah penulis basi menimpa task yang lebih baru ([1000407](https://github.com/programinglive/dev-workflow-mcp-server/commit/1000407a275c4a7801c082880a210243d1fbc3ce))
+* **state:** peringatan konflik di depan, sebut aksi tidak berlaku ([4e31f07](https://github.com/programinglive/dev-workflow-mcp-server/commit/4e31f071b6e0a2612c4efee165c4dc8307b0d739))
+
 ## [1.13.0](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.12.3...v1.13.0) (2026-10-29)
 
 
