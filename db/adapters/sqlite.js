@@ -2,7 +2,7 @@ import { safeLog } from '../../security/sanitizer.js';
 import Database from "better-sqlite3";
 import { existsSync } from "fs";
 import path from "path";
-import { DbAdapter } from "./base.js";
+import { DbAdapter, normalizeTaskType } from "./base.js";
 import { assertSafeKnowledge, classify } from '../../security/policy.js';
 
 const DB_FILENAME = "dev-workflow.db";
@@ -166,7 +166,7 @@ export class SqliteAdapter extends DbAdapter {
             userId,
             normalizedProjectPath,
             entry.taskDescription,
-            entry.taskType,
+            normalizeTaskType(entry.taskType),
             entry.commitMessage,
             entry.timestamp || new Date().toISOString(),
             entry.forced ? 1 : 0,

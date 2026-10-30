@@ -1,5 +1,5 @@
 import pg from "pg";
-import { DbAdapter } from "./base.js";
+import { DbAdapter, normalizeTaskType } from "./base.js";
 import { assertSafeKnowledge, classify } from '../../security/policy.js';
 
 const { Pool } = pg;
@@ -141,7 +141,7 @@ export class PostgresAdapter extends DbAdapter {
             numericUserId,
             normalizedProjectPath,
             entry.taskDescription || entry.description,
-            entry.taskType,
+            normalizeTaskType(entry.taskType),
             entry.commitMessage,
             entry.timestamp || entry.completed_at || new Date().toISOString(),
             entry.forced || false,

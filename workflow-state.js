@@ -1001,24 +1001,44 @@ export class WorkflowState {
     await fs.writeFile(summaryPath, JSON.stringify(summary, null, 2));
   }
 
-  async syncToDatabase() {
+  /**
+   * Menyalin history, ringkasan, dan state ke database.
+   *
+   * `db` dapat diinjeksi untuk pengujian; pemanggil biasa tidak mengirimnya.
+   *
+   * Satu entri yang gagal TIDAK boleh menghentikan sisanya. Dulu kegagalan
+   * pertama (mis. entri lama tanpa `task_type`) membatalkan seluruh fungsi,
+   * sehingga `updateSummaryForUser` dan `saveState` ikut terlewat dan riwayat
+   * proyek diam-diam berhenti tersimpan sama sekali.
+   */
+  async syncToDatabase(options = {}) {
     assertSafeKnowledge(this.state);
-    try {
-      const { insertHistoryEntry, updateSummaryForUser, saveState } = await import("./db/index.js");
-      const userId = getCurrentUserId();
-      // projectRoot dipakai sebagai identitas proyek di database. Ditentukan
-      // lewat resolveProjectRootForState, bukan dengan menghitung `dirname`
-      // berkali-kali: jumlah itu hanya benar untuk satu kedalaman tertentu.
-      const projectRoot = resolveProjectRootForState(this.stateFile);
+    const db = options.db ?? (await import("./db/index.js"));
+    const userId = getCurrentUserId();
+    // projectRoot dipakai sebagai identitas proyek di database. Ditentukan
+    // lewat resolveProjectRootForState, bukan dengan menghitung `dirname`
+    // berkali-kali: jumlah itu hanya benar untuk satu kedalaman tertentu.
+    const projectRoot = resolveProjectRootForState(this.stateFile);
 
-      for (const entry of this.state.history || []) {
-        await insertHistoryEntry(userId, projectRoot, entry);
+    let skipped = 0;
+    for (const entry of this.state.history || []) {
+      try {
+        await db.insertHistoryEntry(userId, projectRoot, entry);
+      } catch (error) {
+        skipped++;
+        safeLog("error", "History entry skipped:", error.message);
       }
-      await updateSummaryForUser(userId, projectRoot);
-      await saveState(userId, projectRoot, this.state);
+    }
+    if (skipped > 0) {
+      safeLog("error", `History sync skipped ${skipped} entr${skipped === 1 ? "y" : "ies"}.`);
+    }
+
+    try {
+      await db.updateSummaryForUser(userId, projectRoot);
+      await db.saveState(userId, projectRoot, this.state);
     } catch (error) {
-      // Database sync failed; log it but don't crash
-      safeLog('error', "Database sync failed:", error.message);
+      // Ringkasan dan state tetap opsional: jangan pernah menggagalkan save().
+      safeLog("error", "Database sync failed:", error.message);
     }
   }
 
