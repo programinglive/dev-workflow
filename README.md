@@ -610,14 +610,33 @@ then reinstall.
 changes** - git ran in the wrong repository. The server used to fall back to its
 own package directory, which is also a git repo, so commits landed there (or
 nowhere) instead of in your project. It now refuses to run git in the package
-repo and asks for the project explicitly:
+repo and asks for the project explicitly.
+
+Since 30 October 2026 the reliable fix is **per task**, not global. Pass
+`projectDir` to `start_task`; the repo is pinned for that task and every later
+git operation uses it:
+
+```json
+{ "description": "Fix login redirect", "type": "bugfix", "projectDir": "D:\\code\\clinic" }
+```
+
+`start_task` answers with `📁 Repo proyek: <path> (<source>)`, so the repo in use
+is never a guess. `commit_and_push` repeats it on every response.
+
+`WORKFLOW_PROJECT_DIR` still works as an operator-wide default and still wins
+over the session directory, but it is one value for the whole server process.
+When the session directory points at a *different* repo, `start_task` now
+reports `⚠️ KONFLIK` and tells you to pass `projectDir` — previously that
+mismatch was silent, which is how a commit landed in the wrong repo. Prefer
+`projectDir`; keep the env var only for machines with a single project.
 
 ```bash
 export WORKFLOW_PROJECT_DIR=/path/to/your/project
 ```
 
 Point it at any directory inside the project; the repo root is discovered
-upward. Non-git commands are unaffected.
+upward. Non-git commands are unaffected. Full incident write-up:
+[`docs/2026-10-30-project-dir-misrouting.md`](docs/2026-10-30-project-dir-misrouting.md).
 
 **A task jumped straight to `done` after reporting `review`** - it was reported
 twice. Factory treats the second report as approval. Current versions block that

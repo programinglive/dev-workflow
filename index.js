@@ -13,7 +13,7 @@ import {
   GetPromptRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { fileURLToPath } from "url";
-import { exec } from "./exec.js";
+import { exec, setActiveProjectDir } from "./exec.js";
 import { normalizeRequestArgs, shellEscape } from "./utils.js";
 import { createGitFacade } from "./git-facade.js";
 import {
@@ -60,6 +60,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const sessionId = sessionKeyFromRequest(request);
     if (sessionId) await workflowState.useSession(sessionId);
     await workflowState.load();
+    // Repo proyek mengikuti sesi, bukan satu nilai global. Tanpa ini, sesi yang
+    // bekerja di repo lain tetap menjalankan git di WORKFLOW_PROJECT_DIR.
+    setActiveProjectDir(workflowState.state.projectDir || "");
   }
   return securityOutputFilter(await handleToolCall({
     request,
@@ -234,6 +237,7 @@ async function cliMain(argv) {
     workflowState = new WorkflowState();
     await workflowState.load();
     await workflowState.ensurePrimaryFile();
+    setActiveProjectDir(workflowState.state.projectDir || "");
 
     const request = {
       params: {

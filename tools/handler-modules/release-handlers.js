@@ -1,4 +1,5 @@
 import { textResponse, isReleaseSatisfied, resetToCommitIfWorkingChanges, summarizeHistory } from "./shared.js";
+import { resolveProjectDir, setActiveProjectDir, getActiveProjectDir } from "../../exec.js";
 
 export async function handleSkipRelease(args, workflowState) {
   if (workflowState.state.currentPhase === "idle") {
@@ -50,6 +51,18 @@ export async function handlePerformRelease(args, context) {
     return textResponse("⚠️ Please start a task first using 'start_task'!");
   }
 
+  // Sama seperti commit_and_push: projectDir eksplisit menang atas repo sesi.
+  const requestedProjectDir =
+    typeof args.projectDir === "string" ? args.projectDir.trim() : "";
+  if (requestedProjectDir) {
+    try {
+      setActiveProjectDir(resolveProjectDir({ explicit: requestedProjectDir }).dir);
+    } catch (error) {
+      return textResponse(`❌ projectDir tidak valid: ${error.message}`);
+    }
+    workflowState.state.projectDir = getActiveProjectDir();
+  }
+
   let hasNewChanges;
   try {
     hasNewChanges = await resetToCommitIfWorkingChanges(workflowState, git);
@@ -81,7 +94,7 @@ export async function handlePerformRelease(args, context) {
       return textResponse(
         `❌ Tidak bisa memeriksa repository Git, jadi status rilis tidak dapat diverifikasi.\n\n` +
         `Penyebab: ${error.message}\n\n` +
-        `Set WORKFLOW_PROJECT_DIR ke direktori proyek, atau jalankan server MCP dari dalam direktori proyek.`
+        `Sebutkan 'projectDir' pada 'perform_release' untuk menunjuk repo yang benar.`
       );
     }
 

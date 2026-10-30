@@ -1,9 +1,58 @@
 import { textResponse, isReleaseSatisfied, formatChecklist } from "./shared.js";
 import { handleReadyCheck } from "./status-handlers.js";
 import { containsTestFilesInStatus } from "../../git-helpers.js";
+import { resolveProjectDir, setActiveProjectDir, getActiveProjectDir } from "../../exec.js";
+
+/**
+ * Label repo yang benar-benar dipakai, untuk ditampilkan di setiap jawaban.
+ *
+ * Tanpa ini, "No changes detected" tidak bisa dibedakan antara "sudah commit"
+ * dan "git berjalan di repo yang salah". Itu persis yang menyamarkan commit
+ * salah arah pada 30 Oktober 2026.
+ */
+function repoLabel() {
+  try {
+    const resolved = resolveProjectDir({
+      explicit: getActiveProjectDir(),
+      env: process.env,
+      candidates: [process.cwd(), process.env.INIT_CWD],
+    });
+    const origin = resolved.source === "env" ? " — dari WORKFLOW_PROJECT_DIR (global)" : "";
+    return resolved.dir + origin;
+  } catch {
+    return "(tidak bisa ditentukan)";
+  }
+}
+
+/**
+ * Terapkan `projectDir` dari argumen tool bila ada.
+ * Mengembalikan pesan kesalahan, atau null bila tidak ada masalah.
+ */
+function applyProjectDirOverride(args) {
+  const requested = typeof args.projectDir === "string" ? args.projectDir.trim() : "";
+  if (!requested) {
+    return null;
+  }
+
+  try {
+    const resolved = resolveProjectDir({ explicit: requested });
+    setActiveProjectDir(resolved.dir);
+    return null;
+  } catch (error) {
+    return `❌ projectDir tidak valid: ${error.message}`;
+  }
+}
 
 export async function handleCommitAndPush(args, context) {
   const { workflowState, exec, git, utils } = context;
+
+  const projectDirError = applyProjectDirOverride(args);
+  if (projectDirError) {
+    return textResponse(projectDirError);
+  }
+
+  workflowState.state.projectDir = getActiveProjectDir() || workflowState.state.projectDir || "";
+
   if (!workflowState.state.readyToCommit || !workflowState.state.readyCheckCompleted) {
     const readyResponse = await handleReadyCheck(workflowState);
     if (workflowState.state.currentPhase !== "commit") {
@@ -29,8 +78,9 @@ export async function handleCommitAndPush(args, context) {
   } catch (error) {
     return textResponse(
       `❌ Tidak bisa memeriksa repository Git, jadi tidak ada yang di-commit.\n\n` +
+      `Repo: ${repoLabel()}\n` +
       `Penyebab: ${error.message}\n\n` +
-      `Set WORKFLOW_PROJECT_DIR ke direktori proyek, atau jalankan server MCP dari dalam direktori proyek.`
+      `Sebutkan 'projectDir' pada 'start_task' atau 'commit_and_push' untuk menunjuk repo yang benar.`
     );
   }
 
@@ -47,7 +97,7 @@ export async function handleCommitAndPush(args, context) {
     await workflowState.save();
 
     return textResponse(
-      `ℹ️ No changes detected. Assuming commit and push already completed.\nLast commit: ${effectiveCommitMessage || "(unavailable)"
+      `ℹ️ No changes detected. Assuming commit and push already completed.\nRepo: ${repoLabel()}\nLast commit: ${effectiveCommitMessage || "(unavailable)"
       }\n\nNext: Run 'perform_release' to handle the release and push tags.`
     );
   }
@@ -109,7 +159,7 @@ export async function handleCommitAndPush(args, context) {
   await workflowState.save();
 
   return textResponse(
-    `✅ Commit and push completed!\n\nCommit message: ${generatedSummary}\nPushed to: ${branchForPush || "(default upstream)"
+    `✅ Commit and push completed!\nRepo: ${repoLabel()}\n\nCommit message: ${generatedSummary}\nPushed to: ${branchForPush || "(default upstream)"
     }\n\nNext: Run 'perform_release' to handle the release and push tags.`
   );
 }

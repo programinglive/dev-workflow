@@ -1,5 +1,71 @@
 import { classify } from '../../security/policy.js';
 import { textResponse, isReleaseSatisfied, isErrorResponse, ensurePrdExists } from "./shared.js";
+import { resolveProjectDir, setActiveProjectDir } from "../../exec.js";
+
+/**
+ * Catat repo proyek untuk sesi ini.
+ *
+ * Tanpa ini, satu-satunya penentu adalah WORKFLOW_PROJECT_DIR yang global.
+ * Di mesin ini nilainya `D:\code\clinic`, jadi task yang sebenarnya bekerja di
+ * repo lain tetap menjalankan git di clinic dan `commit_and_push` menjawab
+ * "No changes detected" seolah sudah selesai (30 Oktober 2026).
+ *
+ * Best-effort: kalau repo belum bisa ditentukan, task tetap boleh mulai, tapi
+ * pengguna diberi tahu supaya tidak terkejut saat commit.
+ */
+function pinProjectDir(args, workflowState) {
+  const requested = typeof args.projectDir === "string" ? args.projectDir.trim() : "";
+
+  let resolved = null;
+  let error = null;
+  try {
+    resolved = resolveProjectDir({
+      explicit: requested,
+      env: process.env,
+      candidates: [process.cwd(), process.env.INIT_CWD],
+    });
+  } catch (resolveError) {
+    error = resolveError;
+  }
+
+  if (!resolved) {
+    workflowState.state.projectDir = "";
+    setActiveProjectDir("");
+    return {
+      message:
+        `⚠️ Repo proyek belum ditentukan: ${error.message}\n` +
+        `   Sebutkan 'projectDir' pada 'start_task' supaya commit tidak salah arah.`,
+    };
+  }
+
+  workflowState.state.projectDir = resolved.dir;
+  setActiveProjectDir(resolved.dir);
+
+  const sourceNote = {
+    explicit: "dari argumen projectDir",
+    cwd: "dari direktori kerja sesi",
+    env: "dari WORKFLOW_PROJECT_DIR (nilai global)",
+    pinned: "dari projectDir sesi",
+  }[resolved.source] || resolved.source;
+
+  let message = `📁 Repo proyek: ${resolved.dir} (${sourceNote})`;
+
+  // Sumber env berarti tidak ada sinyal per-sesi sama sekali. Kalau direktori
+  // sesi ternyata menunjuk repo LAIN, hampir pasti env ini milik proyek lain -
+  // dan itulah yang dulu membuat `git add .` berjalan di repo yang salah.
+  if (resolved.conflict) {
+    message +=
+      `\n   ⚠️ KONFLIK: direktori sesi menunjuk repo lain, ${resolved.conflict.cwdDir}.` +
+      `\n   Repo dipilih dari WORKFLOW_PROJECT_DIR. Kalau task ini untuk repo sesi,` +
+      `\n   ulangi 'start_task' dengan projectDir: "${resolved.conflict.cwdDir}".`;
+  } else if (resolved.source === "env") {
+    message +=
+      `\n   ⚠️ Repo ini berasal dari WORKFLOW_PROJECT_DIR, bukan dari sesi.` +
+      `\n   Kalau task ini bekerja di repo lain, ulangi 'start_task' dengan projectDir yang benar.`;
+  }
+
+  return { message };
+}
 
 export async function handleStartTask(args, workflowState) {
   // Selamatkan dulu pekerjaan yang mungkin tertimpa. Ini menangani dua kasus:
@@ -17,6 +83,8 @@ export async function handleStartTask(args, workflowState) {
   workflowState.state.commitAndPushCompleted = false;
   workflowState.state.lastCommitMessage = "";
   workflowState.state.lastPushBranch = "";
+  // Setelah reset(), karena reset mengosongkan projectDir.
+  const project = pinProjectDir(args, workflowState);
   // start_task memang bermaksud MENGGANTI task, jadi ia boleh menang atas
   // task berjalan. Task yang diganti tetap diarsipkan oleh reconcileWithDisk,
   // bukan dihapus.
@@ -47,7 +115,7 @@ export async function handleStartTask(args, workflowState) {
   const warningBlock = warnings.length > 0 ? `\n\n${warnings.join("\n\n")}` : "";
 
   return textResponse(
-    `✅ Task Started: ${args.description}${warningBlock}\n\n🎯 Be conscious about what you're coding!\n\nWorkflow Steps:\n1. ✓ Start task (current)\n2. ⏳ Describe feature flow with Mermaid\n3. ⏳ Fix/implement the feature\n4. ⏳ Create tests\n5. ⏳ Run tests (must pass!)\n6. ⏳ Create documentation\n7. ⏳ Run 'check_ready_to_commit'\n8. ⏳ Run 'commit_and_push' (commits and pushes)\n9. ⏳ Run 'perform_release' (handles versioning and tags) or 'skip_release' (when no release is needed)\n10. ⏳ Complete task\n\nReminder: Focus on writing clean, maintainable code!`
+    `✅ Task Started: ${args.description}\n\n${project.message}${warningBlock}\n\n🎯 Be conscious about what you're coding!\n\nWorkflow Steps:\n1. ✓ Start task (current)\n2. ⏳ Describe feature flow with Mermaid\n3. ⏳ Fix/implement the feature\n4. ⏳ Create tests\n5. ⏳ Run tests (must pass!)\n6. ⏳ Create documentation\n7. ⏳ Run 'check_ready_to_commit'\n8. ⏳ Run 'commit_and_push' (commits and pushes)\n9. ⏳ Run 'perform_release' (handles versioning and tags) or 'skip_release' (when no release is needed)\n10. ⏳ Complete task\n\nReminder: Focus on writing clean, maintainable code!`
   );
 }
 

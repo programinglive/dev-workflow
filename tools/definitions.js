@@ -25,6 +25,14 @@ export function getToolList() {
             enum: ["feature", "bugfix", "refactor", "other"],
             description: "Type of task",
           },
+          projectDir: {
+            type: "string",
+            description:
+              "Absolute path to the repository this task works on (e.g. D:\\code\\clinic). " +
+              "Pinned for the whole task; every git operation afterwards runs there. " +
+              "Pass it whenever the session directory is not itself a git repository, " +
+              "otherwise the server may fall back to WORKFLOW_PROJECT_DIR and commit to the wrong repo.",
+          },
         },
         required: ["description", "type"],
       },
@@ -153,6 +161,12 @@ export function getToolList() {
             type: "string",
             description: "Optional branch name to push to (defaults to current branch)",
           },
+          projectDir: {
+            type: "string",
+            description:
+              "Absolute path to the repository to commit in. Overrides the repo pinned by 'start_task' " +
+              "for this call. Use it to fix a misdirected commit without restarting the task.",
+          },
         },
         required: [],
       },
@@ -171,6 +185,11 @@ export function getToolList() {
           notes: {
             type: "string",
             description: "Optional release notes",
+          },
+          projectDir: {
+            type: "string",
+            description:
+              "Absolute path to the repository to release. Overrides the repo pinned by 'start_task' for this call.",
           },
         },
         required: ["command"],
