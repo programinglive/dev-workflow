@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.13.2](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.13.1...v1.13.2) (2026-10-30)
+
+
+### 🐛 Bug Fixes
+
+* **git:** jangan klaim sukses commit saat git tidak bisa dijalankan ([7008538](https://github.com/programinglive/dev-workflow-mcp-server/commit/7008538a3e2349d9834c4e222f4a7d6b3b205390))
+
 ### [1.13.1](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.12.3...v1.13.1) (2026-10-30)
 
 
