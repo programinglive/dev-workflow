@@ -634,3 +634,91 @@ cwd = direktori tanpa git     -> error yang menyebut direktori itu
 berarti membuka sesi di dalam repo server MCP membuat `commit_and_push` bekerja
 di sana. Bila kamu ingin memaksa repo lain, set `WORKFLOW_PROJECT_DIR` - jalur
 itu tetap diperiksa lebih dulu dan tidak terpengaruh aturan ini.
+
+# Rilis menulis `version: null` dan tag `vnull` (dikerjakan 30 Oktober 2026)
+
+## Masalah
+
+Setelah `commit_and_push` berhasil, `perform_release` menjalankan rilis dan
+menghasilkan:
+
+```text
+chore(release): null 🚀
+```
+
+`package.json` menjadi `"version": null`, dan repo mendapat tag `vnull`.
+Kerusakan ini sempat ter-push ke `main` dan harus di-revert.
+
+## Akar masalah
+
+`release.cjs` mengirim `--release-as` **dua kali** ke standard-version.
+
+```js
+// perform_release menyusun perintah
+npm run release -- --release-as patch
+
+// getCliArguments: argumen pertama diawali '-', jadi dianggap flag
+{ releaseType: 'patch', extraArgs: ['--release-as', 'patch'] }
+
+// buildStandardVersionArgs: menambah dari releaseType, LALU menambah extraArgs
+['--release-as', 'patch', '--release-as', 'patch']
+```
+
+yargs memperlakukan opsi yang muncul dua kali sebagai array, dan:
+
+```text
+semver.inc('1.13.2', 'patch')            -> '1.13.3'
+semver.inc('1.13.2', ['patch','patch'])  -> null
+```
+
+standard-version memakai hasil itu apa adanya, sehingga menulis `null` sebagai
+versi.
+
+## Yang diperbaiki
+
+### 1. `--release-as` diambil sekali, lalu dibuang dari `extraArgs`
+
+`getCliArguments()` sekarang mencari `--release-as` (baik bentuk terpisah maupun
+`--release-as=patch`), memakai nilainya sebagai `releaseType`, dan mengeluarkan
+pasangan itu dari `extraArgs`. Bila `--release-as` tidak punya nilai, fungsinya
+melempar pesan jelas - `--release-as` tanpa nilai membuat yargs memberinya
+`true`, dan `semver.inc(version, true)` juga menghasilkan `null`.
+
+### 2. `stripReleaseAs()` sebagai lapis kedua
+
+`buildStandardVersionArgs()` membuang setiap `--release-as` yang masih ada di
+`extraArgs` sebelum menyusun argumen akhir, sehingga satu jalur pemanggilan pun
+tidak bisa menggandakannya.
+
+## Cara memverifikasi
+
+`npm test` menjalankan `tests/release-args.test.js`:
+
+1. `--release-as patch` di CLI menghasilkan tepat satu `--release-as`;
+2. semua bentuk pemanggilan (`--release-as patch|minor|major`, `1.14.0`,
+   `patch`, tanpa argumen) menghasilkan tepat satu opsi dengan nilai benar;
+3. `--first-release` tidak digandakan dan tidak diteruskan;
+4. argumen lain seperti `--dry-run` tetap diteruskan;
+5. tipe rilis tak dikenal dan `--release-as` tanpa nilai ditolak.
+
+Verifikasi end-to-end di clone repo (dengan berkas yang diubah disalin ke
+dalamnya, karena `git clone` hanya membawa commit):
+
+```text
+version before: 1.13.2
+command       : npm run release -- --release-as patch
+version after : "1.13.3"
+head          : chore(release): 1.13.3 🚀
+tag at HEAD   : ["v1.13.3"]
+```
+
+## Sisa risiko
+
+**standard-version tetap menerima nilai aneh tanpa protes.** Perbaikan ini
+mencegah bentuk yang kita hasilkan sendiri, bukan semua kemungkinan. Kalau
+`release.cjs` dipanggil langsung dengan argumen yang tidak lazim, validasi di
+`buildStandardVersionArgs` adalah satu-satunya penjaga.
+
+**Tidak ada pemeriksaan hasil rilis.** Tidak ada yang memverifikasi bahwa
+`package.json` berisi semver sah setelah rilis berjalan. Pemeriksaan seperti itu
+akan menangkap kerusakan ini lebih cepat - belum dikerjakan di sini.

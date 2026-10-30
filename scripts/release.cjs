@@ -40,6 +40,40 @@ function getCliArguments(argv = process.argv) {
     return { releaseType: 'patch', extraArgs: [] };
   }
 
+  // `--release-as` selalu diambil sebagai tipe rilis dan DIBUANG dari extraArgs.
+  //
+  // Kalau dibiarkan, argumen itu sampai ke standard-version dua kali: sekali
+  // dari releaseType, sekali dari extraArgs. yargs lalu mengubahnya menjadi
+  // array, dan `semver.inc("1.13.2", ["patch","patch"])` mengembalikan null -
+  // rilis menulis `"version": null` dan tag `vnull`.
+  const releaseAsIndex = rawArgs.indexOf('--release-as');
+  if (releaseAsIndex !== -1) {
+    const value = rawArgs[releaseAsIndex + 1];
+    if (!value || value.startsWith('-')) {
+      throw new Error(
+        '--release-as memerlukan nilai tipe rilis (major, minor, patch, atau versi semver).'
+      );
+    }
+    return {
+      releaseType: value,
+      extraArgs: [...rawArgs.slice(0, releaseAsIndex), ...rawArgs.slice(releaseAsIndex + 2)]
+    };
+  }
+
+  const inline = rawArgs.find((arg) => arg.startsWith('--release-as='));
+  if (inline) {
+    const value = inline.slice('--release-as='.length);
+    if (!value) {
+      throw new Error(
+        '--release-as memerlukan nilai tipe rilis (major, minor, patch, atau versi semver).'
+      );
+    }
+    return {
+      releaseType: value,
+      extraArgs: rawArgs.filter((arg) => arg !== inline)
+    };
+  }
+
   if (rawArgs[0].startsWith('-')) {
     return { releaseType: 'patch', extraArgs: rawArgs };
   }
@@ -62,17 +96,43 @@ function getNpmRunArgument(env = process.env) {
   return undefined;
 }
 
+/**
+ * Membuang setiap `--release-as` dari argumen tambahan.
+ *
+ * Pertahanan lapis kedua: tipe rilis sudah ditentukan lewat `releaseType`, jadi
+ * salinan apa pun di `extraArgs` hanya akan menggandakan opsi dan membuat yargs
+ * memberinya array - yang berakhir pada `semver.inc(...) === null`.
+ */
+function stripReleaseAs(extraArgs) {
+  if (!Array.isArray(extraArgs)) {
+    return [];
+  }
+
+  const kept = [];
+  for (let index = 0; index < extraArgs.length; index += 1) {
+    const arg = extraArgs[index];
+    if (arg === '--release-as') {
+      index += 1; // lewati nilainya juga
+      continue;
+    }
+    if (typeof arg === 'string' && arg.startsWith('--release-as=')) {
+      continue;
+    }
+    kept.push(arg);
+  }
+  return kept;
+}
+
 function buildStandardVersionArgs({ releaseType, extraArgs }) {
   const args = [];
-  
+  const remainingArgs = stripReleaseAs(extraArgs);
+
   // Handle --first-release flag
-  const isFirstRelease = Array.isArray(extraArgs) && extraArgs.includes('--first-release');
+  const isFirstRelease = remainingArgs.includes('--first-release');
   if (isFirstRelease) {
     args.push('--release-as', '0.0.1');
-    // Remove --first-release from extraArgs to avoid passing it to standard-version
-    extraArgs = extraArgs.filter(arg => arg !== '--first-release');
   } else if (releaseType) {
-    const normalized = releaseType.trim();
+    const normalized = String(releaseType).trim();
     const isValid = VALID_RELEASE_TYPES.has(normalized) || SEMVER_REGEX.test(normalized);
     if (!isValid) {
       const allowed = Array.from(VALID_RELEASE_TYPES).join(', ');
@@ -81,8 +141,8 @@ function buildStandardVersionArgs({ releaseType, extraArgs }) {
     args.push('--release-as', normalized);
   }
 
-  if (Array.isArray(extraArgs) && extraArgs.length > 0) {
-    args.push(...extraArgs);
+  if (remainingArgs.length > 0) {
+    args.push(...remainingArgs.filter((arg) => arg !== '--first-release'));
   }
 
   return args;
