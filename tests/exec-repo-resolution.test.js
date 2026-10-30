@@ -46,7 +46,7 @@ test("WORKFLOW_PROJECT_DIR dipakai bila tidak ada direktori eksplisit", async ()
   }
 });
 
-test("repo paket MCP tidak pernah dipilih sebagai direktori kerja", async () => {
+test("repo paket MCP tidak dipilih selama ada repo proyek lain", async () => {
   const repo = await makeRepo();
   try {
     const resolved = resolveWorkingDirectory({
@@ -61,15 +61,28 @@ test("repo paket MCP tidak pernah dipilih sebagai direktori kerja", async () => 
   }
 });
 
-test("gagal dengan pesan jelas bila satu-satunya kandidat adalah repo paket", () => {
-  assert.throws(
-    () => resolveWorkingDirectory({ explicit: "", env: {}, candidates: [PACKAGE_DIR] }),
-    (error) => {
-      assert.match(error.message, /WORKFLOW_PROJECT_DIR/, "harus menyebut cara memperbaiki");
-      assert.match(error.message, /repo paket|package repo|server MCP/i, "harus menjelaskan sebabnya");
-      return true;
-    },
-  );
+test("repo paket dipakai bila kandidatnya memang berada di dalamnya", () => {
+  // Perilaku ini berubah 30 Oktober 2026: kandidat yang berada di dalam repo
+  // paket berarti pemanggil sengaja bekerja di sana, jadi diterima. Lihat
+  // tests/package-repo-working-directory.test.js.
+  const resolved = resolveWorkingDirectory({ explicit: "", env: {}, candidates: [PACKAGE_DIR] });
+  assert.strictEqual(resolved, path.resolve(PACKAGE_DIR));
+});
+
+test("gagal dengan pesan jelas bila tidak ada repo sama sekali", async () => {
+  const kosong = await mkdtemp(path.join(tmpdir(), "bukan-repo-"));
+  try {
+    assert.throws(
+      () => resolveWorkingDirectory({ explicit: "", env: {}, candidates: [kosong] }),
+      (error) => {
+        assert.match(error.message, /WORKFLOW_PROJECT_DIR/, "harus menyebut cara memperbaiki");
+        assert.match(error.message, /repository git|repo git/i, "harus menjelaskan sebabnya");
+        return true;
+      },
+    );
+  } finally {
+    await rm(kosong, { recursive: true, force: true });
+  }
 });
 
 test("direktori eksplisit yang bukan repo ditolak, bukan diabaikan", async () => {

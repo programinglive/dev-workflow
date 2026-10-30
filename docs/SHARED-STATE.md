@@ -544,3 +544,93 @@ menolak.
 **`getPrimaryBranch()` masih menelan dua error pertama.** Bila `git rev-parse`
 gagal karena alasan lain (mis. repo korup), kegagalan itu baru terlihat di
 `getCurrentBranch()`. Pesannya tetap sampai, tetapi bukan dari sumber aslinya.
+
+# `commit_and_push` mustahil dipakai di repo server MCP sendiri (dikerjakan 30 Oktober 2026)
+
+## Masalah
+
+Setelah perbaikan sukses palsu, `commit_and_push` menolak dengan benar saat git
+tidak bisa dijalankan. Tetapi penolakan itu juga muncul saat sesi OpenCode
+dibuka **di dalam repo server MCP sendiri** - jadi `commit_and_push` tidak
+pernah bisa dipakai untuk mengembangkan server ini.
+
+```text
+❌ Tidak bisa memeriksa repository Git, jadi tidak ada yang di-commit.
+Penyebab: Tidak bisa menentukan repo proyek: satu-satunya kandidat adalah
+repo paket server MCP.
+```
+
+## Akar masalah
+
+`resolveWorkingDirectory()` membuang `PACKAGE_DIR` dari kandidat `cwd` tanpa
+syarat:
+
+```js
+const usable = found.find((dir) => !samePath(dir, PACKAGE_DIR));
+if (usable) return usable;
+throw new Error("... satu-satunya kandidat adalah repo paket server MCP ...");
+```
+
+Aturan itu benar untuk bug 29 Oktober: server pernah menjalankan git di repo
+paket saat `cwd` proyek gagal diresolusi, lalu melaporkan "No changes detected"
+sementara perubahan proyek tidak pernah ter-commit. Tetapi mengecualikannya
+tanpa syarat berarti kandidat yang **memang berada di dalam** repo paket pun
+dibuang.
+
+Pesan errornya juga menyesatkan: ia selalu menyalahkan repo paket, bahkan saat
+tidak ada repository git sama sekali di direktori yang diperiksa.
+
+## Yang diperbaiki
+
+### 1. Repo paket diterima bila kandidatnya memang di dalamnya
+
+`found` berisi akar repo hasil resolusi setiap kandidat. Bila akar itu adalah
+`PACKAGE_DIR`, berarti `cwd` benar-benar berada di dalam repo paket - pilihan
+sadar, bukan fallback diam-diam. Kandidat seperti itu sekarang diterima, dan
+repo proyek lain tetap menang bila ada.
+
+```js
+const projectRepo = found.find((dir) => !samePath(dir, PACKAGE_DIR));
+if (projectRepo) return projectRepo;
+
+if (found.some((dir) => samePath(dir, PACKAGE_DIR))) return path.resolve(PACKAGE_DIR);
+```
+
+Bug lama tidak kembali: `found` hanya berisi repo yang benar-benar ditemukan
+dari kandidat, jadi tidak ada jalan bagi `cwd` proyek untuk "jatuh" ke repo
+paket.
+
+### 2. Pesan error yang akurat
+
+Bila tidak ada repo sama sekali, pesannya menyebut direktori yang diperiksa,
+bukan menyalahkan repo paket:
+
+```text
+Tidak bisa menentukan repo proyek: tidak ada repository git pada
+"C:\...\no-repo-iyURBK". Set WORKFLOW_PROJECT_DIR ke direktori proyek, ...
+```
+
+## Cara memverifikasi
+
+`npm test` menjalankan `tests/package-repo-working-directory.test.js` dan
+`tests/exec-repo-resolution.test.js`:
+
+1. `cwd` di akar maupun subdirektori repo paket resolve ke repo paket;
+2. repo proyek lain tetap dipilih saat repo paket juga menjadi kandidat;
+3. `cwd` di dalam repo proyek tidak pernah dialihkan ke repo paket;
+4. direktori tanpa git memberi pesan yang menyebut sebab sebenarnya.
+
+Verifikasi pada mesin nyata, tanpa `WORKFLOW_PROJECT_DIR`:
+
+```text
+cwd = repo paket              -> C:\...\dev-workflow-mcp-server
+cwd = repo proyek lain        -> C:\...\other-project-1kc3Pf
+cwd = direktori tanpa git     -> error yang menyebut direktori itu
+```
+
+## Sisa risiko
+
+**Repo paket kini bisa menjadi target commit.** Itu memang tujuannya, tetapi
+berarti membuka sesi di dalam repo server MCP membuat `commit_and_push` bekerja
+di sana. Bila kamu ingin memaksa repo lain, set `WORKFLOW_PROJECT_DIR` - jalur
+itu tetap diperiksa lebih dulu dan tidak terpengaruh aturan ini.
