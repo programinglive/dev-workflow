@@ -1,27 +1,37 @@
 import { exec } from "./exec.js";
 
 export async function hasStagedChanges() {
-  try {
-    const { stdout } = await exec("git status --porcelain");
-    return stdout
-      .split("\n")
-      .filter(Boolean)
-      .some((line) => {
-        const indexStatus = line[0];
-        return indexStatus && indexStatus !== " " && indexStatus !== "?";
-      });
-  } catch (error) {
-    return false;
-  }
+  const { stdout } = await exec("git status --porcelain");
+  return stdout
+    .split("\n")
+    .filter(Boolean)
+    .some((line) => {
+      const indexStatus = line[0];
+      return indexStatus && indexStatus !== " " && indexStatus !== "?";
+    });
 }
 
+/**
+ * Apakah ada perubahan yang belum di-commit?
+ *
+ * MENGAPA TIDAK `catch { return false }`
+ * --------------------------------------
+ * Dulu fungsi ini menelan setiap error git dan menjawab `false`. Pemanggil
+ * membacanya sebagai "tidak ada perubahan", lalu `commit_and_push` menjawab
+ * "No changes detected. Assuming commit and push already completed" - sukses
+ * palsu, padahal tidak ada commit sama sekali.
+ *
+ * Yang terjadi 30 Oktober 2026: server MCP dijalankan dengan cwd direktori sesi
+ * OpenCode (`Documents\Default Project`) yang bukan repo git. `git status`
+ * gagal, error ditelan, delapan berkas tidak pernah ter-commit, dan tool tetap
+ * melaporkan berhasil.
+ *
+ * "Tidak tahu" bukan "tidak ada perubahan". Sekarang error diteruskan supaya
+ * pemanggil bisa melaporkan masalah sebenarnya.
+ */
 export async function hasWorkingChanges() {
-  try {
-    const { stdout } = await exec("git status --porcelain");
-    return stdout.split("\n").some((line) => line && line.trim().length > 0);
-  } catch (error) {
-    return false;
-  }
+  const { stdout } = await exec("git status --porcelain");
+  return stdout.split("\n").some((line) => line && line.trim().length > 0);
 }
 
 export function workingTreeSummary(statusOutput) {
@@ -113,51 +123,31 @@ function parseNameStatusLine(line) {
 }
 
 export async function getStagedChanges() {
-  try {
-    const { stdout } = await exec("git diff --cached --name-status");
-    return stdout
-      .split("\n")
-      .map((line) => parseNameStatusLine(line))
-      .filter(Boolean);
-  } catch (error) {
-    return [];
-  }
+  const { stdout } = await exec("git diff --cached --name-status");
+  return stdout
+    .split("\n")
+    .map((line) => parseNameStatusLine(line))
+    .filter(Boolean);
 }
 
 export async function hasTestChanges() {
-  try {
-    const { stdout } = await exec("git status --porcelain");
-    return containsTestFilesInStatus(stdout);
-  } catch (error) {
-    return false;
-  }
+  const { stdout } = await exec("git status --porcelain");
+  return containsTestFilesInStatus(stdout);
 }
 
 export async function getLastCommitMessage() {
-  try {
-    const { stdout } = await exec("git log -1 --pretty=%B");
-    return stdout.trim();
-  } catch (error) {
-    return "";
-  }
+  const { stdout } = await exec("git log -1 --pretty=%B");
+  return stdout.trim();
 }
 
 export async function getCurrentBranch() {
-  try {
-    const { stdout } = await exec("git rev-parse --abbrev-ref HEAD");
-    return stdout.trim();
-  } catch (error) {
-    return "";
-  }
+  const { stdout } = await exec("git rev-parse --abbrev-ref HEAD");
+  return stdout.trim();
 }
 
 export async function getStatusOutput() {
-  try {
-    const { stdout } = await exec("git status --porcelain");
-    return stdout;
-  } catch (error) {
-    return "";
-  }
+  const { stdout } = await exec("git status --porcelain");
+  return stdout;
 }
 
 export async function getPrimaryBranch() {

@@ -15,11 +15,26 @@ export async function handleCommitAndPush(args, context) {
     typeof args.commitMessage === "string" ? args.commitMessage.trim() : "";
 
   const requestedBranch = typeof args.branch === "string" ? args.branch.trim() : "";
-  const primaryBranch = await git.getPrimaryBranch();
-  const currentBranch = await git.getCurrentBranch();
-  const branchForPush = requestedBranch || primaryBranch || currentBranch || "";
 
-  const hasWorkingChanges = await git.hasWorkingChanges();
+  // Preflight: kalau git tidak bisa dijalankan, jangan menebak. Dulu rantai ini
+  // gagal, error ditelan helper, lalu tool menjawab "No changes detected" dan
+  // menandai commit selesai padahal tidak ada commit sama sekali.
+  let primaryBranch;
+  let currentBranch;
+  let hasWorkingChanges;
+  try {
+    primaryBranch = await git.getPrimaryBranch();
+    currentBranch = await git.getCurrentBranch();
+    hasWorkingChanges = await git.hasWorkingChanges();
+  } catch (error) {
+    return textResponse(
+      `❌ Tidak bisa memeriksa repository Git, jadi tidak ada yang di-commit.\n\n` +
+      `Penyebab: ${error.message}\n\n` +
+      `Set WORKFLOW_PROJECT_DIR ke direktori proyek, atau jalankan server MCP dari dalam direktori proyek.`
+    );
+  }
+
+  const branchForPush = requestedBranch || primaryBranch || currentBranch || "";
 
   if (!hasWorkingChanges) {
     const lastCommitMessage = await git.getLastCommitMessage();
