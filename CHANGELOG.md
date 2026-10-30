@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.13.6](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.13.5...v1.13.6) (2026-10-30)
+
+
+### 📝 Documentation
+
+* **mcp:** perluas guard kill-by-name ke Stop-Process, killall, pkill, wmic ([9e853fe](https://github.com/programinglive/dev-workflow-mcp-server/commit/9e853fe81c39a7e6bf2e1ab4f65b782865105f61))
+
 ### [1.13.5](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.13.4...v1.13.5) (2026-10-30)
 
 
