@@ -439,3 +439,108 @@ mana pun, jadi tidak dapat dipulihkan. Ini pilihan sadar: menebak dari
 menghasilkan `user_id` berbeda untuk proyek yang sama (`default` vs
 `user-…`). Belum diperbaiki di sini; saat mereparasi data lama, jalankan dari
 `cwd` proyek yang benar.
+
+# `commit_and_push` melaporkan sukses palsu saat git tidak bisa dijalankan (dikerjakan 30 Oktober 2026)
+
+## Masalah
+
+Dari sesi OpenCode di `C:\Users\DHIKA\Documents\Default Project`, delapan berkas
+sudah diubah dan siap di-commit. `commit_and_push` menjawab:
+
+```text
+ℹ️ No changes detected. Assuming commit and push already completed.
+Last commit: fix(db): normalisasi taskType dan jangan hentikan sync saat satu entri gagal
+```
+
+Padahal `git status` di repo menunjukkan delapan berkas belum di-commit, dan
+`git log` tidak bergerak. Tool menandai `commitAndPushCompleted = true` sehingga
+workflow melangkah ke fase rilis seolah semuanya beres.
+
+## Bukti
+
+```text
+$ node -e "..."   # cwd = Documents\Default Project
+cwd: C:\Users\DHIKA\Documents\Default Project
+getStatusOutput -> ""
+hasWorkingChanges -> false    <-- false di sini adalah kebohongan
+```
+
+## Akar masalah
+
+`exec()` sudah benar: untuk perintah `git` ia memanggil `resolveWorkingDirectory()`
+dan **melempar** bila tidak menemukan repo proyek.
+
+Yang salah ada di `git-helpers.js`. Setiap helper membungkus `exec` dengan
+`try/catch` yang mengembalikan nilai jinak:
+
+```js
+export async function hasWorkingChanges() {
+  try {
+    const { stdout } = await exec("git status --porcelain");
+    return stdout.split("\n").some(...);
+  } catch (error) {
+    return false;   // <-- "tidak tahu" disamakan dengan "tidak ada perubahan"
+  }
+}
+```
+
+`handleCommitAndPush` membaca `false` sebagai "sudah ter-commit", lalu masuk ke
+cabang sukses palsu. Penyebab `git` gagal: server MCP dijalankan dengan `cwd`
+direktori sesi OpenCode, dan direktori itu bukan repo git.
+
+## Yang diperbaiki
+
+### 1. Helper tidak lagi berbohong
+
+`hasWorkingChanges()`, `hasStagedChanges()`, `getStatusOutput()`,
+`getStagedChanges()`, `getLastCommitMessage()`, `getCurrentBranch()`, dan
+`hasTestChanges()` sekarang meneruskan error. "Tidak tahu" bukan "tidak ada
+perubahan".
+
+`getPrimaryBranch()` tetap punya fallback `main → master → current branch`,
+karena branch yang belum ada adalah kondisi normal, bukan kegagalan. Bila repo
+sama sekali tidak dapat diresolusi, fallback terakhirnya (`getCurrentBranch()`)
+ikut melempar.
+
+### 2. Handler melaporkan penyebabnya
+
+`handleCommitAndPush` dan `handlePerformRelease` membungkus preflight git dan
+menjawab:
+
+```text
+❌ Tidak bisa memeriksa repository Git, jadi tidak ada yang di-commit.
+
+Penyebab: Tidak bisa menentukan repo proyek: ...
+Set WORKFLOW_PROJECT_DIR ke direktori proyek, atau jalankan server MCP dari dalam direktori proyek.
+```
+
+State workflow **tidak** dimajukan, jadi `commitAndPushCompleted` tetap `false`.
+
+## Cara memverifikasi
+
+`npm test` menjalankan `tests/commit-false-success.test.js`:
+
+1. `hasWorkingChanges()` melempar saat repo tidak dapat diresolusi;
+2. `commit_and_push` tidak pernah menjawab "No changes detected" atau
+   "Commit and push completed" ketika git gagal, dan menjelaskan cara
+   memperbaikinya;
+3. `commitAndPushCompleted` tetap `false` setelah kegagalan itu;
+4. tree yang benar-benar bersih **tetap** dilaporkan "No changes detected"
+   (jalur lama tidak rusak);
+5. di repo git sungguhan, helper tetap menjawab `false` untuk tree bersih dan
+   `true` setelah ada berkas baru.
+
+Verifikasi end-to-end pada repo sementara dengan remote bare: dengan
+`WORKFLOW_PROJECT_DIR` diarahkan ke repo itu, `commit_and_push` benar-benar
+membuat commit `feat: add feature` dan mendorongnya ke remote.
+
+## Sisa risiko
+
+**`WORKFLOW_PROJECT_DIR` harus di-set sendiri** bila server MCP berjalan dari
+direktori yang bukan repo. Tanpa itu, tool gagal dengan pesan jelas — perilaku
+yang disengaja, karena menebak repo tujuan jauh lebih berbahaya daripada
+menolak.
+
+**`getPrimaryBranch()` masih menelan dua error pertama.** Bila `git rev-parse`
+gagal karena alasan lain (mis. repo korup), kegagalan itu baru terlihat di
+`getCurrentBranch()`. Pesannya tetap sampai, tetapi bukan dari sumber aslinya.

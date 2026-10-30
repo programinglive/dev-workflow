@@ -50,7 +50,18 @@ export async function handlePerformRelease(args, context) {
     return textResponse("⚠️ Please start a task first using 'start_task'!");
   }
 
-  if (await resetToCommitIfWorkingChanges(workflowState, git)) {
+  let hasNewChanges;
+  try {
+    hasNewChanges = await resetToCommitIfWorkingChanges(workflowState, git);
+  } catch (error) {
+    return textResponse(
+      `❌ Tidak bisa memeriksa repository Git, jadi status rilis tidak dapat diverifikasi.\n\n` +
+      `Penyebab: ${error.message}\n\n` +
+      `Set WORKFLOW_PROJECT_DIR ke direktori proyek, atau jalankan server MCP dari dalam direktori proyek.`
+    );
+  }
+
+  if (hasNewChanges) {
     return textResponse(
       "⚠️ Detected new changes after the last commit. Please run 'commit_and_push' again before recording a release."
     );
@@ -63,7 +74,16 @@ export async function handlePerformRelease(args, context) {
   }
 
   if (!workflowState.state.commitAndPushCompleted) {
-    const hasWorkingChanges = await git.hasWorkingChanges();
+    let hasWorkingChanges;
+    try {
+      hasWorkingChanges = await git.hasWorkingChanges();
+    } catch (error) {
+      return textResponse(
+        `❌ Tidak bisa memeriksa repository Git, jadi status rilis tidak dapat diverifikasi.\n\n` +
+        `Penyebab: ${error.message}\n\n` +
+        `Set WORKFLOW_PROJECT_DIR ke direktori proyek, atau jalankan server MCP dari dalam direktori proyek.`
+      );
+    }
 
     if (hasWorkingChanges) {
       return textResponse(
