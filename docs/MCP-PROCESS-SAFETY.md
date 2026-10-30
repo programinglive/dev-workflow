@@ -63,75 +63,70 @@ server yang dimaksud dari MCP server yang tidak ada urusannya.
 
 ## Pencegahan
 
-Aturan permission global menolak bentuk **kill by name**, apa pun alatnya. Ditambahkan ke
+Aturan permission global menolak kill-by-name yang **menyasar proses node**, karena
+setiap MCP server adalah proses Node. Ditambahkan ke
 `~/.config/opencode/opencode.json`:
 
 ```jsonc
 "permissions": [
-  { "action": "shell", "resource": "taskkill */IM *", "effect": "deny" },
-  { "action": "shell", "resource": "taskkill */im *", "effect": "deny" },
-  { "action": "shell", "resource": "taskkill */F /IM *", "effect": "deny" },
-  { "action": "shell", "resource": "taskkill */f /im *", "effect": "deny" },
-  { "action": "shell", "resource": "Stop-Process *-Name*", "effect": "deny" },
-  { "action": "shell", "resource": "stop-process *-name*", "effect": "deny" },
-  { "action": "shell", "resource": "ps *Stop-Process*-Name*", "effect": "deny" },
-  { "action": "shell", "resource": "Get-Process *| Stop-Process*", "effect": "deny" },
-  { "action": "shell", "resource": "Get-Process *|Stop-Process*", "effect": "deny" },
-  { "action": "shell", "resource": "gps *| spps*", "effect": "deny" },
-  { "action": "shell", "resource": "killall *", "effect": "deny" },
-  { "action": "shell", "resource": "pkill *", "effect": "deny" },
-  { "action": "shell", "resource": "wmic process *delete*", "effect": "deny" }
+  { "action": "shell", "resource": "taskkill */IM node*",  "effect": "deny" },
+  { "action": "shell", "resource": "taskkill */im node*",  "effect": "deny" },
+  { "action": "shell", "resource": "Stop-Process *-Name*node*", "effect": "deny" },
+  { "action": "shell", "resource": "stop-process *-name*node*", "effect": "deny" },
+  { "action": "shell", "resource": "Get-Process node*| Stop-Process*", "effect": "deny" },
+  { "action": "shell", "resource": "Get-Process *| Stop-Process*node*", "effect": "deny" }
 ]
 ```
 
-Alasannya per bentuk:
+### Kenapa hanya `node`, bukan semua kill-by-name
 
-| Pola | Menutup |
-| --- | --- |
-| `taskkill */IM *` (+ varian huruf besar/kecil, `/F`) | kill by image name |
-| `Stop-Process *-Name*` (+ alias `ps`, `spps`) | kill by name di PowerShell |
-| `Get-Process *\| Stop-Process*` (+ `gps`) | bentuk pipa, termasuk yang memilih berdasarkan nama |
-| `killall *`, `pkill *` | kill by name di Unix/WSL |
-| `wmic process *delete*` | menghapus proses lewat WMI |
+Versi pertama aturan ini memblokir **semua** kill-by-name (13 aturan). Setelah
+menganalisis 21.462 perintah agen, ternyata itu terlalu agresif: dari 21.462
+perintah, hanya **satu** yang menyasar node, sementara **tiga** menyasar proses
+lain dan sama sekali tidak berbahaya bagi MCP.
 
-`pkill`, `killall`, dan `wmic` tidak ada di mesin ini (`Get-Command` mengembalikan
-kosong). Aturannya tetap dipasang karena WSL dan instalasi lain bisa
-menambahkannya, dan biayanya nol bila tidak dipakai.
+```text
+taskkill /F /IM node.exe /T                          <- satu-satunya yang menjatuhkan MCP
+Stop-Process -Name "codex","opencode" -Force         <- aman untuk MCP
+taskkill /f /im codex.exe; taskkill /f /im opencode.exe  <- aman untuk MCP
+taskkill /F /IM git.exe                              <- aman untuk MCP
+```
 
-Yang tetap diizinkan - bentuk per-PID, yang hanya menyentuh satu proses:
+Aturan lebar memblokir keempatnya; aturan sempit hanya yang pertama. Rinciannya
+di `docs/SHELL-PERMISSION-ALLOWLIST-ANALYSIS.md`.
+
+Yang tetap diizinkan - bentuk per-PID, dan kill-by-name selain node:
 
 - `taskkill /PID <pid> /F`
 - `Stop-Process -Id <pid> -Force`
-- `Get-Process -Id <pid>` (tanpa pipa ke Stop-Process)
-
-**Bentuk pipa sengaja diblokir seluruhnya.** Pola teks tidak bisa membedakan
-`Get-Process -Id 12345 | Stop-Process` (sah) dari `Get-Process node | Stop-Process`
-(mematikan semua MCP). Karena keduanya berbentuk sama, keduanya ditolak, dan
-pemakaian yang sah diarahkan memakai `Stop-Process -Id <pid>` langsung.
+- `Get-Process <apa pun> | Stop-Process` (kecuali yang menyebut node)
+- `taskkill /IM <proses-lain>.exe`
 
 ## Cara memverifikasi
 
-Empat perintah. Yang pertama memakai nama proses palsu, jadi aman walau aturan
-gagal:
+Lima perintah, semuanya aman dijalankan:
 
 ```text
-$ Stop-Process -Name definitely-not-a-real-process-xyz -Force
+$ taskkill /F /IM node.exe /T
 {"error":{"type":"permission.rejected","message":"Permission denied: shell"}}
 
 $ taskkill /F /IM definitely-not-a-real-process-xyz.exe
-{"error":{"type":"permission.rejected","message":"Permission denied: shell"}}
+ERROR: The process "definitely-not-a-real-process-xyz.exe" not found.
 
-$ Stop-Process -Id 999999 -Force      -> berjalan (tidak diblokir)
-$ taskkill /PID 999998 /F             -> berjalan (tidak diblokir)
+$ Stop-Process -Name definitely-not-a-real-xyz -Force   -> berjalan
+$ Get-Process -Id 999999 | Stop-Process                  -> berjalan
+$ taskkill /PID 999998 /F                                -> berjalan
 ```
 
-Dua yang pertama membuktikan kill-by-name diblokir sebelum eksekusi. Dua yang
-terakhir membuktikan bentuk per-PID masih berjalan - perbaikannya tidak
-melumpuhkan pembersihan proses yang sah.
+Yang pertama membuktikan perintah yang benar-benar mematikan MCP ditahan. Empat
+sisanya membuktikan aturan tidak melumpuhkan pembersihan proses yang sah.
 
-`npm test` menjalankan `tests/process-kill-guard.test.js`, yang memastikan
-aturan penjaga masih ada di config, masih menangkap sembilan bentuk perintah
-berbahaya, dan tidak menangkap bentuk per-PID yang sah.
+`npm test` menjalankan dua berkas:
+
+- `tests/process-kill-guard.test.js` - aturan di config masih ada dan masih
+  menangkap bentuk berbahaya;
+- `tests/narrow-kill-guard.test.js` - aturan sempit menahan node, membiarkan
+  sisanya, dan tetap tidak bisa menangkap perintah yang dirakit runtime.
 
 ## Kalau MCP sudah terlanjur mati
 
