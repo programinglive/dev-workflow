@@ -722,3 +722,94 @@ mencegah bentuk yang kita hasilkan sendiri, bukan semua kemungkinan. Kalau
 **Tidak ada pemeriksaan hasil rilis.** Tidak ada yang memverifikasi bahwa
 `package.json` berisi semver sah setelah rilis berjalan. Pemeriksaan seperti itu
 akan menangkap kerusakan ini lebih cepat - belum dikerjakan di sini.
+
+> Diperbarui 30 Oktober 2026: pemeriksaan itu sekarang ada. Lihat bagian
+> berikutnya.
+
+# Guard versi setelah rilis (dikerjakan 30 Oktober 2026)
+
+## Masalah
+
+Insiden `version: null` di atas tidak terdeteksi sampai tag `vnull` ter-push.
+`SEMVER_REGEX` sudah ada di `release.cjs`, tetapi hanya dipakai memvalidasi
+**tipe rilis masukan**:
+
+```js
+const isValid = VALID_RELEASE_TYPES.has(normalized) || SEMVER_REGEX.test(normalized);
+```
+
+Hasil rilis - isi `package.json` setelah standard-version berjalan - tidak pernah
+diperiksa. Selama standard-version keluar dengan kode 0, `perform_release`
+menganggap semuanya beres lalu mem-push tag.
+
+## Yang diperbaiki
+
+`verifyReleaseVersion()` membaca `package.json` setelah standard-version selesai
+dan menolak bila `version` bukan semver sah. `runRelease()` memanggilnya sebelum
+melaporkan sukses, sehingga rilis yang rusak berakhir dengan status 1:
+
+```js
+if (!releaseResult || releaseResult.error || releaseResult.status !== 0) {
+  return { ...releaseResult, status: releaseResult?.status || 1 };
+}
+
+let releasedVersion;
+try {
+  releasedVersion = verifyReleaseVersion({ cwd });
+} catch (error) {
+  safeLog('error', error.message);
+  return { status: 1, error };
+}
+```
+
+Karena `perform_release` berhenti ketika perintah rilis gagal, tag tidak pernah
+di-push. Pesan errornya menyebut nilai yang didapat dan langkah pemulihan:
+
+```text
+Rilis gagal: package.json berisi version null, bukan semver yang sah.
+Tag tidak boleh di-push. Periksa argumen --release-as, lalu pulihkan dengan
+"git tag -d vnull" dan "git reset --hard HEAD~1" bila perlu.
+```
+
+## Cara memverifikasi
+
+`npm test` menjalankan dua berkas:
+
+`tests/release-version-guard.test.js` - fungsi guard sendiri:
+
+1. menerima `1.13.3`, `0.0.1`, `2.0.0`, `1.0.0-beta.1`;
+2. menolak `null` (bentuk kerusakan yang sebenarnya), versi yang hilang,
+   nilai non-string, dan string bukan semver (`""`, `"1.13"`, `"v1.13.3"`,
+   `"latest"`, `"null"`);
+3. menolak `package.json` yang tidak ada atau bukan JSON;
+4. pesan errornya menyebut nilai yang bermasalah.
+
+`tests/release-run-guard.test.js` - guard terpasang di dalam `runRelease`:
+
+1. bila standard-version "berhasil" tetapi meninggalkan `version: null`,
+   `runRelease` mengembalikan status 1 beserta error;
+2. hal yang sama untuk versi bukan semver;
+3. versi sah tetap lolos;
+4. kegagalan standard-version sendiri diteruskan apa adanya tanpa pemeriksaan.
+
+Verifikasi end-to-end di clone repo, dengan guard dipaksa menolak:
+
+```text
+version before : 1.13.3
+version after  : 1.13.4      (standard-version sempat menaikkan versi)
+head after     : chore(release): 1.13.4 🚀
+tags           : 111 -> 112  (tag lokal dibuat)
+exit code      : 1           <- perform_release berhenti, tag TIDAK di-push
+```
+
+## Sisa risiko
+
+**Rilis yang gagal meninggalkan commit dan tag lokal.** Guard mencegah tag
+keluar dari mesin, tetapi tidak membersihkannya: standard-version sudah menulis
+commit rilis dan tag sebelum pemeriksaan berjalan. Pesan error menyebutkan
+perintah pemulihannya. Pembersihan otomatis sengaja tidak dilakukan karena
+`git reset --hard` jauh lebih berbahaya daripada sisa yang terlihat jelas.
+
+**Guard hanya berjalan lewat `release.cjs`.** Bila `perform_release` diberi
+perintah rilis lain yang tidak memakai skrip ini, tidak ada yang memeriksa
+hasilnya. Jalur itu tidak dipakai sehari-hari, tetapi belum ditutup.

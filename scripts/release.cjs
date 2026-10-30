@@ -158,6 +158,52 @@ function loadPackageJson(cwd = process.cwd()) {
   }
 }
 
+/**
+ * Memastikan package.json berisi versi semver yang sah SETELAH rilis berjalan.
+ *
+ * MENGAPA ADA
+ * -----------
+ * 30 Oktober 2026 `perform_release` menulis `"version": null` ke package.json
+ * dan membuat tag `vnull`, lalu mem-push keduanya. Penyebabnya argumen
+ * `--release-as` terkirim dua kali sehingga `semver.inc()` mengembalikan null.
+ *
+ * `SEMVER_REGEX` sudah ada saat itu, tetapi hanya dipakai memvalidasi tipe
+ * rilis MASUKAN. Hasil rilis tidak pernah diperiksa, jadi kerusakan baru
+ * terlihat setelah tag keluar dari mesin.
+ *
+ * Fungsi ini menutup celah itu: standard-version dianggap belum berhasil
+ * sebelum package.json terbukti berisi semver yang sah.
+ */
+function verifyReleaseVersion({ cwd = process.cwd(), readFileSync = fs.readFileSync } = {}) {
+  const packageJsonPath = path.join(cwd, 'package.json');
+
+  let contents;
+  try {
+    contents = readFileSync(packageJsonPath, 'utf8');
+  } catch (error) {
+    throw new Error(`Tidak bisa membaca ${packageJsonPath}; hasil rilis tidak dapat diverifikasi.`);
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(contents);
+  } catch (error) {
+    throw new Error(`${packageJsonPath} bukan JSON yang sah setelah rilis; hasilnya tidak dapat diverifikasi.`);
+  }
+
+  const version = parsed?.version;
+
+  if (typeof version !== 'string' || !SEMVER_REGEX.test(version.trim())) {
+    throw new Error(
+      `Rilis gagal: package.json berisi version ${JSON.stringify(version)}, bukan semver yang sah. ` +
+      'Tag tidak boleh di-push. Periksa argumen --release-as, lalu pulihkan dengan ' +
+      `"git tag -d v${String(version)}" dan "git reset --hard HEAD~1" bila perlu.`
+    );
+  }
+
+  return version.trim();
+}
+
 function detectPackageManager({ env = process.env, cwd = process.cwd() } = {}) {
   const userAgent = env.npm_config_user_agent || '';
   if (userAgent.startsWith('pnpm/')) return 'pnpm';
@@ -249,6 +295,18 @@ function runRelease({
     return { ...releaseResult, status: releaseResult?.status || 1 };
   }
 
+  // Rilis hanya dianggap berhasil setelah package.json terbukti berisi semver
+  // yang sah. Tanpa pemeriksaan ini, `version: null` dan tag `vnull` lolos
+  // sampai di-push (kejadian 30 Oktober 2026).
+  let releasedVersion;
+  try {
+    releasedVersion = verifyReleaseVersion({ cwd });
+  } catch (error) {
+    safeLog('error', error.message);
+    return { status: 1, error };
+  }
+  safeLog('info', `✅ Released ${releasedVersion}`);
+
   const releaseNotesPath = dependencies.releaseNotesPath || path.join('docs', 'release-notes', 'RELEASE_NOTES.md');
   const updateNotes = dependencies.updateReleaseNotes || ((options = {}) => updateReleaseNotes({ rootDir: cwd, ...options }));
 
@@ -284,6 +342,7 @@ module.exports = {
   getNpmRunArgument,
   buildStandardVersionArgs,
   loadPackageJson,
+  verifyReleaseVersion,
   detectPackageManager,
   runProjectTests,
   runRelease,
