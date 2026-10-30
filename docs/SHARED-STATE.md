@@ -440,6 +440,8 @@ menghasilkan `user_id` berbeda untuk proyek yang sama (`default` vs
 `user-…`). Belum diperbaiki di sini; saat mereparasi data lama, jalankan dari
 `cwd` proyek yang benar.
 
+> Diperbarui 30 Oktober 2026: sudah diperbaiki. Lihat bagian berikutnya.
+
 # `commit_and_push` melaporkan sukses palsu saat git tidak bisa dijalankan (dikerjakan 30 Oktober 2026)
 
 ## Masalah
@@ -813,3 +815,90 @@ perintah pemulihannya. Pembersihan otomatis sengaja tidak dilakukan karena
 **Guard hanya berjalan lewat `release.cjs`.** Bila `perform_release` diberi
 perintah rilis lain yang tidak memakai skrip ini, tidak ada yang memeriksa
 hasilnya. Jalur itu tidak dipakai sehari-hari, tetapi belum ditutup.
+
+# Identitas user jatuh ke "default" saat state memakai path eksplisit (dikerjakan 30 Oktober 2026)
+
+## Masalah
+
+Saat mereparasi riwayat proyek yang gagal tersinkron, 150 baris masuk ke
+database dengan `user_id = "default"`, padahal pemakaian normal memakai
+`user-1a171645d22-788e41b9`. Baris duplikat itu harus dibersihkan manual.
+
+Pada mesin yang sama ditemukan tiga identitas berbeda:
+
+```text
+C:\Users\DHIKA                              -> user-19ac630d828-982a39ab
+C:\Users\DHIKA\Documents\Default Project    -> user-1a171645d22-788e41b9
+C:\Users\DHIKA\Documents\code\dev-workflow-mcp-server -> user-1a17163e109-757756e5
+```
+
+## Akar masalah
+
+`syncToDatabase()` memanggil `getCurrentUserId()`, yang hanya membaca cache
+modul `cachedUserId`:
+
+```js
+function getCurrentUserId() {
+  if (cachedUserId) return cachedUserId;
+  if (cachedUserStateDir) return resolveUserId(cachedUserStateDir);
+  return "default";
+}
+```
+
+Cache itu terisi lewat `resolveUserId()`, dan `resolveUserId()` hanya dipanggil
+dari `resolveStateFile()`. Pemanggil yang membuat `WorkflowState` dengan path
+**eksplisit** - skrip perbaikan, CLI, tes - tidak pernah memicunya. Dalam keadaan
+itu fungsinya diam-diam mengembalikan `"default"`.
+
+Jadi bukan `cwd` yang menentukan identitas, melainkan **cara state dibuat**. Itu
+lebih buruk, karena hasilnya bergantung pada urutan pemanggilan di dalam proses
+dan mudah bocor antar proyek saat satu proses melayani beberapa location.
+
+## Yang diperbaiki
+
+`getCurrentUserId(stateFile)` sekarang menerima path state dan membaca
+identitas dari proyek itu langsung:
+
+```js
+if (stateFile) {
+  const stateDir = path.dirname(path.resolve(stateFile));
+  const userIdFile = path.join(stateDir, USER_ID_FILENAME);
+
+  try {
+    const stored = readFileSync(userIdFile, "utf-8").trim();
+    if (stored) return stored;
+  } catch { /* belum ada, lanjut */ }
+
+  try { return resolveUserId(stateDir); } catch { /* lanjut */ }
+}
+```
+
+Cache modul tetap dipakai sebagai cadangan, tetapi tidak lagi menjadi sumber
+utama. Hasilnya tidak bergantung pada direktori kerja, tidak bergantung pada
+urutan pemanggilan, dan tidak bocor antar proyek.
+
+## Cara memverifikasi
+
+`npm test` menjalankan `tests/stable-user-id.test.js`:
+
+1. `WorkflowState` dengan path eksplisit memakai `user-id` dari direktori
+   `.state`-nya, bukan `"default"`;
+2. dua proyek berbeda dalam **satu proses** memakai identitas masing-masing,
+   tanpa saling mewarisi.
+
+Pada database nyata `C:\Users\DHIKA\Documents\Default Project\.state\dev-workflow.db`:
+
+```text
+  161  user-1a171645d22-788e41b9  <-  C:\Users\DHIKA\Documents\Default Project
+proyek dengan lebih dari satu user_id: tidak ada
+```
+
+## Sisa risiko
+
+**Baris lama tidak dimigrasikan otomatis.** Data yang terlanjur tertulis dengan
+`"default"` tetap di sana sampai dibersihkan manual. Perbaikan ini mencegah
+kerusakan baru, bukan menyembuhkan yang lama.
+
+**Masih ada tiga user-id berkas di mesin ini.** Satu per proyek, dan itu memang
+desainnya: identitas mengikuti proyek, bukan mesin. Yang diperbaiki adalah agar
+identitas itu benar-benar dibaca, bukan agar semua proyek memakai satu id.

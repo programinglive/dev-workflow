@@ -223,18 +223,55 @@ function getUserScopedDir(baseDir) {
   return path.join(baseDir, "users", userId);
 }
 
-function getCurrentUserId() {
+/**
+ * Identitas user untuk baris database milik state ini.
+ *
+ * MENGAPA TIDAK MEMBACA CACHE MODUL
+ * ---------------------------------
+ * Versi sebelumnya hanya memakai `cachedUserId`, yang terisi lewat
+ * `resolveUserId()` - dan itu hanya dipanggil dari `resolveStateFile()`.
+ * Pemanggil yang membuat `WorkflowState` dengan path EKSPLISIT (skrip
+ * perbaikan, CLI, tes) tidak pernah memicunya, sehingga `syncToDatabase()`
+ * diam-diam menulis baris dengan `user_id = "default"`.
+ *
+ * Akibat nyata 30 Oktober 2026: satu proyek punya riwayat di dua identitas
+ * (`user-…` dan `default`) dalam database yang sama, dan 150 baris duplikat
+ * harus dibersihkan manual.
+ *
+ * Membaca langsung dari direktori `.state` milik state ini membuat hasilnya
+ * tidak bergantung pada direktori kerja proses, tidak bergantung pada urutan
+ * pemanggilan, dan tidak bocor antar proyek dalam satu proses.
+ */
+function getCurrentUserId(stateFile = null) {
   const envUserId = (process.env.DEV_WORKFLOW_USER_ID || "").trim();
   if (envUserId) {
     return envUserId;
   }
 
-  if (cachedUserId) {
-    return cachedUserId;
+  if (stateFile) {
+    const stateDir = path.dirname(path.resolve(stateFile));
+    const userIdFile = path.join(stateDir, USER_ID_FILENAME);
+
+    try {
+      const stored = readFileSync(userIdFile, "utf-8").trim();
+      if (stored) {
+        return stored;
+      }
+    } catch {
+      // Berkas belum ada: jatuh ke pencarian di bawah.
+    }
+
+    // .state langsung (bukan .state/users/<id>): pakai resolveUserId, yang
+    // menangani migrasi id lama maupun pembuatan id baru.
+    try {
+      return resolveUserId(stateDir);
+    } catch {
+      // Biarkan jatuh ke nilai cadangan di bawah.
+    }
   }
 
-  if (cachedUserStateDir) {
-    return resolveUserId(cachedUserStateDir);
+  if (cachedUserId) {
+    return cachedUserId;
   }
 
   return "default";
@@ -1014,7 +1051,7 @@ export class WorkflowState {
   async syncToDatabase(options = {}) {
     assertSafeKnowledge(this.state);
     const db = options.db ?? (await import("./db/index.js"));
-    const userId = getCurrentUserId();
+    const userId = getCurrentUserId(this.stateFile);
     // projectRoot dipakai sebagai identitas proyek di database. Ditentukan
     // lewat resolveProjectRootForState, bukan dengan menghitung `dirname`
     // berkali-kali: jumlah itu hanya benar untuk satu kedalaman tertentu.
