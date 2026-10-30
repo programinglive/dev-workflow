@@ -52,8 +52,16 @@ function samePath(a, b) {
  * Menentukan direktori repo proyek tempat git boleh dijalankan.
  *
  * Urutan: eksplisit -> WORKFLOW_PROJECT_DIR/PROJECT_DIR -> kandidat.
- * Repo paket MCP selalu dilewati; kalau tidak ada pilihan lain, lebih baik
- * gagal dengan pesan jelas daripada commit ke repo yang salah.
+ *
+ * Repo paket MCP sengaja tidak dipilih sebagai cadangan: dulu server pernah
+ * menjalankan git di repo-nya sendiri saat cwd proyek gagal diresolusi, lalu
+ * melaporkan "No changes detected" sementara perubahan proyek tidak pernah
+ * ter-commit.
+ *
+ * Tetapi kandidat yang MEMANG berada di dalam repo paket berarti pemanggil
+ * sengaja bekerja di sana - misalnya saat mengembangkan server MCP ini sendiri.
+ * Membuangnya tanpa syarat membuat `commit_and_push` mustahil dipakai di repo
+ * paket, jadi kandidat seperti itu diterima. Repo proyek lain tetap menang.
  */
 export function resolveWorkingDirectory({ explicit = "", env = process.env, candidates = [] } = {}) {
   if (explicit) {
@@ -74,14 +82,22 @@ export function resolveWorkingDirectory({ explicit = "", env = process.env, cand
   }
 
   const found = candidates.map((candidate) => findRepoRoot(candidate)).filter(Boolean);
-  const usable = found.find((dir) => !samePath(dir, PACKAGE_DIR));
-  if (usable) {
-    return usable;
+
+  const projectRepo = found.find((dir) => !samePath(dir, PACKAGE_DIR));
+  if (projectRepo) {
+    return projectRepo;
+  }
+
+  // Hanya repo paket yang ditemukan. Itu hanya mungkin bila salah satu kandidat
+  // benar-benar berada di dalamnya, jadi pemanggil memilih repo ini dengan sadar.
+  if (found.some((dir) => samePath(dir, PACKAGE_DIR))) {
+    return path.resolve(PACKAGE_DIR);
   }
 
   throw new Error(
-    "Tidak bisa menentukan repo proyek: satu-satunya kandidat adalah repo paket server MCP. " +
-    "Set WORKFLOW_PROJECT_DIR ke direktori proyek, atau jalankan server MCP dari direktori proyek.",
+    "Tidak bisa menentukan repo proyek: tidak ada repository git pada " +
+    `${candidates.filter(Boolean).map((candidate) => `"${candidate}"`).join(", ") || "direktori kerja"}. ` +
+    "Set WORKFLOW_PROJECT_DIR ke direktori proyek, atau jalankan server MCP dari dalam direktori proyek.",
   );
 }
 
