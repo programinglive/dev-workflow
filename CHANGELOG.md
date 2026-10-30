@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.13.9](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.13.8...v1.13.9) (2026-10-30)
+
+
+### 🐛 Bug Fixes
+
+* **state:** baca user id dari state proyek, bukan cache modul ([79ac773](https://github.com/programinglive/dev-workflow-mcp-server/commit/79ac773471d88066e69d5cb539c10a3a20500983))
+
 ### [1.13.8](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.13.7...v1.13.8) (2026-10-30)
 
 
