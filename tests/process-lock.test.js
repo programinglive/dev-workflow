@@ -2,13 +2,14 @@ import { test } from "node:test";
 import assert from "node:assert";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import path, { join } from "node:path";
 
 import {
   acquireProcessLock,
   releaseProcessLock,
   readProcessLock,
   processLockPath,
+  projectLockDir,
   lockWarning,
 } from "../process-lock.js";
 
@@ -121,4 +122,65 @@ test("peringatan menyebut PID proses lain dan menyarankan menutup OpenCode", () 
 
   assert.match(pesan, /23528/);
   assert.match(pesan, /OpenCode/);
+});
+
+// ---------------------------------------------------------------------------
+// Lock harus berada di .state PROYEK, bukan di direktori user
+// ---------------------------------------------------------------------------
+//
+// 31 Oktober 2026, setelah rilis 1.13.15: dua proses MCP hidup bersamaan
+// (PID 26604 dan 7516) tetapi hanya SATU lock file yang tercipta. Sebabnya lock
+// ditaruh di `path.dirname(stateFile)` = `.state/users/<user>/`. Direktori user
+// bisa berbeda antar proses (id user dibuat per direktori state), sehingga dua
+// proses bisa saling tidak melihat dan peringatan proses ganda tidak pernah
+// muncul. Lock harus satu per PROYEK.
+
+test("lock diletakkan di .state proyek, bukan di direktori user", () => {
+  const stateFile = path.join(
+    "C:",
+    "proyek",
+    ".state",
+    "users",
+    "user-abc",
+    "workflow-state.ses_x.json"
+  );
+
+  assert.equal(projectLockDir(stateFile), path.join("C:", "proyek", ".state"));
+});
+
+test("dua sesi berbeda di proyek yang sama memakai lock yang SAMA", () => {
+  const a = projectLockDir(
+    path.join("/proyek", ".state", "users", "user-satu", "workflow-state.ses_a.json")
+  );
+  const b = projectLockDir(
+    path.join("/proyek", ".state", "users", "user-dua", "workflow-state.ses_b.json")
+  );
+
+  assert.equal(a, b, "dua user dir di proyek yang sama harus berbagi satu lock");
+});
+
+test("state di luar tata letak .state memakai direktorinya sendiri", () => {
+  const stateFile = path.join("/tmp", "uji", "state.json");
+  assert.equal(projectLockDir(stateFile), path.dirname(path.resolve(stateFile)));
+});
+
+test("gagal menulis lock dilaporkan, bukan ditelan diam-diam", () => {
+  // Sebelum ini kegagalan menulis mengembalikan { acquired: true } saja, jadi
+  // sistem tampak sehat padahal tidak ada penanda apa pun di disk.
+  const result = acquireProcessLock({
+    dir: "/tidak/bisa/ditulis",
+    pid: 111,
+    now: 1000,
+    isAlive: () => false,
+    writeFileImpl: () => {
+      throw Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
+    },
+  });
+
+  assert.equal(result.acquired, true);
+  assert.equal(result.wrote, false);
+  assert.match(String(result.error || ""), /EACCES/);
+
+  const warning = lockWarning(result);
+  assert.match(String(warning || ""), /tidak bisa|gagal|EACCES/i);
 });
