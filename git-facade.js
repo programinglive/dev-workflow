@@ -21,6 +21,7 @@ import {
   hasTestChanges,
   hasWorkingChanges,
   foreignDirtyEntries,
+  hasOnlyForeignChanges,
   parseStatusEntries,
   workingTreeSummary,
 } from "./git-helpers.js";
@@ -41,5 +42,6 @@ export function createGitFacade() {
     workingTreeSummary,
     parseStatusEntries,
     foreignDirtyEntries,
+    hasOnlyForeignChanges,
   };
 }

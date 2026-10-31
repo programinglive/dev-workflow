@@ -150,6 +150,37 @@ export function foreignDirtyEntries(baselineEntries, statusOutput) {
   return parseStatusEntries(statusOutput).filter((entry) => baseline.has(entry.path));
 }
 
+/**
+ * Apakah SELURUH working tree hanya berisi berkas yang sudah kotor sejak
+ * `start_task`.
+ *
+ * Dipakai `perform_release`. Sebelumnya rilis menuntut working tree benar-benar
+ * bersih, dan itu benar selama commit menyapu semua. Setelah `commit_and_push`
+ * sengaja MENINGGALKAN pekerjaan sesi lain, syarat itu berubah jadi jebakan:
+ * rilis menolak selamanya dan menyarankan "commit or stash", padahal
+ * meng-commit berkas itu justru yang kita cegah.
+ *
+ * Mengembalikan false kalau baseline kosong: tanpa baseline tidak ada dasar
+ * untuk menyatakan sesuatu "bukan milik kita", jadi perilaku lama dipertahankan.
+ */
+export function hasOnlyForeignChanges(baselineEntries, statusOutput) {
+  const baseline = new Set(
+    (Array.isArray(baselineEntries) ? baselineEntries : [])
+      .map((entry) => String(entry?.path || "").trim())
+      .filter(Boolean),
+  );
+  if (baseline.size === 0) {
+    return false;
+  }
+
+  const current = parseStatusEntries(statusOutput);
+  if (current.length === 0) {
+    return false;
+  }
+
+  return current.every((entry) => baseline.has(entry.path));
+}
+
 function parseNameStatusLine(line) {
   if (!line) {
     return null;

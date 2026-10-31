@@ -126,7 +126,7 @@ See [MCP client configuration](#mcp-client-configuration).
 | `create_documentation` | Mark docs as written |
 | `check_ready_to_commit` | Verify every required step is complete |
 | `commit_and_push` | `git add` → `commit` → `push`, refusing to sweep in another session's work |
-| `perform_release` | Record a release |
+| `perform_release` | Record a release; runs even when only another session's files are left unstaged |
 | `skip_release` | Skip the release step with a justification |
 | `complete_task` | Finish and reset the workflow |
 | `get_workflow_status` | Show the current phase |
@@ -612,6 +612,7 @@ fail on husky.
 - Forgetting a workflow step
 - Releasing without committing and pushing
 - Committing another session's uncommitted work by accident
+- Blocking a release because another session's work is deliberately left alone
 
 ---
 
@@ -652,6 +653,24 @@ baseline and keep the old behaviour.
 Known limit: this catches work that was **already** dirty when the task started.
 A file created by another session mid-task cannot be attributed, because git
 records content, not authorship.
+
+### What this means for `perform_release`
+
+Release used to require a completely clean working tree, which was correct while
+commits swept everything. Once `commit_and_push` deliberately *leaves* another
+session's work unstaged, that rule would block every release — and its advice
+("commit or stash all changes") would ask you to commit exactly what the guard
+just refused.
+
+So `perform_release` now distinguishes two kinds of dirt:
+
+| Working tree contains | Release |
+|---|---|
+| only paths from `dirtyAtStart` | runs, and lists them as deliberately left alone |
+| any path that is not in the baseline | refused, naming those files |
+
+Without a baseline (tasks started before this feature) the old strict rule
+applies: anything dirty blocks the release.
 
 ---
 

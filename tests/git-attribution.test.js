@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { parseStatusEntries, foreignDirtyEntries } from "../git-helpers.js";
+import { parseStatusEntries, foreignDirtyEntries, hasOnlyForeignChanges } from "../git-helpers.js";
 
 /**
  * Baseline/attribution guard.
@@ -82,4 +82,27 @@ test("foreignDirtyEntries tidak mencocokkan sebagian nama berkas", () => {
   const baseline = [{ code: "M", path: "app.js" }];
 
   assert.deepEqual(foreignDirtyEntries(baseline, "M src/app.js\n"), []);
+});
+
+test("hasOnlyForeignChanges benar hanya bila SEMUA yang kotor ada di baseline", () => {
+  const baseline = [{ code: "M", path: "knowledge/billing.yaml" }];
+
+  assert.equal(hasOnlyForeignChanges(baseline, " M knowledge/billing.yaml\n"), true);
+  assert.equal(
+    hasOnlyForeignChanges(baseline, " M knowledge/billing.yaml\n?? fitur-baru.js\n"),
+    false,
+    "satu berkas baru saja sudah cukup untuk menolak",
+  );
+});
+
+test("hasOnlyForeignChanges tidak melonggarkan apa pun tanpa baseline", () => {
+  // Baseline kosong berarti working tree bersih saat task dimulai. Tanpa dasar
+  // menyebut sesuatu "bukan milik kita", perilaku lama harus dipertahankan.
+  assert.equal(hasOnlyForeignChanges([], " M apa-saja.js\n"), false);
+  assert.equal(hasOnlyForeignChanges(undefined, " M apa-saja.js\n"), false);
+});
+
+test("hasOnlyForeignChanges salah bila tree benar-benar bersih", () => {
+  const baseline = [{ code: "M", path: "a.js" }];
+  assert.equal(hasOnlyForeignChanges(baseline, ""), false);
 });
