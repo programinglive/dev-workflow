@@ -122,7 +122,18 @@ export function getContinueGuidance(status) {
   switch (status.currentPhase) {
     case "coding": {
       const task = status.taskDescription ? ` "${status.taskDescription}"` : "";
-      return `Describe your feature flow with Mermaid using 'create_feature_flow', then finish implementing${task} and run 'mark_bug_fixed' with a brief summary of the change.`;
+      // Item DoD yang masih terbuka disebut di sini karena agen sering berhenti
+      // di "implementasi selesai" dan lupa bahwa task-nya masih terkunci.
+      const open = (status.definitionOfDone || []).filter(
+        (item) => item && item.status !== "waived" && !(item.status === "done" && item.revision === status.dodRevision),
+      );
+      const dodHint =
+        open.length > 0
+          ? ` Prove each definition-of-done item with 'mark_dod_item' { id, evidence } - still open: ${open
+              .map((item) => `${item.id} (${item.text})`)
+              .join(", ")}.`
+          : "";
+      return `Describe your feature flow with Mermaid using 'create_feature_flow', then finish implementing${task} and run 'mark_bug_fixed' with a brief summary of the change.${dodHint}`;
     }
     case "testing":
       if (!status.testsCreated) {

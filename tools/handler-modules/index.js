@@ -11,6 +11,7 @@ import { handleCommitAndPush, handleCompleteTask, handleForceCompleteTask, handl
 import { handleProjectSummary, handleProjectSummaryData, handleProjectSummaryDb, handleViewHistory } from "./summary-handlers.js";
 import { handleGetWorkflowStatus, handleReadyCheck, handleContinueWorkflow, handleRerunWorkflow } from "./status-handlers.js";
 import { handleSetDefinitionOfDone, handleMarkDodItem, handleWaiveDodItem } from "./dod-handlers.js";
+import { openItems, MIN_EVIDENCE } from "./dod.js";
 import { handleListFactoryTasks, handleClaimFactoryTask, handleSyncTaskStatus, handleListFactoryProjects, handleCreateFactoryTask, handleUpdateFactoryTask } from "./factory-handlers.js";
 
 function summarizeResponse(label, response) {
@@ -49,7 +50,52 @@ async function handleRunFullWorkflow(args, { workflowState, exec, git, utils }) 
     }
   }
 
+  // Definition of done diperiksa di DEPAN, bukan setelah tujuh langkah.
+  //
+  // `start_task` mewajibkan DoD, jadi setiap task baru punya item terbuka. Sejak
+  // gerbang DoD ada (1.14.0), `run_full_workflow` tidak punya langkah untuk
+  // membuktikan item - jadi ia selalu berhenti di ready check, SETELAH
+  // mark_bug_fixed, create_tests, run_tests, dan create_documentation semuanya
+  // tercatat padahal commit belum pernah terjadi. Task seperti itu tertinggal
+  // setengah jadi dan membingungkan `get_workflow_status`.
+  //
+  // Lebih baik menolak di awal dengan daftar item yang perlu dibuktikan.
+  const dodEvidenceArg = args.dodEvidence;
+  const dodEvidence = dodEvidenceArg && typeof dodEvidenceArg === "object" && !Array.isArray(dodEvidenceArg)
+    ? dodEvidenceArg
+    : {};
+
+  const dodItemsBefore = Array.isArray(workflowState.state.definitionOfDone)
+    ? workflowState.state.definitionOfDone
+    : [];
+  const dodRevisionBefore = Number(workflowState.state.dodRevision) || 0;
+  const outstandingBefore = openItems(dodItemsBefore, dodRevisionBefore);
+
+  const missingEvidence = outstandingBefore.filter((item) => {
+    const value = dodEvidence[item.id];
+    return typeof value !== "string" || value.trim().length < MIN_EVIDENCE;
+  });
+
+  if (missingEvidence.length > 0) {
+    const list = missingEvidence.map((item) => `   ${item.id}: ${item.text}`).join("\n");
+    const example = missingEvidence
+      .map((item) => `"${item.id}": "npm test -> 533 pass"`)
+      .join(", ");
+
+    return textResponse(
+      `⚠️ Dibatalkan sebelum satu langkah pun berjalan: ${missingEvidence.length} item Definition of Done belum terbukti.\n\n` +
+        `${list}\n\n` +
+        `'run_full_workflow' tidak bisa menebak buktinya. Kirim 'dodEvidence' berisi bukti untuk tiap item, ` +
+        `atau buktikan dulu lewat 'mark_dod_item' lalu panggil 'run_full_workflow' lagi.\n\n` +
+        `Contoh:\n  "dodEvidence": { ${example} }\n\n` +
+        `Bukti minimal ${MIN_EVIDENCE} karakter dan harus menyebut apa yang benar-benar dijalankan atau diperiksa. ` +
+        `Item yang memang tidak berlaku kecualikan dengan 'waive_dod_item' { id, reason }.\n\n` +
+        `Tidak ada langkah yang dicatat; workflow tidak berubah.`
+    );
+  }
+
   const steps = [];
+  let dodApplied = false;
   const testsPassed = typeof args.testsPassed === "boolean" ? args.testsPassed : true;
   const testDetails = typeof args.testDetails === "string" ? args.testDetails : "";
   const releaseArgs = {
@@ -121,6 +167,28 @@ async function handleRunFullWorkflow(args, { workflowState, exec, git, utils }) 
     }
 
     if (!state.readyCheckCompleted) {
+      // Buktikan item DoD dari `dodEvidence` sebelum ready check, sekali saja.
+      //
+      // Diletakkan di sini, bukan di awal, karena bukti baru benar setelah
+      // implementasi dan tes selesai. Kalau dicatat di awal, bukti yang dikirim
+      // bersama panggilan ini akan menempel pada kode yang belum ditulis.
+      if (!dodApplied) {
+        const applied = [];
+        for (const item of openItems(state.definitionOfDone || [], Number(state.dodRevision) || 0)) {
+          const evidence = dodEvidence[item.id];
+          if (typeof evidence !== "string" || evidence.trim() === "") continue;
+          const resp = await handleMarkDodItem({ id: item.id, evidence }, workflowState);
+          if (isErrorResponse(resp)) return resp;
+          applied.push(item.id);
+        }
+        dodApplied = true;
+        if (applied.length > 0) {
+          steps.push(`mark_dod_item: ${applied.join(", ")}`);
+          await workflowState.load();
+          continue;
+        }
+      }
+
       const resp = await executeStep("check_ready_to_commit", handleReadyCheck, [workflowState]);
       if (isErrorResponse(resp)) return resp;
       continue;

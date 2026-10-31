@@ -132,7 +132,7 @@ See [MCP client configuration](#mcp-client-configuration).
 | `get_workflow_status` | Show the current phase |
 | `continue_workflow` | Get guidance on the next step |
 | `view_history` | List completed tasks |
-| `run_full_workflow` | Run every step in one call |
+| `run_full_workflow` | Run every step in one call (requires `dodEvidence` for open items) |
 | `rerun_workflow` | Restart the current task from the beginning |
 | `drop_task` | Abandon the task without completing it |
 | `force_complete_task` | Complete despite missing steps, with a reason |
@@ -679,7 +679,9 @@ applies: anything dirty blocks the release.
 1. Always start with `start_task` — it sets the intent for the session
 2. Do not skip tests unless it is genuinely impossible — use `skip_tests` with a clear reason
 3. Call `get_workflow_status` whenever you lose track of the phase
-4. `run_full_workflow` is a shortcut for simple tasks where all the data is already known
+4. `run_full_workflow` is a shortcut for simple tasks where all the data is already known. Pass
+   `dodEvidence` keyed by item id (`{ "dod-1": "npm test -> 533 pass" }`); without it the call refuses up front
+   instead of stopping halfway with implementation, tests and docs already recorded but nothing committed
 5. For docs-only work, use `skip_release` rather than forcing a release
 
 ---

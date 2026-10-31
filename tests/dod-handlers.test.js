@@ -7,6 +7,7 @@ import path from "node:path";
 import { WorkflowState } from "../workflow-state.js";
 import { handleToolCall } from "../tools/handlers.js";
 import { normalizeRequestArgs } from "../utils.js";
+import { testUtils } from "./test-helpers.js";
 import { resetToCommitIfWorkingChanges } from "../tools/handler-modules/shared.js";
 import { summarize } from "../tools/handler-modules/dod.js";
 
@@ -50,7 +51,7 @@ function call(name, args, workflowState) {
       getLastCommitMessage: async () => "",
       getStatusOutput: async () => "",
     },
-    utils: {},
+    utils: testUtils,
   });
 }
 
@@ -441,7 +442,7 @@ test("commit_and_push menolak dan menyebut item yang masih terbuka", async () =>
         getPrimaryBranch: async () => "main",
         getStatusOutput: async () => "M tests/x.test.js",
       },
-      utils: {},
+      utils: testUtils,
     });
 
     assert.match(text(response), /dod-3/);
@@ -594,5 +595,153 @@ test("rerun_workflow mempertahankan item DoD yang sudah ada", async () => {
     assert.equal(state.state.currentPhase, "coding");
     assert.equal(state.state.definitionOfDone.length, 1, "DoD tidak boleh hilang");
     assert.equal(state.state.definitionOfDone[0].status, "done");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// run_full_workflow dan DoD
+// ---------------------------------------------------------------------------
+
+function fullWorkflowGit() {
+  // Sama seperti tes run_full_workflow yang sudah ada: setelah `git commit` dan
+  // `git push`, pohon kerja bersih. Tanpa ini, perform_release mengira ada
+  // perubahan baru dan mengembalikan workflow ke fase commit.
+  const state = { working: true };
+  return {
+    state,
+    git: {
+      hasWorkingChanges: async () => state.working,
+      hasStagedChanges: async () => false,
+      hasTestChanges: async () => true,
+      getStagedChanges: async () => [{ status: "M", path: "src/app.js" }],
+      getCurrentBranch: async () => "main",
+      getPrimaryBranch: async () => "main",
+      getHeadSha: async () => "a".repeat(40),
+      getRemoteBranchSha: async () => "a".repeat(40),
+      getLastCommitMessage: async () => "",
+      getStatusOutput: async () => "M src/app.js\nM tests/app.test.js",
+      containsTestFilesInStatus: (statusOutput) => statusOutput.includes("tests/"),
+      workingTreeSummary: () => ({ hasChanges: state.working, lines: [] }),
+    },
+  };
+}
+
+const fullWorkflowArgs = {
+  summary: "selesai",
+  testCommand: "npm test",
+  documentationType: "README",
+  documentationSummary: "docs",
+  commitMessage: "feat: x",
+  releaseCommand: "npm run release",
+  mermaidCode: "graph TD; A-->B;",
+  featureFlowDescription: "flow",
+};
+
+async function callFull(state, extra = {}) {
+  const { state: gitState, git } = fullWorkflowGit();
+  return handleToolCall({
+    request: { params: { name: "run_full_workflow", arguments: { ...fullWorkflowArgs, ...extra } } },
+    normalizeRequestArgs,
+    workflowState: state,
+    exec: async (command) => {
+      if (typeof command === "string" && (command.startsWith("git commit") || command.startsWith("git push"))) {
+        gitState.working = false;
+      }
+      return { stdout: "" };
+    },
+    git,
+    utils: testUtils,
+  });
+}
+
+test("run_full_workflow menolak di awal dan menyebut id item DoD yang belum terbukti", async () => {
+  await withState(async (state) => {
+    await call("start_task", {
+      description: "Coba full workflow",
+      type: "feature",
+      definitionOfDone: ["build lulus", "tes hijau"],
+    }, state);
+
+    const response = await callFull(state);
+    const out = text(response);
+
+    assert.match(out, /Dibatalkan sebelum satu langkah pun berjalan/);
+    assert.match(out, /dod-1: build lulus/);
+    assert.match(out, /dod-2: tes hijau/);
+    assert.match(out, /dodEvidence/);
+
+    // Tidak ada langkah yang boleh tercatat: itulah inti perbaikannya.
+    assert.equal(state.state.bugFixed, false);
+    assert.equal(state.state.testsCreated, false);
+    assert.equal(state.state.documentationCreated, false);
+    assert.equal(state.state.history.length, 0);
+    assert.equal(state.state.currentPhase, "coding");
+  });
+});
+
+test("run_full_workflow menolak bukti yang terlalu pendek", async () => {
+  await withState(async (state) => {
+    await call("start_task", {
+      description: "Coba full workflow",
+      type: "feature",
+      definitionOfDone: ["build lulus"],
+    }, state);
+
+    const out = text(await callFull(state, { dodEvidence: { "dod-1": "ok" } }));
+
+    assert.match(out, /Dibatalkan sebelum satu langkah pun berjalan/);
+    assert.equal(state.state.bugFixed, false);
+  });
+});
+
+test("run_full_workflow dengan dodEvidence menyelesaikan seluruh langkah", async () => {
+  await withState(async (state) => {
+    await call("start_task", {
+      description: "Coba full workflow",
+      type: "feature",
+      definitionOfDone: ["build lulus", "tes hijau"],
+    }, state);
+
+    const response = await callFull(state, {
+      dodEvidence: { "dod-1": "npm test -> 533 pass", "dod-2": "npm test hijau" },
+    });
+    const out = text(response);
+
+    assert.match(out, /Full workflow completed successfully/);
+    assert.match(out, /mark_dod_item: dod-1, dod-2/);
+    assert.equal(state.state.currentPhase, "idle", "task harus benar-benar selesai");
+    assert.equal(state.state.history.length, 1);
+    assert.equal(state.state.history.at(-1).definitionOfDoneSummary.done, 2);
+  });
+});
+
+test("item yang sudah dikecualikan tidak menahan run_full_workflow", async () => {
+  await withState(async (state) => {
+    await call("start_task", {
+      description: "Coba full workflow",
+      type: "feature",
+      definitionOfDone: ["build lulus", "deploy staging"],
+    }, state);
+    await call("waive_dod_item", { id: "dod-2", reason: "staging sedang maintenance" }, state);
+
+    const response = await callFull(state, { dodEvidence: { "dod-1": "npm test -> 533 pass" } });
+
+    assert.match(text(response), /Full workflow completed successfully/);
+    assert.equal(state.state.currentPhase, "idle");
+  });
+});
+
+test("panduan fase coding menyebut item DoD yang masih terbuka", async () => {
+  await withState(async (state) => {
+    await call("start_task", {
+      description: "Coba panduan",
+      type: "feature",
+      definitionOfDone: ["build lulus"],
+    }, state);
+
+    const out = text(await call("continue_workflow", {}, state));
+
+    assert.match(out, /mark_dod_item/);
+    assert.match(out, /dod-1 \(build lulus\)/);
   });
 });

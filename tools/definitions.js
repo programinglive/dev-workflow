@@ -438,6 +438,15 @@ export function getToolList() {
             type: "string",
             description: "Optional release notes to record",
           },
+          dodEvidence: {
+            type: "object",
+            additionalProperties: { type: "string" },
+            description:
+              "Evidence for each open definition-of-done item, keyed by item id and applied just before the ready check, " +
+              "for example { \"dod-1\": \"npm test -> 533 pass\" }. Required whenever an item is still open: the workflow " +
+              "refuses to run at all rather than stop halfway through, because it cannot invent proof. Each value must be " +
+              "at least 5 characters. Items that do not apply must be waived with 'waive_dod_item' first.",
+          },
           releaseType: {
             type: "string",
             description: "Optional release type override (major/minor/patch)",
