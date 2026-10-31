@@ -250,7 +250,107 @@ test("commit_and_push melaporkan repo yang sama saat git memang di sana", async 
 });
 
 // ---------------------------------------------------------------------------
-// 4. State tes tidak boleh menyentuh state milik repo
+// 4. "No changes detected" tidak boleh berarti "sudah selesai"
+// ---------------------------------------------------------------------------
+
+test("commit_and_push tidak mengaku sudah commit saat tidak ada yang di-commit", async () => {
+  const repo = await fakeRepo("repo-bersih-");
+
+  try {
+    await withWorkflowState(async (workflowState) => {
+      workflowState.state.readyToCommit = true;
+      workflowState.state.readyCheckCompleted = true;
+      workflowState.state.testsCreated = true;
+      workflowState.state.testsPassed = true;
+      workflowState.state.currentPhase = "commit";
+      await workflowState.save();
+
+      // Working tree bersih dan HEAD sudah ada di remote: tidak ada yang salah,
+      // tetapi panggilan ini juga tidak membuat commit apa pun.
+      const git = createGitMock({
+        getToplevel: async () => repo,
+        hasWorkingChanges: async () => false,
+        getLastCommitMessage: async () => "chore(release): 2.38.47",
+      });
+
+      const response = await handleToolCall({
+        request: createRequest("commit_and_push", { projectDir: repo }),
+        normalizeRequestArgs: (args) => ({ args, error: null }),
+        workflowState,
+        exec: async () => ({ stdout: "" }),
+        git,
+        utils: testUtils,
+      });
+
+      const text = response.content.map((part) => part.text).join("\n");
+
+      assert.match(
+        text,
+        /tidak membuat commit|no commit was made|tidak ada commit baru/i,
+        "Jawaban harus menyatakan terus terang bahwa panggilan ini tidak membuat commit. " +
+          "Kata 'Assuming commit and push already completed' membuat agen percaya " +
+          "pekerjaannya sudah masuk padahal tidak ada yang dikerjakan."
+      );
+
+      assert.doesNotMatch(
+        text,
+        /Assuming commit and push already completed/i,
+        "Kalimat 'Assuming ... already completed' adalah klaim tanpa bukti"
+      );
+    });
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("commit_and_push menyebut tidak ada task aktif saat state idle", async () => {
+  const repo = await fakeRepo("repo-idle-");
+
+  try {
+    await withWorkflowState(async (workflowState) => {
+      workflowState.state.readyToCommit = true;
+      workflowState.state.readyCheckCompleted = true;
+      workflowState.state.testsCreated = true;
+      workflowState.state.testsPassed = true;
+      // currentPhase dibiarkan "idle": tidak ada task yang sedang dikerjakan.
+      await workflowState.save();
+
+      const git = createGitMock({
+        getToplevel: async () => repo,
+        hasWorkingChanges: async () => false,
+      });
+
+      const response = await handleToolCall({
+        request: createRequest("commit_and_push", { projectDir: repo }),
+        normalizeRequestArgs: (args) => ({ args, error: null }),
+        workflowState,
+        exec: async () => ({ stdout: "" }),
+        git,
+        utils: testUtils,
+      });
+
+      const text = response.content.map((part) => part.text).join("\n");
+
+      assert.match(
+        text,
+        /idle|tidak ada task aktif|no active task/i,
+        "Saat state idle, jawaban harus menyebut tidak ada task aktif - itu sebabnya " +
+          "tidak ada yang di-commit."
+      );
+
+      assert.doesNotMatch(
+        text,
+        /Assuming commit and push already completed/i,
+        "Tidak ada alasan untuk mengaku commit selesai saat tidak ada task aktif"
+      );
+    });
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 5. State tes tidak boleh menyentuh state milik repo
 // ---------------------------------------------------------------------------
 
 test("state selama tes berada di direktori sementara, bukan .state milik repo", async () => {

@@ -186,9 +186,13 @@ export async function handleCommitAndPush(args, context) {
     const lastCommitMessage = await git.getLastCommitMessage();
     const effectiveCommitMessage = lastCommitMessage || providedCommitMessage;
 
-    // "Tidak ada perubahan" bukan berarti "sudah ter-push". HEAD bisa saja
-    // berupa commit yang belum pernah dikirim. Memeriksanya mencegah tool
-    // menandai selesai padahal remote masih tertinggal.
+    // "Tidak ada perubahan" bukan berarti "sudah ter-push", dan juga bukan
+    // berarti "panggilan ini sudah commit". HEAD bisa saja berupa commit yang
+    // belum pernah dikirim, dan bisa juga sudah terkirim oleh panggilan
+    // SEBELUMNYA. Memeriksanya mencegah tool menandai selesai padahal remote
+    // masih tertinggal - dan kalimat "Assuming commit and push already
+    // completed" (dipakai sampai 31 Oktober 2026) membuat agen percaya
+    // pekerjaannya sudah masuk padahal tidak ada yang dikerjakan sama sekali.
     const pushed = await verifyPushed(git, branchForPush);
     if (!pushed.ok) {
       return textResponse(
@@ -205,9 +209,20 @@ export async function handleCommitAndPush(args, context) {
     workflowState.state.currentPhase = isReleaseSatisfied(workflowState.state) ? "ready_to_complete" : "release";
     await workflowState.save();
 
+    const noActiveTask = workflowState.state.currentPhase === "idle" || !workflowState.state.taskDescription;
+
     return textResponse(
-      `ℹ️ No changes detected. Assuming commit and push already completed.\nRepo: ${repoName}\nBranch: ${branchForPush} (verified on remote)\nLast commit: ${effectiveCommitMessage || "(unavailable)"
-      }\n\nNext: Run 'perform_release' to handle the release and push tags.`
+      `ℹ️ No changes detected. No commit was made by this call.\n` +
+      `Repo: ${repoName}\nBranch: ${branchForPush} (verified on remote, HEAD ${pushed.head.slice(0, 8)})\n` +
+      `Commit terakhir: ${effectiveCommitMessage || "(tidak terbaca)"}\n\n` +
+      (noActiveTask
+        ? `Tidak ada task aktif di state workflow (currentPhase "idle"), jadi memang tidak ada ` +
+          `yang diharapkan dari panggilan ini.\n\n`
+        : "") +
+      `Yang terbukti: commit terakhir sudah ada di remote. Yang TIDAK terbukti: commit itu berisi ` +
+      `pekerjaan task ini. Kalau perubahan seharusnya ada, berarti belum ditulis, sudah di-commit ` +
+      `oleh panggilan sebelumnya, atau berada di repo/branch lain.\n\n` +
+      `Next: Run 'perform_release' to handle the release and push tags.`
     );
   }
 
