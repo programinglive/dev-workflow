@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.14.2](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.14.1...v1.14.2) (2026-10-31)
+
+
+### 👷 Continuous Integration
+
+* **web:** deploy situs dari GitHub Action dan hasilkan versi saat build ([385e3f2](https://github.com/programinglive/dev-workflow-mcp-server/commit/385e3f2ea8d6eb82a567cd2177df1992a0a5951b))
+
+
+### ✅ Tests
+
+* **db:** lewati tes adapter saat service tidak ada ([840bde2](https://github.com/programinglive/dev-workflow-mcp-server/commit/840bde2a0af58dcc901e8357833440832c6d8ad8))
+* update db/adapters/sqlite.js and tests/db-adapters.test.js ([112ea7f](https://github.com/programinglive/dev-workflow-mcp-server/commit/112ea7fd3ac8d958c9063295b4a4f84c7a86f36d))
+
+
+### 🐛 Bug Fixes
+
+* **commit:** jangan sapu pekerjaan sesi lain saat commit ([9d66735](https://github.com/programinglive/dev-workflow-mcp-server/commit/9d66735b9c98b3ac4c44fbe2ed17b95da622ec68))
+* **release:** jangan blokir rilis karena pekerjaan sesi lain yang ditinggalkan ([616bf3f](https://github.com/programinglive/dev-workflow-mcp-server/commit/616bf3f5880a193068bf0bad03265524cc2406a0))
+* **web:** rute yang dihapus menjawab 404 ([5e724b5](https://github.com/programinglive/dev-workflow-mcp-server/commit/5e724b546128940f8d59bd4902ead157d64a2c44))
+* **workflow:** run_full_workflow menolak sebelum berjalan tanpa bukti DoD ([562611d](https://github.com/programinglive/dev-workflow-mcp-server/commit/562611d3bf1b104dcff9f21da002c92a002165e1))
+
 ### [1.14.1](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.14.0...v1.14.1) (2026-10-31)
 
 
