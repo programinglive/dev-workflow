@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.14.1](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.14.0...v1.14.1) (2026-10-31)
+
+
+### 🐛 Bug Fixes
+
+* **web:** hapus login dan history yang mati, versi dari manifest root ([a705633](https://github.com/programinglive/dev-workflow-mcp-server/commit/a705633897de0818f81626ee8d7ebfca95399af4))
+
 ## [1.14.0](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.13.16...v1.14.0) (2026-10-31)
 
 
