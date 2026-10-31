@@ -21,7 +21,7 @@
     "start": "node index.js",
     "local": "node index.js",
     "setup": "node scripts/setup-stack.js",
-    "test": "node --no-deprecation --test",
+    "test": "node --no-deprecation --import ./tests/setup-env.js --test",
     "test:security": "node --no-deprecation --test tests/security*.test.js",
     "security:audit": "node index.js call security_audit",
     "lint": "node scripts/lint.mjs",

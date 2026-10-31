@@ -2,6 +2,7 @@ import { textResponse, isReleaseSatisfied, formatChecklist } from "./shared.js";
 import { handleReadyCheck } from "./status-handlers.js";
 import { containsTestFilesInStatus } from "../../git-helpers.js";
 import { resolveProjectDir, setActiveProjectDir, getActiveProjectDir } from "../../exec.js";
+import path from "path";
 
 /**
  * Label repo yang benar-benar dipakai, untuk ditampilkan di setiap jawaban.
@@ -22,6 +23,18 @@ function repoLabel() {
   } catch {
     return "(tidak bisa ditentukan)";
   }
+}
+
+/**
+ * Apakah dua path menunjuk direktori yang sama.
+ *
+ * Windows tidak membedakan huruf besar/kecil dan kadang memberi garis miring
+ * di akhir, jadi perbandingan string mentah akan salah.
+ */
+function samePath(a, b) {
+  if (!a || !b) return false;
+  const normal = (value) => path.resolve(value).replace(/[\\/]+$/, "").toLowerCase();
+  return normal(a) === normal(b);
 }
 
 /**
@@ -127,10 +140,21 @@ export async function handleCommitAndPush(args, context) {
   let primaryBranch;
   let currentBranch;
   let hasWorkingChanges;
+  let gitToplevel = "";
   try {
     primaryBranch = await git.getPrimaryBranch();
     currentBranch = await git.getCurrentBranch();
     hasWorkingChanges = await git.hasWorkingChanges();
+
+    // Tempat git BENAR-BENAR berjalan, menurut git sendiri.
+    //
+    // 31 Oktober 2026 laporan menyebut `portal-beautyworld` untuk commit yang
+    // masuk ke repo lain, karena labelnya dibaca dari variabel global yang bisa
+    // berubah - bukan dari repo tempat git berjalan. Laporan seperti itu membuat
+    // agen percaya commit-nya ada di tempat yang salah.
+    if (typeof git.getToplevel === "function") {
+      gitToplevel = String((await git.getToplevel()) || "").trim();
+    }
   } catch (error) {
     return textResponse(
       `❌ Tidak bisa memeriksa repository Git, jadi tidak ada yang di-commit.\n\n` +
@@ -139,6 +163,22 @@ export async function handleCommitAndPush(args, context) {
       `Sebutkan 'projectDir' pada 'start_task' atau 'commit_and_push' untuk menunjuk repo yang benar.`
     );
   }
+
+  // Kalau git berjalan di repo lain daripada yang diminta, BERHENTI. Commit ke
+  // repo yang salah jauh lebih mahal daripada satu pesan kesalahan.
+  const requestedRepo = getActiveProjectDir();
+  if (gitToplevel && requestedRepo && !samePath(gitToplevel, requestedRepo)) {
+    return textResponse(
+      `❌ Dibatalkan: git berjalan di repo yang BERBEDA dari yang diminta.\n\n` +
+      `Diminta    : ${requestedRepo}\n` +
+      `Dipakai git: ${gitToplevel}\n\n` +
+      `Tidak ada yang di-commit. Sebutkan 'projectDir' yang benar pada 'commit_and_push', ` +
+      `atau jalankan ulang 'start_task' dengan 'projectDir' repo tersebut.`
+    );
+  }
+
+  // Label laporan memakai repo yang benar-benar dipakai git bila diketahui.
+  const repoName = gitToplevel || repoLabel();
 
   const branchForPush = pickPushBranch({ requestedBranch, currentBranch, primaryBranch });
 
@@ -153,7 +193,7 @@ export async function handleCommitAndPush(args, context) {
     if (!pushed.ok) {
       return textResponse(
         `⚠️ Tidak ada perubahan untuk di-commit, tetapi HEAD BELUM ada di remote.\n` +
-        `Repo: ${repoLabel()}\nBranch: ${branchForPush || "(tidak diketahui)"}\n` +
+        `Repo: ${repoName}\nBranch: ${branchForPush || "(tidak diketahui)"}\n` +
         `Sebab: ${pushed.detail}\n\n` +
         `Jalankan 'commit_and_push' lagi dengan 'branch' yang benar, atau push manual.`
       );
@@ -166,7 +206,7 @@ export async function handleCommitAndPush(args, context) {
     await workflowState.save();
 
     return textResponse(
-      `ℹ️ No changes detected. Assuming commit and push already completed.\nRepo: ${repoLabel()}\nBranch: ${branchForPush} (verified on remote)\nLast commit: ${effectiveCommitMessage || "(unavailable)"
+      `ℹ️ No changes detected. Assuming commit and push already completed.\nRepo: ${repoName}\nBranch: ${branchForPush} (verified on remote)\nLast commit: ${effectiveCommitMessage || "(unavailable)"
       }\n\nNext: Run 'perform_release' to handle the release and push tags.`
     );
   }
@@ -228,7 +268,7 @@ export async function handleCommitAndPush(args, context) {
   if (!pushed.ok) {
     return textResponse(
       `❌ Commit dibuat, tetapi TIDAK ter-push.\n` +
-      `Repo: ${repoLabel()}\nBranch: ${branchForPush || "(tidak diketahui)"}\n` +
+      `Repo: ${repoName}\nBranch: ${branchForPush || "(tidak diketahui)"}\n` +
       `Sebab: ${pushed.detail}\n\n` +
       `Commit lokal: ${generatedSummary}\n\n` +
       `Jalankan 'commit_and_push' lagi dengan 'branch' yang benar, atau push manual.`
@@ -242,7 +282,7 @@ export async function handleCommitAndPush(args, context) {
   await workflowState.save();
 
   return textResponse(
-    `✅ Commit and push completed!\nRepo: ${repoLabel()}\n\nCommit message: ${generatedSummary}\nPushed to: ${branchForPush} (verified at ${pushed.head.slice(0, 8)})\n\nNext: Run 'perform_release' to handle the release and push tags.`
+    `✅ Commit and push completed!\nRepo: ${repoName}\n\nCommit message: ${generatedSummary}\nPushed to: ${branchForPush} (verified at ${pushed.head.slice(0, 8)})\n\nNext: Run 'perform_release' to handle the release and push tags.`
   );
 }
 

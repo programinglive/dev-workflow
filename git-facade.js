@@ -16,6 +16,7 @@ import {
   getRemoteBranchSha,
   getStagedChanges,
   getStatusOutput,
+  getToplevel,
   hasStagedChanges,
   hasTestChanges,
   hasWorkingChanges,
@@ -34,6 +35,7 @@ export function createGitFacade() {
     getRemoteBranchSha,
     getLastCommitMessage,
     getStatusOutput,
+    getToplevel,
     workingTreeSummary,
   };
 }

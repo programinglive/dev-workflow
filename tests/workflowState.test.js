@@ -22,6 +22,12 @@ delete process.env.DEV_WORKFLOW_DB_URL;
 delete process.env.TEST_MYSQL_URL;
 delete process.env.TEST_POSTGRES_URL;
 
+// Berkas ini menguji PEMILIHAN path state, jadi tidak boleh ada path yang
+// dipaksakan. Preload `tests/setup-env.js` menetapkan DEV_WORKFLOW_STATE_FILE
+// agar tes lain tidak menulis ke .state milik repo; di sini justru variabel itu
+// harus kosong supaya aturan pemilihan path benar-benar diuji.
+delete process.env.DEV_WORKFLOW_STATE_FILE;
+
 import {
   WorkflowState,
   getNextStep,
