@@ -255,8 +255,23 @@ export function summarize(items, revision) {
   };
 }
 
-export function renderChecklist(items, revision) {
-  const list = Array.isArray(items) ? items : [];
+/**
+ * Daftar item yang belum terpenuhi, LENGKAP dengan id-nya.
+ *
+ * `renderChecklist` sengaja hanya menampilkan kondisi (untuk dibaca manusia).
+ * Pesan penolakan butuh id, karena tanpa id agen tidak tahu item mana yang
+ * harus dibuktikan lewat `mark_dod_item`.
+ */
+export function renderOutstanding(items, revision) {
+  return openItems(items, revision)
+    .map((item) => {
+      const state = item.status === "done" ? "bukti basi, perlu konfirmasi ulang" : "terbuka";
+      return `- ${item.id} [${state}]: ${item.text}`;
+    })
+    .join("\n");
+}
+
+export function renderChecklist(items, revision) {  const list = Array.isArray(items) ? items : [];
 
   return list
     .map((item) => {

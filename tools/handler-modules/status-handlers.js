@@ -1,5 +1,6 @@
 import { textResponse, formatChecklist, isReleaseSatisfied, getContinueGuidance, resetToCommitIfWorkingChanges } from "./shared.js";
 import { handleCommitAndPush } from "./commit-handlers.js";
+import { openItems, renderChecklist, renderOutstanding, summarize } from "./dod.js";
 
 export async function handleGetWorkflowStatus(workflowState) {
   const status = workflowState.state;
@@ -47,9 +48,18 @@ export async function handleReadyCheck(workflowState) {
   const status = workflowState.state;
   const testsCreatedDone = status.testsSkipped || status.testsCreated;
   const testsPassedDone = status.testsSkipped || status.testsPassed;
+
+  // Definition of Done adalah prasyarat, bukan langkah baru: ia tidak pernah
+  // memindahkan `currentPhase` sendiri. Ia hanya memutuskan lolos atau tidak.
+  const dodItems = Array.isArray(status.definitionOfDone) ? status.definitionOfDone : [];
+  const dod = summarize(dodItems, status.dodRevision);
+  const dodRecorded = dodItems.length > 0;
+  const dodSatisfied = dodRecorded && dod.open === 0;
+
   const checks = [
     { name: "Task started", done: status.currentPhase !== "idle" },
     { name: "Feature flow described", done: status.featureFlowCreated },
+    { name: "Definition of done recorded", done: dodRecorded },
     { name: "Feature/bug fixed", done: status.bugFixed },
     {
       name: status.testsSkipped ? "Tests skipped (manual QA documented)" : "Tests created",
@@ -60,6 +70,7 @@ export async function handleReadyCheck(workflowState) {
       done: testsPassedDone,
     },
     { name: "Documentation created", done: status.documentationCreated },
+    { name: "Definition of done satisfied", done: dodSatisfied },
   ];
 
   const allDone = checks.every((c) => c.done);
@@ -81,7 +92,24 @@ export async function handleReadyCheck(workflowState) {
     );
   }
 
-  return textResponse(`⚠️ NOT READY TO COMMIT!\n\n${checkList}\n\nPlease complete all steps before committing.`);
+  // Sebut item yang menghalangi, bukan hanya centang merah: agen yang ditolak
+  // harus tahu persis apa yang harus dibuktikan atau dikecualikan.
+  const hints = [];
+  if (!dodRecorded) {
+    hints.push(
+      "Belum ada item DoD untuk task ini. Isi dengan 'set_definition_of_done' { items: [...] } " +
+        "sebelum task bisa di-commit."
+    );
+  } else if (!dodSatisfied) {
+    hints.push(
+      `Item DoD yang belum terpenuhi:\n${renderOutstanding(dodItems, status.dodRevision)}\n` +
+        `Buktikan dengan 'mark_dod_item' { id, evidence } atau kecualikan dengan 'waive_dod_item' { id, reason }.`
+    );
+  }
+
+  const hintBlock = hints.length > 0 ? `\n\n${hints.join("\n\n")}` : "";
+
+  return textResponse(`⚠️ NOT READY TO COMMIT!\n\n${checkList}${hintBlock}\n\nPlease complete all steps before committing.`);
 }
 
 export async function handleContinueWorkflow(workflowState, context) {

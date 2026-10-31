@@ -7,6 +7,8 @@ import path from "node:path";
 import { WorkflowState } from "../workflow-state.js";
 import { handleToolCall } from "../tools/handlers.js";
 import { normalizeRequestArgs } from "../utils.js";
+import { resetToCommitIfWorkingChanges } from "../tools/handler-modules/shared.js";
+import { summarize } from "../tools/handler-modules/dod.js";
 
 /**
  * Tes untuk Definition of Done lokal.
@@ -359,5 +361,177 @@ test("waive_dod_item menolak item yang sudah terbukti", async () => {
 
     assert.match(text(response), /sudah terbukti/);
     assert.equal(state.state.definitionOfDone[0].status, "done");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Gerbang: ready check, commit, complete
+// ---------------------------------------------------------------------------
+
+async function readyState(state) {
+  state.state.currentPhase = "ready";
+  state.state.taskDescription = "Task siap";
+  state.state.featureFlowCreated = true;
+  state.state.bugFixed = true;
+  state.state.testsCreated = true;
+  state.state.testsPassed = true;
+  state.state.documentationCreated = true;
+}
+
+test("ready check menolak selama masih ada item DoD terbuka", async () => {
+  await withState(async (state) => {
+    state.state.currentPhase = "coding";
+    await call("start_task", {
+      description: "Task siap",
+      type: "feature",
+      definitionOfDone: ["build lulus", "login terverifikasi"],
+    }, state);
+    await readyState(state);
+
+    const blocked = await call("check_ready_to_commit", {}, state);
+    assert.match(text(blocked), /❌ Definition of done satisfied/);
+    assert.match(text(blocked), /NOT READY/);
+    assert.equal(state.state.readyCheckCompleted, false);
+
+    await call("mark_dod_item", { id: "dod-1", evidence: "npm test 482 pass" }, state);
+    await call("mark_dod_item", { id: "dod-2", evidence: "login dicoba di tenant nyata" }, state);
+
+    const passed = await call("check_ready_to_commit", {}, state);
+    assert.match(text(passed), /ALL CHECKS PASSED/);
+    assert.match(text(passed), /✅ Definition of done satisfied/);
+    assert.equal(state.state.readyCheckCompleted, true);
+  });
+});
+
+test("ready check menolak task yang belum punya item DoD sama sekali", async () => {
+  await withState(async (state) => {
+    await readyState(state);
+    state.state.definitionOfDone = [];
+
+    const response = await call("check_ready_to_commit", {}, state);
+
+    assert.match(text(response), /❌ Definition of done recorded/);
+    assert.match(text(response), /set_definition_of_done/);
+  });
+});
+
+test("commit_and_push menolak dan menyebut item yang masih terbuka", async () => {
+  await withState(async (state) => {
+    state.state.currentPhase = "commit";
+    state.state.taskDescription = "Task";
+    state.state.readyToCommit = true;
+    state.state.readyCheckCompleted = true;
+    state.state.definitionOfDone = [
+      { id: "dod-3", text: "migrasi bisa di-rollback", status: "open", evidence: "", waivedReason: "", revision: 0, updatedAt: "" },
+    ];
+
+    const commands = [];
+    const response = await handleToolCall({
+      request: { params: { name: "commit_and_push", arguments: { commitMessage: "feat: x" } } },
+      normalizeRequestArgs,
+      workflowState: state,
+      exec: async (command) => {
+        commands.push(command);
+        return { stdout: "" };
+      },
+      git: {
+        hasWorkingChanges: async () => true,
+        hasStagedChanges: async () => false,
+        getCurrentBranch: async () => "main",
+        getPrimaryBranch: async () => "main",
+        getStatusOutput: async () => "M tests/x.test.js",
+      },
+      utils: {},
+    });
+
+    assert.match(text(response), /dod-3/);
+    assert.match(text(response), /migrasi bisa di-rollback/);
+    assert.equal(commands.length, 0, "tidak boleh ada git add sebelum DoD terpenuhi");
+  });
+});
+
+test("complete_task menolak selama item DoD terbuka", async () => {
+  await withState(async (state) => {
+    state.state.currentPhase = "ready_to_complete";
+    state.state.taskDescription = "Task";
+    state.state.definitionOfDone = [
+      { id: "dod-1", text: "build lulus", status: "open", evidence: "", waivedReason: "", revision: 0, updatedAt: "" },
+    ];
+
+    const response = await call("complete_task", { commitMessage: "feat: x" }, state);
+
+    assert.match(text(response), /dod-1/);
+    assert.equal(state.state.currentPhase, "ready_to_complete", "task tidak boleh ditutup");
+    assert.equal(state.state.history.length, 0);
+  });
+});
+
+test("complete_task menerima setelah semua item terpenuhi dan mencatat dodSummary", async () => {
+  await withState(async (state) => {
+    state.state.currentPhase = "ready_to_complete";
+    state.state.taskDescription = "Task";
+    state.state.definitionOfDone = [
+      { id: "dod-1", text: "build lulus", status: "done", evidence: "npm test", waivedReason: "", revision: 0, updatedAt: "" },
+      { id: "dod-2", text: "deploy staging", status: "waived", evidence: "", waivedReason: "staging mati", revision: 0, updatedAt: "" },
+    ];
+
+    const response = await call("complete_task", { commitMessage: "feat: x" }, state);
+
+    assert.match(text(response), /Task completed/);
+    assert.equal(state.state.currentPhase, "idle");
+    const entry = state.state.history.at(-1);
+    assert.equal(entry.definitionOfDoneSummary.done, 1);
+    assert.equal(entry.definitionOfDoneSummary.waived, 1);
+    assert.deepEqual(entry.definitionOfDoneSummary.waivedReasons, ["staging mati"]);
+  });
+});
+
+test("force_complete_task tetap bisa menutup dan mencatat alasannya", async () => {
+  await withState(async (state) => {
+    state.state.currentPhase = "ready_to_complete";
+    state.state.taskDescription = "Task";
+    state.state.definitionOfDone = [
+      { id: "dod-1", text: "build lulus", status: "open", evidence: "", waivedReason: "", revision: 0, updatedAt: "" },
+    ];
+
+    const response = await call(
+      "force_complete_task",
+      { commitMessage: "feat: x", reason: "klien minta segera rilis" },
+      state,
+    );
+
+    assert.match(text(response), /force-completed/);
+    const entry = state.state.history.at(-1);
+    assert.equal(entry.forced, true);
+    assert.equal(entry.forceReason, "klien minta segera rilis");
+    assert.equal(entry.definitionOfDoneSummary.open, 1);
+  });
+});
+
+test("perubahan kerja baru setelah commit membuat bukti lama basi, waive tetap bertahan", async () => {
+  await withState(async (state) => {
+    state.state.currentPhase = "release";
+    state.state.taskDescription = "Task";
+    state.state.commitAndPushCompleted = true;
+    state.state.definitionOfDone = [
+      { id: "dod-1", text: "build lulus", status: "done", evidence: "npm test", waivedReason: "", revision: 0, updatedAt: "" },
+      { id: "dod-2", text: "deploy staging", status: "waived", evidence: "", waivedReason: "staging mati", revision: 0, updatedAt: "" },
+    ];
+
+    const changed = await resetToCommitIfWorkingChanges(state, {
+      hasWorkingChanges: async () => true,
+      hasStagedChanges: async () => false,
+    });
+
+    assert.equal(changed, true);
+    assert.equal(state.state.dodRevision, 1, "revisi harus naik");
+
+    const summary = summarize(state.state.definitionOfDone, state.state.dodRevision);
+    assert.equal(summary.done, 0, "bukti lama tidak lagi berlaku");
+    assert.equal(summary.open, 1);
+    assert.equal(summary.waived, 1, "waive bukan bukti, jadi bertahan");
+
+    await call("mark_dod_item", { id: "dod-1", evidence: "npm test diulang setelah perubahan" }, state);
+    assert.equal(summarize(state.state.definitionOfDone, state.state.dodRevision).open, 0);
   });
 });
