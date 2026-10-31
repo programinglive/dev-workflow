@@ -108,9 +108,18 @@ export function acquireProcessLock({
   writeFileImpl = writeFileSync,
 }) {
   const existing = readProcessLock({ dir });
+  // Diingat di SEMUA jalur, bukan hanya saat gagal.
+  //
+  // 31 Oktober 2026: pemanggilan ini semula hanya ada di cabang `acquired: false`.
+  // Akibatnya, pada jalur yang BERHASIL — yaitu jalur normal — detak jantung
+  // tidak tahu direktori mana yang harus disegarkan: `refreshProcessLock()`
+  // langsung mengembalikan false, penanda tidak pernah diperbarui, dan setelah
+  // 10 menit ia dianggap basi sehingga guard berhenti melindungi tanpa pesan
+  // apa pun. Ditemukan dengan menjalankan sesi MCP kedua sungguhan, bukan lewat
+  // unit test, karena unit test memanggil refresh dengan direktori eksplisit.
+  rememberLockDir(dir);
 
   if (existing && existing.pid !== pid && isAlive(existing.pid)) {
-    rememberLockDir(dir);
     return { acquired: false, holder: existing };
   }
 
