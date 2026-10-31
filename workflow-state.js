@@ -4,6 +4,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync } from 
 import path from "path";
 import { assertSafeKnowledge } from './security/policy.js';
 import { sanitize } from './security/sanitizer.js';
+import { normalizeItems as normalizeDodItems, mergeDefinitionOfDone as mergeDodItems } from './tools/handler-modules/dod.js';
 import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -658,6 +659,14 @@ export class WorkflowState {
       projectDir: "",
       featureFlowCreated: false,
       featureFlowDescription: "",
+      // Definition of Done milik task ini. Aturan dan bentuk itemnya ada di
+      // tools/handler-modules/dod.js; di sini hanya disimpan.
+      definitionOfDone: [],
+      dodSource: "",
+      dodFactoryTaskId: "",
+      // Naik setiap ada perubahan kerja baru setelah commit tercatat, sehingga
+      // bukti item `done` yang lama otomatis tidak lagi berlaku.
+      dodRevision: 0,
       history: [],
       taskType: "",
     };
@@ -702,6 +711,14 @@ export class WorkflowState {
       projectDir: "",
       featureFlowCreated: false,
       featureFlowDescription: "",
+      // Definition of Done milik task ini. Aturan dan bentuk itemnya ada di
+      // tools/handler-modules/dod.js; di sini hanya disimpan.
+      definitionOfDone: [],
+      dodSource: "",
+      dodFactoryTaskId: "",
+      // Naik setiap ada perubahan kerja baru setelah commit tercatat, sehingga
+      // bukti item `done` yang lama otomatis tidak lagi berlaku.
+      dodRevision: 0,
       history: [],
       taskType: "",
     };
@@ -767,6 +784,21 @@ export class WorkflowState {
       }
       if (typeof this.state.featureFlowDescription !== "string") {
         this.state.featureFlowDescription = "";
+      }
+      // Berkas state yang ditulis sebelum fitur DoD ada tidak punya field ini.
+      // Ia harus muncul sebagai "belum punya DoD", bukan undefined yang membuat
+      // gerbang melempar TypeError.
+      this.state.definitionOfDone = normalizeDodItems(this.state.definitionOfDone);
+      if (typeof this.state.dodSource !== "string") {
+        this.state.dodSource = "";
+      }
+      if (typeof this.state.dodFactoryTaskId !== "string") {
+        this.state.dodFactoryTaskId = "";
+      }
+      if (!Number.isFinite(Number(this.state.dodRevision)) || Number(this.state.dodRevision) < 0) {
+        this.state.dodRevision = 0;
+      } else {
+        this.state.dodRevision = Math.trunc(Number(this.state.dodRevision));
       }
     } catch (error) {
       if (error?.code !== "ENOENT") {
@@ -887,6 +919,48 @@ export class WorkflowState {
     }
   }
 
+  /**
+   * Gabungkan item DoD dengan milik disk bila task-nya sama.
+   *
+   * Sama seperti `mergeMonotonicProgress`, ini hanya berlaku untuk task yang
+   * SAMA. `start_task` mengganti task, dan pada saat itu DoD memang harus mulai
+   * dari nol - bukan mewarisi bukti task sebelumnya.
+   *
+   * Bedanya, DoD digabung per item dengan aturan "yang lebih kuat menang",
+   * bukan OR boolean: dua proses MCP bisa melayani task yang sama, dan proses
+   * yang memegang state basi tidak boleh menghapus bukti item yang baru dicatat
+   * proses lain.
+   */
+  mergeDefinitionOfDone(reconciled) {
+    const diskTask = (reconciled?.diskTask || "").trim();
+    const ourTask = (this.state.taskDescription || "").trim();
+    if (!diskTask || !ourTask || diskTask !== ourTask) {
+      return 0;
+    }
+    if ((reconciled?.diskPhase || "idle") === "idle") {
+      return 0;
+    }
+
+    const disk = reconciled?.diskState;
+    if (!disk) {
+      return 0;
+    }
+
+    const before = Array.isArray(this.state.definitionOfDone) ? this.state.definitionOfDone : [];
+    const merged = mergeDodItems(before, normalizeDodItems(disk.definitionOfDone));
+    this.state.definitionOfDone = merged;
+
+    // Revisi hanya boleh maju: revisi yang lebih tinggi berarti ada perubahan
+    // kerja baru yang sudah diketahui proses lain. Mundur berarti bukti basi
+    // diam-diam dihidupkan kembali.
+    const diskRevision = Number(disk.dodRevision);
+    if (Number.isFinite(diskRevision) && diskRevision > Number(this.state.dodRevision || 0)) {
+      this.state.dodRevision = Math.trunc(diskRevision);
+    }
+
+    return merged.length - before.length;
+  }
+
   async save(options = {}) {
     assertSafeKnowledge(this.state);
     const reconciled = await this.reconcileWithDisk();
@@ -918,6 +992,7 @@ export class WorkflowState {
     // disk memang task yang sama. `start_task` mengganti task, dan pada saat itu
     // flag harus benar-benar direset, bukan dihidupkan kembali.
     this.mergeMonotonicProgress(reconciled);
+    this.mergeDefinitionOfDone(reconciled);
 
     this.state.owner = {
       processMarker: PROCESS_TOKEN,
@@ -1272,6 +1347,14 @@ export class WorkflowState {
       projectDir: "",
       featureFlowCreated: false,
       featureFlowDescription: "",
+      // Definition of Done milik task ini. Aturan dan bentuk itemnya ada di
+      // tools/handler-modules/dod.js; di sini hanya disimpan.
+      definitionOfDone: [],
+      dodSource: "",
+      dodFactoryTaskId: "",
+      // Naik setiap ada perubahan kerja baru setelah commit tercatat, sehingga
+      // bukti item `done` yang lama otomatis tidak lagi berlaku.
+      dodRevision: 0,
       history,
       taskType: "",
     };
