@@ -25,6 +25,41 @@ export function processLockPath({ dir }) {
 }
 
 /**
+ * Direktori `.state` milik PROYEK untuk sebuah berkas state.
+ *
+ * Kenapa bukan `path.dirname(stateFile)` saja: berkas state sesi berada di
+ * `.state/users/<user>/`, dan direktori user bisa BERBEDA antar proses (id user
+ * dibuat per direktori state). Pada 31 Oktober 2026 dua proses MCP hidup
+ * bersamaan tetapi hanya satu lock file yang tercipta, karena masing-masing
+ * menulis ke direktori user-nya sendiri - jadi keduanya tidak pernah saling
+ * melihat dan peringatan proses ganda tidak muncul.
+ *
+ * Lock harus satu per PROYEK, bukan per user. Fungsi ini naik sampai menemukan
+ * direktori bernama `.state` dan memakai direktori itu. Kalau tidak ada (state
+ * di luar tata letak itu), pakai direktori berkasnya sendiri.
+ */
+export function projectLockDir(stateFilePath) {
+  const resolved = path.resolve(stateFilePath);
+  let current = path.dirname(resolved);
+  const { root } = path.parse(current);
+
+  while (true) {
+    if (path.basename(current) === ".state") {
+      return current;
+    }
+
+    const parent = path.dirname(current);
+    if (parent === current || current === root) {
+      break;
+    }
+
+    current = parent;
+  }
+
+  return path.dirname(resolved);
+}
+
+/**
  * Membaca isi lock, atau null bila tidak ada / tidak terbaca.
  *
  * Berkas rusak sengaja dianggap "tidak ada lock": penanda yang tidak bisa
@@ -66,7 +101,13 @@ function defaultIsAlive(pid) {
  *   { acquired: true, tookOverFrom: <pid> }   -> pemegang lama sudah mati
  *   { acquired: false, holder: {...} }        -> ada proses lain yang hidup
  */
-export function acquireProcessLock({ dir, pid = process.pid, now = Date.now(), isAlive = defaultIsAlive }) {
+export function acquireProcessLock({
+  dir,
+  pid = process.pid,
+  now = Date.now(),
+  isAlive = defaultIsAlive,
+  writeFileImpl = writeFileSync,
+}) {
   const existing = readProcessLock({ dir });
 
   if (existing && existing.pid !== pid && isAlive(existing.pid)) {
@@ -79,10 +120,17 @@ export function acquireProcessLock({ dir, pid = process.pid, now = Date.now(), i
 
   try {
     mkdirSync(dir, { recursive: true });
-    writeFileSync(processLockPath({ dir }), JSON.stringify(payload), "utf8");
-  } catch {
-    // Tidak bisa menulis penanda bukan alasan mematikan server.
-    return { acquired: true, wrote: false };
+    writeFileImpl(processLockPath({ dir }), JSON.stringify(payload), "utf8");
+  } catch (error) {
+    // Tidak bisa menulis penanda bukan alasan mematikan server, TETAPI juga
+    // tidak boleh ditelan: sampai 31 Oktober 2026 kegagalan ini hanya
+    // mengembalikan { acquired: true } sehingga sistem tampak sehat padahal
+    // tidak ada penanda apa pun di disk. Simpan sebabnya supaya bisa dilaporkan.
+    return {
+      acquired: true,
+      wrote: false,
+      error: (error && (error.code || error.message)) || "unknown",
+    };
   }
 
   return tookOverFrom ? { acquired: true, tookOverFrom } : { acquired: true };
@@ -118,7 +166,16 @@ function safeHostname() {
  * nyata, dan supaya pemanggil bebas memilih tidak menampilkan apa pun.
  */
 export function lockWarning(result) {
-  if (!result || result.acquired !== false || !result.holder) return null;
+  if (!result) return null;
+
+  if (result.wrote === false) {
+    return (
+      `Tidak bisa menulis penanda proses ke ${LOCK_FILENAME} (${result.error}). ` +
+      "Deteksi proses MCP ganda tidak akan bekerja sampai ini diperbaiki."
+    );
+  }
+
+  if (result.acquired !== false || !result.holder) return null;
 
   const started = Number.isFinite(result.holder.startedAt)
     ? new Date(result.holder.startedAt).toISOString()

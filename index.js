@@ -14,7 +14,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { fileURLToPath } from "url";
 import path from "path";
-import { acquireProcessLock, releaseProcessLock, lockWarning } from "./process-lock.js";
+import { acquireProcessLock, releaseProcessLock, lockWarning, projectLockDir } from "./process-lock.js";
 import { exec, setActiveProjectDir } from "./exec.js";
 import { normalizeRequestArgs, shellEscape } from "./utils.js";
 import { createGitFacade } from "./git-facade.js";
@@ -199,24 +199,29 @@ export async function main() {
     // Select request metadata before the first disk write. Creating an idle
     // PID fallback here leaves a phantom session alongside the real sessions.
     safeLog('error', `[${new Date().toISOString()}] Workflow state initialization complete.`);
-
-    // Penanda proses: 31 Oktober 2026 dua proses MCP hidup bersamaan dan
-    // memegang kredensial Factory yang berbeda, sehingga tool yang sama
-    // menjawab berbeda tergantung proses mana yang melayaninya. Proses lain
-    // TIDAK dibunuh (itu berbahaya); cukup dilaporkan supaya pengguna tahu
-    // harus menutup OpenCode dan membukanya lagi.
-    try {
-      const stateDir = path.dirname(path.resolve(workflowState.stateFile));
-      const warning = lockWarning(acquireProcessLock({ dir: stateDir }));
-      if (warning) safeLog('error', warning);
-      process.once('exit', () => releaseProcessLock({ dir: stateDir }));
-    } catch (lockError) {
-      safeLog('error', 'Warning: could not record process lock:', lockError.message);
-    }
   } catch (error) {
     safeLog('error', `[${new Date().toISOString()}] Warning: Failed to initialize workflow state:`, error.message);
     // Continue anyway - workflow state is optional for MCP to function
     workflowState = new WorkflowState();
+  }
+
+  // Penanda proses - DI LUAR try di atas, dengan sengaja.
+  //
+  // 31 Oktober 2026: blok ini semula berada di dalam try yang sama dengan
+  // inisialisasi state. Saat dua proses MCP start serempak, satu di antaranya
+  // gagal menginisialisasi state (berebut berkas yang sama), masuk ke catch, dan
+  // penanda prosesnya tidak pernah ditulis. Hasilnya dua proses hidup dengan
+  // satu lock file: proses ganda tidak pernah terdeteksi.
+  //
+  // Lokasinya juga harus di `.state` PROYEK, bukan di direktori user: direktori
+  // user bisa berbeda antar proses, sehingga keduanya tidak saling melihat.
+  try {
+    const lockDir = projectLockDir(workflowState.stateFile);
+    const warning = lockWarning(acquireProcessLock({ dir: lockDir }));
+    if (warning) safeLog('error', warning);
+    process.once('exit', () => releaseProcessLock({ dir: lockDir }));
+  } catch (lockError) {
+    safeLog('error', 'Warning: could not record process lock:', lockError.message);
   }
 
   const transport = new StdioServerTransport();
