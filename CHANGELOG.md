@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.13.13](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.13.12...v1.13.13) (2026-10-31)
+
+
+### 🐛 Bug Fixes
+
+* **factory:** recover from stale credentials and warn about duplicate MCP processes ([b9bf608](https://github.com/programinglive/dev-workflow-mcp-server/commit/b9bf60884968b77d8cd04aae2a15ff6eeee663f3))
+
 ### [1.13.12](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.13.11...v1.13.12) (2026-10-31)
 
 
