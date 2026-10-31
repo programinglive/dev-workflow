@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.13.15](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.13.14...v1.13.15) (2026-10-31)
+
+
+### 🐛 Bug Fixes
+
+* **workflow:** claim archives local work, and a clean tree is not "already completed" ([614df9b](https://github.com/programinglive/dev-workflow-mcp-server/commit/614df9b5acfd02b9a58c915881d12095fe412f5a))
+
 ### [1.13.14](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.13.13...v1.13.14) (2026-10-31)
 
 
