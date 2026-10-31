@@ -44,6 +44,13 @@ export function getToolList() {
               "Each item must later be proven with 'mark_dod_item' (evidence required) or waived with " +
               "'waive_dod_item' (reason required). A task cannot be committed or closed while any item is open.",
           },
+          force: {
+            type: "boolean",
+            description:
+              "Start anyway when another live MCP process is working the same project. Only for the machine owner: " +
+              "two sessions on one working tree overwrite each other's files silently. Prefer closing the other " +
+              "session or using a git worktree.",
+          },
         },
         required: ["description", "type", "definitionOfDone"],
       },

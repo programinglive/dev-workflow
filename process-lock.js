@@ -80,8 +80,7 @@ export function readProcessLock({ dir }) {
   }
 }
 
-function defaultIsAlive(pid) {
-  if (!Number.isFinite(pid) || pid <= 0) return false;
+function defaultIsAlive(pid) {  if (!Number.isFinite(pid) || pid <= 0) return false;
 
   try {
     // Sinyal 0 tidak mengirim apa pun; ia hanya memeriksa apakah proses ada.
@@ -111,12 +110,13 @@ export function acquireProcessLock({
   const existing = readProcessLock({ dir });
 
   if (existing && existing.pid !== pid && isAlive(existing.pid)) {
+    rememberLockDir(dir);
     return { acquired: false, holder: existing };
   }
 
   const tookOverFrom = existing && existing.pid !== pid ? existing.pid : undefined;
 
-  const payload = { pid, startedAt: now, host: safeHostname() };
+  const payload = { pid, startedAt: now, heartbeatAt: now, host: safeHostname() };
 
   try {
     mkdirSync(dir, { recursive: true });
@@ -133,8 +133,7 @@ export function acquireProcessLock({
     };
   }
 
-  return tookOverFrom ? { acquired: true, tookOverFrom } : { acquired: true };
-}
+  return tookOverFrom ? { acquired: true, tookOverFrom } : { acquired: true };}
 
 /** Melepas lock hanya bila memang milik kita. */
 export function releaseProcessLock({ dir, pid = process.pid }) {
@@ -188,4 +187,87 @@ export function lockWarning(result) {
     "dan state workflow bisa berbeda antar proses. Tutup OpenCode lalu buka lagi untuk " +
     "memastikan hanya satu proses yang hidup."
   );
+}
+
+/**
+ * Berapa lama penanda proses dianggap masih "baru saja bekerja".
+ *
+ * Dipakai untuk membedakan sesi yang benar-benar aktif dari proses MCP yang
+ * tertinggal hidup setelah jendela OpenCode-nya ditutup. Tanpa batas ini,
+ * "satu penulis per repo" hanya bisa ditegakkan dengan memblokir sesi yang sah.
+ */
+export const DEFAULT_LOCK_STALE_MS = 10 * 60 * 1000;
+
+/** Interval detak jantung; sepertiga dari batas basi, supaya ada toleransi. */
+export const HEARTBEAT_MS = Math.floor(DEFAULT_LOCK_STALE_MS / 3);
+
+/** Direktori lock yang terakhir dipegang proses ini (diisi acquireProcessLock). */
+let rememberedLockDir = null;
+
+function lockStamp(lock) {
+  const value = Number(lock?.heartbeatAt ?? lock?.startedAt);
+  return Number.isFinite(value) ? value : 0;
+}
+
+/**
+ * Menyegarkan penanda milik kita sendiri.
+ *
+ * Mengembalikan false bila penanda bukan milik kita atau tidak bisa ditulis.
+ * Tidak pernah melempar: gagal menyegarkan penanda tidak boleh mematikan server,
+ * tetapi juga tidak boleh diam-diam dianggap berhasil.
+ */
+export function refreshProcessLock({ dir = rememberedLockDir, pid = process.pid, now = Date.now(), writeFileImpl = writeFileSync } = {}) {
+  if (!dir) return false;
+
+  const existing = readProcessLock({ dir });
+  if (!existing || existing.pid !== pid) return false;
+
+  try {
+    writeFileImpl(processLockPath({ dir }), JSON.stringify({ ...existing, heartbeatAt: now }), "utf8");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Pemegang lock lain yang masih hidup DAN masih bekerja, atau null.
+ *
+ * Inilah yang membuat aturan "satu penulis per repo" punya gigi: pemanggil bisa
+ * menolak memulai pekerjaan alih-alih menimpanya. Penanda yang basi (tidak ada
+ * detak dalam `staleMs`) diabaikan, karena proses MCP yang tertinggal hidup
+ * bukan alasan memblokir sesi baru.
+ */
+export function activeForeignLock({
+  dir = rememberedLockDir,
+  pid = process.pid,
+  now = Date.now(),
+  staleMs = DEFAULT_LOCK_STALE_MS,
+  isAlive = defaultIsAlive,
+} = {}) {
+  if (!dir) return null;
+
+  const lock = readProcessLock({ dir });
+  if (!lock || lock.pid === pid) return null;
+  if (!isAlive(lock.pid)) return null;
+
+  const age = now - lockStamp(lock);
+  if (age > staleMs) return null;
+
+  return { ...lock, ageMs: age };
+}
+
+/** Mengingat direktori lock supaya detak jantung tidak perlu parameter. */
+export function rememberLockDir(dir) {
+  rememberedLockDir = dir || null;
+}
+
+/** Hanya untuk tes: mengganti pemeriksa "proses hidup". */
+let isAliveOverride = null;
+export function setIsAliveForTests(fn) {
+  isAliveOverride = typeof fn === "function" ? fn : null;
+}
+
+export function currentIsAlive() {
+  return isAliveOverride || defaultIsAlive;
 }
