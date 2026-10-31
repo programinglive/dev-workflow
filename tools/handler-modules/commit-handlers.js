@@ -352,9 +352,22 @@ export async function handleCommitAndPush(args, context) {
 
   // Berkas yang ditinggalkan sengaja tetap disebut: kalau tidak, orang
   // mengira seluruh pekerjaan sudah ter-commit padahal ada yang tertinggal.
-  const foreignNote = foreignDirty.length > 0
+  //
+  // Tetapi berkas yang MEMANG ikut di-commit lewat `paths` tidak boleh muncul
+  // di sini. Baseline mencatat keadaan sebelum task, jadi berkas yang sudah
+  // kita edit sendiri sebelum `start_task` juga ada di sana - dan versi pertama
+  // catatan ini menyebutnya "not committed" padahal baru saja di-commit.
+  const stagedNow = new Set(
+    explicitPaths.map((p) => String(p).replace(/\\/g, "/").replace(/^\.\//, "")),
+  );
+  const leftBehind = args.includeForeign === true
+    ? []
+    : foreignDirty.filter((entry) =>
+        !stagedNow.has(String(entry.path).replace(/\\/g, "/").replace(/^\.\//, "")));
+
+  const foreignNote = leftBehind.length > 0
     ? `\n\nℹ️ Left unstaged (already dirty before this task, not committed):\n` +
-      foreignDirty.map((entry) => `   ${entry.code.padEnd(3)} ${entry.path}`).join("\n")
+      leftBehind.map((entry) => `   ${entry.code.padEnd(3)} ${entry.path}`).join("\n")
     : "";
 
   return textResponse(
