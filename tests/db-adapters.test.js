@@ -1,6 +1,7 @@
 import "dotenv/config";
 import test from "node:test";
 import assert from "node:assert/strict";
+import net from "node:net";
 import path from "node:path";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -8,6 +9,74 @@ import os from "node:os";
 import { SqliteAdapter } from "../db/adapters/sqlite.js";
 import { MysqlAdapter } from "../db/adapters/mysql.js";
 import { PostgresAdapter } from "../db/adapters/postgres.js";
+
+/**
+ * Apakah server database di URL ini benar-benar bisa dihubungi?
+ *
+ * MENGAPA ADA
+ * -----------
+ * Tes ini dulu hanya memeriksa apakah variabel lingkungan berisi URL. Di mesin
+ * yang punya `DEV_WORKFLOW_DB_URL=mysql://...` di `.env` tapi MySQL-nya tidak
+ * jalan, tes langsung gagal dengan `ECONNREFUSED 127.0.0.1:3306` - dan `npm test`
+ * jadi merah karena satu service lokal mati, bukan karena kode rusak. Angka
+ * merah yang salah itu berbahaya: ia melatih orang mengabaikan hasil tes.
+ *
+ * Yang dilakukan sekarang: coba sambung ke host:port dengan timeout pendek.
+ * Tidak bisa? Tes DILEWATI dengan alasan yang tercetak, bukan dinyatakan lulus.
+ * Kalau service-nya hidup, tesnya tetap berjalan dan tetap bisa gagal.
+ */
+async function canConnect(connectionUrl, timeoutMs = 1500) {
+    if (!connectionUrl) return false;
+
+    let host;
+    let port;
+    try {
+        const parsed = new URL(connectionUrl);
+        host = parsed.hostname || "127.0.0.1";
+        port = Number(parsed.port) || (parsed.protocol.startsWith("postgres") ? 5432 : 3306);
+    } catch {
+        return false;
+    }
+
+    return new Promise((resolve) => {
+        const socket = new net.Socket();
+        const finish = (reachable) => {
+            socket.removeAllListeners();
+            socket.destroy();
+            resolve(reachable);
+        };
+
+        socket.setTimeout(timeoutMs);
+        socket.once("connect", () => finish(true));
+        socket.once("timeout", () => finish(false));
+        socket.once("error", () => finish(false));
+        socket.connect(port, host);
+    });
+}
+
+async function probe(connectionUrl, label) {
+    if (!connectionUrl) {
+        return { reachable: false, reason: `${label} dilewati: URL koneksi tidak diatur` };
+    }
+
+    let target = "host tidak terbaca";
+    try {
+        const parsed = new URL(connectionUrl);
+        const port = Number(parsed.port) || (parsed.protocol.startsWith("postgres") ? 5432 : 3306);
+        target = `${parsed.hostname || "127.0.0.1"}:${port}`;
+    } catch {
+        // URL rusak: biarkan tes berjalan supaya kegagalannya jujur dan terbaca.
+        return { reachable: true, reason: "" };
+    }
+
+    const reachable = await canConnect(connectionUrl);
+    return {
+        reachable,
+        reason: reachable
+            ? ""
+            : `${label} dilewati: tidak ada server di ${target}. Jalankan service-nya untuk menguji adapter ini.`,
+    };
+}
 
 
 // Helper to run common adapter tests
@@ -77,8 +146,9 @@ test("Database Adapters", async (t) => {
     // Check specific test variable OR generic one if it maps to mysql
     const mysqlUrl = process.env.TEST_MYSQL_URL ||
         (process.env.DEV_WORKFLOW_DB_URL && process.env.DEV_WORKFLOW_DB_URL.startsWith("mysql") ? process.env.DEV_WORKFLOW_DB_URL : null);
+    const mysqlProbe = await probe(mysqlUrl, "MysqlAdapter");
 
-    await t.test("MysqlAdapter", { skip: !mysqlUrl }, async (t) => {
+    await t.test("MysqlAdapter", { skip: mysqlProbe.reachable ? false : mysqlProbe.reason }, async (t) => {
         const adapter = new MysqlAdapter({ connectionUrl: mysqlUrl });
         try {
             // We use a random user ID to avoid clashing with verification script data
@@ -94,8 +164,9 @@ test("Database Adapters", async (t) => {
     // 3. PostgreSQL (Conditional)
     const pgUrl = process.env.TEST_POSTGRES_URL ||
         (process.env.DEV_WORKFLOW_DB_URL && process.env.DEV_WORKFLOW_DB_URL.startsWith("postgres") ? process.env.DEV_WORKFLOW_DB_URL : null);
+    const pgProbe = await probe(pgUrl, "PostgresAdapter");
 
-    await t.test("PostgresAdapter", { skip: !pgUrl }, async (t) => {
+    await t.test("PostgresAdapter", { skip: pgProbe.reachable ? false : pgProbe.reason }, async (t) => {
         const adapter = new PostgresAdapter({ connectionUrl: pgUrl });
         try {
             const testId = `test-pg-${Date.now()}`;
