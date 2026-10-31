@@ -647,7 +647,12 @@ Since 30 October 2026 the reliable fix is **per task**, not global. Pass
 git operation uses it:
 
 ```json
-{ "description": "Fix login redirect", "type": "bugfix", "projectDir": "D:\\code\\clinic" }
+{
+  "description": "Fix login redirect",
+  "type": "bugfix",
+  "projectDir": "D:\\code\\clinic",
+  "definitionOfDone": ["redirect kembali ke halaman asal", "build lulus"]
+}
 ```
 
 `start_task` answers with `📁 Repo proyek: <path> (<source>)`, so the repo in use

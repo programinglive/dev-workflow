@@ -1,73 +1,24 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import Link from "next/link";
-import { Menu, X, Moon, Sun, LogOut } from "lucide-react";
+import { Menu, X, Moon, Sun } from "lucide-react";
 import { GithubIcon } from "./GithubIcon";
 import Image from "next/image";
-import { apiClient } from "@/lib/api-client";
 import { useTheme } from "./ThemeProvider";
 
+/**
+ * There is deliberately no Login link here.
+ *
+ * The site is a static export (`output: "export"`), so no server runs with it:
+ * the Express auth routes in `web/server.js` are never deployed, and the old
+ * login page posted to a Cloudflare quick tunnel that no longer exists. A button
+ * that can only fail is worse than no button. Workflow history is served by the
+ * MCP tools on the user's own machine (`view_history`, `project_summary`).
+ */
 export default function Navbar() {
     const [isOpen, setIsOpen] = useState(false);
     const { theme, toggleTheme } = useTheme();
-    const [isAuthenticated, setIsAuthenticated] = useState(false);
-    const [username, setUsername] = useState<string | null>(null);
-
-    useEffect(() => {
-        // Check authentication status
-        const checkAuth = () => {
-            // Check authentication status ONLY if we think we're logged in OR if we just received an update event
-            // This prevents 401 errors from cluttering the console for guests
-            const mightBeLoggedIn = localStorage.getItem('isLoggedIn') === 'true';
-
-            if (mightBeLoggedIn) {
-                apiClient.getCurrentUser()
-                    .then(data => {
-                        if (data) {
-                            setIsAuthenticated(true);
-                            setUsername(data.username || 'User');
-                            // Ensure local storage is in sync
-                            localStorage.setItem('isLoggedIn', 'true');
-                        } else {
-                            throw new Error('Not authenticated');
-                        }
-                    })
-                    .catch(() => {
-                        // Session invalid/expired
-                        localStorage.removeItem('isLoggedIn');
-                        setIsAuthenticated(false);
-                        setUsername(null);
-                    });
-            } else {
-                setIsAuthenticated(false);
-                setUsername(null);
-            }
-        };
-
-        // Initial check
-        checkAuth();
-
-        // Listen for auth updates (login/logout/validated session)
-        window.addEventListener('authUpdate', checkAuth);
-
-        return () => {
-            window.removeEventListener('authUpdate', checkAuth);
-        };
-    }, []);
-
-    const handleLogout = async () => {
-        try {
-            await apiClient.logout();
-            localStorage.removeItem('isLoggedIn');
-            setIsAuthenticated(false);
-            setUsername(null);
-            window.dispatchEvent(new Event('authUpdate'));
-            window.location.href = '/login';
-        } catch (error) {
-            console.error('Logout error:', error);
-        }
-    };
 
     return (
         <nav className="fixed top-0 left-0 right-0 z-50 bg-white/80 dark:bg-[#0a0a0f]/80 backdrop-blur-lg border-b border-gray-200 dark:border-white/10 transition-colors duration-300">
@@ -79,7 +30,6 @@ export default function Navbar() {
                     </Link>
                     <div className="hidden md:flex items-center gap-3 lg:gap-6">
                         <Link href="/#features" className="text-xs lg:text-sm text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition">Features</Link>
-                        <Link href="/history" className="text-xs lg:text-sm text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition">History</Link>
                         <Link href="/#api" className="text-xs lg:text-sm text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition">API</Link>
                         <Link href="/docs" className="text-xs lg:text-sm text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition">Docs</Link>
                         <button
@@ -102,28 +52,6 @@ export default function Navbar() {
                             <GithubIcon className="w-3.5 h-3.5 lg:w-4 lg:h-4" />
                             GitHub
                         </a>
-                        {isAuthenticated && (
-                            <div className="flex items-center gap-4 pl-4 border-l border-gray-200 dark:border-white/10">
-                                <span className="text-sm font-medium text-gray-900 dark:text-white">
-                                    {username}
-                                </span>
-                                <button
-                                    onClick={handleLogout}
-                                    className="flex items-center gap-1.5 px-3 py-1.5 lg:px-4 lg:py-2 bg-red-100 dark:bg-red-900/50 hover:bg-red-200 dark:hover:bg-red-800/50 rounded-lg transition text-xs lg:text-sm text-red-700 dark:text-red-300"
-                                >
-                                    <LogOut className="w-3.5 h-3.5 lg:w-4 lg:h-4" />
-                                    Logout
-                                </button>
-                            </div>
-                        )}
-                        {!isAuthenticated && (
-                            <Link
-                                href="/login"
-                                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition"
-                            >
-                                Login
-                            </Link>
-                        )}
                     </div>
                     <div className="md:hidden flex items-center gap-2">
                         <button
@@ -150,13 +78,7 @@ export default function Navbar() {
             {isOpen && (
                 <div className="md:hidden border-t border-gray-200 dark:border-white/10 bg-white dark:bg-[#0a0a0f] transition-colors duration-300">
                     <div className="px-4 py-4 space-y-3">
-                        {isAuthenticated && (
-                            <div className="px-3 py-2 text-sm font-medium text-gray-900 dark:text-white border-b border-gray-200 dark:border-white/10 mb-2">
-                                Signed in as {username}
-                            </div>
-                        )}
                         <Link href="/#features" className="block text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition" onClick={() => setIsOpen(false)}>Features</Link>
-                        <Link href="/history" className="block text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition" onClick={() => setIsOpen(false)}>History</Link>
                         <Link href="/#api" className="block text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition" onClick={() => setIsOpen(false)}>API</Link>
                         <Link href="/docs" className="block text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition" onClick={() => setIsOpen(false)}>Docs</Link>
                         <a
@@ -168,23 +90,6 @@ export default function Navbar() {
                             <GithubIcon className="w-4 h-4" />
                             GitHub
                         </a>
-                        {isAuthenticated ? (
-                            <button
-                                onClick={() => { setIsOpen(false); handleLogout(); }}
-                                className="w-full text-left flex items-center gap-2 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 px-2 py-1.5 rounded transition"
-                            >
-                                <LogOut className="w-4 h-4" />
-                                Logout
-                            </button>
-                        ) : (
-                            <Link
-                                href="/login"
-                                className="block w-full text-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition"
-                                onClick={() => setIsOpen(false)}
-                            >
-                                Login
-                            </Link>
-                        )}
                     </div>
                 </div>
             )}

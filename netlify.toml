@@ -1,7 +1,24 @@
+# Deploy for devworkflow.programinglive.com
+#
+# The site is a Next.js **static export** (`output: "export"` in
+# web/next.config.ts), so `next build` writes plain HTML/JS into `web/out` and
+# there is no server runtime at all.
+#
+# Two things this file has to get right, because both have silently broken the
+# deploy before:
+#
+#   1. `publish` must point at `out`, relative to `base`. With the line removed
+#      ("auto-detection"), Netlify could not find the export and kept serving an
+#      old successful deploy while every new build looked fine.
+#   2. `@netlify/plugin-nextjs` must NOT be loaded. It is for server-rendered
+#      Next.js and expects `.next`; with a static export it only adds ways for
+#      the build to fail.
 [build]
   base = "web"
   command = "npm run build"
-  # publish = ".next" (Removed to allow auto-detection)
+  publish = "out"
 
-[[plugins]]
-  package = "@netlify/plugin-nextjs"
+[build.environment]
+  # Next.js 16 requires Node 20.9+. Pin it so a Netlify default bump cannot
+  # change the build under us.
+  NODE_VERSION = "22"

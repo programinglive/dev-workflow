@@ -2,6 +2,19 @@
 
 Learn how to start and use the Dev Workflow dashboard included with the MCP server. The dashboard exposes project history, summaries, and aggregates through a small Node.js service.
 
+## Two different deployments
+
+The same `web/` codebase is used for two things that behave very differently. Keep them apart when reading the rest of this document.
+
+| | Public site | Local dashboard |
+|---|---|---|
+| Where | `devworkflow.programinglive.com` | `http://localhost:3000` via `npm run web` |
+| How it is built | `next build` with `output: "export"` (see `web/next.config.ts`), published from `web/out` | `web/server.js` (Express) wrapping the same Next app |
+| Server at runtime | **None.** It is static HTML/JS. | Express: sessions, PostgreSQL, the `/api/*` routes |
+| Login and history | **Removed.** A static export cannot authenticate anyone. | Available through `/api/auth/*` and `/api/workflow/history` |
+
+The public site used to link to `/login` and `/history`. Both were dead: the login page posted to a Cloudflare quick tunnel (`*.trycloudflare.com`) that expired, and every `/api/*` path on the real domain answered 404 because no server is deployed there. On 31 October 2026 those pages, the client that called the tunnel, and the header links were removed. Workflow history is read through the MCP tools on the user's own machine (`view_history`, `project_summary`) instead.
+
 ## Prerequisites
 
 Before launching the dashboard, confirm the following:
