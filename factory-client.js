@@ -25,6 +25,7 @@ import os from "os";
 import { assertSafeKnowledge } from './security/policy.js';
 import { sanitize } from './security/sanitizer.js';
 import { registerRuntimeSecret } from './security/runtime-secrets.js';
+import { refreshFactoryCredentials, describeLoginFailure } from './factory-credentials.js';
 import { mkdirSync, readFileSync, writeFileSync } from "fs";
 import path from "path";
 
@@ -397,6 +398,27 @@ export function buildWorkFinishPayload({ sessionId, deviceId, outcome, summary, 
 // HTTP layer
 // ---------------------------------------------------------------------------
 
+/**
+ * Kapan proses MCP ini hidup.
+ *
+ * Dipakai di pesan gagal login: tanpa ini pengguna tidak punya cara tahu bahwa
+ * environment yang dipakai sudah usang.
+ */
+function processStartedAt() {
+  return new Date(Date.now() - process.uptime() * 1000);
+}
+
+/** Satu percobaan login dengan pasangan email/password tertentu. */
+function attemptLogin(config, fetchImpl, { email, password }) {
+  registerRuntimeSecret(password);
+
+  return fetchImpl(`${config.pocketBaseUrl}/api/collections/activity_users/auth-with-password`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ identity: email, password }),
+  });
+}
+
 async function resolveToken(config, fetchImpl = fetch) {
   registerRuntimeSecret(config.token); registerRuntimeSecret(config.password);
   if (config.token) return config.token;
@@ -405,24 +427,57 @@ async function resolveToken(config, fetchImpl = fetch) {
   const cached = tokenCache.get(key);
   if (cached && cached.expiresAt > Date.now()) return cached.token;
 
-  const response = await fetchImpl(`${config.pocketBaseUrl}/api/collections/activity_users/auth-with-password`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ identity: config.email, password: config.password }),
-  });
+  const remember = (token) => {
+    registerRuntimeSecret(token);
+    tokenCache.set(key, { token, expiresAt: Date.now() + TOKEN_TTL_MS });
+    return token;
+  };
 
-  if (!response.ok) {
-    throw new Error(
-      `Factory login failed (HTTP ${response.status}). Check FACTORY_EMAIL and FACTORY_PASSWORD, or set FACTORY_TOKEN.`,
-    );
+  const response = await attemptLogin(config, fetchImpl, config);
+
+  if (response.ok) {
+    const body = await response.json();
+    if (!body.token) throw new Error("Factory login returned no token.");
+    return remember(body.token);
   }
 
-  const body = await response.json();
-  if (!body.token) throw new Error("Factory login returned no token.");
-  registerRuntimeSecret(body.token);
+  // Kredensial ditolak. Sebelum menyerah, baca ulang berkas konfigurasi: proses
+  // MCP mewarisi environment saat dijalankan dan tidak pernah memuat ulang, jadi
+  // password yang baru diubah di opencode.json tidak pernah terpakai sampai
+  // OpenCode di-restart. 31 Oktober 2026 itu mematikan otomasi berjam-jam.
+  const refreshed = refreshFactoryCredentials(config);
 
-  tokenCache.set(key, { token: body.token, expiresAt: Date.now() + TOKEN_TTL_MS });
-  return body.token;
+  if (refreshed && refreshed.changed) {
+    if (refreshed.token) {
+      return remember(refreshed.token);
+    }
+
+    if (refreshed.email && refreshed.password) {
+      const retry = await attemptLogin(config, fetchImpl, refreshed);
+
+      if (retry.ok) {
+        const body = await retry.json();
+        if (!body.token) throw new Error("Factory login returned no token.");
+        return remember(body.token);
+      }
+
+      throw new Error(
+        describeLoginFailure({
+          status: retry.status,
+          processStartedAt: processStartedAt(),
+          credentialsChanged: true,
+        }),
+      );
+    }
+  }
+
+  throw new Error(
+    describeLoginFailure({
+      status: response.status,
+      processStartedAt: processStartedAt(),
+      credentialsChanged: Boolean(refreshed && refreshed.changed),
+    }),
+  );
 }
 
 /** Test helper: forget cached tokens (for example after a password change). */
