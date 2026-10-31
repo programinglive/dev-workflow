@@ -1,140 +1,142 @@
-# Definition of Done for the Local Workflow — Design
+# Definition of Done Lokal untuk dev-workflow MCP — Design
 
-**Date:** 2026-10-31
-**Status:** Approved in chat, awaiting spec review
-**Target repo:** `C:\Users\DHIKA\Documents\code\dev-workflow-mcp-server` (v1.13.16, the copy the MCP server actually runs)
-**Planned release:** 1.14.0 (minor)
+**Tanggal:** 2026-10-31
+**Status:** Menunggu review spec
+**Repo:** `C:\Users\DHIKA\Documents\code\dev-workflow-mcp-server` (v1.13.16, salinan yang benar-benar dijalankan MCP server)
+**Rilis yang direncanakan:** 1.14.0 (minor)
 
-## Ringkasan (ID)
+## Ringkasan
 
-Factory (`factory.programinglive.com`) sudah punya `definitionOfDone` per task: checklist kondisi konkret yang wajib ada sebelum task boleh `done`. dev-workflow MCP belum punya padanannya — gerbangnya masih boolean yang di-set sendiri oleh agen (`status-handlers.js:46`). Spec ini menambah DoD lokal: item per item, bukti wajib, ada jalan waive dengan alasan, dan mengunci `check_ready_to_commit`, `commit_and_push`, serta `complete_task`.
+Factory (`factory.programinglive.com`) sudah punya `definitionOfDone` per task: checklist kondisi konkret yang wajib ada sebelum task boleh `done`. dev-workflow MCP belum punya padanannya — gerbangnya masih boolean yang di-set sendiri oleh agen (`tools/handler-modules/status-handlers.js:46`).
 
-## Problem
+Spec ini menambah DoD lokal: item per item, bukti wajib, jalan waive dengan alasan, dan penguncian pada `check_ready_to_commit`, `commit_and_push`, serta `complete_task`.
 
-`handleReadyCheck` (`tools/handler-modules/status-handlers.js:46`) decides readiness from six boolean rows that the agent sets for itself: feature flow, bug fixed, tests created, tests passed, documentation created. None of them says *what* must be true. An agent can therefore reach `commit_and_push` while the concrete conditions of the task (build passes, login page verified against a real tenant, migration rolled back cleanly) were never stated, let alone proven.
+## Masalah
 
-The Factory board already solves this for board tasks: `definition_of_done` is a separate column, required at creation, and `move_task → done` is rejected while it is empty (`app/api/factory/route.ts:112` in `D:\code\factory`). The dev-workflow MCP only mirrors that for *remote* factory tools (`create_factory_task`, `update_factory_task`) — the local workflow has nothing.
+`handleReadyCheck` memutuskan kesiapan dari enam baris boolean yang di-set agen untuk dirinya sendiri: feature flow, bug fixed, tests created, tests passed, documentation created. Tidak satu pun menyebut *apa* yang harus benar. Agen bisa sampai ke `commit_and_push` padahal kondisi konkret task-nya (build lulus, halaman login terverifikasi di tenant nyata, migrasi bisa di-rollback) belum pernah dinyatakan, apalagi dibuktikan.
 
-A gap worth naming: `handleCompleteTask` (`tools/handler-modules/commit-handlers.js:304`) currently performs no checks at all. It closes the task on any call.
+Papan Factory sudah menyelesaikan ini untuk task papan: `definition_of_done` adalah kolom terpisah, wajib saat pembuatan, dan `move_task → done` ditolak selama kosong (`app/api/factory/route.ts:112` di `D:\code\factory`). dev-workflow MCP hanya meniru itu untuk tool Factory *remote* (`create_factory_task`, `update_factory_task`) — workflow lokal tidak punya apa pun.
 
-## Goal
+Celah yang perlu disebut: `handleCompleteTask` (`tools/handler-modules/commit-handlers.js:304`) saat ini tidak melakukan pemeriksaan apa pun. Ia menutup task pada panggilan apa saja.
 
-Every local task carries a checklist of concrete conditions. Each condition is either **proven** (marked with evidence) or **waived** (with a written reason). Ready-check, commit, and complete refuse to proceed while any condition is outstanding.
+## Tujuan
 
-## Non-goals
+Setiap task lokal membawa daftar kondisi konkret. Tiap kondisi **dibuktikan** (ditandai dengan bukti) atau **dikecualikan** (dengan alasan tertulis). Ready check, commit, dan complete menolak berjalan selama ada kondisi yang belum terpenuhi.
 
-- No new workflow phase. DoD is a prerequisite inside the existing ready check.
-- No push-back of local DoD to the Factory board. Pull only (`claim_factory_task`), because writes to the board already have an official path (`update_factory_task`).
-- No human-approval UI. `force_complete_task` stays the audited escape hatch.
-- The web dashboard (`web/`) is untouched in this version.
+## Non-tujuan
 
-## Data model
+- Tidak ada fase workflow baru. DoD adalah prasyarat di dalam ready check yang sudah ada.
+- Tidak ada push balik DoD lokal ke papan Factory. Hanya tarik (`claim_factory_task`), karena penulisan ke papan sudah punya jalur resmi (`update_factory_task`).
+- Tidak ada UI persetujuan manusia. `force_complete_task` tetap menjadi jalan keluar yang tercatat.
+- Dashboard web (`web/`) tidak disentuh pada versi ini.
 
-New state fields, added in the three places that build a fresh state (`workflow-state.js:637` constructor, `:682` `useSession`, `:1251` `reset`):
+## Model data
+
+Field state baru, ditambahkan di tiga tempat yang membentuk state segar (`workflow-state.js:637` constructor, `:682` `useSession`, `:1251` `reset`):
 
 ```js
-definitionOfDone: [],   // items, see below
+definitionOfDone: [],   // item, lihat di bawah
 dodSource: "",          // "" | "manual" | "factory"
-dodFactoryTaskId: "",   // Factory recordId when pulled from the board
-dodRevision: 0,         // bumped when new working changes land after a commit
+dodFactoryTaskId: "",   // recordId Factory saat ditarik dari papan
+dodRevision: 0,         // naik saat ada perubahan kerja baru setelah commit
 ```
 
-One item:
+Satu item:
 
 ```js
 {
-  id: "dod-1",          // stable: 1 + highest existing numeric suffix
-  text: "build lulus",  // 3..300 chars after trim
+  id: "dod-1",          // stabil: 1 + suffix numerik tertinggi yang ada
+  text: "build lulus",  // 3..300 karakter setelah trim
   status: "open",       // "open" | "done" | "waived"
-  evidence: "",         // required (5..500) when status === "done"
-  waivedReason: "",     // required (5..500) when status === "waived"
-  revision: 0,          // dodRevision at the moment it was proven/waived
+  evidence: "",         // wajib (5..500) saat status "done"
+  waivedReason: "",     // wajib (5..500) saat status "waived"
+  revision: 0,          // dodRevision saat item dibuktikan/dikecualikan
   updatedAt: "2026-10-31T10:00:00.000Z"
 }
 ```
 
-A single definition is enough for every consumer:
+Satu definisi cukup untuk semua konsumen:
 
 ```
 isSatisfied(item) := item.status === "waived"
                   || (item.status === "done" && item.revision === state.dodRevision)
 ```
 
-Limits: 1–20 items per task; text 3–300 chars after trim; duplicate text rejected case-insensitively; an empty list is never valid.
+Batas: 1–20 item per task; teks 3–300 karakter setelah trim; duplikat ditolak case-insensitive; daftar kosong tidak pernah sah.
 
-### Normalization and migration
+### Normalisasi dan migrasi
 
-`load()` already normalizes scalar fields (`workflow-state.js:762`). Add the same treatment for DoD: non-array → `[]`; entries that are not objects or have empty text dropped; unknown status → `"open"`; missing `evidence` / `waivedReason` → `""`; non-numeric `dodRevision` → `0`; duplicate or missing ids reassigned in order.
+`load()` sudah menormalkan field skalar (`workflow-state.js:762`). Perlakuan sama untuk DoD: bukan array → `[]`; entri yang bukan objek atau teksnya kosong dibuang; status asing → `"open"`; `evidence` / `waivedReason` hilang → `""`; `dodRevision` bukan angka → `0`; id duplikat atau hilang diberi ulang berurutan.
 
-State files written before this release simply have no DoD fields, so they normalize to empty defaults. That is the legacy case: a task already in progress appears with zero items and is blocked by the gate until `set_definition_of_done` fills it. Nothing is silently granted.
+Berkas state yang ditulis sebelum rilis ini tidak punya field DoD, sehingga dinormalkan ke default kosong. Itu kasus legacy: task yang sudah berjalan tampil dengan nol item dan diblokir gerbang sampai `set_definition_of_done` mengisinya. Tidak ada yang diberikan diam-diam.
 
-## Staleness: the revision rule
+## Kebasian: aturan revisi
 
-`resetToCommitIfWorkingChanges` (`tools/handler-modules/shared.js:30`) already detects new working changes after a recorded commit and rolls the workflow back to `commit`. Extend it: **increment `dodRevision`** on that transition. Every `done` item then stops satisfying `isSatisfied`, so the agent must re-confirm against the code that is actually being committed. `waived` items survive the bump, because a waiver is a decision, not a proof.
+`resetToCommitIfWorkingChanges` (`tools/handler-modules/shared.js:30`) sudah mendeteksi perubahan kerja baru setelah commit tercatat dan mengembalikan workflow ke `commit`. Perluas: **naikkan `dodRevision`** pada transisi itu. Setiap item `done` lalu berhenti memenuhi `isSatisfied`, sehingga agen harus mengonfirmasi ulang terhadap kode yang benar-benar di-commit. Item `waived` bertahan melewati kenaikan revisi, karena waiver adalah keputusan, bukan bukti.
 
-Why a revision counter instead of setting items back to `open`:
+Alasan memakai penghitung revisi alih-alih mengembalikan item ke `open`:
 
-- `mergeMonotonicProgress` (`workflow-state.js:863`) merges *forward-only* progress across MCP processes for the same task. Mutating status downwards would fight that merge, and the "highest status wins" rule below would resurrect the old `done`.
-- A task-level counter is compared against a value stored on the item, so nothing has to be rewritten and no evidence is destroyed.
-- Display stays honest: the item keeps its `done` status *and* the old evidence, and is reported as `perlu konfirmasi ulang` until re-marked.
+- `mergeMonotonicProgress` (`workflow-state.js:863`) menggabungkan kemajuan **maju-saja** antar-proses MCP untuk task yang sama. Mengubah status ke bawah akan melawan merge itu, dan aturan "status tertinggi menang" di bawah akan membangkitkan `done` lama.
+- Penghitung tingkat task dibandingkan dengan nilai yang tersimpan di item, jadi tidak ada yang perlu ditulis ulang dan tidak ada bukti yang dihancurkan.
+- Tampilan tetap jujur: item mempertahankan status `done` *dan* bukti lamanya, lalu dilaporkan sebagai `perlu konfirmasi ulang` sampai ditandai lagi.
 
-Re-marking an item that is merely stale is the same call the agent already makes: `mark_dod_item`. No other transition bumps `dodRevision`; `mark_bug_fixed`, `run_tests` and `create_documentation` leave DoD alone, because they are steps *within* the same body of work, not new changes after a commit.
+Menandai ulang item yang hanya basi adalah panggilan yang sudah dipakai agen: `mark_dod_item`. Tidak ada transisi lain yang menaikkan `dodRevision`; `mark_bug_fixed`, `run_tests`, dan `create_documentation` tidak menyentuh DoD, karena keduanya adalah langkah *di dalam* badan pekerjaan yang sama, bukan perubahan baru setelah commit.
 
-Cross-process merge: add `mergeDefinitionOfDone(reconciled)` alongside `mergeMonotonicProgress`, applied only when the disk task description matches ours. Per item id, keep the entry that ranks higher by `(statusRank, revision)`, where `done = 2, waived = 1, open = 0`. Items present only in memory are kept; items present only on disk are kept. This prevents a stale process from erasing evidence another process just recorded.
+Merge antar-proses: tambahkan `mergeDefinitionOfDone(reconciled)` di samping `mergeMonotonicProgress`, hanya diterapkan bila deskripsi task di disk sama dengan milik kita. Per id, pertahankan entri yang lebih tinggi menurut `(statusRank, revision)`, dengan `done = 2, waived = 1, open = 0`. Item yang hanya ada di memori tetap disimpan; item yang hanya ada di disk juga disimpan. Ini mencegah proses basi menghapus bukti yang baru dicatat proses lain.
 
-## Tool surface
+## Permukaan tool
 
-| Tool | Change |
+| Tool | Perubahan |
 |---|---|
-| `start_task` | New **required** field `definitionOfDone: string[]` (1–20 items). Validated by `validateItems`; failures return the rule list and a two-line example. `projectDir` behaviour is unchanged. |
-| `set_definition_of_done` **(new)** | `{ items: string[], append?: boolean, reason?: string }`. Rejects when the workflow is idle. Default (`append` false) replaces the whole list and is **refused** when any existing item is `done` or `waived` — the message offers `append: true` or a waiver instead of silently discarding proof. `append: true` adds items up to the 20-item cap. Sets `dodSource: "manual"` unless the source is already `"factory"`, in which case `dodFactoryTaskId` is preserved. Clears `readyCheckCompleted`. |
-| `mark_dod_item` **(new)** | `{ id, evidence }`. `evidence` required, 5–500 chars. `open → done`. Re-marking a `done` item is idempotent and refreshes evidence plus `revision` (this is how a stale item is re-confirmed). A `waived` item is refused: reinstate it through `set_definition_of_done` with `append: true` if it genuinely matters again. Clears `readyCheckCompleted`. |
-| `waive_dod_item` **(new)** | `{ id, reason }`. `reason` required, 5–500 chars. `open → waived`. A `done` item is refused (`sudah terbukti, tidak ada yang perlu dikecualikan`). Clears `readyCheckCompleted`. |
-| `get_workflow_status` | New block: `DoD: 2/4 selesai, 1 dilewati, 1 terbuka` then one line per item with evidence or waiver reason. Source shown when it came from the board. |
-| `check_ready_to_commit` | Two new rows: `Definition of done recorded (>= 1 item)` and `Definition of done satisfied (0 open or stale items)`. |
-| `commit_and_push` | Explicit guard before `git add .`: refuse with the ids and texts of outstanding items. The existing ready-check call already covers this transitively; the explicit guard exists so the message names the items instead of just "NOT READY". |
-| `complete_task` | New guard: refuse while any item is outstanding or the list is empty. `force_complete_task` remains the bypass and records `forced: true` plus the DoD summary. |
-| `claim_factory_task` | Parse the board's `definitionOfDone` into items: `dodSource: "factory"`, `dodFactoryTaskId: recordId`, `dodRevision: 0`. Notice line in the response states how many items were imported. |
-| `run_full_workflow` | Accepts and forwards `definitionOfDone`, because it drives the same steps. |
-| `rerun_workflow` | Currently calls `reset()` and restores only the task description and type (`status-handlers.js:138`), which would silently drop every DoD item and block the task forever. New behaviour: carry `definitionOfDone`, `dodSource`, `dodFactoryTaskId` and `dodRevision` across the reset, and say in the response that proven items are kept. |
+| `start_task` | Field **wajib** baru `definitionOfDone: string[]` (1–20 item). Divalidasi `validateItems`; kegagalan mengembalikan daftar aturan dan contoh dua baris. Perilaku `projectDir` tidak berubah. |
+| `set_definition_of_done` **(baru)** | `{ items: string[], append?: boolean, reason?: string }`. Ditolak saat workflow idle. Default (`append` false) mengganti seluruh daftar dan **ditolak** bila ada item `done` atau `waived` — pesannya menawarkan `append: true` atau waive, bukan membuang bukti diam-diam. `append: true` menambah item sampai batas 20. Mengisi `dodSource: "manual"` kecuali sumbernya sudah `"factory"`, dalam hal mana `dodFactoryTaskId` dipertahankan. Mengosongkan `readyCheckCompleted`. |
+| `mark_dod_item` **(baru)** | `{ id, evidence }`. `evidence` wajib, 5–500 karakter. `open → done`. Menandai ulang item `done` idempoten dan menyegarkan evidence plus `revision` (inilah jalur konfirmasi ulang item basi). Item `waived` ditolak: kembalikan lewat `set_definition_of_done` dengan `append: true` bila memang urgen lagi. Mengosongkan `readyCheckCompleted`. |
+| `waive_dod_item` **(baru)** | `{ id, reason }`. `reason` wajib, 5–500 karakter. `open → waived`. Item `done` ditolak (`sudah terbukti, tidak ada yang perlu dikecualikan`). Mengosongkan `readyCheckCompleted`. |
+| `get_workflow_status` | Blok baru: `DoD: 2/4 selesai, 1 dilewati, 1 terbuka`, lalu satu baris per item dengan bukti atau alasan waiver. Sumber ditampilkan bila berasal dari papan. |
+| `check_ready_to_commit` | Dua baris baru: `Definition of done recorded (>= 1 item)` dan `Definition of done satisfied (0 outstanding)`. |
+| `commit_and_push` | Guard eksplisit sebelum `git add .`: tolak dengan id dan teks item yang masih terbuka. Panggilan ready check yang sudah ada memang menutupi ini secara transitif; guard eksplisit ada supaya pesannya menyebut itemnya, bukan hanya "NOT READY". |
+| `complete_task` | Guard baru: tolak selama ada item terbuka atau daftarnya kosong. `force_complete_task` tetap menjadi bypass dan mencatat `forced: true` plus `dodSummary`. |
+| `claim_factory_task` | Parse `definitionOfDone` papan menjadi item: `dodSource: "factory"`, `dodFactoryTaskId: recordId`, `dodRevision: 0`. Baris pemberitahuan di respons menyebut berapa item yang diimpor. |
+| `run_full_workflow` | Menerima dan meneruskan `definitionOfDone`, karena ia memandu langkah yang sama. |
+| `rerun_workflow` | Saat ini memanggil `reset()` dan hanya memulihkan deskripsi serta tipe task (`status-handlers.js:138`), yang akan diam-diam membuang setiap item DoD dan mengunci task selamanya. Perilaku baru: bawa `definitionOfDone`, `dodSource`, `dodFactoryTaskId`, dan `dodRevision` melewati reset, dan sebutkan di respons bahwa item yang sudah terbukti dipertahankan. |
 
-When a task closes, `complete_task`, `force_complete_task` and `drop_task` record `dodSummary: { total, done, waived, open, waivedReasons }` on the history entry, so the project summary and `view_history` can show what was actually proven.
+Saat task ditutup, `complete_task`, `force_complete_task`, dan `drop_task` mencatat `dodSummary: { total, done, waived, open, waivedReasons }` pada entri `history`, sehingga project summary dan `view_history` bisa menunjukkan apa yang benar-benar dibuktikan.
 
-### Gate rows after the change
+### Baris gerbang setelah perubahan
 
 ```
 Task started
 Feature flow described
-Definition of done recorded (>= 1 item)          <- new
+Definition of done recorded (>= 1 item)          <- baru
 Feature/bug fixed
 Tests created / Tests passed
 Documentation created
-Definition of done satisfied (0 outstanding)     <- new
+Definition of done satisfied (0 outstanding)     <- baru
 ```
 
-`allDone` requires both new rows. DoD never moves `currentPhase` by itself; it only decides whether ready-check passes.
+`allDone` membutuhkan kedua baris baru. DoD tidak pernah memindahkan `currentPhase` sendiri; ia hanya memutuskan lolos atau tidaknya ready check.
 
-## Factory pull
+## Tarik dari Factory
 
-`claim_factory_task` already reads `task.definitionOfDone` for display (`factory-handlers.js:153`). Replace that display with a real import through `parseFactoryChecklist`:
+`claim_factory_task` sudah membaca `task.definitionOfDone` untuk ditampilkan (`factory-handlers.js:153`). Ganti tampilan itu dengan import nyata lewat `parseFactoryChecklist`:
 
-- `^\s*[-*+]\s*\[[ xX]\]\s*(.+)$` → item, **always imported as `open`**. A board checklist is a plan, not proof; the agent still has to prove each line locally.
+- `^\s*[-*+]\s*\[[ xX]\]\s*(.+)$` → item, **selalu diimpor sebagai `open`**. Checklist papan adalah rencana, bukan bukti; agen tetap harus membuktikan tiap baris secara lokal.
 - `^\s*[-*+]\s+(.+)$` → item.
-- `^#{1,6}\s` headings, blank lines and prose paragraphs → ignored.
-- Text trimmed, truncated to 300 chars, capped at 20 items. When capping or truncating happens, the response says so explicitly instead of dropping silently.
-- Empty result → `dodSource: ""` and a warning that the board task has no DoD, so the agent must run `set_definition_of_done`.
+- Heading `^#{1,6}\s`, baris kosong, dan paragraf prosa → diabaikan.
+- Teks di-trim, dipotong 300 karakter, dibatasi 20 item. Bila pemotongan terjadi, respons menyebutkannya secara eksplisit alih-alih membuang diam-diam.
+- Hasil kosong → `dodSource: ""` dan peringatan bahwa task papan tidak punya DoD, sehingga agen harus menjalankan `set_definition_of_done`.
 
-`sync_task_status` already re-reads the board checklist after a status change; no change needed.
+`sync_task_status` sudah membaca ulang checklist papan setelah perubahan status; tidak perlu perubahan.
 
-## Module layout
+## Tata letak modul
 
-- `tools/handler-modules/dod.js` — pure functions, no MCP and no filesystem: `validateItems`, `normalizeItems`, `parseFactoryChecklist`, `renderChecklist`, `summarize`, `openItems`, `isSatisfied`, `nextItemId`, `mergeDefinitionOfDone`.
-- `tools/handler-modules/dod-handlers.js` — `handleSetDefinitionOfDone`, `handleMarkDodItem`, `handleWaiveDodItem`. Thin: validate, mutate `workflowState.state`, `save()`, return `textResponse`.
-- Wiring: `tools/definitions.js` (schemas), `tools/handler-modules/index.js` (switch cases), `workflow-state.js` (fields, normalization, merge, revision bump), `status-handlers.js` (gate rows, status display), `commit-handlers.js` (guards, history summaries), `factory-handlers.js` (claim import).
+- `tools/handler-modules/dod.js` — fungsi murni, tanpa MCP dan tanpa filesystem: `validateItems`, `normalizeItems`, `parseFactoryChecklist`, `renderChecklist`, `summarize`, `openItems`, `isSatisfied`, `nextItemId`, `mergeDefinitionOfDone`.
+- `tools/handler-modules/dod-handlers.js` — `handleSetDefinitionOfDone`, `handleMarkDodItem`, `handleWaiveDodItem`. Tipis: validasi, mutasi `workflowState.state`, `save()`, kembalikan `textResponse`.
+- Penyambungan: `tools/definitions.js` (skema), `tools/handler-modules/index.js` (case switch), `workflow-state.js` (field, normalisasi, merge, kenaikan revisi), `status-handlers.js` (baris gerbang, tampilan status), `commit-handlers.js` (guard, ringkasan history), `factory-handlers.js` (import saat claim).
 
-## Error messages
+## Gaya pesan galat
 
-Every rejection is actionable and in the voice already used by the server (Indonesian, concrete): state the rule, show the offending value, and name the next call. For example:
+Setiap penolakan bisa ditindaklanjuti dan memakai suara yang sudah dipakai server (Indonesia, konkret): sebut aturannya, tampilkan nilai yang bermasalah, dan tunjuk panggilan berikutnya.
 
 ```
 ⚠️ Item DoD "dod-3" masih terbuka: "migrasi bisa di-rollback".
@@ -142,35 +144,37 @@ Buktikan dengan 'mark_dod_item' { id: "dod-3", evidence: "..." },
 atau kecualikan dengan 'waive_dod_item' { id: "dod-3", reason: "..." }.
 ```
 
-## Tests
+## Tes
 
-New:
+Baseline terukur sebelum perubahan: `npm test` → 450 tes, 448 pass, 2 skipped, 0 fail.
 
-- `tests/dod.test.js` — pure functions: Factory checklist parsing across `- [ ]`, `- [x]`, `* [ ]`, plain bullets, headings, prose, over-long lines, more than 20 lines; duplicate detection case-insensitive; id reassignment; `isSatisfied` across statuses and revisions; `renderChecklist` round-trip.
-- `tests/dod-handlers.test.js` — the whole gate story: `start_task` with empty/missing/duplicate items; `mark_dod_item` without evidence; `waive_dod_item` on a `done` item; `set_definition_of_done` refusing to discard proven items; ready check failing on one open item and passing once proven; `commit_and_push` refusing before staging; `complete_task` refusing on an open item; `force_complete_task` succeeding and recording `forced: true` with a DoD summary; `claim_factory_task` importing from a mocked Factory client; legacy state (no DoD fields) blocked then unblocked by `set_definition_of_done`; revision bump on new working changes forcing re-confirmation, while waivers survive.
+Baru:
 
-Updated: the 23 existing `start_task` call sites across `tests/handlers.test.js`, `workflowState.test.js`, `session-state.test.js`, `shared-state.test.js`, `handlers-commit.test.js`, `handlers-release.test.js`, `duplicate-review-guard.test.js`, `session-metadata*.test.js` — through a helper in `tests/test-helpers.js` so the fixture list lives in one place. Assertions that match the ready-check checklist text gain the two new rows.
+- `tests/dod.test.js` — fungsi murni: parse checklist Factory untuk `- [ ]`, `- [x]`, `* [ ]`, butir tanpa kotak, heading, prosa, baris kepanjangan, lebih dari 20 baris; deteksi duplikat case-insensitive; pemberian ulang id; `isSatisfied` untuk semua kombinasi status × revisi; `renderChecklist` bolak-balik.
+- `tests/dod-handlers.test.js` — seluruh cerita gerbang: `start_task` dengan DoD kosong/hilang/duplikat; `mark_dod_item` tanpa evidence; `waive_dod_item` pada item `done`; `set_definition_of_done` menolak membuang item terbukti; ready check gagal karena satu item terbuka dan lolos setelah dibuktikan; `commit_and_push` menolak sebelum staging; `complete_task` menolak saat ada item terbuka; `force_complete_task` lolos dan mencatat `forced: true` plus `dodSummary`; `claim_factory_task` mengimpor dari client Factory yang di-mock; state lama tanpa field DoD terblokir lalu lolos setelah `set_definition_of_done`; kenaikan revisi memaksa konfirmasi ulang sementara waiver bertahan.
 
-`npm test` must be green before commit; the MCP server itself enforces this, which is the point.
+Diperbarui: 15 pemanggilan `start_task` yang ada di `tests/project-dir-resolution.test.js` (3), `tests/shared-state.test.js` (3), `tests/session-metadata.test.js` (5), `tests/session-metadata-e2e.test.js` (2), dan `tests/security-boundaries.test.js` (2) — lewat satu helper di `tests/test-helpers.js` supaya daftar fixture ada di satu tempat. Assertion yang mencocokkan teks checklist ready-check mendapat dua baris baru.
 
-## Documentation
+`npm test` harus hijau sebelum commit; server MCP sendiri yang menegakkannya, dan itu memang intinya.
 
-`AGENTS.md` (repo) — the ten steps become twelve: DoD supplied in `start_task`, items proven during implementation. `README.md`, `docs/software-factory.md` (parity with the Factory board, and where the two differ: local DoD is per item and evidence-backed), `CHANGELOG.md`, `docs/PRD.md` (required by `create_documentation`).
+## Dokumentasi
 
-The copy of the rules at `C:\Users\DHIKA\Documents\Default Project\AGENTS.md` also describes the ten steps. It is outside this repo; updating it is a separate, explicitly agreed follow-up.
+`AGENTS.md` (repo) — sepuluh langkah menjadi dua belas: DoD disuplai di `start_task`, item dibuktikan selama implementasi. `README.md`, `docs/software-factory.md` (paritas dengan papan Factory, dan di mana keduanya berbeda: DoD lokal per item dan berbasis bukti), `CHANGELOG.md`, `docs/PRD.md` (wajib untuk `create_documentation`).
 
-## Risks
+Salinan aturan di `C:\Users\DHIKA\Documents\Default Project\AGENTS.md` juga menjelaskan sepuluh langkah. Berkas itu di luar repo ini; memperbaruinya adalah tindak lanjut terpisah yang perlu disetujui eksplisit.
 
-- **Friction.** A strict per-item gate can slow trivial work. Mitigations already in the design: `waive_dod_item` with a reason, and `force_complete_task` which records `forced: true`.
-- **Test churn.** 23 call sites change; using one helper keeps the diff mechanical.
-- **Evidence quality.** Evidence is free text; nothing verifies that a cited command actually ran. The gate raises the cost of a false claim and leaves a trail in `history`, which is the realistic ceiling for a local MCP server. Automatic verification would need the worker, not this server.
-- **Two MCP processes, same task.** Handled by `mergeDefinitionOfDone`; the alternative (arrays merged by last write) can erase evidence.
+## Risiko
 
-## Done when
+- **Gesekan.** Gerbang per item yang ketat bisa memperlambat pekerjaan sepele. Mitigasi sudah ada di desain: `waive_dod_item` dengan alasan, dan `force_complete_task` yang mencatat `forced: true`.
+- **Churn tes.** 15 call-site berubah; memakai satu helper menjaga diff tetap mekanis.
+- **Kualitas bukti.** Evidence adalah teks bebas; tidak ada yang memverifikasi perintah yang dikutip benar-benar dijalankan. Gerbang menaikkan biaya klaim palsu dan meninggalkan jejak di `history`, yang merupakan plafon realistis untuk server MCP lokal. Verifikasi otomatis akan butuh worker, bukan server ini.
+- **Dua proses MCP, task sama.** Ditangani `mergeDefinitionOfDone`; alternatifnya (array digabung last-write) bisa menghapus bukti.
 
-- `npm test` green with the new suites included.
-- `start_task` without `definitionOfDone` fails with a message that names the field and the rules.
-- A task with one open item cannot pass `check_ready_to_commit`, cannot `commit_and_push`, and cannot `complete_task`.
-- Waiving that item with a reason lets all three proceed, and the waiver appears in `get_workflow_status`, in the `history` entry's `dodSummary`, and in the documentation step of the task.
-- A task claimed from the board arrives with its DoD items imported as `open`.
-- New working changes after a commit make every proven item stale, and the ready check says so.
+## Definisi selesai untuk spec ini
+
+- `npm test` hijau dengan suite baru disertakan.
+- `start_task` tanpa `definitionOfDone` gagal dengan pesan yang menyebut field dan aturannya.
+- Task dengan satu item terbuka tidak bisa lolos `check_ready_to_commit`, tidak bisa `commit_and_push`, dan tidak bisa `complete_task`.
+- Menjalankan waive pada item itu dengan alasan membuka ketiganya, dan waiver muncul di `get_workflow_status`, di `dodSummary` entri `history`, dan di langkah dokumentasi task.
+- Task yang di-claim dari papan datang dengan item DoD yang diimpor sebagai `open`.
+- Perubahan kerja baru setelah commit membuat setiap item yang sudah dibuktikan menjadi basi, dan ready check menyebutkannya.
