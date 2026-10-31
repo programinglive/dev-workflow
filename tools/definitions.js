@@ -33,8 +33,19 @@ export function getToolList() {
               "Pass it whenever the session directory is not itself a git repository, " +
               "otherwise the server may fall back to WORKFLOW_PROJECT_DIR and commit to the wrong repo.",
           },
+          definitionOfDone: {
+            type: "array",
+            items: { type: "string" },
+            minItems: 1,
+            maxItems: 20,
+            description:
+              "REQUIRED. The concrete conditions that must be true before this task counts as done, " +
+              "one condition per item, for example ['build lulus', 'halaman login terverifikasi']. " +
+              "Each item must later be proven with 'mark_dod_item' (evidence required) or waived with " +
+              "'waive_dod_item' (reason required). A task cannot be committed or closed while any item is open.",
+          },
         },
-        required: ["description", "type"],
+        required: ["description", "type", "definitionOfDone"],
       },
     },
     {

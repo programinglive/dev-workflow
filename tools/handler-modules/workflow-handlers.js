@@ -1,5 +1,6 @@
 import { classify } from '../../security/policy.js';
 import { textResponse, isReleaseSatisfied, isErrorResponse, ensurePrdExists } from "./shared.js";
+import { validateItemTexts } from "./dod.js";
 import { resolveProjectDir, setActiveProjectDir } from "../../exec.js";
 
 /**
@@ -68,6 +69,19 @@ function pinProjectDir(args, workflowState) {
 }
 
 export async function handleStartTask(args, workflowState) {
+  // Validasi DoD SEBELUM menyentuh state apa pun. Task yang ditolak tidak boleh
+  // mengganti task yang sedang berjalan, dan tidak boleh meninggalkan state
+  // setengah jadi yang membuat `get_workflow_status` membingungkan.
+  const dodCheck = validateItemTexts(args.definitionOfDone);
+  if (!dodCheck.ok) {
+    return textResponse(
+      `⚠️ ${dodCheck.error}\n\n` +
+        `Contoh pemakaian:\n` +
+        `  definitionOfDone: ["build lulus", "halaman login terverifikasi"]\n\n` +
+        `Task BELUM dimulai; workflow sebelumnya tidak diubah.`
+    );
+  }
+
   // Selamatkan dulu pekerjaan yang mungkin tertimpa. Ini menangani dua kasus:
   //   1. Proses MCP LAIN menulis berkas state setelah kita memuatnya.
   //   2. Task kita sendiri yang belum selesai lalu diganti task baru.
@@ -78,6 +92,18 @@ export async function handleStartTask(args, workflowState) {
   workflowState.state.classification = classify(args);
   workflowState.state.taskDescription = args.description;
   workflowState.state.taskType = args.type;
+  workflowState.state.definitionOfDone = dodCheck.items.map((text, index) => ({
+    id: `dod-${index + 1}`,
+    text,
+    status: "open",
+    evidence: "",
+    waivedReason: "",
+    revision: 0,
+    updatedAt: new Date().toISOString(),
+  }));
+  workflowState.state.dodSource = "manual";
+  workflowState.state.dodFactoryTaskId = "";
+  workflowState.state.dodRevision = 0;
   workflowState.state.testsSkipped = false;
   workflowState.state.testsSkippedReason = "";
   workflowState.state.commitAndPushCompleted = false;
@@ -114,8 +140,16 @@ export async function handleStartTask(args, workflowState) {
 
   const warningBlock = warnings.length > 0 ? `\n\n${warnings.join("\n\n")}` : "";
 
+  const dodLines = workflowState.state.definitionOfDone
+    .map((item) => `   ${item.id}: ${item.text}`)
+    .join("\n");
+
   return textResponse(
-    `✅ Task Started: ${args.description}\n\n${project.message}${warningBlock}\n\n🎯 Be conscious about what you're coding!\n\nWorkflow Steps:\n1. ✓ Start task (current)\n2. ⏳ Describe feature flow with Mermaid\n3. ⏳ Fix/implement the feature\n4. ⏳ Create tests\n5. ⏳ Run tests (must pass!)\n6. ⏳ Create documentation\n7. ⏳ Run 'check_ready_to_commit'\n8. ⏳ Run 'commit_and_push' (commits and pushes)\n9. ⏳ Run 'perform_release' (handles versioning and tags) or 'skip_release' (when no release is needed)\n10. ⏳ Complete task\n\nReminder: Focus on writing clean, maintainable code!`
+    `✅ Task Started: ${args.description}\n\n${project.message}${warningBlock}\n\n` +
+      `📋 Definition of Done (${workflowState.state.definitionOfDone.length} item, semua masih terbuka):\n${dodLines}\n` +
+      `   Buktikan tiap item dengan 'mark_dod_item' { id, evidence } setelah benar-benar terbukti,\n` +
+      `   atau kecualikan dengan 'waive_dod_item' { id, reason } bila memang tidak relevan.\n\n` +
+      `🎯 Be conscious about what you're coding!\n\nWorkflow Steps:\n1. ✓ Start task (current)\n2. ⏳ Describe feature flow with Mermaid\n3. ⏳ Fix/implement the feature\n4. ⏳ Prove each definition-of-done item\n5. ⏳ Create tests\n6. ⏳ Run tests (must pass!)\n7. ⏳ Create documentation\n8. ⏳ Run 'check_ready_to_commit'\n9. ⏳ Run 'commit_and_push' (commits and pushes)\n10. ⏳ Run 'perform_release' or 'skip_release' (when no release is needed)\n11. ⏳ Complete task\n12. ✓ Workflow closed\n\nReminder: Focus on writing clean, maintainable code!`
   );
 }
 

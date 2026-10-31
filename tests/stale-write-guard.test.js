@@ -107,11 +107,11 @@ test("start_task tetap boleh mengganti task dan mengarsipkan yang lama", async (
   await withStateFile(async (stateFile) => {
     const first = new WorkflowState(stateFile);
     await first.load();
-    await handleStartTask({ description: "[TASK-1] lama", type: "other" }, first);
+    await handleStartTask({ description: "[TASK-1] lama", type: "other", definitionOfDone: ["task tercatat"] }, first);
 
     // Proses lain memegang state yang masih memuat TASK-1.
     const second = await otherProcess(stateFile);
-    await handleStartTask({ description: "[TASK-2] baru", type: "bugfix" }, second);
+    await handleStartTask({ description: "[TASK-2] baru", type: "bugfix", definitionOfDone: ["task tercatat"] }, second);
 
     const disk = await readDisk(stateFile);
     assert.equal(disk.taskDescription, "[TASK-2] baru");
@@ -155,7 +155,7 @@ test("penulisan normal di sesi yang sama tidak dianggap konflik", async () => {
     const ws = new WorkflowState(stateFile);
     await ws.load();
 
-    await handleStartTask({ description: "[TASK] normal", type: "bugfix" }, ws);
+    await handleStartTask({ description: "[TASK] normal", type: "bugfix", definitionOfDone: ["task tercatat"] }, ws);
     ws.state.bugFixed = true;
     const reconciled = await ws.save();
 
@@ -180,7 +180,7 @@ test("tool memberi tahu bahwa aksinya TIDAK berlaku, bukan 'berhasil'", async ()
 
     // Proses lain memulai task baru sesudahnya.
     const worker = await otherProcess(stateFile);
-    await handleStartTask({ description: "[B] task yang benar-benar jalan", type: "bugfix" }, worker);
+    await handleStartTask({ description: "[B] task yang benar-benar jalan", type: "bugfix", definitionOfDone: ["task tercatat"] }, worker);
 
     // Proses basi menjalankan tool yang menyimpan.
     const response = await handleToolCall(
@@ -204,7 +204,7 @@ test("tool yang tidak menyimpan tidak menampilkan peringatan", async () => {
   await withStateFile(async (stateFile) => {
     const ws = new WorkflowState(stateFile);
     await ws.load();
-    await handleStartTask({ description: "[TASK] normal", type: "other" }, ws);
+    await handleStartTask({ description: "[TASK] normal", type: "other", definitionOfDone: ["task tercatat"] }, ws);
 
     const response = await handleToolCall(ctx(ws, "get_workflow_status", {}));
     assert.doesNotMatch(response.content[0].text, /AKSI TIDAK BERLAKU/);
