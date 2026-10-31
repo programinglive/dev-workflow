@@ -46,6 +46,11 @@ export async function resetToCommitIfWorkingChanges(workflowState, git) {
   workflowState.state.currentPhase = "commit";
   workflowState.state.releaseCommand = "";
   workflowState.state.releaseNotes = "";
+  // Perubahan kerja baru berarti bukti DoD yang lama tidak lagi membuktikan
+  // kode yang akan di-commit. Menaikkan revisi membuat setiap item `done`
+  // otomatis tidak memenuhi sampai dibuktikan ulang - tanpa menulis ulang
+  // statusnya, sehingga penggabungan antar-proses tidak saling menghapus.
+  workflowState.state.dodRevision = (Number(workflowState.state.dodRevision) || 0) + 1;
   await workflowState.save();
   return true;
 }

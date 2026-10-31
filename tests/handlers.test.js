@@ -12,6 +12,27 @@ import {
   determineReleaseTypeFromCommit,
 } from "../commit-helpers.js";
 
+/**
+ * DoD yang sudah terbukti, untuk task yang memulai dari state "hampir selesai".
+ *
+ * Sejak gerbang DoD ada, sebuah task tidak bisa ditutup tanpa minimal satu item
+ * yang terbukti atau dikecualikan. Tes yang menyiapkan state secara manual harus
+ * menyertakannya, persis seperti task nyata.
+ */
+function provenDefinitionOfDone() {
+  return [
+    {
+      id: "dod-1",
+      text: "fitur berjalan sesuai kriteria",
+      status: "done",
+      evidence: "npm test",
+      waivedReason: "",
+      revision: 0,
+      updatedAt: "",
+    },
+  ];
+}
+
 async function withWorkflowState(callback) {
   const tempDir = await mkdtemp(path.join(tmpdir(), "workflow-handlers-"));
   const stateFile = path.join(tempDir, "state.json");
@@ -208,6 +229,7 @@ test("run_full_workflow iterates until commit/release complete with clean tree",
     workflowState.state.documentationType = "README";
     workflowState.state.documentationSummary = "Docs";
     workflowState.state.fixSummary = "Feature done";
+    workflowState.state.definitionOfDone = provenDefinitionOfDone();
     await workflowState.save();
 
     const commands = [];
@@ -390,6 +412,7 @@ test("run_full_workflow uses provided branch for release push when commit is cle
     workflowState.state.documentationType = "README";
     workflowState.state.documentationSummary = "Docs";
     workflowState.state.fixSummary = "Feature done";
+    workflowState.state.definitionOfDone = provenDefinitionOfDone();
     await workflowState.save();
 
     const commands = [];
@@ -534,6 +557,7 @@ test("run_full_workflow executes all steps successfully", async () => {
     workflowState.state.taskType = "feature";
     workflowState.state.currentPhase = "coding";
     workflowState.state.featureFlowCreated = true;
+    workflowState.state.definitionOfDone = provenDefinitionOfDone();
     await workflowState.save();
 
     const commands = [];
@@ -622,6 +646,7 @@ test("run_full_workflow resumes from current phase when steps are already comple
     workflowState.state.readyCheckCompleted = true;
     workflowState.state.commitAndPushCompleted = true;
     workflowState.state.featureFlowCreated = true;
+    workflowState.state.definitionOfDone = provenDefinitionOfDone();
     await workflowState.save();
 
     const commands = [];

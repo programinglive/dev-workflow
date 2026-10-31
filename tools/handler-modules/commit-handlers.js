@@ -1,5 +1,6 @@
 import { textResponse, isReleaseSatisfied, formatChecklist } from "./shared.js";
 import { handleReadyCheck } from "./status-handlers.js";
+import { openItems, renderChecklist, renderOutstanding, summarize } from "./dod.js";
 import { containsTestFilesInStatus } from "../../git-helpers.js";
 import { resolveProjectDir, setActiveProjectDir, getActiveProjectDir } from "../../exec.js";
 import path from "path";
@@ -121,6 +122,23 @@ export async function handleCommitAndPush(args, context) {
   }
 
   workflowState.state.projectDir = getActiveProjectDir() || workflowState.state.projectDir || "";
+
+  // Guard DoD yang eksplisit. `handleReadyCheck` di bawah sudah menutupi ini
+  // secara transitif, tetapi pesannya generik ("NOT READY"); di sini kita bisa
+  // menyebut item mana yang menghalangi, sebelum satu perintah git pun jalan.
+  const dodItems = Array.isArray(workflowState.state.definitionOfDone)
+    ? workflowState.state.definitionOfDone
+    : [];
+  const outstanding = openItems(dodItems, workflowState.state.dodRevision);
+  if (outstanding.length > 0) {
+    return textResponse(
+      `⚠️ Dibatalkan: ${outstanding.length} item Definition of Done belum terpenuhi.\n\n` +
+        `${renderOutstanding(dodItems, workflowState.state.dodRevision)}\n\n` +
+        `Buktikan dengan 'mark_dod_item' { id, evidence }, atau kecualikan dengan ` +
+        `'waive_dod_item' { id, reason }.\n\n` +
+        `Tidak ada yang di-stage dan tidak ada yang di-commit.`
+    );
+  }
 
   if (!workflowState.state.readyToCommit || !workflowState.state.readyCheckCompleted) {
     const readyResponse = await handleReadyCheck(workflowState);
@@ -302,10 +320,35 @@ export async function handleCommitAndPush(args, context) {
 }
 
 export async function handleCompleteTask(args, workflowState) {
+  // Sampai 31 Oktober 2026 fungsi ini tidak memeriksa apa pun: task bisa
+  // ditutup dengan DoD kosong atau masih penuh item terbuka. Sekarang tidak.
+  const dodState = workflowState.state;
+  const dodItems = Array.isArray(dodState.definitionOfDone) ? dodState.definitionOfDone : [];
+  const dod = summarize(dodItems, dodState.dodRevision);
+
+  if (dodItems.length === 0) {
+    return textResponse(
+      `⚠️ Task ini belum punya Definition of Done, jadi belum bisa ditutup.\n\n` +
+        `Isi dulu dengan 'set_definition_of_done' { items: [...] }, buktikan tiap item, lalu ulangi 'complete_task'.\n` +
+        `Kalau memang harus ditutup sekarang, pakai 'force_complete_task' dengan alasan - langkah itu tercatat.`
+    );
+  }
+
+  if (dod.open > 0) {
+    const outstanding = openItems(dodItems, dodState.dodRevision);
+    return textResponse(
+      `⚠️ ${dod.open} item Definition of Done masih terbuka:\n\n` +
+        `${renderOutstanding(dodItems, dodState.dodRevision)}\n\n` +
+        `Buktikan dengan 'mark_dod_item' { id, evidence } atau kecualikan dengan ` +
+        `'waive_dod_item' { id, reason }.`
+    );
+  }
+
   const entry = {
     taskDescription: workflowState.state.taskDescription,
     taskType: workflowState.state.taskType,
     commitMessage: args.commitMessage,
+    definitionOfDoneSummary: dod,
   };
 
   workflowState.addToHistory(entry);
@@ -313,7 +356,8 @@ export async function handleCompleteTask(args, workflowState) {
   await workflowState.save();
 
   return textResponse(
-    `✅ Task completed!\n\nCommit message: ${args.commitMessage}\nHistory recorded.`
+    `✅ Task completed!\n\nCommit message: ${args.commitMessage}\n` +
+      `DoD: ${dod.done}/${dod.total} terbukti, ${dod.waived} dikecualikan.\nHistory recorded.`
   );
 }
 
@@ -331,6 +375,10 @@ export async function handleForceCompleteTask(args, workflowState) {
     commitMessage,
     forced: true,
     forceReason: reason,
+    definitionOfDoneSummary: summarize(
+      Array.isArray(workflowState.state.definitionOfDone) ? workflowState.state.definitionOfDone : [],
+      workflowState.state.dodRevision,
+    ),
   });
 
   workflowState.reset();
@@ -350,6 +398,10 @@ export async function handleDropTask(args, workflowState) {
     commitMessage: workflowState.state.lastCommitMessage,
     dropped: true,
     dropReason: typeof args.reason === "string" ? args.reason : "",
+    definitionOfDoneSummary: summarize(
+      Array.isArray(workflowState.state.definitionOfDone) ? workflowState.state.definitionOfDone : [],
+      workflowState.state.dodRevision,
+    ),
   });
   workflowState.reset();
   await workflowState.save();
