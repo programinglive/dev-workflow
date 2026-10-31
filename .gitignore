@@ -63,3 +63,6 @@ Thumbs.db
 .git-credentials
 .netrc
 .superpowers/
+
+# Dibuat oleh web/scripts/generate-version.mjs saat build
+web/lib/version.generated.ts

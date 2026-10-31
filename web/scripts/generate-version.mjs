@@ -1,0 +1,48 @@
+#!/usr/bin/env node
+/**
+ * Menulis versi situs dari manifest root, tepat sebelum `next build`.
+ *
+ * MENGAPA GENERATOR, BUKAN IMPORT LANGSUNG
+ * ----------------------------------------
+ * Percobaan pertama mengimpor `../../package.json` dari `web/lib/version.ts`.
+ * Itu gagal: Turbopack mengunci workspace ke `web/`, jadi berkas di atasnya
+ * "di luar workspace root" dan tidak dikompilasi. Menaikkan workspace root ke
+ * repo justru menarik seluruh `node_modules` repo ke build situs.
+ *
+ * Generator menjaga satu sumber kebenaran tanpa menyentuh batas workspace:
+ * `standard-version` menaikkan `package.json` root, `prebuild` membaca angka itu,
+ * dan halaman hanya melihat nilai jadi.
+ */
+import { readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const webRoot = path.dirname(here);
+const rootManifest = path.join(webRoot, "..", "package.json");
+const target = path.join(webRoot, "lib", "version.generated.ts");
+
+async function main() {
+  const raw = await readFile(rootManifest, "utf8");
+  const { version } = JSON.parse(raw);
+
+  if (typeof version !== "string" || !/^\d+\.\d+\.\d+/.test(version)) {
+    throw new Error(
+      `package.json root tidak memuat versi semver yang sah (dapat: ${JSON.stringify(version)}). ` +
+        `Perbaiki sebelum membangun situs, karena versi itu yang akan ditampilkan.`,
+    );
+  }
+
+  const contents = `// Dibuat oleh scripts/generate-version.mjs - jangan diedit tangan.
+// Sumber: package.json root.
+export const WEB_VERSION = ${JSON.stringify(version)};
+`;
+
+  await writeFile(target, contents, "utf8");
+  console.log(`version: ${version} -> ${path.relative(webRoot, target)}`);
+}
+
+main().catch((error) => {
+  console.error(`Gagal menulis versi situs: ${error.message}`);
+  process.exit(1);
+});
