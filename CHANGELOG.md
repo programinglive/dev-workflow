@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.14.0](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.13.16...v1.14.0) (2026-10-31)
+
+
+### ✨ Features
+
+* **dod:** add tools to record, prove and waive items ([0fdf0e0](https://github.com/programinglive/dev-workflow-mcp-server/commit/0fdf0e04fe131937c3e7abae5628a5a1645f4606))
+* **dod:** gate commit and completion on proven items ([ea93a7a](https://github.com/programinglive/dev-workflow-mcp-server/commit/ea93a7a357419a058302bafc65fdab9beb09a3ac))
+* **dod:** persist definition of done in workflow state ([48de33e](https://github.com/programinglive/dev-workflow-mcp-server/commit/48de33ed2a182cc0b15753c551cab5c69e55a005))
+* **dod:** pure definition-of-done helpers ([1c510b3](https://github.com/programinglive/dev-workflow-mcp-server/commit/1c510b3a7714d22cd3588445c39947b21347256b))
+* **dod:** require a definition of done when starting a task ([6d36c93](https://github.com/programinglive/dev-workflow-mcp-server/commit/6d36c9310e26f9a05132901b8fd6a09a53b49603))
+* **dod:** show items in status and import them from the board ([05b4db2](https://github.com/programinglive/dev-workflow-mcp-server/commit/05b4db2e48dd6034ef4e74bc9fe0b58e1e523d1f))
+
+
+### 📝 Documentation
+
+* **dod:** document the per-item definition of done ([80469d3](https://github.com/programinglive/dev-workflow-mcp-server/commit/80469d3fa5512327908f230bd22aded21138c1c1))
+* **spec:** definition of done per item dengan bukti untuk workflow lokal ([06a4edc](https://github.com/programinglive/dev-workflow-mcp-server/commit/06a4edc0aa6d88f9e2b1feb9979de9be6b21262b))
+* **spec:** definition of done per item with evidence for the local workflow ([a5a375a](https://github.com/programinglive/dev-workflow-mcp-server/commit/a5a375a5c518945f38b3cbe73bbc987cc490dbba))
+
 ### [1.13.16](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.13.15...v1.13.16) (2026-10-31)
 
 
