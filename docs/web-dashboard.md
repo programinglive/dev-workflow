@@ -15,6 +15,23 @@ The same `web/` codebase is used for two things that behave very differently. Ke
 
 The public site used to link to `/login` and `/history`. Both were dead: the login page posted to a Cloudflare quick tunnel (`*.trycloudflare.com`) that expired, and every `/api/*` path on the real domain answered 404 because no server is deployed there. On 31 October 2026 those pages, the client that called the tunnel, and the header links were removed. Workflow history is read through the MCP tools on the user's own machine (`view_history`, `project_summary`) instead.
 
+## Deploying the public site
+
+`.github/workflows/deploy-web.yml` builds and publishes the site on every push to
+`main` that touches `web/`, `package.json`, or `netlify.toml`. It replaced manual
+`netlify deploy` runs from a laptop, which had last happened on 29 January 2026.
+
+Two repository secrets are required, once:
+
+```bash
+gh secret set NETLIFY_AUTH_TOKEN    # Netlify personal access token
+gh secret set NETLIFY_SITE_ID --body 3b9966e4-43e6-45a8-bafc-8dd0a35aacf2
+```
+
+The workflow fails on purpose when `web/out/docs/index.html` does not contain the
+version from `package.json`. A hard-coded version string is what let the site
+advertise 1.9.1 for months without anything going red.
+
 ## Prerequisites
 
 Before launching the dashboard, confirm the following:

@@ -64,11 +64,27 @@ test("versi yang ditampilkan berasal dari package.json, bukan angka yang ditulis
     const docsPage = await readFile(path.join(webRoot, "app", "docs", "page.tsx"), "utf8");
     const hero = await readFile(path.join(webRoot, "components", "Hero.tsx"), "utf8");
     const versionModule = await readFile(path.join(webRoot, "lib", "version.ts"), "utf8");
+    const generator = await readFile(path.join(webRoot, "scripts", "generate-version.mjs"), "utf8");
 
-    assert.match(versionModule, /\.\.\/\.\.\/package\.json/, "versi harus dibaca dari manifest root");
+    assert.match(generator, /\.\.\/"?\)?/, "generator harus membaca manifest di atas web/");
+    assert.match(generator, /package\.json/);
+    assert.match(versionModule, /version\.generated/, "halaman memakai nilai yang dibuat saat build");
     assert.doesNotMatch(docsPage, /Version:\s*\d+\.\d+\.\d+/, "jangan tulis nomor versi langsung di halaman");
     assert.match(docsPage, /WEB_VERSION/);
     assert.match(hero, /WEB_VERSION/);
+});
+
+test("deploy situs berjalan dari CI, bukan dari laptop", async () => {
+    const workflow = await readFile(
+        path.join(repoRoot, ".github", "workflows", "deploy-web.yml"),
+        "utf8",
+    );
+
+    assert.match(workflow, /netlify-cli@latest deploy --prod/, "deploy harus lewat CLI Netlify");
+    assert.match(workflow, /--no-build/, "artefak yang sudah diverifikasi yang dikirim, bukan build kedua");
+    assert.match(workflow, /secrets\.NETLIFY_AUTH_TOKEN/);
+    assert.match(workflow, /secrets\.NETLIFY_SITE_ID/);
+    assert.match(workflow, /does not mention version/, "build harus gagal kalau versi tidak ikut terbit");
 });
 
 test("netlify mempublikasikan direktori export dan tidak memuat plugin server-render", async () => {
