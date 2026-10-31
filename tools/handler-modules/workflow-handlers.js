@@ -1,6 +1,7 @@
 import { classify } from '../../security/policy.js';
 import { textResponse, isReleaseSatisfied, isErrorResponse, ensurePrdExists } from "./shared.js";
 import { validateItemTexts } from "./dod.js";
+import { activeForeignLock, projectLockDir, currentIsAlive, DEFAULT_LOCK_STALE_MS } from "../../process-lock.js";
 import { resolveProjectDir, setActiveProjectDir } from "../../exec.js";
 
 /**
@@ -88,6 +89,46 @@ async function captureDirtyAtStart(git) {
 }
 
 export async function handleStartTask(args, workflowState, git) {
+  // Satu penulis per repo.
+  //
+  // 31 Oktober 2026 dua sesi OpenCode menulis satu working tree yang sama. Satu
+  // sesi kehilangan seluruh suntingannya di `tools/handler-modules/index.js`
+  // tanpa pesan apa pun: berkasnya kembali ke versi HEAD di tengah pekerjaan.
+  // Penanda proses sudah ada sejak sebelumnya, tetapi hanya DICATAT sebagai
+  // peringatan, jadi tidak ada yang menghentikan tabrakan.
+  //
+  // Sekarang `start_task` menolak memulai bila ada proses MCP lain yang hidup
+  // DAN baru saja bekerja (ada detak dalam 10 menit) pada proyek yang sama.
+  // Penanda yang basi diabaikan supaya proses MCP yang tertinggal tidak
+  // memblokir selamanya. `force: true` tetap tersedia untuk pemilik mesin yang
+  // tahu apa yang ia lakukan, dan alasannya dicatat di jawaban.
+  const foreignLock = activeForeignLock({
+    dir: projectLockDir(workflowState.stateFile),
+    isAlive: currentIsAlive(),
+  });
+
+  if (foreignLock && args.force !== true) {
+    const minutes = Math.max(1, Math.round(foreignLock.ageMs / 60000));
+    const host = foreignLock.host ? ` di ${foreignLock.host}` : "";
+    const started = Number.isFinite(Number(foreignLock.startedAt))
+      ? new Date(Number(foreignLock.startedAt)).toISOString()
+      : "waktu tidak diketahui";
+
+    return textResponse(
+      `⚠️ Dibatalkan: sesi lain sedang mengerjakan proyek ini.\n\n` +
+        `Proses MCP PID ${foreignLock.pid}${host} berdetak ${minutes} menit lalu ` +
+        `(hidup sejak ${started}).\n` +
+        `Dua sesi pada satu working tree saling menimpa berkas: pada 31 Oktober 2026 ` +
+        `satu sesi kehilangan seluruh suntingannya tanpa pesan.\n\n` +
+        `Pilih salah satu:\n` +
+        `  1. Tutup jendela OpenCode yang lain, lalu ulangi 'start_task'.\n` +
+        `  2. Beri sesi ini worktree sendiri: opencode.worktree_create, lalu jalankan sesi dari sana.\n` +
+        `  3. Kalau Anda yakin sesi itu sudah tidak dipakai, ulangi dengan { "force": true }.\n\n` +
+        `Penanda dianggap basi setelah ${Math.round(DEFAULT_LOCK_STALE_MS / 60000)} menit tanpa detak.\n` +
+        `Task BELUM dimulai; tidak ada state yang diubah.`
+    );
+  }
+
   // Validasi DoD SEBELUM menyentuh state apa pun. Task yang ditolak tidak boleh
   // mengganti task yang sedang berjalan, dan tidak boleh meninggalkan state
   // setengah jadi yang membuat `get_workflow_status` membingungkan.

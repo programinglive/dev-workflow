@@ -14,7 +14,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { fileURLToPath } from "url";
 import path from "path";
-import { acquireProcessLock, releaseProcessLock, lockWarning, projectLockDir } from "./process-lock.js";
+import { acquireProcessLock, releaseProcessLock, lockWarning, projectLockDir, refreshProcessLock, HEARTBEAT_MS } from "./process-lock.js";
 import { exec, setActiveProjectDir } from "./exec.js";
 import { normalizeRequestArgs, shellEscape } from "./utils.js";
 import { createGitFacade } from "./git-facade.js";
@@ -220,6 +220,16 @@ export async function main() {
     const warning = lockWarning(acquireProcessLock({ dir: lockDir }));
     if (warning) safeLog('error', warning);
     process.once('exit', () => releaseProcessLock({ dir: lockDir }));
+
+    // Detak jantung penanda proses.
+    //
+    // Tanpa ini, penanda hanya menyebut KAPAN proses start. Proses MCP yang
+    // tertinggal hidup setelah jendela OpenCode-nya ditutup akan terlihat sama
+    // hidupnya dengan sesi yang benar-benar bekerja, sehingga aturan "satu
+    // penulis per repo" tidak bisa ditegakkan tanpa memblokir sesi yang sah.
+    // Dengan detak, "hidup" berarti "hidup DAN baru saja bekerja".
+    const heartbeat = setInterval(() => refreshProcessLock(), HEARTBEAT_MS);
+    heartbeat.unref?.();
   } catch (lockError) {
     safeLog('error', 'Warning: could not record process lock:', lockError.message);
   }
