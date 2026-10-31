@@ -327,6 +327,52 @@ test("commit_and_push boleh men-stage semuanya bila includeForeign: true", async
   });
 });
 
+test("commit_and_push tidak menyebut berkas yang baru saja di-commit lewat paths", async () => {
+  // Baseline mencatat keadaan SEBELUM task. Berkas yang kita edit sendiri
+  // sebelum start_task karena itu ikut tercatat sebagai "sudah kotor", dan
+  // versi pertama catatan ini menyebutnya "not committed" padahal baru saja
+  // di-commit - laporan yang berlawanan dengan kenyataan.
+  await withWorkflowState(async (workflowState) => {
+    await prepareCommitPhase(workflowState);
+    workflowState.state.dirtyAtStart = [
+      { code: "M", path: "knowledge/billing.yaml" },
+      { code: "M", path: "tests/handlers-commit.test.js" },
+    ];
+    await workflowState.save();
+
+    const calls = [];
+    const execStub = async (command, options = {}) => {
+      calls.push({ command, options });
+      return { stdout: "" };
+    };
+
+    const response = await handleToolCall({
+      request: createRequest("commit_and_push", {
+        commitMessage: "feat: test",
+        paths: ["tests/handlers-commit.test.js"],
+      }),
+      normalizeRequestArgs: (args) => ({ args, error: null }),
+      workflowState,
+      exec: execStub,
+      git: createGitMock({
+        hasWorkingChanges: async () => true,
+        getStagedChanges: async () => [{ status: "M", path: "tests/handlers-commit.test.js" }],
+        getStatusOutput: async () => FOREIGN_STATUS,
+        foreignDirtyEntries,
+      }),
+      utils: testUtils,
+    });
+
+    const text = response.content[0].text;
+    const note = text.includes("Left unstaged") ? text.split("Left unstaged")[1] : "";
+    assert.match(text, /billing\.yaml/, "berkas yang benar-benar tertinggal harus tetap disebut");
+    assert.ok(
+      !note.includes("tests/handlers-commit.test.js"),
+      `berkas yang ikut di-commit tidak boleh disebut tertinggal, catatan: ${note.slice(0, 120)}`,
+    );
+  });
+});
+
 test("commit_and_push tidak berubah bila baseline kosong", async () => {
   // Task tanpa baseline (state lama, atau start_task tanpa git) harus tetap
   // berperilaku seperti sebelumnya - kalau tidak, setiap task jadi terblokir.
