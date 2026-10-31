@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.15.0](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.14.2...v1.15.0) (2026-10-31)
+
+
+### ✨ Features
+
+* **lock:** start_task menolak saat sesi lain aktif di proyek yang sama ([e5b0698](https://github.com/programinglive/dev-workflow-mcp-server/commit/e5b069893f3316120225b78da088663ccc725f8d))
+
+
+### 📝 Documentation
+
+* **lock:** jelaskan penolakan start_task dan cara memakai worktree ([93b8771](https://github.com/programinglive/dev-workflow-mcp-server/commit/93b87710b4f40aec3e0b58be239c609c723fb2e2))
+
 ### [1.14.2](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.14.1...v1.14.2) (2026-10-31)
 
 
