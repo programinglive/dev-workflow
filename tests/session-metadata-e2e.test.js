@@ -86,6 +86,9 @@ test("MCP SDK meneruskan _meta sessionID sampai ke state di disk", async () => {
     DEV_WORKFLOW_USER_ID: "user-e2e",
     DEV_WORKFLOW_DB_PATH: path.join(tmpdir(), `mcp-meta-e2e-${process.pid}.db`),
     DOTENV_CONFIG_PATH: path.join(projectRoot, "empty.env"),
+    // Tes ini justru memeriksa DI MANA state dibuat, jadi path paksaan dari
+    // preload tes harus dikosongkan agar aturan pemilihan path berlaku.
+    DEV_WORKFLOW_STATE_FILE: "",
   }, projectRoot);
 
   try {

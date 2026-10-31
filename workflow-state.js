@@ -400,6 +400,19 @@ async function pathExists(filePath) {
 }
 
 async function ensureCompatibilityLinks(primaryPath) {
+  // Cermin kompatibilitas ditulis ke `<paket>/.state/workflow-state.json`,
+  // BUKAN ke lokasi state yang sebenarnya. Itu benar untuk pemakaian nyata
+  // (CLI dan dasbor web membaca jalur lama), tetapi merusak saat tes: setiap
+  // WorkflowState yang dibuat tes - meski di direktori sementara - menimpa
+  // state repo, dan 31 Oktober 2026 itu menghapus task yang sedang berjalan di
+  // tengah `npm test`.
+  //
+  // Tes mematikan cermin ini lewat DEV_WORKFLOW_NO_COMPAT_LINKS=1 (lihat
+  // tests/setup-env.js). Perilaku produksi tidak berubah.
+  if (process.env.DEV_WORKFLOW_NO_COMPAT_LINKS === "1") {
+    return;
+  }
+
   const resolvedPrimary = path.resolve(primaryPath);
 
   if (!(await pathExists(resolvedPrimary))) {

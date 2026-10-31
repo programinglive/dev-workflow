@@ -1,6 +1,42 @@
 import { textResponse, isReleaseSatisfied, resetToCommitIfWorkingChanges, summarizeHistory } from "./shared.js";
 import { resolveProjectDir, setActiveProjectDir, getActiveProjectDir } from "../../exec.js";
 
+/**
+ * Label repo yang dipakai, untuk ditampilkan di laporan.
+ *
+ * Sama seperti di commit-handlers: laporan harus menyebut repo yang benar-benar
+ * dipakai, bukan tebakan.
+ */
+function repoLabel() {
+  try {
+    const resolved = resolveProjectDir({
+      explicit: getActiveProjectDir(),
+      env: process.env,
+      candidates: [process.cwd(), process.env.INIT_CWD],
+    });
+    const origin = resolved.source === "env" ? " — dari WORKFLOW_PROJECT_DIR (global)" : "";
+    return resolved.dir + origin;
+  } catch {
+    return "(tidak bisa ditentukan)";
+  }
+}
+
+/**
+ * Menjalankan perintah git yang hasilnya hanya dipakai untuk laporan.
+ *
+ * Kegagalan di sini tidak boleh menggagalkan rilis: kalau `git describe`
+ * tidak menemukan tag, itu bukan alasan untuk berhenti. Yang penting adalah
+ * rilis tetap berjalan dan laporannya jujur tentang apa yang tidak diketahui.
+ */
+async function safeExecStdout(exec, command) {
+  try {
+    const { stdout } = await exec(command);
+    return String(stdout || "").trim();
+  } catch {
+    return "";
+  }
+}
+
 export async function handleSkipRelease(args, workflowState) {
   if (workflowState.state.currentPhase === "idle") {
     return textResponse("⚠️ Please start a task first using 'start_task' before skipping release.");
@@ -185,10 +221,44 @@ export async function handlePerformRelease(args, context) {
     );
   }
 
+  // Tipe rilis WAJIB sah sebelum perintah disusun.
+  //
+  // 31 Oktober 2026: `determineReleaseTypeFromCommit` mengembalikan string kosong,
+  // lalu perintahnya menjadi `npm run release -- --release-as ` + "null" ->
+  // standard-version menulis `"version": null` dan membuat tag `vnull`, lalu
+  // keduanya di-push. Yang salah bukan hanya hasilnya: perintah yang mustahil
+  // itu tetap dijalankan tanpa perlawanan.
+  if (!recognizedTypes.has(releaseType)) {
+    return textResponse(
+      `⚠️ Tipe rilis tidak bisa ditentukan dari commit terakhir, jadi rilis TIDAK dijalankan.\n\n` +
+      `Commit terakhir: ${lastCommitMessage || "(kosong)"}\n\n` +
+      `Sebutkan tipe rilisnya secara eksplisit:\n` +
+      `  • 'perform_release' dengan releaseType: "patch" | "minor" | "major"\n` +
+      `  • atau command: "npm run release:patch"\n\n` +
+      `Tanpa itu perintahnya akan menjadi "--release-as null", yang menghasilkan tag vnull ` +
+      `dan package.json berversi null.`
+    );
+  }
+
   const finalCommand =
     releaseCommand.includes("--release-as") || /release:(major|minor|patch)/i.test(releaseCommand)
       ? releaseCommand
       : `${releaseCommand} -- --release-as ${releaseType}`;
+
+  // Jaring pengaman terakhir: apa pun yang terjadi di atas, jangan pernah
+  // menjalankan perintah yang membawa tipe rilis kosong.
+  if (/--release-as\s+(?:null|undefined|)\s*$/i.test(finalCommand) || /\snull\b/i.test(finalCommand)) {
+    return textResponse(
+      `⚠️ Perintah rilis akan berisi tipe rilis yang tidak sah, jadi TIDAK dijalankan:\n\n` +
+      `  ${finalCommand}\n\n` +
+      `Sebutkan tipe rilisnya: releaseType "patch" | "minor" | "major".`
+    );
+  }
+
+  // Catat keadaan SEBELUM rilis supaya, kalau push gagal, kita bisa menyebut
+  // persis apa yang tertinggal di mesin.
+  const headBefore = await safeExecStdout(exec, "git rev-parse HEAD");
+  const tagBefore = await safeExecStdout(exec, "git describe --tags --abbrev=0");
 
   try {
     await exec(finalCommand);
@@ -198,6 +268,9 @@ export async function handlePerformRelease(args, context) {
     );
   }
 
+  const headAfter = await safeExecStdout(exec, "git rev-parse HEAD");
+  const tagAfter = await safeExecStdout(exec, "git describe --tags --abbrev=0");
+
   const branchForPush = workflowState.state.lastPushBranch || (await git.getCurrentBranch()) || "";
   const pushCommand = branchForPush
     ? `git push --follow-tags origin ${utils.shellEscape(branchForPush)}`
@@ -206,8 +279,29 @@ export async function handlePerformRelease(args, context) {
   try {
     await exec(pushCommand);
   } catch (error) {
+    // Rilis SUDAH membuat commit dan tag di mesin; hanya push yang gagal.
+    // Tanpa menyebut yang tertinggal, tidak jelas apa yang harus dibereskan -
+    // dan pada 31 Oktober 2026 hal itu membuat rilis tampak selesai.
+    const leftBehind = [];
+    if (headAfter && headAfter !== headBefore) {
+      leftBehind.push(`  • commit rilis ${headAfter.slice(0, 8)}`);
+    }
+    if (tagAfter && tagAfter !== tagBefore) {
+      leftBehind.push(`  • tag ${tagAfter}`);
+    }
+
     return textResponse(
-      `❌ git push (with tags) failed:\n\n${error.stderr || error.stdout || error.message}`
+      `❌ Push rilis GAGAL. Rilis TIDAK tercatat sebagai selesai.\n\n` +
+      `Repo: ${repoLabel()}\nBranch: ${branchForPush || "(tidak diketahui)"}\n` +
+      `Penyebab: ${error.stderr || error.stdout || error.message}\n\n` +
+      (leftBehind.length > 0
+        ? `Tertinggal di mesin (belum sampai ke remote):\n${leftBehind.join("\n")}\n\n`
+        : "") +
+      `Pemulihan:\n` +
+      `  1. periksa: git log --oneline -3 && git tag --points-at HEAD\n` +
+      `  2. kirim ulang: git push --follow-tags origin ${branchForPush || "<branch>"}\n` +
+      `  3. atau batalkan rilis lokal: git reset --hard HEAD~1 && git tag -d ${tagAfter || "<tag>"}\n\n` +
+      `Jangan tandai task selesai sebelum tag benar-benar ada di remote.`
     );
   }
 

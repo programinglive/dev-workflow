@@ -173,6 +173,18 @@ export async function getStatusOutput() {
   return stdout;
 }
 
+/**
+ * Direktori teratas repo tempat git BENAR-BENAR berjalan.
+ *
+ * `git rev-parse --show-toplevel` menjawab dari repo yang aktif, bukan dari
+ * tebakan kita tentang direktori mana yang dimaksud. Dipakai untuk memastikan
+ * laporan `commit_and_push` menyebut repo yang sama dengan yang di-commit.
+ */
+export async function getToplevel() {
+  const { stdout } = await exec("git rev-parse --show-toplevel");
+  return stdout.trim();
+}
+
 export async function getPrimaryBranch() {
   try {
     // Check if 'main' exists on origin
