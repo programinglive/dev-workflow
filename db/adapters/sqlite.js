@@ -1,6 +1,6 @@
 import { safeLog } from '../../security/sanitizer.js';
 import Database from "better-sqlite3";
-import { existsSync } from "fs";
+import { existsSync, mkdirSync } from "fs";
 import path from "path";
 import { DbAdapter, normalizeTaskType } from "./base.js";
 import { assertSafeKnowledge, classify } from '../../security/policy.js';
@@ -43,6 +43,11 @@ export class SqliteAdapter extends DbAdapter {
     async connect() {
         if (!this.db) {
             const dbPath = this.getDbPath();
+            // Direktori induk belum tentu ada: pada clone bersih, `.state/`
+            // belum pernah dibuat. Tanpa ini SQLite melempar
+            // "Cannot open database because the directory does not exist" -
+            // hijau di mesin penulis, merah di tempat lain.
+            mkdirSync(path.dirname(dbPath), { recursive: true });
             this.db = new Database(dbPath);
             this.db.pragma("journal_mode = WAL");
             await this.migrate();
