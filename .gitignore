@@ -66,3 +66,6 @@ Thumbs.db
 
 # Dibuat oleh web/scripts/generate-version.mjs saat build
 web/lib/version.generated.ts
+
+# Next.js static export output (built by CI, published from web/out)
+web/out/

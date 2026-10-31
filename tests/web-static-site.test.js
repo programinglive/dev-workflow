@@ -105,6 +105,27 @@ test("netlify mempublikasikan direktori export dan tidak memuat plugin server-re
     assert.match(config, /base\s*=\s*"web"/);
 });
 
+test("rute yang sudah tidak ada menjawab 404, bukan halaman depan dengan 200", async () => {
+    // Netlify membaca konfigurasi dari base (`web/`), jadi berkas inilah yang
+    // menentukan apa yang terjadi pada /login/ dan /history/ setelah halaman
+    // itu dihapus. Catch-all lama mengarah ke /index.html dengan status 200:
+    // rute mati tampak hidup bagi crawler dan uptime check.
+    const raw = await readFile(path.join(webRoot, "netlify.toml"), "utf8");
+    const config = raw
+        .split(/\r?\n/)
+        .filter((line) => !line.trim().startsWith("#"))
+        .join("\n");
+
+    assert.match(config, /publish\s*=\s*"out"/, "konfigurasi base juga menentukan direktori publish");
+    assert.doesNotMatch(
+        config,
+        /to\s*=\s*"\/index\.html"\s*\n\s*status\s*=\s*200/,
+        "catch-all ke /index.html membuat rute yang dihapus membalas 200",
+    );
+    assert.match(config, /to\s*=\s*"\/404\.html"/, "fallback harus ke halaman 404 yang memang diekspor");
+    assert.match(config, /status\s*=\s*404/);
+});
+
 async function collectSourceFiles(dir) {
     const entries = await readdir(dir, { withFileTypes: true });
     const files = [];
