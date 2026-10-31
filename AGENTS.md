@@ -38,6 +38,10 @@ Before taking any action or answering user requests regarding code changes, chec
 
 ### Quick Shortcuts
 - If you have all information ready, you can use `run_full_workflow` to execute all steps safely in sequence.
+  It requires `dodEvidence` for every definition-of-done item that is still open — for example
+  `"dodEvidence": { "dod-1": "npm test -> 533 pass" }`. Without it the call stops **before the first step** and
+  lists the items it needs, because it cannot invent proof. The evidence is recorded just before the ready check,
+  so it describes code that has already been written.
 - Use `get_workflow_status` at any time to check what step is next.
 
 **Do not bypass these steps. The MCP server will block commits and releases if any required step is skipped.**
