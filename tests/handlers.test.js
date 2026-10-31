@@ -62,6 +62,8 @@ test("run_tests guidance mentions core documentation types", async () => {
         getStagedChanges: async () => [],
         getCurrentBranch: async () => "main",
         getPrimaryBranch: async () => "main",
+        getHeadSha: async () => "a".repeat(40),
+        getRemoteBranchSha: async () => "a".repeat(40),
         getLastCommitMessage: async () => "",
         workingTreeSummary: () => ({ hasChanges: false, lines: [] }),
       },
@@ -101,6 +103,8 @@ test("create_documentation verifies PRD file exists", async () => {
         getStagedChanges: async () => [],
         getCurrentBranch: async () => "main",
         getPrimaryBranch: async () => "main",
+        getHeadSha: async () => "a".repeat(40),
+        getRemoteBranchSha: async () => "a".repeat(40),
         getLastCommitMessage: async () => "",
         workingTreeSummary: () => ({ hasChanges: false, lines: [] }),
       },
@@ -149,6 +153,8 @@ test("commit_and_push commits changes and pushes", async () => {
       getStagedChanges: async () => [{ status: "M", path: "src/index.js" }],
       getCurrentBranch: async () => "main",
       getPrimaryBranch: async () => "main",
+      getHeadSha: async () => "a".repeat(40),
+      getRemoteBranchSha: async () => "a".repeat(40),
       getLastCommitMessage: async () => "",
       getStatusOutput: async () => "M tests/handlers.test.js\nM src/index.js",
       containsTestFilesInStatus: (statusOutput) => statusOutput.includes("tests/"),
@@ -220,6 +226,8 @@ test("run_full_workflow iterates until commit/release complete with clean tree",
       getStagedChanges: async () => [],
       getCurrentBranch: async () => "main",
       getPrimaryBranch: async () => "main",
+      getHeadSha: async () => "a".repeat(40),
+      getRemoteBranchSha: async () => "a".repeat(40),
       getLastCommitMessage: async () => "chore: existing",
       getStatusOutput: async () => "",
       containsTestFilesInStatus: (statusOutput) => statusOutput.includes("tests/"),
@@ -258,7 +266,7 @@ test("run_full_workflow iterates until commit/release complete with clean tree",
   });
 });
 
-test("commit_and_push uses primary branch when no branch specified", async () => {
+test("commit_and_push pushes the active branch, not the primary branch", async () => {
   await withWorkflowState(async (workflowState) => {
     workflowState.state.readyToCommit = true;
     workflowState.state.readyCheckCompleted = true;
@@ -282,6 +290,8 @@ test("commit_and_push uses primary branch when no branch specified", async () =>
       getStagedChanges: async () => [{ status: "M", path: "src/index.js" }],
       getCurrentBranch: async () => "feature/test",
       getPrimaryBranch: async () => "main",
+      getHeadSha: async () => "a".repeat(40),
+      getRemoteBranchSha: async () => "a".repeat(40),
       getLastCommitMessage: async () => "",
       getStatusOutput: async () => "M tests/handlers.test.js\nM src/index.js",
       containsTestFilesInStatus: (statusOutput) => statusOutput.includes("tests/"),
@@ -299,9 +309,12 @@ test("commit_and_push uses primary branch when no branch specified", async () =>
 
     const pushCommand = commands.find((command) => command.startsWith("git push"));
     assert.ok(pushCommand, "git push should be executed");
+    // 31 Okt 2026: sebelumnya test ini mengharapkan "main" padahal branch aktif
+    // "feature/test". Itu mengunci bug sukses-palsu: push ke main keluar 0 tanpa
+    // mengirim commit di feature/test, lalu tool melaporkan selesai.
     assert.ok(
-      pushCommand.includes("main"),
-      "push command should use detected primary branch (main)"
+      pushCommand.includes("feature/test"),
+      "push command should target the active branch (feature/test)"
     );
     assert.ok(
       response.content[0].text.includes("Commit and push completed!"),
@@ -310,7 +323,7 @@ test("commit_and_push uses primary branch when no branch specified", async () =>
   });
 });
 
-test("commit_and_push falls back to master when main not found", async () => {
+test("commit_and_push falls back to the primary branch when HEAD is detached", async () => {
   await withWorkflowState(async (workflowState) => {
     workflowState.state.readyToCommit = true;
     workflowState.state.readyCheckCompleted = true;
@@ -332,8 +345,10 @@ test("commit_and_push falls back to master when main not found", async () => {
       hasStagedChanges: async () => false,
       hasTestChanges: async () => true,
       getStagedChanges: async () => [{ status: "M", path: "src/index.js" }],
-      getCurrentBranch: async () => "feature/test",
+      getCurrentBranch: async () => "HEAD",
       getPrimaryBranch: async () => "master",
+      getHeadSha: async () => "a".repeat(40),
+      getRemoteBranchSha: async () => "a".repeat(40),
       getLastCommitMessage: async () => "",
       getStatusOutput: async () => "M tests/handlers.test.js\nM src/index.js",
       containsTestFilesInStatus: (statusOutput) => statusOutput.includes("tests/"),
@@ -353,7 +368,7 @@ test("commit_and_push falls back to master when main not found", async () => {
     assert.ok(pushCommand, "git push should be executed");
     assert.ok(
       pushCommand.includes("master"),
-      "push command should use detected primary branch (master)"
+      "push command should fall back to the primary branch when HEAD is detached"
     );
   });
 });
@@ -393,6 +408,8 @@ test("run_full_workflow uses provided branch for release push when commit is cle
       getStagedChanges: async () => [],
       getCurrentBranch: async () => "feature/local",
       getPrimaryBranch: async () => "main",
+      getHeadSha: async () => "a".repeat(40),
+      getRemoteBranchSha: async () => "a".repeat(40),
       getLastCommitMessage: async () => "chore: existing",
       getStatusOutput: async () => "",
       containsTestFilesInStatus: (statusOutput) => statusOutput.includes("tests/"),
@@ -453,6 +470,8 @@ test("project_summary_data reads persisted file and falls back", async () => {
         getStagedChanges: async () => [],
         getCurrentBranch: async () => "main",
         getPrimaryBranch: async () => "main",
+        getHeadSha: async () => "a".repeat(40),
+        getRemoteBranchSha: async () => "a".repeat(40),
         getLastCommitMessage: async () => "",
         getStatusOutput: async () => "",
         containsTestFilesInStatus: (statusOutput) => statusOutput.includes("tests/"),
@@ -489,6 +508,8 @@ test("project_summary aggregates task types and recent activity", async () => {
         getStagedChanges: async () => [],
         getCurrentBranch: async () => "main",
         getPrimaryBranch: async () => "main",
+        getHeadSha: async () => "a".repeat(40),
+        getRemoteBranchSha: async () => "a".repeat(40),
         getLastCommitMessage: async () => "",
         getStatusOutput: async () => "",
         containsTestFilesInStatus: (statusOutput) => statusOutput.includes("tests/"),
@@ -535,6 +556,8 @@ test("run_full_workflow executes all steps successfully", async () => {
       getStagedChanges: async () => [{ status: "M", path: "src/app.js" }],
       getCurrentBranch: async () => "main",
       getPrimaryBranch: async () => "main",
+      getHeadSha: async () => "a".repeat(40),
+      getRemoteBranchSha: async () => "a".repeat(40),
       getLastCommitMessage: async () => "",
       getStatusOutput: async () => workingChanges ? "M tests/handlers.test.js\nM src/app.js" : "",
       containsTestFilesInStatus: (statusOutput) => statusOutput.includes("tests/"),
@@ -617,6 +640,8 @@ test("run_full_workflow resumes from current phase when steps are already comple
       getStagedChanges: async () => [],
       getCurrentBranch: async () => "main",
       getPrimaryBranch: async () => "main",
+      getHeadSha: async () => "a".repeat(40),
+      getRemoteBranchSha: async () => "a".repeat(40),
       getLastCommitMessage: async () => "",
       getStatusOutput: async () => "",
       containsTestFilesInStatus: (statusOutput) => statusOutput.includes("tests/"),
@@ -688,6 +713,8 @@ test("run_full_workflow validates required arguments", async () => {
         getStagedChanges: async () => [],
         getCurrentBranch: async () => "main",
         getPrimaryBranch: async () => "main",
+        getHeadSha: async () => "a".repeat(40),
+        getRemoteBranchSha: async () => "a".repeat(40),
         getLastCommitMessage: async () => "",
         getStatusOutput: async () => "",
         containsTestFilesInStatus: (statusOutput) => statusOutput.includes("tests/"),
@@ -726,6 +753,8 @@ test("force_complete_task records entry and resets state", async () => {
         getStagedChanges: async () => [],
         getCurrentBranch: async () => "main",
         getPrimaryBranch: async () => "main",
+        getHeadSha: async () => "a".repeat(40),
+        getRemoteBranchSha: async () => "a".repeat(40),
         getLastCommitMessage: async () => "",
         getStatusOutput: async () => "",
         containsTestFilesInStatus: (statusOutput) => statusOutput.includes("tests/"),
@@ -768,6 +797,8 @@ test("perform_release blocks when new changes detected", async () => {
       getStagedChanges: async () => [],
       getCurrentBranch: async () => "main",
       getPrimaryBranch: async () => "main",
+      getHeadSha: async () => "a".repeat(40),
+      getRemoteBranchSha: async () => "a".repeat(40),
       getLastCommitMessage: async () => "",
       getStatusOutput: async () => "?? new-file.js",
       containsTestFilesInStatus: (statusOutput) => statusOutput.includes("tests/"),
@@ -801,6 +832,8 @@ test("continue_workflow warns when workflow is idle", async () => {
       getStagedChanges: async () => [],
       getCurrentBranch: async () => "main",
       getPrimaryBranch: async () => "main",
+      getHeadSha: async () => "a".repeat(40),
+      getRemoteBranchSha: async () => "a".repeat(40),
       getLastCommitMessage: async () => "",
       getStatusOutput: async () => "",
       containsTestFilesInStatus: (statusOutput) => statusOutput.includes("tests/"),
@@ -838,6 +871,8 @@ test("continue_workflow resets to commit when new changes detected", async () =>
       getStagedChanges: async () => [],
       getCurrentBranch: async () => "main",
       getPrimaryBranch: async () => "main",
+      getHeadSha: async () => "a".repeat(40),
+      getRemoteBranchSha: async () => "a".repeat(40),
       getLastCommitMessage: async () => "",
       getStatusOutput: async () => "?? new-file.js",
       containsTestFilesInStatus: (statusOutput) => statusOutput.includes("tests/"),
@@ -886,6 +921,8 @@ test("commit_and_push recognizes already committed work", async () => {
       getStagedChanges: async () => [],
       getCurrentBranch: async () => "main",
       getPrimaryBranch: async () => "main",
+      getHeadSha: async () => "a".repeat(40),
+      getRemoteBranchSha: async () => "a".repeat(40),
       getLastCommitMessage: async () => "fix: previous work",
       getStatusOutput: async () => "",
       containsTestFilesInStatus: (statusOutput) => statusOutput.includes("tests/"),
@@ -1052,6 +1089,8 @@ test("skip_release records justification and advances to completion phase", asyn
         getStagedChanges: async () => [],
         getCurrentBranch: async () => "main",
         getPrimaryBranch: async () => "main",
+        getHeadSha: async () => "a".repeat(40),
+        getRemoteBranchSha: async () => "a".repeat(40),
         getLastCommitMessage: async () => "chore: docs",
         getStatusOutput: async () => "",
         containsTestFilesInStatus: (statusOutput) => statusOutput.includes("tests/"),
