@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { handleToolCall } from "../tools/handlers.js";
 import { withWorkflowState, testUtils, createRequest, createGitMock } from "./test-helpers.js";
+import { foreignDirtyEntries } from "../git-helpers.js";
 
 test("commit_and_push commits changes and pushes", async () => {
   await withWorkflowState(async (workflowState) => {
@@ -175,5 +176,184 @@ test("commit_and_push recognizes already committed work", async () => {
     );
     assert.equal(workflowState.state.commitAndPushCompleted, true);
     assert.equal(workflowState.state.currentPhase, "release");
+  });
+});
+
+/**
+ * Skenario yang benar-benar terjadi 31 Okt 2026: sesi lain sedang bekerja di
+ * repo yang sama, lalu `git add .` menyeret pekerjaannya ke commit sesi ini.
+ * Tidak ada yang bisa membedakannya setelah commit jadi.
+ */
+async function prepareCommitPhase(workflowState) {
+  workflowState.state.readyToCommit = true;
+  workflowState.state.readyCheckCompleted = true;
+  workflowState.state.testsSkipped = false;
+  workflowState.state.testsCreated = true;
+  workflowState.state.testsPassed = true;
+  workflowState.state.currentPhase = "commit";
+  await workflowState.save();
+}
+
+const FOREIGN_STATUS = [
+  " M knowledge/billing.yaml",
+  " M tests/handlers-commit.test.js",
+  " M src/index.js",
+].join("\n");
+
+test("commit_and_push menolak men-stage berkas yang sudah kotor sebelum task", async () => {
+  await withWorkflowState(async (workflowState) => {
+    await prepareCommitPhase(workflowState);
+    workflowState.state.dirtyAtStart = [{ code: "M", path: "knowledge/billing.yaml" }];
+    await workflowState.save();
+
+    const commands = [];
+    const execStub = async (command) => {
+      commands.push(command);
+      return { stdout: "" };
+    };
+
+    const response = await handleToolCall({
+      request: createRequest("commit_and_push", { commitMessage: "feat: test" }),
+      normalizeRequestArgs: (args) => ({ args, error: null }),
+      workflowState,
+      exec: execStub,
+      git: createGitMock({
+        hasWorkingChanges: async () => true,
+        getStagedChanges: async () => [{ status: "M", path: "src/index.js" }],
+        getStatusOutput: async () => FOREIGN_STATUS,
+        foreignDirtyEntries,
+      }),
+      utils: testUtils,
+    });
+
+    const text = response.content[0].text;
+    assert.match(text, /Refusing to stage/, "harus menolak, bukan lanjut commit");
+    assert.match(text, /knowledge\/billing\.yaml/, "berkas asing harus disebut namanya");
+    assert.equal(
+      commands.some((command) => command.startsWith("git add") || command === "git add"),
+      false,
+      "tidak boleh ada git add"
+    );
+    assert.equal(
+      commands.some((command) => command.startsWith("git commit")),
+      false,
+      "tidak boleh ada commit"
+    );
+    assert.notEqual(workflowState.state.commitAndPushCompleted, true);
+  });
+});
+
+test("commit_and_push dengan 'paths' hanya men-stage berkas yang disebut", async () => {
+  await withWorkflowState(async (workflowState) => {
+    await prepareCommitPhase(workflowState);
+    workflowState.state.dirtyAtStart = [{ code: "M", path: "knowledge/billing.yaml" }];
+    await workflowState.save();
+
+    const calls = [];
+    const execStub = async (command, options = {}) => {
+      calls.push({ command, options });
+      return { stdout: "" };
+    };
+
+    const response = await handleToolCall({
+      request: createRequest("commit_and_push", {
+        commitMessage: "feat: test",
+        paths: ["src/index.js", "tests/handlers-commit.test.js"],
+      }),
+      normalizeRequestArgs: (args) => ({ args, error: null }),
+      workflowState,
+      exec: execStub,
+      git: createGitMock({
+        hasWorkingChanges: async () => true,
+        getStagedChanges: async () => [{ status: "M", path: "src/index.js" }],
+        getStatusOutput: async () => FOREIGN_STATUS,
+        foreignDirtyEntries,
+      }),
+      utils: testUtils,
+    });
+
+    const addCall = calls.find((call) => call.options?.arguments?.[0] === "add");
+    assert.ok(addCall, "git add harus dijalankan");
+    assert.deepEqual(addCall.options.arguments, [
+      "add",
+      "--",
+      "src/index.js",
+      "tests/handlers-commit.test.js",
+    ]);
+    assert.equal(
+      calls.some((call) => call.command === "git add ."),
+      false,
+      "tidak boleh memakai 'git add .' saat paths diberikan"
+    );
+    const text = response.content[0].text;
+    assert.match(text, /Commit and push completed/);
+    assert.match(text, /knowledge\/billing\.yaml/, "berkas yang ditinggalkan harus disebut");
+  });
+});
+
+test("commit_and_push boleh men-stage semuanya bila includeForeign: true", async () => {
+  await withWorkflowState(async (workflowState) => {
+    await prepareCommitPhase(workflowState);
+    workflowState.state.dirtyAtStart = [{ code: "M", path: "knowledge/billing.yaml" }];
+    await workflowState.save();
+
+    const calls = [];
+    const execStub = async (command, options = {}) => {
+      calls.push({ command, options });
+      return { stdout: "" };
+    };
+
+    await handleToolCall({
+      request: createRequest("commit_and_push", {
+        commitMessage: "feat: test",
+        includeForeign: true,
+      }),
+      normalizeRequestArgs: (args) => ({ args, error: null }),
+      workflowState,
+      exec: execStub,
+      git: createGitMock({
+        hasWorkingChanges: async () => true,
+        getStagedChanges: async () => [{ status: "M", path: "src/index.js" }],
+        getStatusOutput: async () => FOREIGN_STATUS,
+        foreignDirtyEntries,
+      }),
+      utils: testUtils,
+    });
+
+    assert.ok(
+      calls.some((call) => call.command === "git add ."),
+      "includeForeign harus memakai perilaku lama"
+    );
+  });
+});
+
+test("commit_and_push tidak berubah bila baseline kosong", async () => {
+  // Task tanpa baseline (state lama, atau start_task tanpa git) harus tetap
+  // berperilaku seperti sebelumnya - kalau tidak, setiap task jadi terblokir.
+  await withWorkflowState(async (workflowState) => {
+    await prepareCommitPhase(workflowState);
+    await workflowState.save();
+
+    const calls = [];
+    const execStub = async (command, options = {}) => {
+      calls.push({ command, options });
+      return { stdout: "" };
+    };
+
+    await handleToolCall({
+      request: createRequest("commit_and_push", { commitMessage: "feat: test" }),
+      normalizeRequestArgs: (args) => ({ args, error: null }),
+      workflowState,
+      exec: execStub,
+      git: createGitMock({
+        hasWorkingChanges: async () => true,
+        getStagedChanges: async () => [{ status: "M", path: "src/index.js" }],
+        getStatusOutput: async () => FOREIGN_STATUS,
+        foreignDirtyEntries,
+      }),
+      utils: testUtils,
+    });
+
+    assert.ok(calls.some((call) => call.command === "git add ."));
   });
 });

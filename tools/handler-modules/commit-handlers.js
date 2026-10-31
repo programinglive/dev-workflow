@@ -250,8 +250,44 @@ export async function handleCommitAndPush(args, context) {
     return textResponse("⚠️ Please include test updates in your changes before running 'commit_and_push'. Ensure at least one test file is modified.");
   }
 
+  /*
+   * `git add .` men-staging SELURUH working tree, termasuk pekerjaan sesi lain
+   * yang kebetulan ada di repo yang sama - lalu commit ini mengakuinya sebagai
+   * miliknya. Itu bukan teori: pada 31 Okt 2026 dua baris `billing.yaml` milik
+   * sesi lain ikut masuk commit sesi ini, dan sebuah `devices.yaml` yang
+   * ditulis ulang di tengah task nyaris tertimpa.
+   *
+   * Baseline dicatat `start_task`. Yang bisa dipastikan bukan milik kita adalah
+   * berkas yang SUDAH kotor sejak baseline. Berkas baru selama task tidak
+   * dituduh - tidak ada cara membedakannya, dan tuduhan palsu akan membuat
+   * pemeriksaan ini diabaikan.
+   */
+  const foreignDirty = typeof git.foreignDirtyEntries === "function"
+    ? git.foreignDirtyEntries(workflowState.state.dirtyAtStart, statusOutput)
+    : [];
+  const explicitPaths = Array.isArray(args.paths)
+    ? args.paths.map((entry) => String(entry).trim()).filter(Boolean)
+    : [];
+
+  if (foreignDirty.length > 0 && explicitPaths.length === 0 && args.includeForeign !== true) {
+    const list = foreignDirty.map((entry) => `   ${entry.code.padEnd(3)} ${entry.path}`).join("\n");
+    return textResponse(
+      `❌ Refusing to stage the whole tree: ${foreignDirty.length} file(s) were already dirty ` +
+        `before this task started, so they are almost certainly another session's work.\n\n` +
+        `${list}\n\n` +
+        `Choose one:\n` +
+        `   • pass 'paths' with only the files this task changed (recommended),\n` +
+        `   • or pass 'includeForeign: true' if you have verified that work belongs in this commit.\n\n` +
+        `Nothing was staged and nothing was committed.`
+    );
+  }
+
   try {
-    await exec("git add .");
+    if (explicitPaths.length > 0) {
+      await exec("git add", { executable: "git", arguments: ["add", "--", ...explicitPaths] });
+    } else {
+      await exec("git add .");
+    }
   } catch (error) {
     return textResponse(
       `❌ Failed to stage files:\n\n${error.stderr || error.stdout || error.message}`
@@ -314,8 +350,15 @@ export async function handleCommitAndPush(args, context) {
   workflowState.state.currentPhase = isReleaseSatisfied(workflowState.state) ? "ready_to_complete" : "release";
   await workflowState.save();
 
+  // Berkas yang ditinggalkan sengaja tetap disebut: kalau tidak, orang
+  // mengira seluruh pekerjaan sudah ter-commit padahal ada yang tertinggal.
+  const foreignNote = foreignDirty.length > 0
+    ? `\n\nℹ️ Left unstaged (already dirty before this task, not committed):\n` +
+      foreignDirty.map((entry) => `   ${entry.code.padEnd(3)} ${entry.path}`).join("\n")
+    : "";
+
   return textResponse(
-    `✅ Commit and push completed!\nRepo: ${repoName}\n\nCommit message: ${generatedSummary}\nPushed to: ${branchForPush} (verified at ${pushed.head.slice(0, 8)})\n\nNext: Run 'perform_release' to handle the release and push tags.`
+    `✅ Commit and push completed!\nRepo: ${repoName}\n\nCommit message: ${generatedSummary}\nPushed to: ${branchForPush} (verified at ${pushed.head.slice(0, 8)})${foreignNote}\n\nNext: Run 'perform_release' to handle the release and push tags.`
   );
 }
 

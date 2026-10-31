@@ -68,7 +68,26 @@ function pinProjectDir(args, workflowState) {
   return { message };
 }
 
-export async function handleStartTask(args, workflowState) {
+/**
+ * Daftar berkas yang sudah kotor sebelum task dimulai.
+ *
+ * Kegagalan git di sini tidak boleh menggagalkan `start_task`: baseline hanya
+ * dipakai untuk memperingatkan saat commit, dan task tanpa baseline tetap sah
+ * (perilaku lama).
+ */
+async function captureDirtyAtStart(git) {
+  if (!git || typeof git.getStatusOutput !== "function" ||
+      typeof git.parseStatusEntries !== "function") {
+    return [];
+  }
+  try {
+    return git.parseStatusEntries(await git.getStatusOutput());
+  } catch {
+    return [];
+  }
+}
+
+export async function handleStartTask(args, workflowState, git) {
   // Validasi DoD SEBELUM menyentuh state apa pun. Task yang ditolak tidak boleh
   // mengganti task yang sedang berjalan, dan tidak boleh meninggalkan state
   // setengah jadi yang membuat `get_workflow_status` membingungkan.
@@ -111,6 +130,15 @@ export async function handleStartTask(args, workflowState) {
   workflowState.state.lastPushBranch = "";
   // Setelah reset(), karena reset mengosongkan projectDir.
   const project = pinProjectDir(args, workflowState);
+
+  // Catat berkas yang SUDAH kotor sebelum task ini dimulai.
+  //
+  // Saat commit nanti, berkas itu tidak boleh ikut ter-stage lewat `git add .`:
+  // itu pekerjaan sesi lain yang kebetulan berada di working tree yang sama.
+  // Kejadian nyata 31 Okt 2026: dua baris `billing.yaml` milik sesi lain masuk
+  // commit sesi ini, dan tidak ada yang bisa membedakannya dari luar.
+  workflowState.state.dirtyAtStart = await captureDirtyAtStart(git);
+
   // start_task memang bermaksud MENGGANTI task, jadi ia boleh menang atas
   // task berjalan. Task yang diganti tetap diarsipkan oleh reconcileWithDisk,
   // bukan dihapus.

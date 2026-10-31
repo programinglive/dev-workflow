@@ -94,6 +94,62 @@ export function containsTestFilesInStatus(statusOutput) {
     .some((path) => isTestFilePath(path));
 }
 
+/**
+ * `git status --porcelain` -> [{code, path}].
+ *
+ * Dipakai untuk dua hal: mencatat berkas yang SUDAH kotor saat `start_task`
+ * (baseline), dan membandingkannya lagi saat commit. Tanpa ini, `git add .`
+ * tidak bisa membedakan pekerjaan sesi ini dari pekerjaan sesi lain.
+ *
+ * Path TIDAK dibaca dengan `slice(3)`: format porcelain adalah `XY path`
+ * (X = index, Y = worktree), jadi perubahan yang belum di-stage berbentuk
+ * `" M path"` sementara berkas baru berbentuk `"?? path"`. Memotong kolom tetap
+ * memakan huruf pertama nama berkas - pernah menghasilkan `nowledge/...`.
+ */
+export function parseStatusEntries(statusOutput) {
+  if (typeof statusOutput !== "string") {
+    return [];
+  }
+
+  return statusOutput
+    .split("\n")
+    .filter((line) => line && line.trim().length > 0)
+    .map((line) => {
+      const match = /^\s*([MADRCU?!]{1,2})\s+(.*)$/.exec(line);
+      if (!match) {
+        return null;
+      }
+      const rawPath = match[2].trim();
+      const target = rawPath.includes(" -> ")
+        ? rawPath.split(" -> ").pop().trim()
+        : rawPath;
+      return target ? { code: match[1], path: target } : null;
+    })
+    .filter(Boolean);
+}
+
+/**
+ * Berkas yang sudah kotor SEBELUM task dimulai dan masih kotor sekarang.
+ *
+ * Ini satu-satunya atribusi yang bisa dipercaya: berkas yang sudah kotor di
+ * baseline bukan hasil pekerjaan sesi ini. Berkas baru yang muncul selama task
+ * sengaja TIDAK masuk sini - tidak ada cara membedakan berkas baru milik kita
+ * dari berkas baru milik sesi lain, dan menebaknya akan menghasilkan tuduhan
+ * palsu yang membuat fitur ini diabaikan.
+ */
+export function foreignDirtyEntries(baselineEntries, statusOutput) {
+  const baseline = new Set(
+    (Array.isArray(baselineEntries) ? baselineEntries : [])
+      .map((entry) => String(entry?.path || "").trim())
+      .filter(Boolean),
+  );
+  if (baseline.size === 0) {
+    return [];
+  }
+
+  return parseStatusEntries(statusOutput).filter((entry) => baseline.has(entry.path));
+}
+
 function parseNameStatusLine(line) {
   if (!line) {
     return null;
