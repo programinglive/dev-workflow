@@ -126,3 +126,238 @@ test("start_task menyimpan item DoD sebagai open dengan sumber manual", async ()
     assert.equal(state.state.dodRevision, 0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// set_definition_of_done
+// ---------------------------------------------------------------------------
+
+test("set_definition_of_done ditolak kalau belum ada task aktif", async () => {
+  await withState(async (state) => {
+    const response = await call("set_definition_of_done", { items: ["build lulus"] }, state);
+
+    assert.match(text(response), /No active task/);
+    assert.deepEqual(state.state.definitionOfDone, []);
+  });
+});
+
+test("set_definition_of_done mengisi daftar task yang belum punya DoD", async () => {
+  await withState(async (state) => {
+    state.state.currentPhase = "coding";
+    state.state.taskDescription = "Task lama tanpa DoD";
+
+    const response = await call(
+      "set_definition_of_done",
+      { items: ["build lulus", "migrasi aman"] },
+      state,
+    );
+
+    assert.match(text(response), /disusun: 2 item/);
+    assert.deepEqual(
+      state.state.definitionOfDone.map((item) => item.text),
+      ["build lulus", "migrasi aman"],
+    );
+    assert.equal(state.state.dodSource, "manual");
+  });
+});
+
+test("set_definition_of_done menolak mengganti daftar yang sudah punya bukti", async () => {
+  await withState(async (state) => {
+    state.state.currentPhase = "coding";
+    state.state.taskDescription = "Task dengan bukti";
+    state.state.definitionOfDone = [
+      { id: "dod-1", text: "build lulus", status: "done", evidence: "npm test", waivedReason: "", revision: 0, updatedAt: "" },
+    ];
+
+    const response = await call("set_definition_of_done", { items: ["kondisi lain"] }, state);
+
+    assert.match(text(response), /membuang bukti/i);
+    assert.match(text(response), /append/);
+    assert.equal(state.state.definitionOfDone.length, 1, "bukti tidak boleh hilang");
+    assert.equal(state.state.definitionOfDone[0].status, "done");
+  });
+});
+
+test("set_definition_of_done dengan append menambah tanpa membuang bukti", async () => {
+  await withState(async (state) => {
+    state.state.currentPhase = "coding";
+    state.state.taskDescription = "Task dengan bukti";
+    state.state.definitionOfDone = [
+      { id: "dod-1", text: "build lulus", status: "done", evidence: "npm test", waivedReason: "", revision: 0, updatedAt: "" },
+    ];
+
+    const response = await call(
+      "set_definition_of_done",
+      { items: ["migrasi aman"], append: true },
+      state,
+    );
+
+    assert.match(text(response), /ditambah: 2 item/);
+    assert.deepEqual(
+      state.state.definitionOfDone.map((item) => item.text),
+      ["build lulus", "migrasi aman"],
+    );
+    assert.equal(state.state.definitionOfDone[0].status, "done");
+    assert.equal(state.state.definitionOfDone[1].status, "open");
+    assert.equal(state.state.definitionOfDone[1].id, "dod-2");
+  });
+});
+
+test("set_definition_of_done menolak total di atas 20 item", async () => {
+  await withState(async (state) => {
+    state.state.currentPhase = "coding";
+    state.state.taskDescription = "Task panjang";
+    state.state.definitionOfDone = Array.from({ length: 20 }, (_, index) => ({
+      id: `dod-${index + 1}`,
+      text: `kondisi ${index + 1}`,
+      status: "open",
+      evidence: "",
+      waivedReason: "",
+      revision: 0,
+      updatedAt: "",
+    }));
+
+    const response = await call("set_definition_of_done", { items: ["kondisi ekstra"], append: true }, state);
+
+    assert.match(text(response), /melebihi batas 20/);
+    assert.equal(state.state.definitionOfDone.length, 20);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// mark_dod_item
+// ---------------------------------------------------------------------------
+
+test("mark_dod_item menolak item tanpa bukti", async () => {
+  await withState(async (state) => {
+    state.state.currentPhase = "coding";
+    state.state.taskDescription = "Task";
+    state.state.definitionOfDone = [
+      { id: "dod-1", text: "build lulus", status: "open", evidence: "", waivedReason: "", revision: 0, updatedAt: "" },
+    ];
+
+    const without = await call("mark_dod_item", { id: "dod-1" }, state);
+    assert.match(text(without), /evidence/);
+    assert.equal(state.state.definitionOfDone[0].status, "open");
+
+    const tooShort = await call("mark_dod_item", { id: "dod-1", evidence: "ok" }, state);
+    assert.match(text(tooShort), /5-500/);
+    assert.equal(state.state.definitionOfDone[0].status, "open");
+  });
+});
+
+test("mark_dod_item menyimpan bukti dan membuka jalur berikutnya", async () => {
+  await withState(async (state) => {
+    state.state.currentPhase = "coding";
+    state.state.taskDescription = "Task";
+    state.state.readyCheckCompleted = true;
+    state.state.definitionOfDone = [
+      { id: "dod-1", text: "build lulus", status: "open", evidence: "", waivedReason: "", revision: 0, updatedAt: "" },
+    ];
+
+    const response = await call("mark_dod_item", { id: "dod-1", evidence: "npm test 482 pass" }, state);
+
+    assert.match(text(response), /terbukti/);
+    assert.equal(state.state.definitionOfDone[0].status, "done");
+    assert.equal(state.state.definitionOfDone[0].evidence, "npm test 482 pass");
+    assert.equal(state.state.definitionOfDone[0].revision, state.state.dodRevision);
+    assert.equal(state.state.readyCheckCompleted, false, "ready check harus diulang");
+  });
+});
+
+test("mark_dod_item idempoten dan menyegarkan bukti", async () => {
+  await withState(async (state) => {
+    state.state.currentPhase = "coding";
+    state.state.taskDescription = "Task";
+    state.state.definitionOfDone = [
+      { id: "dod-1", text: "build lulus", status: "done", evidence: "bukti lama", waivedReason: "", revision: 0, updatedAt: "" },
+    ];
+
+    const response = await call("mark_dod_item", { id: "dod-1", evidence: "bukti baru yang lebih lengkap" }, state);
+
+    assert.match(text(response), /terbukti/);
+    assert.equal(state.state.definitionOfDone[0].evidence, "bukti baru yang lebih lengkap");
+  });
+});
+
+test("mark_dod_item menolak item yang sudah dikecualikan", async () => {
+  await withState(async (state) => {
+    state.state.currentPhase = "coding";
+    state.state.taskDescription = "Task";
+    state.state.definitionOfDone = [
+      { id: "dod-1", text: "deploy staging", status: "waived", evidence: "", waivedReason: "staging mati", revision: 0, updatedAt: "" },
+    ];
+
+    const response = await call("mark_dod_item", { id: "dod-1", evidence: "sudah dicoba" }, state);
+
+    assert.match(text(response), /dikecualikan/);
+    assert.equal(state.state.definitionOfDone[0].status, "waived");
+  });
+});
+
+test("mark_dod_item menyebut id yang tersedia saat id tidak dikenal", async () => {
+  await withState(async (state) => {
+    state.state.currentPhase = "coding";
+    state.state.taskDescription = "Task";
+    state.state.definitionOfDone = [
+      { id: "dod-7", text: "build lulus", status: "open", evidence: "", waivedReason: "", revision: 0, updatedAt: "" },
+    ];
+
+    const response = await call("mark_dod_item", { id: "dod-1", evidence: "npm test" }, state);
+
+    assert.match(text(response), /dod-7/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// waive_dod_item
+// ---------------------------------------------------------------------------
+
+test("waive_dod_item mencatat alasan", async () => {
+  await withState(async (state) => {
+    state.state.currentPhase = "coding";
+    state.state.taskDescription = "Task";
+    state.state.definitionOfDone = [
+      { id: "dod-1", text: "deploy staging", status: "open", evidence: "", waivedReason: "", revision: 0, updatedAt: "" },
+    ];
+
+    const response = await call(
+      "waive_dod_item",
+      { id: "dod-1", reason: "staging sedang maintenance sampai besok" },
+      state,
+    );
+
+    assert.match(text(response), /dikecualikan/);
+    assert.equal(state.state.definitionOfDone[0].status, "waived");
+    assert.match(state.state.definitionOfDone[0].waivedReason, /maintenance/);
+  });
+});
+
+test("waive_dod_item menolak alasan kosong", async () => {
+  await withState(async (state) => {
+    state.state.currentPhase = "coding";
+    state.state.taskDescription = "Task";
+    state.state.definitionOfDone = [
+      { id: "dod-1", text: "deploy staging", status: "open", evidence: "", waivedReason: "", revision: 0, updatedAt: "" },
+    ];
+
+    const response = await call("waive_dod_item", { id: "dod-1", reason: "  " }, state);
+
+    assert.match(text(response), /reason/);
+    assert.equal(state.state.definitionOfDone[0].status, "open");
+  });
+});
+
+test("waive_dod_item menolak item yang sudah terbukti", async () => {
+  await withState(async (state) => {
+    state.state.currentPhase = "coding";
+    state.state.taskDescription = "Task";
+    state.state.definitionOfDone = [
+      { id: "dod-1", text: "build lulus", status: "done", evidence: "npm test", waivedReason: "", revision: 0, updatedAt: "" },
+    ];
+
+    const response = await call("waive_dod_item", { id: "dod-1", reason: "tidak perlu lagi" }, state);
+
+    assert.match(text(response), /sudah terbukti/);
+    assert.equal(state.state.definitionOfDone[0].status, "done");
+  });
+});
