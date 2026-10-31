@@ -220,3 +220,30 @@ test("force true melewati penolakan dan tetap mencatat task", async () => {
     assert.equal(state.state.currentPhase, "coding");
   });
 });
+
+test("detak jantung berjalan tanpa argumen setelah lock diambil", async () => {
+  // Regresi 31 Oktober 2026: `rememberLockDir` hanya dipanggil di cabang gagal,
+  // jadi pada jalur normal `refreshProcessLock()` tidak tahu direktori mana yang
+  // harus disegarkan. Penanda tidak pernah diperbarui, dianggap basi setelah 10
+  // menit, dan guard berhenti melindungi tanpa pesan apa pun.
+  await withTempDir(async (dir) => {
+    acquireProcessLock({ dir, pid: process.pid, now: 1000 });
+
+    const touched = refreshProcessLock({ now: 2000 });
+    assert.equal(touched, true, "detak harus jalan tanpa argumen setelah acquire");
+
+    const stored = JSON.parse(await readFile(processLockPath({ dir }), "utf8"));
+    assert.equal(stored.heartbeatAt, 2000);
+  });
+});
+
+test("penanda yang berdetak tidak lagi dianggap basi", async () => {
+  await withTempDir(async (dir) => {
+    acquireProcessLock({ dir, pid: process.pid, now: 1000 });
+    refreshProcessLock({ now: Date.now() });
+
+    // Proses lain melihat penanda kita sebagai aktif, bukan basi.
+    const holder = activeForeignLock({ dir, pid: 4242, now: Date.now(), isAlive: () => true });
+    assert.ok(holder, "penanda yang baru berdetak harus dianggap aktif");
+  });
+});
