@@ -114,13 +114,13 @@ test("dua sesi lewat handleToolCall tidak saling menimpa task", async () => {
 
     // Sesi A memulai task.
     await handleToolCall({
-      request: requestWith("start_task", { description: "Task milik sesi A", type: "feature" }, "ses_AAA"),
+      request: requestWith("start_task", { description: "Task milik sesi A", type: "feature", definitionOfDone: ["sesi A tercatat"] }, "ses_AAA"),
       ...context(state),
     });
 
     // Sesi B memulai task lain, memakai PROSES MCP yang sama.
     await handleToolCall({
-      request: requestWith("start_task", { description: "Task milik sesi B", type: "bugfix" }, "ses_BBB"),
+      request: requestWith("start_task", { description: "Task milik sesi B", type: "bugfix", definitionOfDone: ["sesi B tercatat"] }, "ses_BBB"),
       ...context(state),
     });
 
@@ -149,7 +149,7 @@ test("tanpa metadata sesi, perilaku lama dipertahankan (satu berkas)", async () 
     const firstFile = state.stateFile;
 
     await handleToolCall({
-      request: requestWith("start_task", { description: "Task tanpa metadata", type: "other" }),
+      request: requestWith("start_task", { description: "Task tanpa metadata", type: "other", definitionOfDone: ["tercatat"] }),
       ...context(state),
     });
 
@@ -164,13 +164,13 @@ test("berpindah sesi memuat state sesi itu, bukan menyalin yang lama", async () 
     await state.load();
 
     await handleToolCall({
-      request: requestWith("start_task", { description: "Task sesi X", type: "feature" }, "ses_XXX"),
+      request: requestWith("start_task", { description: "Task sesi X", type: "feature", definitionOfDone: ["sesi X tercatat"] }, "ses_XXX"),
       ...context(state),
     });
     const fileX = state.stateFile;
 
     await handleToolCall({
-      request: requestWith("start_task", { description: "Task sesi Y", type: "feature" }, "ses_YYY"),
+      request: requestWith("start_task", { description: "Task sesi Y", type: "feature", definitionOfDone: ["sesi Y tercatat"] }, "ses_YYY"),
       ...context(state),
     });
     assert.notEqual(state.stateFile, fileX, "sesi Y harus memakai berkas berbeda");

@@ -64,6 +64,9 @@ test("resolveStateFile prefers current working directory when multiple project m
   const sourceModulePath = fileURLToPath(new URL("../workflow-state.js", import.meta.url));
   await copyFile(sourceModulePath, path.join(moduleDir, "workflow-state.js"));
   await cp(new URL("../security/", import.meta.url), path.join(moduleDir,"security"), {recursive:true});
+  // workflow-state.js mengimpor aturan DoD dari sini, jadi salinan modul di
+  // direktori sementara harus ikut membawanya.
+  await cp(new URL("../tools/handler-modules/", import.meta.url), path.join(moduleDir, "tools", "handler-modules"), {recursive:true});
 
   await writeFile(path.join(moduleDir, "package.json"), JSON.stringify({ name: "module", type: "module" }));
   await mkdir(path.join(moduleDir, "db"), { recursive: true });
@@ -119,6 +122,9 @@ test("WorkflowState mirrors state file to compatibility locations", async () => 
   await mkdir(stateDir, { recursive: true });
   await copyFile(sourceModulePath, path.join(moduleDir, "workflow-state.js"));
   await cp(new URL("../security/", import.meta.url), path.join(moduleDir,"security"), {recursive:true});
+  // workflow-state.js mengimpor aturan DoD dari sini, jadi salinan modul di
+  // direktori sementara harus ikut membawanya.
+  await cp(new URL("../tools/handler-modules/", import.meta.url), path.join(moduleDir, "tools", "handler-modules"), {recursive:true});
   await writeFile(path.join(moduleDir, "package.json"), JSON.stringify({ name: "module", type: "module" }));
   await mkdir(path.join(moduleDir, "db"), { recursive: true });
   await writeFile(path.join(moduleDir, "db", "index.js"), 'export function getDbAdapter() { return { connect: async () => {}, saveState: async () => {}, getState: async () => null }; } export async function insertHistoryEntry() {} export async function updateSummaryForUser() {} export async function saveState() {} export async function getState() {} export async function getSummaryForUser() { return { totalTasks: 0, taskTypes: {} }; } export async function getHistoryForUser() { return { entries: [], total: 0 }; }');
@@ -151,6 +157,9 @@ test("WorkflowState avoids filesystem root when no project markers found", async
   const sourceModulePath = fileURLToPath(new URL("../workflow-state.js", import.meta.url));
   await copyFile(sourceModulePath, path.join(moduleDir, "workflow-state.js"));
   await cp(new URL("../security/", import.meta.url), path.join(moduleDir,"security"), {recursive:true});
+  // workflow-state.js mengimpor aturan DoD dari sini, jadi salinan modul di
+  // direktori sementara harus ikut membawanya.
+  await cp(new URL("../tools/handler-modules/", import.meta.url), path.join(moduleDir, "tools", "handler-modules"), {recursive:true});
   await writeFile(path.join(moduleDir, "package.json"), JSON.stringify({ name: "module", type: "module" }));
   await mkdir(path.join(moduleDir, "db"), { recursive: true });
   await writeFile(path.join(moduleDir, "db", "index.js"), 'export function getDbAdapter() { return { connect: async () => {}, saveState: async () => {}, getState: async () => null }; } export async function insertHistoryEntry() {} export async function updateSummaryForUser() {} export async function saveState() {} export async function getState() {} export async function getSummaryForUser() { return { totalTasks: 0, taskTypes: {} }; } export async function getHistoryForUser() { return { entries: [], total: 0 }; }');

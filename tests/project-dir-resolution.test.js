@@ -192,6 +192,7 @@ test("start_task menyimpan projectDir ke state dan mengaktifkannya", async () =>
           description: "Kerjakan sesuatu",
           type: "bugfix",
           projectDir: repo,
+          definitionOfDone: ["task tercatat"],
         }),
         normalizeRequestArgs: (args) => ({ args, error: null }),
         workflowState,
@@ -227,6 +228,7 @@ test("start_task melaporkan KONFLIK bila env dan repo sesi berbeda", async () =>
         request: createRequest("start_task", {
           description: "Tanpa projectDir, sesi di repo lain",
           type: "other",
+          definitionOfDone: ["task tercatat"],
         }),
         normalizeRequestArgs: (args) => ({ args, error: null }),
         workflowState,
@@ -266,6 +268,7 @@ test("start_task dengan projectDir mengalahkan env dan tidak melaporkan konflik"
           description: "Dengan projectDir",
           type: "bugfix",
           projectDir: sessionRepo,
+          definitionOfDone: ["task tercatat"],
         }),
         normalizeRequestArgs: (args) => ({ args, error: null }),
         workflowState,

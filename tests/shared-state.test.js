@@ -243,7 +243,7 @@ test("start_task memberi peringatan dan menyelamatkan task proses lain", async (
       taskDescription: "Pekerjaan penting sesi lain",
     });
 
-    const response = await callTool("start_task", { description: "Task baru saya", type: "bugfix" }, state);
+    const response = await callTool("start_task", { description: "Task baru saya", type: "bugfix", definitionOfDone: ["task tercatat"] }, state);
 
     const text = responseText(response);
     assert.match(text, /Task Started: Task baru saya/);
@@ -266,7 +266,7 @@ test("start_task memberi tahu kalau task sebelumnya belum selesai", async () => 
     state.state.taskDescription = "Task lama yang belum selesai";
     await state.save();
 
-    const response = await callTool("start_task", { description: "Task pengganti", type: "feature" }, state);
+    const response = await callTool("start_task", { description: "Task pengganti", type: "feature", definitionOfDone: ["task tercatat"] }, state);
 
     const text = responseText(response);
     assert.match(text, /Task lama yang belum selesai/);
@@ -281,7 +281,7 @@ test("start_task memberi tahu kalau task sebelumnya belum selesai", async () => 
 
 test("start_task tanpa task sebelumnya tidak menampilkan peringatan", async () => {
   await withState(async (state) => {
-    const response = await callTool("start_task", { description: "Task pertama", type: "feature" }, state);
+    const response = await callTool("start_task", { description: "Task pertama", type: "feature", definitionOfDone: ["task tercatat"] }, state);
 
     const text = responseText(response);
     assert.doesNotMatch(text, /proses agen lain/i);
