@@ -110,11 +110,14 @@ See [MCP client configuration](#mcp-client-configuration).
 
 ## Available Tools
 
-22 tools.
+25 tools.
 
 | Tool | Purpose |
 |---|---|
-| `start_task` | Begin a task (always the first step) |
+| `start_task` | Begin a task (always the first step); requires `definitionOfDone` |
+| `set_definition_of_done` | Add or replace the checklist of the current task |
+| `mark_dod_item` | Prove one item, with evidence |
+| `waive_dod_item` | Exclude one item, with a reason |
 | `create_feature_flow` | Record the feature flow as Mermaid |
 | `mark_bug_fixed` | Mark the implementation done |
 | `create_tests` | Mark tests as written |
@@ -141,6 +144,33 @@ See [MCP client configuration](#mcp-client-configuration).
 | `update_factory_task` | Edit a task, including filling a missing definition of done |
 | `claim_factory_task` | Claim a Factory task and start a local workflow |
 | `sync_task_status` | Report a status change back to Factory |
+
+### Definition of Done
+
+Every task carries a checklist of the concrete conditions that must be true before it counts as finished. `start_task` requires it:
+
+```json
+{
+  "description": "Perbaiki validasi form appointment",
+  "type": "bugfix",
+  "projectDir": "D:\\code\\clinic",
+  "definitionOfDone": ["build lulus", "validasi menolak input kosong"]
+}
+```
+
+Each item is later either **proven** or **excluded**, and the workflow refuses to commit or close the task while any item is still open:
+
+```json
+{ "id": "dod-1", "evidence": "php artisan test -> 412 pass" }
+{ "id": "dod-2", "reason": "form ini tidak punya jalur input kosong, sudah dicek di controller" }
+```
+
+- Evidence is required (5-500 characters). It is what separates "proven" from "claimed".
+- An excluded item keeps its reason in the state and in the `history` entry's `definitionOfDoneSummary`.
+- When new working changes appear after a commit, `dodRevision` increments and previously proven items must be re-confirmed against the code that is actually being committed. Waivers survive.
+- A task claimed from the Factory board imports the board checklist as **open** items: a checked box on the board is someone's plan, not proof that this machine ran anything.
+- `set_definition_of_done` fills the checklist of a task started before this rule existed. Replacing a list that already has proven items is refused unless `append: true`.
+- `force_complete_task` is the audited escape hatch: `forced: true`, your reason, and the DoD summary land in history.
 
 ### Factory task integration
 

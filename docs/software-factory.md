@@ -24,6 +24,28 @@ When deployed and connected to `factory.programinglive.com`, the factory gateway
 - **Webhook Receivers**: Triggers automated factory runs upon GitHub/GitLab issues or pull requests.
 - **Multi-Agent Orchestration**: Dispatches specialized worker agents (Architect, Coder, QA, DevOps) to repositories via remote MCP or webhooks.
 
+### Definition of Done: board vs local
+
+Both sides now refuse to close work that has not stated what "done" means, but they
+enforce it differently, and the difference is deliberate.
+
+| | Factory board | This MCP server |
+|---|---|---|
+| Shape | One text column, `definition_of_done` | 1-20 structured items with stable ids |
+| Required at | Task creation, and to move to `done` | `start_task`, and to commit or complete |
+| Gate | Presence: the checklist must not be empty | Per item: every item proven with evidence or waived with a reason |
+| Proof | Free text a human reads | `evidence` (5-500 chars) stored per item, with the `dodRevision` it was proven at |
+| Stale proof | Not modelled | `dodRevision` increments on new changes after a commit; proven items must be re-confirmed, waivers survive |
+| Escape hatch | Move the task back to `backlog` | `force_complete_task`, recorded as `forced: true` with a reason |
+
+`claim_factory_task` imports the board checklist as **open** items: a checked box
+on the board records that someone planned or claimed it, not that this machine
+ever ran anything. The local gate then requires local proof.
+
+Nothing is pushed back to the board: making the local checklist the board's text
+would let a local waiver masquerade as a board fact. Board writes stay on the
+official path, `update_factory_task`.
+
 ---
 
 ## 🛠️ Factory API Endpoints (`web/server.js`)
