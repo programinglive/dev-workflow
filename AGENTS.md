@@ -8,6 +8,8 @@ You are connected to the `dev-workflow` MCP server. **You MUST NOT perform any c
 Before taking any action or answering user requests regarding code changes, check your workflow status and follow these exact steps in sequence:
 
 1. **Start Task**: Call `start_task` with a clear description, type (`feature`, `bugfix`, `refactor`, or `other`), `projectDir`, **and a `definitionOfDone` checklist**. Every task must say, up front, which concrete conditions must be true before it counts as finished.
+
+   `start_task` **refuses** when another live MCP process is working the same project (heartbeat within the last 10 minutes). Two sessions on one working tree overwrite each other's files silently — on 31 October 2026 a session lost every edit in `tools/handler-modules/index.js` that way. Close the other window, use a git worktree, or pass `force: true` when you know the other session is idle. The check runs before any state is touched, so a refused call changes nothing.
 2. **Implement**: Write your code changes.
 3. **Mark Fixed**: Call `mark_bug_fixed` with a summary of the implementation.
 4. **Prove the Definition of Done**: For each item, call `mark_dod_item` with `evidence` (5-500 characters naming what you actually ran or checked, e.g. `npm test -> 505 pass`). An item that turned out not to apply is excluded with `waive_dod_item` and a written reason - never silently dropped.

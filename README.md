@@ -688,7 +688,14 @@ applies: anything dirty blocks the release.
 
 ## Troubleshooting
 
-**`ERR_MODULE_NOT_FOUND: Cannot find package 'dotenv'`** — dependencies are not
+**`start_task` refuses because another session is working the same project.** A
+second session on one working tree silently overwrites the first session's files.
+Close the other OpenCode window, or give this session its own checkout with
+`git worktree add <path> -b <branch>` and run it from there. The check ignores
+locks with no heartbeat for 10 minutes, so a leftover MCP process does not block
+you; `force: true` overrides it when you know the other session is idle.
+
+**`ERR_MODULE_NOT_FOUND: Cannot find package 'dotenv'`** - dependencies are not
 installed. Run `npm install` in the repo.
 
 **`gyp ERR! find VS` on Windows** — the native module is compiling from source
