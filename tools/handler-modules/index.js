@@ -10,6 +10,7 @@ import { handleSkipRelease, handlePerformRelease } from "./release-handlers.js";
 import { handleCommitAndPush, handleCompleteTask, handleForceCompleteTask, handleDropTask } from "./commit-handlers.js";
 import { handleProjectSummary, handleProjectSummaryData, handleProjectSummaryDb, handleViewHistory } from "./summary-handlers.js";
 import { handleGetWorkflowStatus, handleReadyCheck, handleContinueWorkflow, handleRerunWorkflow } from "./status-handlers.js";
+import { handleSetDefinitionOfDone, handleMarkDodItem, handleWaiveDodItem } from "./dod-handlers.js";
 import { handleListFactoryTasks, handleClaimFactoryTask, handleSyncTaskStatus, handleListFactoryProjects, handleCreateFactoryTask, handleUpdateFactoryTask } from "./factory-handlers.js";
 
 function summarizeResponse(label, response) {
@@ -197,6 +198,12 @@ async function dispatchToolCall({
       }
       case "start_task":
         return handleStartTask(args, workflowState);
+      case "set_definition_of_done":
+        return handleSetDefinitionOfDone(args, workflowState);
+      case "mark_dod_item":
+        return handleMarkDodItem(args, workflowState);
+      case "waive_dod_item":
+        return handleWaiveDodItem(args, workflowState);
       case "mark_bug_fixed":
         return handleMarkBugFixed(args, workflowState);
       case "create_feature_flow":

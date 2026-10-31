@@ -49,6 +49,74 @@ export function getToolList() {
       },
     },
     {
+      name: "set_definition_of_done",
+      description:
+        "Add or replace the definition-of-done checklist of the CURRENT task. Use it to fill the checklist of a task started before this feature existed, because a task cannot be committed or closed while any item is open. Replacing a list that already contains proven or waived items is refused unless 'append' is true. Items that are not proven must be waived with a written reason instead of quietly dropped.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          items: {
+            type: "array",
+            items: { type: "string" },
+            minItems: 1,
+            maxItems: 20,
+            description:
+              "Conditions that must be true before the task is done, 3-300 characters each, for example ['build lulus', 'halaman login terverifikasi'].",
+          },
+          append: {
+            type: "boolean",
+            description:
+              "When true, add the items to the existing checklist instead of replacing it. Required when the current checklist already has proven or waived items.",
+          },
+          reason: {
+            type: "string",
+            description: "Optional note recorded with the change.",
+          },
+        },
+        required: ["items"],
+      },
+    },
+    {
+      name: "mark_dod_item",
+      description:
+        "Mark one definition-of-done item as proven, with the evidence that proves it. Evidence is required: 5-500 characters naming what was actually run or checked, for example 'npm test -> 482 pass'. Marking an already-proven item again is allowed and refreshes its evidence, which is how a stale item is re-confirmed after new changes. Waived items cannot be marked; reinstate them with set_definition_of_done { append: true }.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          id: {
+            type: "string",
+            description: "Item id from start_task, get_workflow_status, or set_definition_of_done (for example 'dod-2').",
+          },
+          evidence: {
+            type: "string",
+            description:
+              "What proves the condition is true, 5-500 characters. Name the command and its result, or the page and what you saw.",
+          },
+        },
+        required: ["id", "evidence"],
+      },
+    },
+    {
+      name: "waive_dod_item",
+      description:
+        "Exclude one definition-of-done item with a written reason, for work that turned out not to be needed for this task. The reason is required (5-500 characters) and is recorded in the state and in the history entry, so it must be readable by someone else. A proven item cannot be waived.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          id: {
+            type: "string",
+            description: "Item id from start_task or get_workflow_status (for example 'dod-3').",
+          },
+          reason: {
+            type: "string",
+            description:
+              "Why this condition does not apply to this task, 5-500 characters. Do not use it to avoid work that is actually required.",
+          },
+        },
+        required: ["id", "reason"],
+      },
+    },
+    {
       name: "mark_bug_fixed",
       description:
         "Mark that the bug/feature is fixed. Reminder: Now you MUST create tests!",
