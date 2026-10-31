@@ -228,7 +228,9 @@ export function getToolList() {
     {
       name: "commit_and_push",
       description:
-        "Automatically run git add, commit, and push once the ready check passes.",
+        "Automatically run git add, commit, and push once the ready check passes. " +
+        "Refuses to stage the whole tree when files were already dirty before the task " +
+        "started (another session's work): pass 'paths' to stage only your files.",
       inputSchema: {
         type: "object",
         properties: {
@@ -245,6 +247,19 @@ export function getToolList() {
             description:
               "Absolute path to the repository to commit in. Overrides the repo pinned by 'start_task' " +
               "for this call. Use it to fix a misdirected commit without restarting the task.",
+          },
+          paths: {
+            type: "array",
+            items: { type: "string" },
+            description:
+              "Stage only these paths instead of the whole tree. Use this when the repo " +
+              "also contains another session's uncommitted work.",
+          },
+          includeForeign: {
+            type: "boolean",
+            description:
+              "Stage everything anyway, including files that were already dirty before this " +
+              "task started. Only after verifying that work belongs in this commit.",
           },
         },
         required: [],

@@ -125,7 +125,7 @@ See [MCP client configuration](#mcp-client-configuration).
 | `run_tests` | Record test results (blocks commit when failing) |
 | `create_documentation` | Mark docs as written |
 | `check_ready_to_commit` | Verify every required step is complete |
-| `commit_and_push` | `git add` → `commit` → `push` |
+| `commit_and_push` | `git add` → `commit` → `push`, refusing to sweep in another session's work |
 | `perform_release` | Record a release |
 | `skip_release` | Skip the release step with a justification |
 | `complete_task` | Finish and reset the workflow |
@@ -611,6 +611,47 @@ fail on husky.
 - Committing without documentation
 - Forgetting a workflow step
 - Releasing without committing and pushing
+- Committing another session's uncommitted work by accident
+
+---
+
+## Committing when someone else is editing the same repo
+
+`commit_and_push` stages the working tree, so pre-existing changes from another
+session ride along into your commit — and once committed, they cannot be
+separated from yours. Observed on 31 Oct 2026: two lines of another session's
+`billing.yaml` landed in an unrelated commit, and a `devices.yaml` being edited
+elsewhere nearly got overwritten.
+
+The guard has three parts:
+
+1. **`start_task` records a baseline** (`dirtyAtStart`): every path that was
+   already dirty when the task began.
+2. **`commit_and_push` refuses** when any of those paths is still dirty. Files
+   that appear *during* the task are never blamed — there is no way to tell a
+   new file of yours from a new file of theirs, and false accusations would get
+   the check ignored.
+3. **You choose explicitly**:
+
+   ```jsonc
+   // recommended: stage only what this task touched
+   {"commitMessage": "fix: ...", "paths": ["src/app.js", "tests/app.test.js"]}
+
+   // or, after verifying the other work belongs here
+   {"commitMessage": "fix: ...", "includeForeign": true}
+   ```
+
+With `paths`, staging is `git add -- <paths>` instead of `git add .`, and any
+file left unstaged is listed in the success message so it is not silently
+forgotten.
+
+Failure is closed, not open: the refusal happens *before* `git add`, so nothing
+is staged and nothing is committed. Tasks started before this feature have no
+baseline and keep the old behaviour.
+
+Known limit: this catches work that was **already** dirty when the task started.
+A file created by another session mid-task cannot be attributed, because git
+records content, not authorship.
 
 ---
 

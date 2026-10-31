@@ -20,6 +20,8 @@ import {
   hasStagedChanges,
   hasTestChanges,
   hasWorkingChanges,
+  foreignDirtyEntries,
+  parseStatusEntries,
   workingTreeSummary,
 } from "./git-helpers.js";
 
@@ -37,5 +39,7 @@ export function createGitFacade() {
     getStatusOutput,
     getToplevel,
     workingTreeSummary,
+    parseStatusEntries,
+    foreignDirtyEntries,
   };
 }

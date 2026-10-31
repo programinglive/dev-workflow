@@ -197,7 +197,7 @@ async function dispatchToolCall({
         return textResponse(JSON.stringify(report));
       }
       case "start_task":
-        return handleStartTask(args, workflowState);
+        return handleStartTask(args, workflowState, git);
       case "set_definition_of_done":
         return handleSetDefinitionOfDone(args, workflowState);
       case "mark_dod_item":

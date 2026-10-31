@@ -301,6 +301,12 @@ Before taking any action or answering user requests regarding code changes, chec
 6. **Document**: Update documentation and call \`create_documentation\`.
 7. **Ready Check**: Call \`check_ready_to_commit\` to verify all steps.
 8. **Commit & Push**: Call \`commit_and_push\` with a conventional commit message.
+
+   If the repo also contains another session's uncommitted work, \`commit_and_push\`
+   refuses to stage the whole tree. Pass \`paths\` with only the files this task
+   touched (recommended), or \`includeForeign: true\` after verifying that work
+   belongs in this commit. Never resolve it by overwriting the other session's
+   files.
 9. **Release**: Call \`perform_release\` with the release command (or \`skip_release\` if docs-only).
 10. **Complete**: Call \`complete_task\` to finish the session and reset the workflow.
 

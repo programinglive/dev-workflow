@@ -16,6 +16,12 @@ Before taking any action or answering user requests regarding code changes, chec
 7. **Document**: Update documentation (README, PRD, release notes) and call `create_documentation`.
 8. **Ready Check**: Call `check_ready_to_commit` to verify all steps. It fails while any definition-of-done item is still open.
 9. **Commit & Push**: Call `commit_and_push` with a conventional commit message. It refuses while any item is open.
+
+   If the repo also contains another session's uncommitted work, `commit_and_push`
+   refuses to stage the whole tree. Pass `paths` with only the files this task
+   touched (recommended), or `includeForeign: true` after verifying that work
+   belongs in this commit. Never resolve it by overwriting the other session's
+   files.
 10. **Release**: Call `perform_release` with the release command (or `skip_release` if non-Node/docs-only).
 11. **Complete**: Call `complete_task` to finish the session and reset the workflow. It refuses while any item is open, and records `dodSummary` in history.
 
