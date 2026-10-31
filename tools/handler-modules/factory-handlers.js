@@ -1,4 +1,5 @@
 import { textResponse } from "./shared.js";
+import { parseFactoryChecklist } from "./dod.js";
 import { startKeeping, stopKeeping } from "../../session-keeper.js";
 import {
   readFactoryConfig,
@@ -141,15 +142,32 @@ export async function handleClaimFactoryTask(args = {}, { workflowState } = {}) 
     // ada entri history, tidak ada peringatan, tidak disebut di jawaban.
     // `start_task` sudah mengarsipkan sejak awal; claim tidak.
     let archivedTask = null;
+    // Checklist papan diimpor sebagai RENCANA, bukan bukti: setiap item masuk
+    // sebagai `open` walau di papan sudah dicentang. Centang di papan berarti
+    // seseorang pernah menyatakannya, bukan bahwa kode di mesin ini terbukti.
+    const importedDod = parseFactoryChecklist(task.definitionOfDone);
     if (workflowState) {
       const archived = workflowState.reset({
         archive: true,
         reason: "Diganti claim_factory_task sebelum task selesai",
       });
       archivedTask = archived?.archivedTask || null;
+      const now = new Date().toISOString();
       workflowState.state.currentPhase = "coding";
       workflowState.state.taskDescription = `[${task.taskKey || task.id}] ${task.title}`;
       workflowState.state.taskType = "other";
+      workflowState.state.definitionOfDone = importedDod.items.map((text, index) => ({
+        id: `dod-${index + 1}`,
+        text,
+        status: "open",
+        evidence: "",
+        waivedReason: "",
+        revision: 0,
+        updatedAt: now,
+      }));
+      workflowState.state.dodSource = importedDod.items.length > 0 ? "factory" : "";
+      workflowState.state.dodFactoryTaskId = importedDod.items.length > 0 ? recordId : "";
+      workflowState.state.dodRevision = 0;
       await workflowState.save();
     }
 
@@ -165,7 +183,15 @@ export async function handleClaimFactoryTask(args = {}, { workflowState } = {}) 
           : "",
         `Factory status is now running (work session ${session.id}).`,
         task.projectName ? `Project: ${task.projectName}` : "",
-        task.definitionOfDone ? `Definition of done:\n${task.definitionOfDone}` : "",
+        importedDod.items.length > 0
+          ? `Imported ${importedDod.items.length} definition-of-done item(s) from the board, all OPEN:\n` +
+            importedDod.items.map((text, index) => `   dod-${index + 1}: ${text}`).join("\n") +
+            (importedDod.truncated
+              ? "\n   (Some board items were shortened or dropped: at most 20 items of 300 characters are kept.)"
+              : "") +
+            "\n   Prove each one locally with 'mark_dod_item' { id, evidence }, or waive it with a reason."
+          : "This board task has no definition of done. Add one with 'set_definition_of_done' { items: [...] } - " +
+            "a task cannot be committed or closed without it.",
         "",
         "Local workflow started for this task.",
         "Use 'sync_task_status' with review, blocked or paused to close the session, or done to approve the task once it is in review.",

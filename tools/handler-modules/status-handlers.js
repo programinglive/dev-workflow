@@ -5,7 +5,6 @@ import { openItems, renderChecklist, renderOutstanding, summarize } from "./dod.
 export async function handleGetWorkflowStatus(workflowState) {
   const status = workflowState.state;
   const nextStep = status ? status.currentPhase : "idle";
-
   // Deteksi berkas state yang terakhir ditulis proses MCP lain. Tanpa
   // peringatan ini, agen bisa meng-commit atas nama task orang lain.
   let sharedWarning = "";
@@ -26,6 +25,15 @@ export async function handleGetWorkflowStatus(workflowState) {
     // Status tetap ditampilkan walau pemeriksaan berkas gagal.
   }
 
+  const dodItems = Array.isArray(status.definitionOfDone) ? status.definitionOfDone : [];
+  const dod = summarize(dodItems, status.dodRevision);
+  const dodSource = status.dodSource === "factory" ? " (dari papan Factory)" : "";
+  const dodBlock =
+    dodItems.length === 0
+      ? "DoD: belum ada item - isi dengan 'set_definition_of_done'"
+      : `DoD: ${dod.done}/${dod.total} selesai, ${dod.waived} dilewati, ${dod.open} terbuka${dodSource}\n` +
+        renderChecklist(dodItems, status.dodRevision);
+
   return textResponse(
     `📊 Current Workflow Status:
 
@@ -39,6 +47,8 @@ Documentation: ${status.documentationCreated ? "✅" : "❌"}
 Ready check: ${status.readyCheckCompleted ? "✅" : "❌"}
 Commit & push: ${status.commitAndPushCompleted ? "✅" : "❌"}
 Released: ${status.released ? "✅" : "❌"}
+
+${dodBlock}
 
 Next step: ${nextStep}${sharedWarning}`
   );
@@ -166,6 +176,17 @@ export async function handleContinueWorkflow(workflowState, context) {
 export async function handleRerunWorkflow(workflowState) {
   const currentDescription = workflowState.state.taskDescription;
   const currentType = workflowState.state.taskType;
+  // DoD ikut melewati reset. Tanpa ini, `rerun_workflow` menghapus checklist
+  // dan meninggalkan task yang tidak akan pernah bisa ditutup, karena gerbang
+  // menolak task tanpa item DoD.
+  const dod = {
+    definitionOfDone: Array.isArray(workflowState.state.definitionOfDone)
+      ? workflowState.state.definitionOfDone.map((item) => ({ ...item }))
+      : [],
+    dodSource: workflowState.state.dodSource || "",
+    dodFactoryTaskId: workflowState.state.dodFactoryTaskId || "",
+    dodRevision: Number(workflowState.state.dodRevision) || 0,
+  };
 
   if (!currentDescription) {
     return textResponse("⚠️ No active task to rerun. Use 'start_task' to begin a new workflow.");
@@ -176,9 +197,18 @@ export async function handleRerunWorkflow(workflowState) {
   workflowState.state.currentPhase = "coding";
   workflowState.state.taskDescription = currentDescription;
   workflowState.state.taskType = currentType;
+  Object.assign(workflowState.state, dod);
   await workflowState.save();
 
+  const dodNote =
+    dod.definitionOfDone.length > 0
+      ? `\n\nDoD dipertahankan: ${dod.definitionOfDone.length} item` +
+        ` (${dod.definitionOfDone.filter((item) => item.status === "done").length} sudah terbukti).` +
+        `\nItem yang sudah terbukti TIDAK perlu dibuktikan ulang - kecualikan dengan 'waive_dod_item',` +
+        ` atau tambah item baru dengan 'set_definition_of_done' { items: [...], append: true }.`
+      : "";
+
   return textResponse(
-    `🔄 Rerunning workflow from the start!\n\nTask: ${currentDescription}\nType: ${currentType}\n\nWorkflow Steps:\n1. ✓ Start task (current)\n2. ⏳ Describe feature flow with Mermaid\n3. ⏳ Fix/implement the feature\n4. ⏳ Create tests\n5. ⏳ Run tests (must pass!)\n6. ⏳ Create documentation\n7. ⏳ Run 'check_ready_to_commit'\n8. ⏳ Run 'commit_and_push' (commits and pushes)\n9. ⏳ Run 'perform_release' (handles versioning and tags)\n10. ⏳ Complete task\n\n🎯 Be conscious about what you're coding!`
+    `🔄 Rerunning workflow from the start!\n\nTask: ${currentDescription}\nType: ${currentType}${dodNote}\n\nWorkflow Steps:\n1. ✓ Start task (current)\n2. ⏳ Describe feature flow with Mermaid\n3. ⏳ Fix/implement the feature\n4. ⏳ Prove each definition-of-done item\n5. ⏳ Create tests\n6. ⏳ Run tests (must pass!)\n7. ⏳ Create documentation\n8. ⏳ Run 'check_ready_to_commit'\n9. ⏳ Run 'commit_and_push' (commits and pushes)\n10. ⏳ Run 'perform_release' (handles versioning and tags)\n11. ⏳ Complete task\n\n🎯 Be conscious about what you're coding!`
   );
 }
