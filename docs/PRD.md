@@ -36,6 +36,10 @@ Developers need structured guidance to maintain disciplined workflows across pro
 - Persist workflow state per project and per user, with compatibility handling for legacy locations.
 - Offer aggregated project summaries (JSON artifacts, Database sync, optional web dashboard).
 - Guard release commands to ensure prerequisites are satisfied.
+- Require a per-item Definition of Done on every task: `start_task` takes 1-20 items, each item is proven with evidence via `mark_dod_item` or excluded with a written reason via `waive_dod_item`, and ready-check, commit, and complete refuse while any item is open.
+- Invalidate stale proof: when new working changes appear after a commit, `dodRevision` increments so previously proven items must be re-confirmed against the code being committed. Waivers survive, because a waiver is a decision rather than a proof.
+- Import a Factory task's board checklist as open items on `claim_factory_task`, since a board checkbox records a plan, not local evidence.
+- Record `definitionOfDoneSummary` (total, done, waived, open, waived reasons) on every history entry when a task closes.
 - Support `run_full_workflow` for scripted execution of all steps with validation.
 - Web dashboard displays version dynamically from `package.json` via `/api/version` endpoint to stay in sync after releases.
 
