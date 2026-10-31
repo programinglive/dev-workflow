@@ -126,13 +126,11 @@ test("Database Adapters", async (t) => {
         const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "sqlite-test-"));
         const dbPath = path.join(tmpDir, "test.db");
 
-        // Convert to file URI for connection string if needed, or just pass path
-        // The adapter expects a connection URL for SQLite usually: file:///path/to/db or just path?
-        // Looking at sqlite.js: uri: this.config.connectionUrl.replace("sqlite://", "")
-        // So we invoke it with sqlite://<path>
-        const connectionUrl = `sqlite://${dbPath}`;
-
-        const adapter = new SqliteAdapter({ connectionUrl });
+        // `dbPath`, bukan `connectionUrl`: SqliteAdapter hanya membaca
+        // `config.dbPath`. Versi lama mengirim connectionUrl yang diabaikan,
+        // sehingga tes ini diam-diam menulis ke `.state/dev-workflow.db` milik
+        // repo - dan gagal di clone bersih yang belum punya folder itu.
+        const adapter = new SqliteAdapter({ dbPath });
 
         try {
             await runGenericAdapterTests(t, adapter, "user-sqlite", tmpDir);
@@ -176,4 +174,50 @@ test("Database Adapters", async (t) => {
             if (adapter.pool) await adapter.pool.end();
         }
     });
+});
+
+/**
+ * SQLite selalu diuji, jadi ia tidak boleh bergantung pada keadaan mesin.
+ *
+ * Dua cacat nyata yang ditemukan 31 Okt 2026 saat menjalankan `npm test` di
+ * clone bersih (worktree tanpa folder `.state`):
+ *
+ *   1. `connect()` membuka DB di `<projectRoot>/.state/` tanpa membuat
+ *      direktorinya lebih dulu. Di repo utama ini lolos hanya karena `.state/`
+ *      kebetulan sudah ada - jadi hijau di mesin penulis, merah di clone baru.
+ *   2. Tes lama mengirim `connectionUrl`, padahal `SqliteAdapter` hanya membaca
+ *      `config.dbPath`. Artinya tes itu menulis ke DB `.state` repo yang
+ *      sebenarnya, bukan ke direktori sementara yang ia siapkan.
+ */
+test("SqliteAdapter membuat direktori induk DB bila belum ada", async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "sqlite-mkdir-"));
+    const nested = path.join(tmpDir, "belum", "ada", "sama-sekali");
+    const adapter = new SqliteAdapter({ dbPath: path.join(nested, "test.db") });
+
+    try {
+        await adapter.connect();
+        assert.ok(
+            (await fs.stat(path.join(nested, "test.db"))).isFile(),
+            "berkas DB harus terbentuk di direktori yang tadinya tidak ada",
+        );
+    } finally {
+        if (adapter.db) adapter.db.close();
+        await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test("SqliteAdapter memakai dbPath dari konfigurasi, bukan .state repo", async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "sqlite-path-"));
+    const wanted = path.join(tmpDir, "pilihan-tes.db");
+    const adapter = new SqliteAdapter({ dbPath: wanted });
+
+    try {
+        assert.equal(adapter.getDbPath(), wanted);
+        assert.ok(
+            !adapter.getDbPath().includes(`${path.sep}.state${path.sep}`),
+            "tes tidak boleh menyentuh .state milik repo",
+        );
+    } finally {
+        await fs.rm(tmpDir, { recursive: true, force: true });
+    }
 });
