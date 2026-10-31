@@ -87,14 +87,17 @@ test("commit_and_push uses primary branch when no branch specified", async () =>
 
     const pushCommand = commands.find((command) => command.startsWith("git push"));
     assert.ok(pushCommand, "git push should be executed");
+    // 31 Okt 2026: sebelumnya test ini mengharapkan `main` padahal branch aktif
+    // `feature/test`. Itu mengunci bug: tool mem-push main, git keluar 0 tanpa
+    // mengirim apa pun, lalu melaporkan sukses. Branch aktif harus menang.
     assert.ok(
-      /origin\s+['"]?main['"]?/.test(pushCommand),
-      "push should use primary branch (main) when no branch specified"
+      /origin\s+['"]?feature\/test['"]?/.test(pushCommand),
+      "push must target the active branch, not the primary branch"
     );
   });
 });
 
-test("commit_and_push falls back to master when main not found", async () => {
+test("commit_and_push falls back to master when HEAD is detached", async () => {
   await withWorkflowState(async (workflowState) => {
     workflowState.state.readyToCommit = true;
     workflowState.state.readyCheckCompleted = true;
@@ -118,6 +121,8 @@ test("commit_and_push falls back to master when main not found", async () => {
       git: createGitMock({
         hasWorkingChanges: async () => true,
         getStagedChanges: async () => [{ status: "M", path: "src/index.js" }],
+        // HEAD detached bukan branch, jadi tidak bisa di-push sebagai nama branch.
+        getCurrentBranch: async () => "HEAD",
         getPrimaryBranch: async () => "master",
         getStatusOutput: async () => "M tests/handlers.test.js\nM src/index.js",
         containsTestFilesInStatus: (statusOutput) => statusOutput.includes("tests/"),
@@ -129,7 +134,7 @@ test("commit_and_push falls back to master when main not found", async () => {
     assert.ok(pushCommand, "git push should be executed");
     assert.ok(
       /origin\s+['"]?master['"]?/.test(pushCommand),
-      "push should use master when main not found"
+      "push should fall back to master when HEAD is detached"
     );
   });
 });

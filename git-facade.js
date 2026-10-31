@@ -10,8 +10,10 @@
 
 import {
   getCurrentBranch,
+  getHeadSha,
   getLastCommitMessage,
   getPrimaryBranch,
+  getRemoteBranchSha,
   getStagedChanges,
   getStatusOutput,
   hasStagedChanges,
@@ -27,7 +29,9 @@ export function createGitFacade() {
     hasStagedChanges,
     getStagedChanges,
     getCurrentBranch,
+    getHeadSha,
     getPrimaryBranch,
+    getRemoteBranchSha,
     getLastCommitMessage,
     getStatusOutput,
     workingTreeSummary,

@@ -43,6 +43,62 @@ function applyProjectDirOverride(args) {
   }
 }
 
+/**
+ * Branch yang benar-benar dipakai untuk push.
+ *
+ * Urutan: `branch` eksplisit -> branch aktif -> primary branch.
+ *
+ * Sebelum 31 Okt 2026 urutannya primaryBranch lebih dulu, dan `getPrimaryBranch()`
+ * selalu menjawab "main" bila `origin/main` ada - tanpa melihat branch aktif.
+ * Akibatnya di worktree yang sedang di `feat/...`, tool menjalankan
+ * `git push origin main`. Karena `main` lokal sudah sama dengan `origin/main`,
+ * perintah itu keluar 0 tanpa mengirim apa pun, lalu tool melaporkan
+ * "Commit and push completed". Dua commit nyata tidak pernah ter-push.
+ *
+ * HEAD yang detached ("HEAD") bukan branch, jadi tidak bisa dipakai.
+ */
+function pickPushBranch({ requestedBranch, currentBranch, primaryBranch }) {
+  if (requestedBranch) return requestedBranch;
+  if (currentBranch && currentBranch !== "HEAD") return currentBranch;
+  return primaryBranch || currentBranch || "";
+}
+
+/**
+ * Pastikan remote benar-benar menerima HEAD.
+ *
+ * `git push` bisa keluar 0 tanpa memindahkan apa pun - itulah yang menyamarkan
+ * bug di atas. Satu-satunya bukti yang bisa dipercaya adalah membandingkan SHA.
+ */
+async function verifyPushed(git, branch) {
+  let head;
+  try {
+    head = await git.getHeadSha();
+  } catch (error) {
+    return { ok: false, detail: `tidak bisa membaca HEAD: ${error.message}` };
+  }
+
+  let remote;
+  try {
+    remote = await git.getRemoteBranchSha(branch);
+  } catch {
+    return {
+      ok: false,
+      detail: `branch origin/${branch} tidak ditemukan di remote setelah push`,
+    };
+  }
+
+  if (remote !== head) {
+    return {
+      ok: false,
+      detail:
+        `origin/${branch} berada di ${remote.slice(0, 8)}, ` +
+        `sedangkan HEAD di ${head.slice(0, 8)}`,
+    };
+  }
+
+  return { ok: true, head };
+}
+
 export async function handleCommitAndPush(args, context) {
   const { workflowState, exec, git, utils } = context;
 
@@ -84,11 +140,24 @@ export async function handleCommitAndPush(args, context) {
     );
   }
 
-  const branchForPush = requestedBranch || primaryBranch || currentBranch || "";
+  const branchForPush = pickPushBranch({ requestedBranch, currentBranch, primaryBranch });
 
   if (!hasWorkingChanges) {
     const lastCommitMessage = await git.getLastCommitMessage();
     const effectiveCommitMessage = lastCommitMessage || providedCommitMessage;
+
+    // "Tidak ada perubahan" bukan berarti "sudah ter-push". HEAD bisa saja
+    // berupa commit yang belum pernah dikirim. Memeriksanya mencegah tool
+    // menandai selesai padahal remote masih tertinggal.
+    const pushed = await verifyPushed(git, branchForPush);
+    if (!pushed.ok) {
+      return textResponse(
+        `⚠️ Tidak ada perubahan untuk di-commit, tetapi HEAD BELUM ada di remote.\n` +
+        `Repo: ${repoLabel()}\nBranch: ${branchForPush || "(tidak diketahui)"}\n` +
+        `Sebab: ${pushed.detail}\n\n` +
+        `Jalankan 'commit_and_push' lagi dengan 'branch' yang benar, atau push manual.`
+      );
+    }
 
     workflowState.state.commitAndPushCompleted = true;
     workflowState.state.lastCommitMessage = effectiveCommitMessage || "";
@@ -97,7 +166,7 @@ export async function handleCommitAndPush(args, context) {
     await workflowState.save();
 
     return textResponse(
-      `ℹ️ No changes detected. Assuming commit and push already completed.\nRepo: ${repoLabel()}\nLast commit: ${effectiveCommitMessage || "(unavailable)"
+      `ℹ️ No changes detected. Assuming commit and push already completed.\nRepo: ${repoLabel()}\nBranch: ${branchForPush} (verified on remote)\nLast commit: ${effectiveCommitMessage || "(unavailable)"
       }\n\nNext: Run 'perform_release' to handle the release and push tags.`
     );
   }
@@ -152,6 +221,20 @@ export async function handleCommitAndPush(args, context) {
     );
   }
 
+  // Exit code 0 dari `git push` BUKAN bukti bahwa commit ini terkirim. Kalau
+  // branch yang dipilih sudah sinkron, git tidak melakukan apa pun dan tetap
+  // keluar 0. Satu-satunya bukti yang bisa dipercaya: SHA HEAD ada di remote.
+  const pushed = await verifyPushed(git, branchForPush);
+  if (!pushed.ok) {
+    return textResponse(
+      `❌ Commit dibuat, tetapi TIDAK ter-push.\n` +
+      `Repo: ${repoLabel()}\nBranch: ${branchForPush || "(tidak diketahui)"}\n` +
+      `Sebab: ${pushed.detail}\n\n` +
+      `Commit lokal: ${generatedSummary}\n\n` +
+      `Jalankan 'commit_and_push' lagi dengan 'branch' yang benar, atau push manual.`
+    );
+  }
+
   workflowState.state.commitAndPushCompleted = true;
   workflowState.state.lastCommitMessage = generatedSummary;
   workflowState.state.lastPushBranch = branchForPush;
@@ -159,8 +242,7 @@ export async function handleCommitAndPush(args, context) {
   await workflowState.save();
 
   return textResponse(
-    `✅ Commit and push completed!\nRepo: ${repoLabel()}\n\nCommit message: ${generatedSummary}\nPushed to: ${branchForPush || "(default upstream)"
-    }\n\nNext: Run 'perform_release' to handle the release and push tags.`
+    `✅ Commit and push completed!\nRepo: ${repoLabel()}\n\nCommit message: ${generatedSummary}\nPushed to: ${branchForPush} (verified at ${pushed.head.slice(0, 8)})\n\nNext: Run 'perform_release' to handle the release and push tags.`
   );
 }
 

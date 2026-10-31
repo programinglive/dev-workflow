@@ -60,13 +60,17 @@ export function stripNpmNotices(stderr) {
 }
 
 export function createGitMock(overrides = {}) {
+  // SHA default yang konsisten: push dianggap berhasil kecuali test menggantinya.
+  const headSha = "a".repeat(40);
   return {
     hasWorkingChanges: async () => false,
     hasStagedChanges: async () => false,
     hasTestChanges: async () => true,
     getStagedChanges: async () => [],
     getCurrentBranch: async () => "main",
+    getHeadSha: async () => headSha,
     getPrimaryBranch: async () => "main",
+    getRemoteBranchSha: async () => headSha,
     getLastCommitMessage: async () => "",
     getStatusOutput: async () => "",
     containsTestFilesInStatus: (statusOutput) => statusOutput.includes("tests/"),

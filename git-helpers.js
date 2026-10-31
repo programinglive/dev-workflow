@@ -145,6 +145,29 @@ export async function getCurrentBranch() {
   return stdout.trim();
 }
 
+/**
+ * SHA commit yang sedang di HEAD.
+ *
+ * Dipakai untuk membuktikan bahwa push benar-benar mengirim commit ini, bukan
+ * hanya "git push" yang keluar 0 tanpa memindahkan apa pun.
+ */
+export async function getHeadSha() {
+  const { stdout } = await exec("git rev-parse HEAD");
+  return stdout.trim();
+}
+
+/**
+ * SHA yang tercatat pada remote-tracking ref `origin/<branch>`.
+ * Melempar bila branch itu belum ada di remote.
+ */
+export async function getRemoteBranchSha(branch) {
+  const { stdout } = await exec("git rev-parse", {
+    executable: "git",
+    arguments: ["rev-parse", `origin/${branch}`],
+  });
+  return stdout.trim();
+}
+
 export async function getStatusOutput() {
   const { stdout } = await exec("git status --porcelain");
   return stdout;
