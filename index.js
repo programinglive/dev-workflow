@@ -13,6 +13,8 @@ import {
   GetPromptRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { fileURLToPath } from "url";
+import path from "path";
+import { acquireProcessLock, releaseProcessLock, lockWarning } from "./process-lock.js";
 import { exec, setActiveProjectDir } from "./exec.js";
 import { normalizeRequestArgs, shellEscape } from "./utils.js";
 import { createGitFacade } from "./git-facade.js";
@@ -197,6 +199,20 @@ export async function main() {
     // Select request metadata before the first disk write. Creating an idle
     // PID fallback here leaves a phantom session alongside the real sessions.
     safeLog('error', `[${new Date().toISOString()}] Workflow state initialization complete.`);
+
+    // Penanda proses: 31 Oktober 2026 dua proses MCP hidup bersamaan dan
+    // memegang kredensial Factory yang berbeda, sehingga tool yang sama
+    // menjawab berbeda tergantung proses mana yang melayaninya. Proses lain
+    // TIDAK dibunuh (itu berbahaya); cukup dilaporkan supaya pengguna tahu
+    // harus menutup OpenCode dan membukanya lagi.
+    try {
+      const stateDir = path.dirname(path.resolve(workflowState.stateFile));
+      const warning = lockWarning(acquireProcessLock({ dir: stateDir }));
+      if (warning) safeLog('error', warning);
+      process.once('exit', () => releaseProcessLock({ dir: stateDir }));
+    } catch (lockError) {
+      safeLog('error', 'Warning: could not record process lock:', lockError.message);
+    }
   } catch (error) {
     safeLog('error', `[${new Date().toISOString()}] Warning: Failed to initialize workflow state:`, error.message);
     // Continue anyway - workflow state is optional for MCP to function
