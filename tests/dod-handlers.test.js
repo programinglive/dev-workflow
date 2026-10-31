@@ -535,3 +535,64 @@ test("perubahan kerja baru setelah commit membuat bukti lama basi, waive tetap b
     assert.equal(summarize(state.state.definitionOfDone, state.state.dodRevision).open, 0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Tampilan status dan rerun
+// ---------------------------------------------------------------------------
+
+test("get_workflow_status menampilkan ringkasan dan perincian DoD", async () => {
+  await withState(async (state) => {
+    state.state.currentPhase = "coding";
+    state.state.taskDescription = "Task";
+    state.state.definitionOfDone = [
+      { id: "dod-1", text: "build lulus", status: "done", evidence: "npm test 482 pass", waivedReason: "", revision: 0, updatedAt: "" },
+      { id: "dod-2", text: "deploy staging", status: "waived", evidence: "", waivedReason: "staging mati", revision: 0, updatedAt: "" },
+      { id: "dod-3", text: "login terverifikasi", status: "open", evidence: "", waivedReason: "", revision: 0, updatedAt: "" },
+      { id: "dod-4", text: "migrasi aman", status: "open", evidence: "", waivedReason: "", revision: 0, updatedAt: "" },
+    ];
+
+    const response = await call("get_workflow_status", {}, state);
+    const out = text(response);
+
+    assert.match(out, /DoD: 1\/4 selesai, 1 dilewati, 2 terbuka/);
+    assert.match(out, /\[x\] build lulus/);
+    assert.match(out, /npm test 482 pass/);
+    assert.match(out, /\[~\] deploy staging/);
+    assert.match(out, /staging mati/);
+    assert.match(out, /\[ \] login terverifikasi/);
+  });
+});
+
+test("get_workflow_status menyebut sumber papan untuk DoD dari Factory", async () => {
+  await withState(async (state) => {
+    state.state.currentPhase = "coding";
+    state.state.taskDescription = "Task dari papan";
+    state.state.dodSource = "factory";
+    state.state.dodFactoryTaskId = "abc";
+    state.state.definitionOfDone = [
+      { id: "dod-1", text: "build lulus", status: "open", evidence: "", waivedReason: "", revision: 0, updatedAt: "" },
+    ];
+
+    const out = text(await call("get_workflow_status", {}, state));
+
+    assert.match(out, /Factory/i);
+  });
+});
+
+test("rerun_workflow mempertahankan item DoD yang sudah ada", async () => {
+  await withState(async (state) => {
+    state.state.currentPhase = "ready";
+    state.state.taskDescription = "Task";
+    state.state.taskType = "feature";
+    state.state.definitionOfDone = [
+      { id: "dod-1", text: "build lulus", status: "done", evidence: "npm test", waivedReason: "", revision: 0, updatedAt: "" },
+    ];
+
+    const response = await call("rerun_workflow", {}, state);
+
+    assert.match(text(response), /Rerunning workflow/);
+    assert.equal(state.state.currentPhase, "coding");
+    assert.equal(state.state.definitionOfDone.length, 1, "DoD tidak boleh hilang");
+    assert.equal(state.state.definitionOfDone[0].status, "done");
+  });
+});

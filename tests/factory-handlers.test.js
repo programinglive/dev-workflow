@@ -219,8 +219,16 @@ test("claim handler opens a work session and starts the local workflow", async (
 
     assert.match(out, /Claimed/);
     assert.match(out, /running/);
-    assert.match(out, /Definition of done:\n- \[ \] tes lulus/, "kriteria selesai harus terbaca sebelum bekerja");
+    assert.match(
+      out,
+      /Imported 1 definition-of-done item\(s\) from the board, all OPEN/,
+      "kriteria selesai diimpor sebagai rencana, bukan bukti",
+    );
+    assert.match(out, /dod-1: tes lulus/, "setiap item harus disebut beserta id-nya");
     assert.strictEqual(workflowState.state.currentPhase, "coding");
+    assert.strictEqual(workflowState.state.dodSource, "factory");
+    assert.strictEqual(workflowState.state.definitionOfDone[0].status, "open");
+    assert.strictEqual(workflowState.state.definitionOfDone[0].text, "tes lulus");
     assert.match(workflowState.state.taskDescription, /Sambungkan MCP ke Factory|Task backlog/);
     assert.strictEqual(saved.length, 1);
 
