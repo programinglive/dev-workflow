@@ -39,6 +39,23 @@ export async function resetToCommitIfWorkingChanges(workflowState, git) {
     return false;
   }
 
+  // Berkas yang SUDAH kotor sejak `start_task` sengaja ditinggalkan
+  // `commit_and_push` (pekerjaan sesi lain). Itu bukan alasan untuk membatalkan
+  // rilis: kalau dihitung sebagai "perubahan baru", rilis menolak selamanya dan
+  // menyarankan meng-commit berkas yang justru tidak boleh di-commit.
+  if (typeof git.hasOnlyForeignChanges === "function" &&
+      typeof git.getStatusOutput === "function") {
+    let statusOutput = "";
+    try {
+      statusOutput = await git.getStatusOutput();
+    } catch {
+      statusOutput = "";
+    }
+    if (git.hasOnlyForeignChanges(workflowState.state.dirtyAtStart, statusOutput)) {
+      return false;
+    }
+  }
+
   workflowState.state.commitAndPushCompleted = false;
   workflowState.state.released = false;
   workflowState.state.releaseSkipped = false;

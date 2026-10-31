@@ -80,6 +80,30 @@ export async function handleSkipRelease(args, workflowState) {
   );
 }
 
+/**
+ * Perubahan yang BUKAN berasal dari sebelum task.
+ *
+ * Dipakai untuk menyebutkan berkas mana yang menghalangi rilis. Pesan lama
+ * hanya berkata "detected new changes" tanpa menyebut apa pun, sehingga orang
+ * harus menebak sendiri yang mana.
+ */
+async function unexpectedChanges(git, baselineEntries) {
+  try {
+    const statusOutput = await git.getStatusOutput();
+    if (typeof git.parseStatusEntries !== "function") {
+      return [];
+    }
+    const known = new Set(
+      (Array.isArray(baselineEntries) ? baselineEntries : [])
+        .map((entry) => String(entry?.path || "").trim())
+        .filter(Boolean),
+    );
+    return git.parseStatusEntries(statusOutput).filter((entry) => !known.has(entry.path));
+  } catch {
+    return [];
+  }
+}
+
 export async function handlePerformRelease(args, context) {
   const { workflowState, exec, git, utils } = context;
 
@@ -111,8 +135,14 @@ export async function handlePerformRelease(args, context) {
   }
 
   if (hasNewChanges) {
+    const unexpected = await unexpectedChanges(git, workflowState.state.dirtyAtStart);
+    const details = unexpected.length > 0
+      ? `\n\nBerkas yang bukan bagian dari pekerjaan task ini:\n` +
+        unexpected.map((entry) => `   • ${entry.code.padEnd(3)} ${entry.path}`).join("\n")
+      : "";
     return textResponse(
-      "⚠️ Detected new changes after the last commit. Please run 'commit_and_push' again before recording a release."
+      "⚠️ Detected new changes after the last commit. Please run 'commit_and_push' again before recording a release." +
+        details
     );
   }
 
@@ -203,7 +233,16 @@ export async function handlePerformRelease(args, context) {
   }
 
   const statusSummary = git.workingTreeSummary(statusOutput);
-  if (statusSummary.hasChanges) {
+
+  // "Bersih" di sini berarti: tidak ada perubahan yang BELUM kita putuskan.
+  // Berkas yang sudah kotor sejak `start_task` adalah pekerjaan sesi lain yang
+  // sengaja ditinggalkan `commit_and_push` - rilis boleh lanjut, asalkan
+  // disebutkan supaya tidak tampak seperti repo yang bersih total.
+  const onlyForeign =
+    typeof git.hasOnlyForeignChanges === "function" &&
+    git.hasOnlyForeignChanges(workflowState.state.dirtyAtStart, statusOutput);
+
+  if (statusSummary.hasChanges && !onlyForeign) {
     const changeDetails =
       statusSummary.lines.length > 0
         ? statusSummary.lines.map((line) => `• ${line}`).join("\n")
@@ -213,6 +252,11 @@ export async function handlePerformRelease(args, context) {
       `⚠️ Working tree not clean! Please commit or stash all changes before running 'perform_release'.\n\nDetected changes:\n${changeDetails}`
     );
   }
+
+  const leftOverNote = onlyForeign && statusSummary.lines.length > 0
+    ? `\n\nℹ️ Dibiarkan tidak ter-commit (sudah kotor sebelum task ini, milik sesi lain):\n` +
+      statusSummary.lines.map((line) => `   • ${line}`).join("\n")
+    : "";
 
   const lastCommitMessage = await git.getLastCommitMessage();
   if (!releaseType) {
@@ -313,8 +357,8 @@ export async function handlePerformRelease(args, context) {
 
   const message = summarizeHistory(workflowState.state.history, args.limit || 10);
   if (!message) {
-    return textResponse("📜 No workflow history yet.");
+    return textResponse(`📜 No workflow history yet.${leftOverNote}`);
   }
 
-  return textResponse(message);
+  return textResponse(`${message}${leftOverNote}`);
 }
