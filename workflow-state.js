@@ -33,6 +33,22 @@ let cachedUserStateDir = null;
  */
 const PROCESS_TOKEN = `proc-${process.pid}-${Math.random().toString(16).slice(2, 10)}`;
 
+/**
+ * Langkah workflow yang hanya boleh MAJU dalam satu task.
+ *
+ * Hanya flag PENCAPAIAN. Gerbang kualitas (`readyToCommit`,
+ * `readyCheckCompleted`, `commitAndPushCompleted`, `released`) SENGAJA tidak
+ * masuk: keempatnya direset ketika langkah sebelumnya diulang, dan memaksa
+ * nilainya tetap true akan melemahkan gerbang yang justru ingin ditegakkan.
+ */
+const MONOTONIC_STEP_FIELDS = [
+  "featureFlowCreated",
+  "bugFixed",
+  "testsCreated",
+  "testsPassed",
+  "documentationCreated",
+];
+
 function migrateOwnerMetadata(value) {
   if(value?.owner && !value.owner.processMarker && /^proc-[A-Za-z0-9-]+$/.test(value.owner.token || '')) {
     value.owner.processMarker=value.owner.token;
@@ -820,6 +836,44 @@ export class WorkflowState {
     return created;
   }
 
+  /**
+   * Gabungkan kemajuan langkah dari disk bila task-nya sama.
+   *
+   * Hanya menyentuh flag yang MONOTON dalam satu task. Field yang bisa turun
+   * dengan sengaja (mis. `readyCheckCompleted` yang direset `create_tests`)
+   * tidak digabung, karena itu bagian dari alur normal satu proses.
+   *
+   * `reconciled` sudah memuat state disk terbaru; `this.state` adalah milik
+   * proses ini. Kalau task berbeda atau disk idle, tidak ada yang digabung:
+   * itu task lain, atau task baru yang memang harus mulai dari nol.
+   */
+  mergeMonotonicProgress(reconciled) {
+    const diskTask = (reconciled?.diskTask || "").trim();
+    const ourTask = (this.state.taskDescription || "").trim();
+    if (!diskTask || !ourTask || diskTask !== ourTask) {
+      return;
+    }
+    if ((reconciled?.diskPhase || "idle") === "idle") {
+      return;
+    }
+
+    // Harus dari `reconciled` yang BARU dibaca. `lastReconcile` adalah hasil
+    // penyimpanan sebelumnya, sehingga bisa tertinggal satu putaran - dan
+    // justru itu yang membuat penggabungan gagal menangkap langkah terbaru.
+    const disk = reconciled?.diskState;
+    if (!disk) {
+      return;
+    }
+
+    // Kemajuan hanya boleh maju. Sekali sebuah langkah tercapai di proses mana
+    // pun, langkah itu tetap tercapai.
+    for (const field of MONOTONIC_STEP_FIELDS) {
+      if (disk[field] === true && this.state[field] !== true) {
+        this.state[field] = true;
+      }
+    }
+  }
+
   async save(options = {}) {
     assertSafeKnowledge(this.state);
     const reconciled = await this.reconcileWithDisk();
@@ -838,6 +892,19 @@ export class WorkflowState {
       return { ...reconciled, conflict, verified: false };
     }
     this.lastConflict = null;
+
+    // Dua proses MCP bisa melayani sesi yang SAMA (OpenCode men-spawn lebih dari
+    // satu instance), dan keduanya menulis berkas state yang sama. Tanpa ini,
+    // proses yang memegang state basi menimpa langkah yang sudah dicapai proses
+    // lain: `mark_bug_fixed` menjawab sukses, lalu `create_tests` menjawab
+    // "mark your feature/bug as fixed first". Gejalanya intermiten, sehingga
+    // mudah disalahkan pada hal lain.
+    //
+    // Langkah workflow bersifat monoton dalam satu task: sekali tercapai, tidak
+    // boleh mundur. Karena itu digabung dengan OR - tetapi HANYA bila task di
+    // disk memang task yang sama. `start_task` mengganti task, dan pada saat itu
+    // flag harus benar-benar direset, bukan dihidupkan kembali.
+    this.mergeMonotonicProgress(reconciled);
 
     this.state.owner = {
       processMarker: PROCESS_TOKEN,
@@ -988,11 +1055,15 @@ export class WorkflowState {
       foreignToken: null,
       diskTask: "",
       diskPhase: "idle",
+      // Dipakai mergeMonotonicProgress: state disk apa adanya, supaya flag
+      // langkah yang sudah dicapai proses lain bisa digabung.
+      diskState: null,
     };
     const disk = await this.readDiskState();
     if (!disk) {
       return result;
     }
+    result.diskState = disk;
 
     result.diskTask = disk.taskDescription || "";
     result.diskPhase = disk.currentPhase || "idle";
