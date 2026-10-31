@@ -134,8 +134,19 @@ export async function handleClaimFactoryTask(args = {}, { workflowState } = {}) 
     // dikerjakan, dan papan terlihat penuh task mati.
     startKeeping(config, session, step);
 
+    // Arsipkan task lokal yang sedang berjalan, jangan hapus diam-diam.
+    //
+    // 31 Oktober 2026 claim_factory_task dipanggil di tengah task lain yang baru
+    // sampai tahap rilis. `reset()` tanpa archive membuat task itu lenyap: tidak
+    // ada entri history, tidak ada peringatan, tidak disebut di jawaban.
+    // `start_task` sudah mengarsipkan sejak awal; claim tidak.
+    let archivedTask = null;
     if (workflowState) {
-      workflowState.reset();
+      const archived = workflowState.reset({
+        archive: true,
+        reason: "Diganti claim_factory_task sebelum task selesai",
+      });
+      archivedTask = archived?.archivedTask || null;
       workflowState.state.currentPhase = "coding";
       workflowState.state.taskDescription = `[${task.taskKey || task.id}] ${task.title}`;
       workflowState.state.taskType = "other";
@@ -145,6 +156,10 @@ export async function handleClaimFactoryTask(args = {}, { workflowState } = {}) 
     return textResponse(
       [
         `Claimed [${task.taskKey || task.id}] ${task.title}`,
+        archivedTask
+          ? `⚠️ Task lokal yang belum selesai diarsipkan ke history: "${archivedTask}". ` +
+            `Pekerjaannya tidak dihapus, tetapi tidak lagi aktif di sesi ini.`
+          : "",
         session.tookOver && session.previousHolder
           ? `Took over from ${session.previousHolder.deviceName} (${session.previousHolder.agent}). The reason is recorded on the board.`
           : "",
