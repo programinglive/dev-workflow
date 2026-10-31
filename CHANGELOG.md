@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.15.1](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.15.0...v1.15.1) (2026-10-31)
+
+
+### 🐛 Bug Fixes
+
+* **lock:** detak jantung jalan di jalur normal, bukan hanya saat lock gagal ([c6fa056](https://github.com/programinglive/dev-workflow-mcp-server/commit/c6fa056be1637a5c23cd5c9ca5953de656d9c1e0))
+
 ## [1.15.0](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.14.2...v1.15.0) (2026-10-31)
 
 
