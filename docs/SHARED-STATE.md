@@ -1,3 +1,5 @@
+> **Catatan (1 November 2026):** dokumen ini merekam keadaan saat ditulis. Sejak 1.17.0/1.18.0 state dipisah per SESI di bawah projects/<proyek>/users/<user>/, dan rencana kerja ikut disimpan. Tata letak yang berlaku ada di docs/2026-11-01-state-isolation-design.md dan README.
+
 # State workflow dipakai bersama antar sesi: apa yang diperbaiki
 
 Tanggal: 27 Oktober 2026
