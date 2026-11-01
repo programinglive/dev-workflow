@@ -211,6 +211,27 @@ export default function App() {
             </View>
           )}
 
+          {data && data.machines && data.machines.length > 0 && (
+            <View style={gaya.aktivitas}>
+              <Text style={gaya.aktivitasJudul}>Mesin terhubung</Text>
+              {data.machines.map((m) => (
+                <View key={m.machine} style={gaya.mesinBaris}>
+                  <View
+                    style={[
+                      gaya.titik,
+                      { backgroundColor: m.online ? WARNA.hijau : WARNA.abu },
+                    ]}
+                  />
+                  <Text style={gaya.mesinNama}>{m.machine}</Text>
+                  <Text style={gaya.mesinMeta} numberOfLines={1}>
+                    {m.online ? "online" : "offline"} · {ago(m.last_seen, jamServer)}
+                    {m.last_project ? " · " + m.last_project : ""}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          )}
+
           {data && data.events && data.events.length > 0 && (
             <View style={gaya.aktivitas}>
               <Text style={gaya.aktivitasJudul}>Aktivitas terakhir</Text>
@@ -509,6 +530,10 @@ const gaya = StyleSheet.create({
   ketuk: { color: WARNA.biruMuda, fontSize: 11 },
 
   aktivitas: { marginTop: 8, borderTopWidth: 1, borderTopColor: WARNA.garis, paddingTop: 14 },
+  mesinBaris: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 6 },
+  titik: { width: 8, height: 8, borderRadius: 999 },
+  mesinNama: { color: WARNA.teks, fontSize: 13, fontWeight: "600", minWidth: 90 },
+  mesinMeta: { color: WARNA.redup, fontSize: 12, flexShrink: 1 },
   aktivitasJudul: { color: WARNA.teks, fontSize: 15, fontWeight: "700", marginBottom: 8 },
   aktivitasItem: { color: WARNA.redup, fontSize: 12, marginBottom: 6 },
   aktivitasJenis: { color: WARNA.teks, fontWeight: "600" },
