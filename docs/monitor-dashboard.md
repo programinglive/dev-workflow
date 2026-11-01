@@ -131,8 +131,33 @@ history, atau state workflow. Data aslinya tetap di tiap mesin
 
 
 
-## Sesi `idle` yang basi disembunyikan
+## Dashboard yang mati tidak boleh tampak seperti dashboard yang sepi
 
+Diukur 1 November 2026: dengan service `devwf-monitor` **dihentikan**, layar
+tablet tidak berubah sama sekali — kartu yang sama, angka yang sama, tanpa satu
+pun tanda ada yang salah. Diam bisa berarti dua hal yang sangat berbeda, dan
+pemiliknya tidak punya cara membedakannya.
+
+`/api/sessions` kini mengembalikan `health`:
+
+```json
+{ "lastReportAt": "2026-11-01T16:19:26.924Z", "ageMs": 22, "stale": false, "never": false }
+```
+
+Yang dihitung adalah **kapan laporan terakhir masuk** — bukan "apakah ada
+pekerjaan". Berhentinya pekerjaan itu normal; berhentinya pelaporan itu
+kerusakan. Bila tidak ada laporan lebih dari `STALE_AFTER_MS` (bawaan 10 menit),
+halaman menampilkan peringatan kuning di atas daftar sesi.
+
+`never: true` dibedakan supaya pesannya tepat: "belum pernah ada laporan"
+mengarah ke konfigurasi `DEVWF_MONITOR_URL`/token, sedangkan laporan yang sudah
+tua mengarah ke mesin pengirim atau service-nya.
+
+Diverifikasi dua arah di kedua tablet lewat `uiautomator dump`: peringatan
+muncul saat data sepi (`47m lalu`), dan hilang setelah ada laporan baru
+(`ageMs: 22`).
+
+## Sesi `idle` yang basi disembunyikan
 Proses MCP mati bersama sesi OpenCode-nya, jadi baris `idle` tinggal selamanya.
 Tanpa filter, dashboard yang dipakai berhari-hari memenuhi layar tablet dengan
 sesi yang sudah tidak ada prosesnya.

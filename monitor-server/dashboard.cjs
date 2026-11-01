@@ -18,6 +18,7 @@ const {
   DEFAULT_RETENTION_DAYS,
   DEFAULT_SESSION_RETENTION_DAYS,
 } = require('./retention.cjs');
+const { buildHealth, DEFAULT_STALE_AFTER_MS } = require('./health.cjs');
 
 const PORT = Number(process.env.PORT || 3100);
 const HOST = process.env.HOST || '0.0.0.0';
@@ -50,6 +51,8 @@ const SESSION_RETENTION_DAYS = Number(
 );
 /** Seberapa sering pembersihan dijalankan. */
 const PRUNE_EVERY_MS = Number(process.env.PRUNE_EVERY_MS || 6 * 60 * 60 * 1000);
+/** Dianggap basi bila tidak ada laporan apa pun selama ini. */
+const STALE_AFTER_MS = Number(process.env.STALE_AFTER_MS || DEFAULT_STALE_AFTER_MS);
 /**
  * Berapa lama sesi `idle` masih ditampilkan.
  *
@@ -90,9 +93,13 @@ const PAGE = `<!doctype html>
   .empty { color:#7d8590; text-align:center; padding:40px 0; }
   .events { font-size:12px; color:#7d8590; }
   .events b { color:#c9d1d9; font-weight:500; }
+  .warn { border:1px solid #d2992255; background:#d299221a; color:#e3b341;
+          border-radius:10px; padding:10px 12px; margin-bottom:12px; font-size:13px; }
+  .warn b { color:#f0c674; }
 </style></head><body>
 <h1>Dev Workflow Monitor</h1>
 <div class="sub" id="sub">menyambung…</div>
+<div id="warn"></div>
 <div id="list"><div class="empty">memuat…</div></div>
 <h1 style="font-size:14px;margin-top:24px">Aktivitas terakhir</h1>
 <div id="events" class="events"></div>
@@ -109,6 +116,21 @@ function ago(iso) {
 function render(data) {
   document.getElementById('sub').textContent =
     data.sessions.length + ' sesi · ' + new Date().toLocaleTimeString('id-ID');
+  // Penanda "data masih hidup". Tanpa ini, monitor yang mati tampak persis
+  // seperti monitor yang memang tidak ada pekerjaan - dan pemiliknya tidak
+  // punya cara membedakannya.
+  const h = data.health || {};
+  const warn = document.getElementById('warn');
+  if (h.stale) {
+    warn.innerHTML = '<div class="warn"><b>⚠ Tidak ada laporan masuk</b><br>' +
+      (h.never
+        ? 'Belum pernah ada laporan sama sekali. Periksa DEVWF_MONITOR_URL dan token di mesin pengirim.'
+        : 'Terakhir ' + ago(h.lastReportAt) + '. Bisa berarti tidak ada yang bekerja, ' +
+          'atau pelaporannya terputus — periksa mesin atau service devwf-monitor.') +
+      '</div>';
+  } else {
+    warn.innerHTML = '';
+  }
   const live = data.sessions.filter(s => s.phase !== 'idle').length;
   const list = document.getElementById('list');
   if (!data.sessions.length) {
@@ -281,8 +303,19 @@ const server = http.createServer(async (req, res) => {
       const events = await query(
         `SELECT at, kind, detail, project_name, machine
            FROM events ORDER BY at DESC LIMIT 15`);
+      // Kapan laporan terakhir masuk? Diambil dari kedua tabel supaya satu
+      // laporan pun (sesi atau event) cukup untuk membuktikan jalur hidup.
+      const last = await query(
+        `SELECT GREATEST(
+                  (SELECT max(updated_at) FROM sessions),
+                  (SELECT max(at) FROM events)
+                ) AS last_report_at`);
+      const health = buildHealth({
+        lastReportAt: last.rows[0] ? last.rows[0].last_report_at : null,
+        staleAfterMs: STALE_AFTER_MS,
+      });
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
-      return res.end(JSON.stringify({ sessions: sessions.rows, events: events.rows }));
+      return res.end(JSON.stringify({ sessions: sessions.rows, events: events.rows, health }));
     }
     if (url.pathname === '/api/events') {
       const rows = await query(
