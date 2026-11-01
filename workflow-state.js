@@ -5,6 +5,7 @@ import path from "path";
 import { assertSafeKnowledge } from './security/policy.js';
 import { sanitize } from './security/sanitizer.js';
 import { normalizeItems as normalizeDodItems, mergeDefinitionOfDone as mergeDodItems } from './tools/handler-modules/dod.js';
+import { normalizePlan } from './tools/handler-modules/plan.js';
 import { fileURLToPath } from "url";
 import { createHash } from "crypto";
 
@@ -1017,6 +1018,10 @@ export class WorkflowState {
       // Naik setiap ada perubahan kerja baru setelah commit tercatat, sehingga
       // bukti item `done` yang lama otomatis tidak lagi berlaku.
       dodRevision: 0,
+      // Urutan kerja yang sedang dijalankan. Terpisah dari `definitionOfDone`:
+      // DoD adalah syarat selesai, ini adalah rencana langkahnya. Rencana tidak
+      // menjadi gerbang - ia hanya membuat progres bisa dibaca.
+      plan: [],
       history: [],
       taskType: "",
     };
@@ -1078,6 +1083,10 @@ export class WorkflowState {
       // Naik setiap ada perubahan kerja baru setelah commit tercatat, sehingga
       // bukti item `done` yang lama otomatis tidak lagi berlaku.
       dodRevision: 0,
+      // Urutan kerja yang sedang dijalankan. Terpisah dari `definitionOfDone`:
+      // DoD adalah syarat selesai, ini adalah rencana langkahnya. Rencana tidak
+      // menjadi gerbang - ia hanya membuat progres bisa dibaca.
+      plan: [],
       history: [],
       taskType: "",
     };
@@ -1175,6 +1184,8 @@ export class WorkflowState {
       if (typeof this.state.lastCommitSha !== "string") {
         this.state.lastCommitSha = "";
       }
+      // Berkas state dari versi sebelum fitur rencana tidak punya field ini.
+      this.state.plan = normalizePlan(this.state.plan);
     } catch (error) {
       if (error?.code !== "ENOENT") {
         throw error;
@@ -1739,6 +1750,10 @@ export class WorkflowState {
       // Naik setiap ada perubahan kerja baru setelah commit tercatat, sehingga
       // bukti item `done` yang lama otomatis tidak lagi berlaku.
       dodRevision: 0,
+      // Urutan kerja yang sedang dijalankan. Terpisah dari `definitionOfDone`:
+      // DoD adalah syarat selesai, ini adalah rencana langkahnya. Rencana tidak
+      // menjadi gerbang - ia hanya membuat progres bisa dibaca.
+      plan: [],
       history,
       taskType: "",
     };

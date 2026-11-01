@@ -2,6 +2,13 @@ import { classify } from '../../security/policy.js';
 import { textResponse, isReleaseSatisfied, isErrorResponse, ensurePrdExists, loadDocGateInputs } from "./shared.js";
 import { validateItemTexts } from "./dod.js";
 import {
+  validatePlanSteps,
+  createPlan,
+  normalizePlan,
+  planProgress,
+  renderPlanFull,
+} from "./plan.js";
+import {
   evaluateDocGate,
   isDocumentationPath,
   isGateSatisfied,
@@ -191,6 +198,24 @@ export async function handleStartTask(args, workflowState, git) {
     }
   }
 
+  // Validasi rencana. Skema mewajibkan `plan`; bila agen tidak mengirimnya,
+  // rencana SEMENTARA diturunkan dari DoD supaya progres tetap bisa dibaca,
+  // dan jawabannya menyebut terus terang bahwa urutannya belum benar.
+  const planCheck = validatePlanSteps(args.plan);
+  let planDerived = false;
+
+  if (!planCheck.ok) {
+    if (args.plan !== undefined) {
+      return textResponse(
+        `⚠️ ${planCheck.error}\n\n` +
+          `Contoh pemakaian:\n` +
+          `  plan: ["telusuri handler yang ada", "tulis tes yang gagal", "implementasi minimum"]\n\n` +
+          `Task BELUM dimulai; workflow sebelumnya tidak diubah.`
+      );
+    }
+    planDerived = true;
+  }
+
   // Validasi DoD SEBELUM menyentuh state apa pun. Task yang ditolak tidak boleh
   // mengganti task yang sedang berjalan, dan tidak boleh meninggalkan state
   // setengah jadi yang membuat `get_workflow_status` membingungkan.
@@ -214,6 +239,9 @@ export async function handleStartTask(args, workflowState, git) {
   workflowState.state.classification = classify(args);
   workflowState.state.taskDescription = args.description;
   workflowState.state.taskType = args.type;
+  workflowState.state.plan = planDerived
+    ? createPlan(dodCheck.items.map((text) => `Selesaikan: ${text}`))
+    : createPlan(planCheck.items);
   workflowState.state.definitionOfDone = dodCheck.items.map((text, index) => ({
     id: `dod-${index + 1}`,
     text,
@@ -304,6 +332,11 @@ export async function handleStartTask(args, workflowState, git) {
       `📋 Definition of Done (${workflowState.state.definitionOfDone.length} item, semua masih terbuka):\n${dodLines}\n` +
       `   Buktikan tiap item dengan 'mark_dod_item' { id, evidence } setelah benar-benar terbukti,\n` +
       `   atau kecualikan dengan 'waive_dod_item' { id, reason } bila memang tidak relevan.\n\n` +
+      (planDerived
+        ? `⚠️ 'plan' tidak dikirim, jadi rencana SEMENTARA diturunkan dari DoD.\n` +
+          `   Urutannya belum tentu urutan kerja yang benar. Kirim 'plan' pada 'start_task',\n` +
+          `   atau susun ulang sekarang dengan 'set_plan' { steps: [...] }.\n\n`
+        : `${renderPlanFull(workflowState.state.plan)}\n\n`) +
       `🎯 Be conscious about what you're coding!\n\nWorkflow Steps:\n1. ✓ Start task (current)\n2. ⏳ Describe feature flow with Mermaid\n3. ⏳ Fix/implement the feature\n4. ⏳ Prove each definition-of-done item\n5. ⏳ Create tests\n6. ⏳ Run tests (must pass!)\n7. ⏳ Create documentation\n8. ⏳ Run 'check_ready_to_commit'\n9. ⏳ Run 'commit_and_push' (commits and pushes)\n10. ⏳ Run 'perform_release' or 'skip_release' (when no release is needed)\n11. ⏳ Complete task\n12. ✓ Workflow closed\n\nReminder: Focus on writing clean, maintainable code!`
   );
 }
@@ -494,6 +527,79 @@ export async function handleRunTests(args, workflowState) {
 
   return textResponse(
     `✅ All tests passed! 🎉\n\nTest command: ${args.testCommand}\n\n📝 Now create or update documentation using 'create_documentation' with:\n- documentationType: "PRD", "README", "RELEASE_NOTES", "inline-comments", "API-docs", "changelog", or "other"\n- summary: Brief description of what was documented\n\nNext Steps:\n1. ✓ Fix/implement feature\n2. ✓ Create tests\n3. ✓ Run tests (GREEN!)\n4. ⏳ Create/update documentation\n5. ⏳ Run 'check_ready_to_commit'\n6. ⏳ Run 'commit_and_push'\n7. ⏳ Run 'perform_release' (or use 'skip_release' if no release is needed)\n8. ⏳ Complete task`
+  );
+}
+
+/**
+ * Ganti rencana task yang sedang berjalan.
+ *
+ * Dipakai saat rencana awal ternyata salah setelah ditelusuri. Langkah yang
+ * sudah ditandai selesai dipertahankan bila teksnya sama, supaya mengganti
+ * rencana tidak menghapus progres yang sudah nyata.
+ */
+export async function handleSetPlan(args, workflowState) {
+  if (workflowState.state.currentPhase === "idle") {
+    return textResponse("⚠️ Belum ada task aktif. Mulai dengan 'start_task' sebelum menyusun rencana.");
+  }
+
+  const check = validatePlanSteps(args.steps);
+  if (!check.ok) {
+    return textResponse(`⚠️ ${check.error}\n\nRencana lama tidak diubah.`);
+  }
+
+  const previous = normalizePlan(workflowState.state.plan);
+  const doneTexts = new Set(
+    previous.filter((item) => item.status === "done").map((item) => item.text.toLowerCase()),
+  );
+
+  const next = createPlan(check.items).map((item) =>
+    doneTexts.has(item.text.toLowerCase()) ? { ...item, status: "done" } : item,
+  );
+
+  workflowState.state.plan = next;
+  await workflowState.save();
+
+  return textResponse(`✅ Rencana diperbarui.\n\n${renderPlanFull(next)}`);
+}
+
+/**
+ * Tandai satu langkah rencana sebagai selesai (atau buka kembali).
+ *
+ * Idempoten: menandai ulang langkah yang sudah selesai tidak mengubah apa pun.
+ * Membuka kembali berguna saat langkah yang dikira selesai ternyata belum.
+ */
+export async function handleMarkPlanStep(args, workflowState) {
+  if (workflowState.state.currentPhase === "idle") {
+    return textResponse("⚠️ Belum ada task aktif.");
+  }
+
+  const plan = normalizePlan(workflowState.state.plan);
+  if (plan.length === 0) {
+    return textResponse(
+      "⚠️ Task ini belum punya rencana. Isi dengan 'set_plan' { steps: [...] } lebih dulu."
+    );
+  }
+
+  const id = typeof args.id === "string" ? args.id.trim() : "";
+  const item = plan.find((entry) => entry.id === id);
+  if (!item) {
+    return textResponse(
+      `⚠️ Tidak ada langkah ber-id "${id}".\n\n${renderPlanFull(plan)}`
+    );
+  }
+
+  const status = args.status === "open" ? "open" : "done";
+  workflowState.state.plan = plan.map((entry) =>
+    entry.id === id ? { ...entry, status, updatedAt: new Date().toISOString() } : entry,
+  );
+  await workflowState.save();
+
+  const progress = planProgress(workflowState.state.plan);
+  return textResponse(
+    `${status === "done" ? "✅" : "↩️"} Langkah ${id} ${status === "done" ? "selesai" : "dibuka kembali"}: ${item.text}\n\n` +
+      `${renderPlanFull(workflowState.state.plan)}\n\n` +
+      `Progres: ${progress.done}/${progress.total}` +
+      (progress.next ? ` — berikutnya: ${progress.next.text}` : " — semua langkah selesai")
   );
 }
 

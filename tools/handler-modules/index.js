@@ -13,6 +13,9 @@ import { handleProjectSummary, handleProjectSummaryData, handleProjectSummaryDb,
 import { handleGetWorkflowStatus, handleReadyCheck, handleContinueWorkflow, handleRerunWorkflow } from "./status-handlers.js";
 import { handleSetDefinitionOfDone, handleMarkDodItem, handleWaiveDodItem } from "./dod-handlers.js";
 import { handleNextSteps } from "./next-steps-handlers.js";
+import { handleResumeSession } from "./resume-handlers.js";
+import { handleSetPlan, handleMarkPlanStep } from "./workflow-handlers.js";
+import { renderPlanShort } from "./plan.js";
 import { openItems, MIN_EVIDENCE } from "./dod.js";
 import { handleListFactoryTasks, handleClaimFactoryTask, handleSyncTaskStatus, handleListFactoryProjects, handleCreateFactoryTask, handleUpdateFactoryTask } from "./factory-handlers.js";
 
@@ -351,6 +354,10 @@ async function dispatchToolCall({
         return handleStartTask(args, workflowState, git);
       case "set_definition_of_done":
         return handleSetDefinitionOfDone(args, workflowState);
+      case "set_plan":
+        return handleSetPlan(args, workflowState);
+      case "mark_plan_step":
+        return handleMarkPlanStep(args, workflowState);
       case "mark_dod_item":
         return handleMarkDodItem(args, workflowState);
       case "waive_dod_item":
@@ -381,6 +388,8 @@ async function dispatchToolCall({
         return handleCompleteTask(args, workflowState, { git });
       case "next_steps":
         return handleNextSteps(args, workflowState);
+      case "resume_session":
+        return handleResumeSession(args, workflowState);
       case "force_complete_task":
         return handleForceCompleteTask(args, workflowState);
       case "drop_task":
@@ -433,7 +442,7 @@ export async function handleToolCall(context) {
     assertSafeToolCommand(context.request.params.name,args);
     if (context.workflowState) context.workflowState.lastConflict = null;
     const response=await dispatchToolCall({...context,request:{...context.request,params:{...context.request.params,arguments:args}}});
-    return securityOutputFilter(withConflictNotice(response, context.workflowState));
+    return securityOutputFilter(withPlanProgress(withConflictNotice(response, context.workflowState), context.workflowState));
   } catch(error) {
     if(['SECRET_CONTENT_DENIED','UNSAFE_COMMAND_DENIED'].includes(error.code)) {
       return {isError:true,content:[{type:'text',text:JSON.stringify({error:error.code,message:error.message,findings:error.findings})}]};
@@ -450,6 +459,30 @@ export async function handleToolCall(context) {
  * tersimpan. Kejadian 29 Okt 2026: `start_task` menjawab "✅ Task Started",
  * tetapi `get_workflow_status` berikutnya menampilkan task lain.
  */
+function withPlanProgress(response, workflowState) {
+  const plan = workflowState?.state?.plan;
+  if (!Array.isArray(plan) || plan.length === 0) {
+    return response;
+  }
+
+  const text = response?.content?.[0]?.text;
+  if (typeof text !== "string") {
+    return response;
+  }
+
+  const footer = renderPlanShort(plan);
+  if (!footer) {
+    return response;
+  }
+
+  // Ditempel di AKHIR, bukan di awal: `isErrorResponse` menilai dari awalan,
+  // dan jawaban sukses tetap harus terbaca sebagai sukses.
+  return {
+    ...response,
+    content: [{ ...response.content[0], text: `${text}\n\n${footer}` }, ...response.content.slice(1)],
+  };
+}
+
 function withConflictNotice(response, workflowState) {
   const conflict = workflowState?.lastConflict;
   if (!conflict) {

@@ -5,6 +5,7 @@ import { evaluateDocGate, isGateSatisfied, formatRelativeAge, renderDocGateFailu
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { STRANDED_TASK_FILENAME } from "../../workflow-state.js";
+import { renderPlanFull } from "./plan.js";
 
 /**
  * Bahan gerbang dokumentasi untuk pesan penolakan.
@@ -97,6 +98,8 @@ export async function handleGetWorkflowStatus(workflowState) {
       : `DoD: ${dod.done}/${dod.total} selesai, ${dod.waived} dilewati, ${dod.open} terbuka${dodSource}\n` +
         renderChecklist(dodItems, status.dodRevision);
 
+  const planBlock = renderPlanFull(status.plan);
+
   return textResponse(
     `📊 Current Workflow Status:
 
@@ -112,6 +115,8 @@ Commit & push: ${status.commitAndPushCompleted ? "✅" : "❌"}
 Released: ${status.released ? "✅" : "❌"}
 
 ${dodBlock}
+
+${planBlock}
 
 Next step: ${nextStep}${sharedWarning}${strandedNote}`
   );
