@@ -43,6 +43,14 @@ export function projectLockDir(stateFilePath) {
   let current = path.dirname(resolved);
   const { root } = path.parse(current);
 
+  // Tata letak per proyek: `<dasar>/projects/<proyek>/workflow-state.json`.
+  // Di sini lock HARUS per proyek - kalau naik sampai `.state`, semua proyek
+  // kembali berbagi satu lock dan penjaga menyala untuk proyek yang tidak
+  // berhubungan (kejadian 1 November 2026).
+  if (path.basename(path.dirname(current)) === "projects") {
+    return current;
+  }
+
   while (true) {
     if (path.basename(current) === ".state") {
       return current;
