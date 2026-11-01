@@ -20,6 +20,7 @@ const {
 } = require('./retention.cjs');
 const { buildHealth, DEFAULT_STALE_AFTER_MS } = require('./health.cjs');
 const { buildMachinesQuery, DEFAULT_OFFLINE_AFTER_MINUTES } = require('./machines-query.cjs');
+const { dedupeSessions } = require('./dedupe-sessions.cjs');
 const { classifySession, LABELS, DEFAULT_LIVE_MS, DEFAULT_STUCK_MS } = require('./status.cjs');
 
 const PORT = Number(process.env.PORT || 3100);
@@ -413,9 +414,11 @@ const server = http.createServer(async (req, res) => {
         });
         return { ...row, state: s.status, state_label: LABELS[s.status] || s.status };
       });
+      // Buang kartu kembar (mesin + task sama) sebelum dikirim ke layar.
+      const tampil = dedupeSessions(rows);
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       return res.end(
-        JSON.stringify({ now: serverNow, sessions: rows, events: events.rows, health, machines: machineRows.rows }),
+        JSON.stringify({ now: serverNow, sessions: tampil, events: events.rows, health, machines: machineRows.rows }),
       );
     }
     if (url.pathname === '/api/events') {
