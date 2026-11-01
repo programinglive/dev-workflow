@@ -52,10 +52,16 @@ export async function handleGetWorkflowStatus(workflowState) {
     const disk = await workflowState.readDiskState();
     if (workflowState.isForeignWrite(disk)) {
       const owner = disk.owner || {};
+      // Sejak 1.17.0 state dipisah per sesi, jadi ini BUKAN lagi "state dipakai
+      // bersama antar sesi". Yang tersisa: berkas sesi ini pernah ditulis proses
+      // lain - satu proses melayani beberapa sesi, atau berkas baru saja
+      // dimigrasikan. Pernyataan lama menyesatkan dan menyuruh orang memeriksa
+      // hal yang sudah tidak berlaku.
       sharedWarning =
-        `\n\n⚠️ PERINGATAN: berkas state ini terakhir ditulis proses MCP LAIN ` +
+        `\n\n⚠️ PERINGATAN: berkas state sesi ini terakhir ditulis proses MCP LAIN ` +
         `(${owner.processMarker || "tanpa-token"}, pid ${owner.pid ?? "?"}).\n` +
-        `   State workflow dipakai bersama antar sesi di mesin ini.\n` +
+        `   Biasanya ini berarti satu proses melayani beberapa sesi OpenCode, atau ` +
+        `berkas baru saja dimigrasikan.\n` +
         `   Periksa apakah "Task:" di atas benar-benar milik Anda SEBELUM commit_and_push.`;
       if (disk.currentPhase && disk.currentPhase !== "idle" && disk.taskDescription) {
         sharedWarning += `\n   Proses itu sedang mengerjakan: "${disk.taskDescription}"`;
@@ -187,11 +193,6 @@ export async function handleReadyCheck(workflowState, context = {}) {
         sourceChanged: docGate.sourceChanged,
         readmePath: docGate.readmePath,
         readmeAge: docGate.readmeAge,
-        // Catatan "mungkin task lama" hanya berguna saat langkah dokumentasi
-        // sudah dicatat tetapi tanpa bukti berkas - persis task yang berjalan
-        // sebelum gerbang ini ada.
-        legacy: Boolean(status.documentationCreated) &&
-          (!Array.isArray(status.documentationFiles) || status.documentationFiles.length === 0),
       }),
     );
   }

@@ -245,7 +245,6 @@ export function renderDocGateFailure({
   sourceChanged = [],
   readmePath = "",
   readmeAge = "",
-  legacy = false,
 } = {}) {
   const list = sourceChanged.map((p) => `   • ${p}`).join("\n");
   const count = sourceChanged.length;
@@ -254,15 +253,10 @@ export function renderDocGateFailure({
     ? `README di repo ini: ${readmePath}${readmeAge ? ` — commit terakhir ${readmeAge}` : ""}`
     : "Repo ini tidak punya README di akar maupun direktori docs/.";
 
-  const legacyNote = legacy
-    ? `\nℹ️ Task ini mungkin dimulai sebelum gerbang dokumentasi ada.\n` +
-      `   Kalau README memang sudah benar, kecualikan dengan waive_documentation.\n`
-    : "";
-
   return (
     `❌ Documentation updated for code changes\n\n` +
     `${count} berkas source berubah, tidak satu pun berkas dokumentasi:\n${list}\n\n` +
-    `${readmeLine}\n${legacyNote}\n` +
+    `${readmeLine}\n\n` +
     `Pilih satu:\n` +
     ` 1. Perbarui README/docs, lalu:\n` +
     `    create_documentation { documentationType: "README",\n` +

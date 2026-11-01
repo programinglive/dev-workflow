@@ -256,7 +256,11 @@ export async function getRemoteBranchSha(branch) {
 }
 
 export async function getStatusOutput() {
-  const { stdout } = await exec("git status --porcelain");
+  // Batas waktu: `check_ready_to_commit` kini membaca working tree, dan repo
+  // di network share atau index yang terkunci bisa menggantung panggilan itu -
+  // termasuk `commit_and_push` yang memanggilnya. Lebih baik "tidak bisa
+  // diperiksa" (gerbang tidak memblokir) daripada menggantung selamanya.
+  const { stdout } = await exec("git status --porcelain", { timeout: 10000 });
   return stdout;
 }
 
@@ -268,7 +272,7 @@ export async function getStatusOutput() {
  * laporan `commit_and_push` menyebut repo yang sama dengan yang di-commit.
  */
 export async function getToplevel() {
-  const { stdout } = await exec("git rev-parse --show-toplevel");
+  const { stdout } = await exec("git rev-parse --show-toplevel", { timeout: 10000 });
   return stdout.trim();
 }
 
@@ -317,6 +321,7 @@ export async function getLastCommitForPath(filePath) {
     const { stdout } = await exec("git", {
       executable: "git",
       arguments: ["log", "-1", "--format=%cI", "--", target],
+      timeout: 10000,
     });
     return stdout.trim();
   } catch {
