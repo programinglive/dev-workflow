@@ -2,6 +2,9 @@ import { textResponse, formatChecklist, isReleaseSatisfied, getContinueGuidance,
 import { handleCommitAndPush } from "./commit-handlers.js";
 import { openItems, renderChecklist, renderOutstanding, summarize } from "./dod.js";
 import { evaluateDocGate, isGateSatisfied, formatRelativeAge, renderDocGateFailure } from "./docs.js";
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
+import { STRANDED_TASK_FILENAME } from "../../workflow-state.js";
 
 /**
  * Bahan gerbang dokumentasi untuk pesan penolakan.
@@ -64,6 +67,30 @@ export async function handleGetWorkflowStatus(workflowState) {
   const dodItems = Array.isArray(status.definitionOfDone) ? status.definitionOfDone : [];
   const dod = summarize(dodItems, status.dodRevision);
   const dodSource = status.dodSource === "factory" ? " (dari papan Factory)" : "";
+
+  // Task yang sedang berjalan saat tata letak state berubah tidak disalin ke
+  // berkas sesi (menyalinnya berarti mewarisi pekerjaan orang lain), tetapi ia
+  // juga tidak boleh hilang tanpa jejak. Jejaknya ditulis `migrateStateToSession`.
+  let strandedNote = "";
+  try {
+    const stateDir = path.dirname(workflowState.stateFile);
+    const projectDir = path.basename(path.dirname(stateDir)) === "users"
+      ? path.dirname(path.dirname(stateDir))
+      : stateDir;
+    const strandedPath = path.join(projectDir, STRANDED_TASK_FILENAME);
+    if (existsSync(strandedPath)) {
+      const stranded = JSON.parse(readFileSync(strandedPath, "utf-8"));
+      if (stranded?.taskDescription) {
+        strandedNote =
+          `\n\n⚠️ Ada task yang TIDAK dipindahkan saat tata letak state berubah:\n` +
+          `   "${stranded.taskDescription}" (fase ${stranded.phase || "tidak diketahui"})\n` +
+          `   State-nya masih utuh di ${stranded.sourcePath || "berkas state lama"}.\n` +
+          `   Selesaikan dari sesi asalnya, atau catat ulang dengan 'start_task' bila memang ditinggalkan.`;
+      }
+    }
+  } catch {
+    // Jejak rusak tidak boleh menghalangi status.
+  }
   const dodBlock =
     dodItems.length === 0
       ? "DoD: belum ada item - isi dengan 'set_definition_of_done'"
@@ -86,7 +113,7 @@ Released: ${status.released ? "✅" : "❌"}
 
 ${dodBlock}
 
-Next step: ${nextStep}${sharedWarning}`
+Next step: ${nextStep}${sharedWarning}${strandedNote}`
   );
 }
 

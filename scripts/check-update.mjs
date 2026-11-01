@@ -81,9 +81,15 @@ export function buildReport({ localVersion, npmVersion, localSha, remoteSha, err
     findings.push({ level: "unknown", message: "Clone: tidak bisa diperiksa." });
   } else if (localSha !== remoteSha) {
     needsUpdate = true;
+    // SHA berbeda hanya berarti TIDAK SINKRON. Arahnya tidak bisa diketahui
+    // dari dua SHA saja: lokal bisa tertinggal, bisa juga lebih maju dengan
+    // commit yang belum di-push. Menyimpulkan "tertinggal" lalu menyarankan
+    // `git pull` justru berbahaya di kasus kedua.
     findings.push({
       level: "update",
-      message: `Clone tertinggal dari origin (lokal ${String(localSha).slice(0, 7)}, remote ${String(remoteSha).slice(0, 7)}).`,
+      message:
+        `Clone TIDAK SINKRON dengan origin (lokal ${String(localSha).slice(0, 7)}, ` +
+        `remote ${String(remoteSha).slice(0, 7)}) - arah belum diketahui.`,
     });
   } else {
     findings.push({ level: "ok", message: `Clone: sinkron dengan origin (${String(localSha).slice(0, 7)}).` });
@@ -144,7 +150,10 @@ export function buildReport({ localVersion, npmVersion, localSha, remoteSha, err
     lines.push("Perbarui:");
     if (gitChecked && localSha !== remoteSha) {
       lines.push(`  cd ${ROOT}`);
-      lines.push("  git pull");
+      lines.push("  git log --oneline origin/HEAD..HEAD   # commit lokal yang belum ter-push");
+      lines.push("  git log --oneline HEAD..origin/HEAD   # commit remote yang belum di lokal");
+      lines.push("  git pull   # bila remote lebih maju");
+      lines.push("  git push   # bila lokal lebih maju");
       lines.push("  npm install");
     }
     if (npmChecked && compareVersions(npmVersion, localVersion) > 0) {

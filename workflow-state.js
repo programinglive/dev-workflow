@@ -13,6 +13,8 @@ const __dirname = path.dirname(__filename);
 const STATE_DIR = ".state";
 const PROJECTS_DIR = "projects";
 const STATE_FILENAME = "workflow-state.json";
+/** Jejak task yang sedang berjalan saat tata letak state berubah. */
+export const STRANDED_TASK_FILENAME = "stranded-task.json";
 const LEGACY_STATE_FILENAME = ".workflow-state.json";
 const PROJECT_SUMMARY_FILENAME = "project-summary.json";
 const USER_ID_FILENAME = "user-id";
@@ -283,7 +285,21 @@ function getCurrentUserId(stateFile = null) {
 
   if (stateFile) {
     const stateDir = path.dirname(path.resolve(stateFile));
-    const userIdFile = path.join(stateDir, USER_ID_FILENAME);
+
+    // SATU JANGKAR PER PROYEK.
+    //
+    // Di tata letak `projects/<proyek>/users/<user>/`, berkas state berada satu
+    // tingkat di bawah direktori user, sedangkan `getUserScopedDir` menulis
+    // `user-id` di direktori PROYEK. Membaca dari `stateDir` apa adanya membuat
+    // jalur ini membuat id BARU di `users/<user>/user-id`, lalu `syncToDatabase`
+    // mencatat riwayat dengan user_id yang berbeda dari sebelumnya - kelas bug
+    // 30 Oktober 2026 (150 baris duplikat), dengan sebab yang berbeda.
+    const anchorDir =
+      path.basename(path.dirname(stateDir)) === "users"
+        ? path.dirname(path.dirname(stateDir))
+        : stateDir;
+
+    const userIdFile = path.join(anchorDir, USER_ID_FILENAME);
 
     try {
       const stored = readFileSync(userIdFile, "utf-8").trim();
@@ -297,7 +313,7 @@ function getCurrentUserId(stateFile = null) {
     // .state langsung (bukan .state/users/<id>): pakai resolveUserId, yang
     // menangani migrasi id lama maupun pembuatan id baru.
     try {
-      return resolveUserId(stateDir);
+      return resolveUserId(anchorDir);
     } catch {
       // Biarkan jatuh ke nilai cadangan di bawah.
     }
@@ -681,11 +697,17 @@ export function resolveStateFile({ sessionId = null } = {}) {
     // Dua sumber lama, keduanya hanya menyalin state menganggur:
     //   1. berkas pin bersama (era pra-1.16.0)
     //   2. <proyek>/workflow-state.json (era 1.16.0, satu berkas per proyek)
-    migrateStateToSession({ sourcePath: resolvedCustom, targetPath: target, projectRoot: identityRoot });
+    migrateStateToSession({
+      sourcePath: resolvedCustom,
+      targetPath: target,
+      projectRoot: identityRoot,
+      projectDir,
+    });
     migrateStateToSession({
       sourcePath: path.join(projectDir, STATE_FILENAME),
       targetPath: target,
       projectRoot: identityRoot,
+      projectDir,
     });
 
     return target;
@@ -745,7 +767,7 @@ function projectKey(projectRoot) {
  *
  * Best-effort: kegagalan migrasi tidak boleh menghalangi server hidup.
  */
-function migrateStateToSession({ sourcePath, targetPath, projectRoot }) {
+function migrateStateToSession({ sourcePath, targetPath, projectRoot, projectDir }) {
   try {
     if (!existsSync(sourcePath) || existsSync(targetPath)) {
       return;
@@ -754,7 +776,13 @@ function migrateStateToSession({ sourcePath, targetPath, projectRoot }) {
     const data = parseStateJson(readFileSync(sourcePath, "utf8"));
 
     const pemilik = typeof data?.projectDir === "string" ? data.projectDir.trim() : "";
-    if (pemilik && projectRoot) {
+    // Berkas tanpa `projectDir` tidak boleh disalin: ia tidak bisa dibuktikan
+    // milik proyek ini, dan menyalinnya memindahkan task antar proyek - persis
+    // kesalahan yang sedang diperbaiki.
+    if (!pemilik) {
+      return;
+    }
+    if (projectRoot) {
       const sama = path.resolve(pemilik).toLowerCase() === path.resolve(projectRoot).toLowerCase();
       if (!sama) {
         return;
@@ -764,6 +792,27 @@ function migrateStateToSession({ sourcePath, targetPath, projectRoot }) {
     const phase = typeof data?.currentPhase === "string" ? data.currentPhase : "idle";
     const description = typeof data?.taskDescription === "string" ? data.taskDescription.trim() : "";
     if (phase !== "idle" || description !== "") {
+      // Task yang sedang berjalan TIDAK disalin, tetapi juga tidak boleh
+      // menghilang tanpa jejak: sesi baru akan melihat "Phase: idle" dan mengira
+      // tidak ada apa-apa, lalu DoD lama hilang dari semua permukaan workflow.
+      // Jejaknya ditulis sekali (flag `wx`) supaya `get_workflow_status` bisa
+      // melaporkannya.
+      if (projectDir && description !== "") {
+        try {
+          mkdirSync(projectDir, { recursive: true });
+          writeFileSync(
+            path.join(projectDir, STRANDED_TASK_FILENAME),
+            JSON.stringify(
+              { taskDescription: description, phase, sourcePath, detectedAt: new Date().toISOString() },
+              null,
+              2,
+            ),
+            { encoding: "utf8", flag: "wx" },
+          );
+        } catch {
+          // Sudah tercatat oleh panggilan sebelumnya.
+        }
+      }
       return;
     }
 

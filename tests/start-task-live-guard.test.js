@@ -51,7 +51,7 @@ const liveTask = (overrides = {}) => ({
     { id: "dod-1", text: "bukti milik sesi lain", status: "done", evidence: "npm test -> 42 pass", revision: 0 },
   ],
   dodRevision: 0,
-  owner: { processMarker: "proc-99999-lain", pid: 99999 },
+  owner: { processMarker: "proc-99999-lain", pid: 99999, updatedAt: Date.now() },
   ...overrides,
 });
 
@@ -90,6 +90,25 @@ test("start_task boleh jalan bila pemilik task sudah mati", async () => {
   try {
     setIsAliveForTests(() => false);
     const r = await handleStartTask(args({ force: true }), state, null);
+    assert.match(text(r), /Task Started/);
+    assert.equal(state.state.taskDescription, "task baru");
+  } finally {
+    setIsAliveForTests(null);
+    await cleanup();
+  }
+});
+
+test("penjaga berhenti menghalangi setelah pemilik lama tidak menulis state", async () => {
+  // Keadaan normal di mesin ini: proses MCP lama tetap hidup berjam-jam setelah
+  // jendela OpenCode-nya ditutup. Tanpa batas basi, penjaga memblokir SELAMANYA
+  // dan `force` pun tidak menolong - penjaga yang mustahil dilewati akan
+  // dilewati orang dengan membunuh proses.
+  const { state, cleanup } = await withState(
+    liveTask({ owner: { processMarker: "proc-99999-lain", pid: 99999, updatedAt: Date.now() - 60 * 60 * 1000 } }),
+  );
+  try {
+    setIsAliveForTests(() => true);
+    const r = await handleStartTask(args(), state, null);
     assert.match(text(r), /Task Started/);
     assert.equal(state.state.taskDescription, "task baru");
   } finally {

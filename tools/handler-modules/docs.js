@@ -30,7 +30,15 @@ const SOURCE_EXTENSIONS = new Set([
 /** Ekstensi dokumentasi yang dihitung di mana pun kecuali direktori tes. */
 const DOC_EXTENSIONS = new Set(["md", "mdx", "rst", "adoc"]);
 
-/** Nama berkas dokumentasi di akar repo mana pun. */
+/**
+ * Nama berkas dokumentasi di akar repo mana pun.
+ *
+ * Hanya berlaku untuk nama TANPA ekstensi source. Sebelumnya aturan ini
+ * mencocokkan batang nama, sehingga `src/security.js`, `lib/agents.ts`, dan
+ * `src/architecture.js` dianggap dokumentasi - dan `isSourcePath` menolaknya
+ * sebagai source. Akibatnya task yang hanya mengubah `security.js` lolos dari
+ * gerbang tanpa satu pun berkas dokumentasi tersentuh.
+ */
 const DOC_BASENAMES = [
   "readme",
   "changelog",
@@ -40,6 +48,9 @@ const DOC_BASENAMES = [
   "code_of_conduct",
   "agents",
 ];
+
+/** Ekstensi yang sah mengikuti nama dokumentasi di atas. */
+const DOC_NAME_EXTENSIONS = new Set(["md", "mdx", "rst", "adoc", "txt", "html", "htm"]);
 
 /** Direktori yang isinya tidak pernah dianggap source milik proyek. */
 const IGNORED_DIRS = new Set([
@@ -52,6 +63,23 @@ export function normalizePath(value) {
     .replace(/\\/g, "/")
     .replace(/^\.\//, "")
     .replace(/\/+$/, "");
+}
+
+/**
+ * Kunci pembanding path, untuk HIMPUNAN dan pencocokan.
+ *
+ * Windows tidak membedakan huruf besar/kecil, dan git kadang melaporkan
+ * ejaan dari index, bukan ejaan yang diketik agen. Perbandingan string mentah
+ * membuat deklarasi yang BENAR ditolak dengan pesan "tidak muncul di working
+ * tree" - menyesatkan, dan memaksa agen menebak ejaan.
+ *
+ * Dipakai di tiga tempat (`evaluateDocGate`, verifikasi `create_documentation`,
+ * dan `foreignDirtyPaths`). Tiga salinan perbandingan path adalah cara bug ini
+ * bertahan, jadi semuanya memakai fungsi ini.
+ */
+export function pathKey(value) {
+  const normalized = normalizePath(value);
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
 }
 
 function segmentsOf(p) {
@@ -101,7 +129,14 @@ export function isDocumentationPath(filePath) {
   if (isTestPath(normalized)) return false;
 
   const base = basenameOf(normalized);
-  if (DOC_BASENAMES.some((name) => base === name || base.startsWith(`${name}.`))) {
+  const dot = base.lastIndexOf(".");
+  const stem = dot > 0 ? base.slice(0, dot) : base;
+  const suffix = dot > 0 ? base.slice(dot + 1) : "";
+
+  // Nama dokumentasi dikenali dari BATANG nama, tetapi hanya bila ekstensinya
+  // kosong atau memang ekstensi dokumentasi. Tanpa syarat ekstensi ini,
+  // `src/security.js` lolos sebagai dokumentasi dan gerbangnya mati diam-diam.
+  if (DOC_BASENAMES.includes(stem) && (dot <= 0 || DOC_NAME_EXTENSIONS.has(suffix))) {
     return true;
   }
 
@@ -152,16 +187,16 @@ export function evaluateDocGate({
     .filter(Boolean);
   const dirty = new Set(
     (Array.isArray(dirtyAtStart) ? dirtyAtStart : [])
-      .map((entry) => normalizePath(entry?.path ?? entry))
+      .map((entry) => pathKey(entry?.path ?? entry))
       .filter(Boolean),
   );
   const declared = new Set(
-    (Array.isArray(declaredFiles) ? declaredFiles : []).map(normalizePath).filter(Boolean),
+    (Array.isArray(declaredFiles) ? declaredFiles : []).map(pathKey).filter(Boolean),
   );
 
-  const sourceChanged = changed.filter((p) => !dirty.has(p) && isSourcePath(p));
+  const sourceChanged = changed.filter((p) => !dirty.has(pathKey(p)) && isSourcePath(p));
   const docsTouched = changed.filter(
-    (p) => isDocumentationPath(p) && (!dirty.has(p) || declared.has(p)),
+    (p) => isDocumentationPath(p) && (!dirty.has(pathKey(p)) || declared.has(pathKey(p))),
   );
 
   let status;

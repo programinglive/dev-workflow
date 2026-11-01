@@ -348,6 +348,10 @@ export async function handleCommitAndPush(args, context) {
   workflowState.state.commitAndPushCompleted = true;
   workflowState.state.lastCommitMessage = generatedSummary;
   workflowState.state.lastPushBranch = branchForPush;
+  // SHA yang BENAR-BENAR ter-push. Tanpa ini rekomendasi tindak lanjut selalu
+  // membaca HEAD - yang setelah perform_release adalah commit versi, bukan
+  // commit task, sehingga sinyal TODO dan ukuran diff menunjuk hal yang salah.
+  workflowState.state.lastCommitSha = pushed.head;
   workflowState.state.currentPhase = isReleaseSatisfied(workflowState.state) ? "ready_to_complete" : "release";
   await workflowState.save();
 
@@ -371,8 +375,15 @@ export async function handleCommitAndPush(args, context) {
       leftBehind.map((entry) => `   ${entry.code.padEnd(3)} ${entry.path}`).join("\n")
     : "";
 
+  // Waiver dokumentasi HARUS terlihat di sini. Janji "pola me-waive jadi
+  // terlihat, bukan tersembunyi" bergantung pada laporan commit yang menyebutnya;
+  // riwayat dan rekomendasi dibaca belakangan, saat keputusannya sudah jauh.
+  const waiverNote = workflowState.state.documentationWaived
+    ? `\n\nℹ️ Dokumentasi dikecualikan: ${workflowState.state.documentationWaiverReason || "(tanpa alasan)"}`
+    : "";
+
   return textResponse(
-    `✅ Commit and push completed!\nRepo: ${repoName}\n\nCommit message: ${generatedSummary}\nPushed to: ${branchForPush} (verified at ${pushed.head.slice(0, 8)})${foreignNote}\n\nNext: Run 'perform_release' to handle the release and push tags.`
+    `✅ Commit and push completed!\nRepo: ${repoName}\n\nCommit message: ${generatedSummary}\nPushed to: ${branchForPush} (verified at ${pushed.head.slice(0, 8)})${foreignNote}${waiverNote}\n\nNext: Run 'perform_release' to handle the release and push tags.`
   );
 }
 

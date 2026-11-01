@@ -168,6 +168,22 @@ export function collectSignals({
     push("low", `Rilis di-skip: ${state.releaseSkippedReason || "(tanpa alasan)"}`);
   }
 
+  // Sembilan sinyal, sesuai tabel spec. Yang terakhir mudah terlewat karena
+  // hanya terlihat setelah beberapa task: dokumentasi selalu dicatat, tetapi
+  // tidak pernah benar-benar menyentuh README.
+  if (
+    state.documentationCreated &&
+    !state.documentationWaived &&
+    state.documentationType !== "README" &&
+    state.documentationType !== "API-docs"
+  ) {
+    push(
+      "low",
+      `Dokumentasi dicatat sebagai "${state.documentationType}", bukan README atau API-docs — ` +
+        "pastikan README memang tidak perlu berubah",
+    );
+  }
+
   return signals;
 }
 

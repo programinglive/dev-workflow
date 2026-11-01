@@ -239,7 +239,7 @@ Each session gets its own state file, inside a per-project directory:
 - **The lock is per project**, not per machine. Two unrelated projects no longer block each other.
 - **A non-repository working directory still isolates.** The project directory is derived from the working directory itself, so sessions started from a folder that is not a git repo no longer fall back to one shared file.
 
-`start_task` refuses to replace a task that is still running in another live MCP process, **even with `force: true`** — starting a new task would clear that task's Definition of Done, and its evidence cannot be recovered from history. `force` remains useful when the owning process is gone.
+`start_task` refuses to replace a task that is still running in another live MCP process, **even with `force: true`** — starting a new task would clear that task's Definition of Done, and its evidence cannot be recovered from history. The guard stops applying once the owning process has not written state for 10 minutes, so a leftover MCP process cannot block a session forever. If a layout change finds a running task in an old file, it is not copied; `get_workflow_status` reports it instead of letting it disappear.
 
 Existing state files are never deleted. An idle state is copied into the new per-session file; a state with a running task is left where it is, so a new session does not inherit work it did not start.
 
