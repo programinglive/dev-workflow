@@ -34,6 +34,15 @@ const POLL_MS = 3000;
  */
 const WRITE_TOKEN = process.env.DEVWF_MONITOR_TOKEN || '';
 /**
+ * Token lama yang SEMENTARA masih diterima, dipakai saat rotasi.
+ *
+ * Tanpa ini, mengganti token berarti setiap mesin yang belum diperbarui
+ * langsung ditolak 401 dan kartunya hilang diam-diam - kegagalan yang baru
+ * ketahuan berhari-hari kemudian. Dicabut dengan mengosongkan variabelnya
+ * sesudah semua mesin diperbarui.
+ */
+const WRITE_TOKEN_PREVIOUS = process.env.DEVWF_MONITOR_TOKEN_PREVIOUS || '';
+/**
  * Retensi: MATI secara bawaan.
  *
  * ATURAN: data monitor tidak boleh terhapus tanpa persetujuan eksplisit.
@@ -233,6 +242,19 @@ function denyWrite(res) {
   }));
 }
 
+/**
+ * Terima token SEKARANG, atau token LAMA selama masa rotasi.
+ *
+ * Dicek dengan `isWriteAuthorized` yang sama, jadi aturan "kosong berarti
+ * tolak" tetap berlaku untuk keduanya.
+ */
+function writeAllowed(req) {
+  const header = req.headers.authorization;
+  if (isWriteAuthorized({ header, expectedToken: WRITE_TOKEN })) return true;
+  if (!WRITE_TOKEN_PREVIOUS) return false;
+  return isWriteAuthorized({ header, expectedToken: WRITE_TOKEN_PREVIOUS });
+}
+
 /** Buang baris lama supaya tabel tidak tumbuh selamanya. Hanya bila DIMINTA. */
 async function pruneOldRows() {
   if (!PRUNE_ON) return;
@@ -298,7 +320,7 @@ const server = http.createServer(async (req, res) => {
       return res.end(JSON.stringify({ ok: true, at: new Date().toISOString() }));
     }
     if (url.pathname === '/api/session' && req.method === 'POST') {
-      if (!isWriteAuthorized({ header: req.headers.authorization, expectedToken: WRITE_TOKEN })) {
+      if (!writeAllowed(req)) {
         return denyWrite(res);
       }
       const body = JSON.parse(await readBody(req) || '{}');
@@ -307,7 +329,7 @@ const server = http.createServer(async (req, res) => {
       return res.end(JSON.stringify({ ok: true, sessionKey: key }));
     }
     if (url.pathname === '/api/event' && req.method === 'POST') {
-      if (!isWriteAuthorized({ header: req.headers.authorization, expectedToken: WRITE_TOKEN })) {
+      if (!writeAllowed(req)) {
         return denyWrite(res);
       }
       const body = JSON.parse(await readBody(req) || '{}');
@@ -393,4 +415,5 @@ server.listen(PORT, HOST, () => {
   const timer = setInterval(() => void pruneOldRows(), PRUNE_EVERY_MS);
   if (typeof timer.unref === 'function') timer.unref();
 });
+
 
