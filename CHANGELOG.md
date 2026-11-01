@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.19.6](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.5...v1.19.6) (2026-11-01)
+
+
+### ✨ Features
+
+* **monitor:** idle tanpa task dibuang 5 menit, bukan 30 ([74a248a](https://github.com/programinglive/dev-workflow-mcp-server/commit/74a248aefe3b69abb5c34ca89489eb2e3bee780a))
+
 ### [1.19.5](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.4...v1.19.5) (2026-11-01)
 
 ### [1.19.4](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.3...v1.19.4) (2026-11-01)
