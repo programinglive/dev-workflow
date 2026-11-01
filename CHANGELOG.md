@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.19.17](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.16...v1.19.17) (2026-11-01)
+
+
+### 📝 Documentation
+
+* **mobile:** buktikan APK jalan di emulator, bukan hanya terbangun ([9e1ee7a](https://github.com/programinglive/dev-workflow-mcp-server/commit/9e1ee7a87405ec95b3c2f8a2216dad19b0f29852))
+
 ### [1.19.16](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.15...v1.19.16) (2026-11-01)
 
 
