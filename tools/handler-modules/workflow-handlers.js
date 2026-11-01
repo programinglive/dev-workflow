@@ -6,6 +6,7 @@ import {
   isDocumentationPath,
   isGateSatisfied,
   normalizePath,
+  pathKey,
   MIN_WAIVER_REASON,
   MAX_WAIVER_REASON,
 } from "./docs.js";
@@ -156,22 +157,33 @@ export async function handleStartTask(args, workflowState, git) {
       const ownerPid = Number(disk.owner?.pid);
       const foreignOwner = Number.isFinite(ownerPid) && ownerPid !== process.pid;
 
-      if (phase !== "idle" && description !== "" && foreignOwner && currentIsAlive()(ownerPid)) {
-        const started = Number.isFinite(Number(disk.owner?.startedAt))
-          ? new Date(Number(disk.owner.startedAt)).toISOString()
+      // Batas basi, sama seperti `activeForeignLock`. Tanpa ini, proses MCP yang
+      // ditinggal hidup setelah jendela OpenCode-nya ditutup - keadaan normal di
+      // mesin ini, lihat `cleanup-stale-mcp` - memblokir `start_task` SELAMANYA,
+      // dan `force` pun tidak menolong. Penjaga yang mustahil dilewati akan
+      // dilewati orang dengan membunuh proses; itu lebih buruk daripada kedaluwarsa.
+      const ownerSeenAt = Number(disk.owner?.updatedAt);
+      const ownerFresh =
+        Number.isFinite(ownerSeenAt) && Date.now() - ownerSeenAt < DEFAULT_LOCK_STALE_MS;
+
+      if (phase !== "idle" && description !== "" && foreignOwner && ownerFresh && currentIsAlive()(ownerPid)) {
+        const seen = Number.isFinite(ownerSeenAt)
+          ? new Date(ownerSeenAt).toISOString()
           : "waktu tidak diketahui";
 
         return textResponse(
           `⚠️ Dibatalkan: task lain sedang berjalan di proses MCP PID ${ownerPid}.\n\n` +
             `Task      : "${description}"\n` +
             `Fase      : ${phase}\n` +
-            `Pemilik   : PID ${ownerPid}, hidup sejak ${started}\n\n` +
+            `Pemilik   : PID ${ownerPid}, terakhir menulis state ${seen}\n\n` +
             `Memulai task baru di sini akan mengosongkan Definition of Done task itu, dan buktinya ` +
-            `tidak bisa dipulihkan dari history. Karena itu 'force' TIDAK bisa melewati penjaga ini.\n\n` +
+            `tidak bisa dipulihkan dari history. Karena itu 'force' TIDAK bisa melewati penjaga ini ` +
+            `selama pemiliknya masih menulis.\n\n` +
             `Pilih salah satu:\n` +
             `  1. Selesaikan atau batalkan task itu dari sesi pemiliknya (complete_task / drop_task).\n` +
             `  2. Beri sesi ini worktree sendiri: opencode.worktree_create, lalu jalankan sesi dari sana.\n` +
-            `  3. Kalau proses itu sudah mati, ulangi dengan { "force": true }.\n\n` +
+            `  3. Kalau proses itu sudah tidak dipakai, tutup jendelanya. Penjaga berhenti menghalangi ` +
+            `setelah ${Math.round(DEFAULT_LOCK_STALE_MS / 60000)} menit tanpa tulisan state.\n\n` +
             `Task BELUM dimulai; tidak ada state yang diubah.`
         );
       }
@@ -479,7 +491,7 @@ export async function handleCreateDocumentation(args, workflowState, context = {
     : [];
 
   const inputs = await loadDocGateInputs({ workflowState, git: context.git });
-  const changed = new Set(inputs.changedPaths.map(normalizePath));
+  const changed = new Set(inputs.changedPaths.map(pathKey));
 
   if (requested.length > 0) {
     const notDocumentation = requested.filter((p) => !isDocumentationPath(p));
@@ -491,7 +503,7 @@ export async function handleCreateDocumentation(args, workflowState, context = {
       );
     }
 
-    const missing = requested.filter((p) => !changed.has(normalizePath(p)));
+    const missing = requested.filter((p) => !changed.has(pathKey(p)));
     if (missing.length > 0) {
       const actual = inputs.changedPaths.length > 0
         ? inputs.changedPaths.map((p) => `   • ${p}`).join("\n")
@@ -500,6 +512,7 @@ export async function handleCreateDocumentation(args, workflowState, context = {
         `⚠️ Dibatalkan: berkas ini disebut sebagai dokumentasi tetapi tidak muncul ` +
           `sebagai perubahan di working tree: ${missing.join(", ")}\n\n` +
           `Yang benar-benar berubah sekarang:\n${actual}\n\n` +
+          `Sebutkan path relatif terhadap akar repo (contoh: "README.md"), bukan path absolut. ` +
           `Perbarui berkasnya lebih dulu, lalu sebut ulang. ` +
           `Kalau dokumentasi memang tidak perlu diubah, pakai 'waive_documentation' { reason }.\n\n` +
           `Tidak ada state yang diubah.`
@@ -518,7 +531,12 @@ export async function handleCreateDocumentation(args, workflowState, context = {
   workflowState.state.documentationCreated = true;
   workflowState.state.documentationType = args.documentationType;
   workflowState.state.documentationSummary = args.summary;
-  workflowState.state.documentationFiles = requested;
+  // Hanya ditimpa bila `files` benar-benar dikirim. Panggilan kedua tanpa
+  // `files` (atau lewat run_full_workflow dengan daftar kosong) tidak boleh
+  // menghapus bukti yang sudah terverifikasi sebelumnya.
+  if (requested.length > 0) {
+    workflowState.state.documentationFiles = requested;
+  }
   workflowState.state.currentPhase = "ready";
   workflowState.state.readyToCommit = true;
   workflowState.state.readyCheckCompleted = false;
