@@ -79,6 +79,26 @@ Dua sesi pada **satu proyek yang sama** tetap berbagi satu berkas state. Itu
 disengaja: penjaganya adalah lock per proyek, dan sesi kedua kini ditolak dengan
 alasan yang benar, bukan ditolak karena proyek tetangga.
 
+## BOM: kegagalan yang tidak bersuara
+
+Saat memperbaiki insiden ini, skrip perbaikan menulis ulang
+`.state/workflow-state.json` lewat `Set-Content -Encoding UTF8`. PowerShell 5.1
+menambahkan BOM (EF BB BF) di awal berkas, dan `JSON.parse` menolaknya.
+
+Akibatnya berlapis, dan yang kedua lebih berbahaya daripada yang pertama:
+
+1. migrasi per proyek batal, karena pembacaan berkas lama gagal;
+2. `load()` menangkap galat itu lalu **memperlakukan state sebagai kosong** -
+   task yang sedang berjalan hilang tanpa satu pun pesan.
+
+Sekarang semua pembacaan JSON state melewati `parseStateJson()`, yang membuang
+BOM lebih dulu. Dua tes di `tests/state-bom.test.js` menutup keduanya: state
+ber-BOM harus tetap memuat task-nya, dan migrasi per proyek harus tetap jalan.
+
+Pelajaran yang lebih umum: berkas state bisa ditulis alat lain (PowerShell,
+skrip perbaikan, editor), jadi pembacaannya tidak boleh mengasumsikan UTF-8
+tanpa BOM.
+
 ## Cara memverifikasi
 
 ```bash
