@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.17.2](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.17.1...v1.17.2) (2026-11-01)
+
+
+### 🐛 Bug Fixes
+
+* **release:** tolak tag yang tidak cocok dengan versi package.json ([07dcce8](https://github.com/programinglive/dev-workflow-mcp-server/commit/07dcce82f7f74b3c9bb001f70c121e3b77e87991))
+* **state:** identitas proyek mengikuti projectDir, bukan cwd proses ([fa465b0](https://github.com/programinglive/dev-workflow-mcp-server/commit/fa465b092cd54e3ede8ff7a82015caacd9ffba97))
+
 ### [1.17.1](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.17.0...v1.17.1) (2026-11-01)
 
 
