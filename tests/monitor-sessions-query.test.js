@@ -18,6 +18,9 @@ const { buildSessionsQuery, DEFAULT_IDLE_TTL, DEFAULT_EMPTY_IDLE_TTL } = require
 test("query menyaring idle yang basi, bukan yang sedang bekerja", () => {
   const { sql } = buildSessionsQuery({});
   const where = sql.slice(sql.indexOf("WHERE"));
+  // started_at WAJIB ikut di SELECT: tanpa itu nilainya tersimpan di database
+  // tetapi tidak pernah dibaca, dan counter durasi tidak pernah muncul.
+  assert.match(sql.slice(0, sql.indexOf("FROM")), /started_at/);
 
   assert.match(where, /phase = 'idle'/);
   assert.match(where, /updated_at < now\(\) - \$2::interval/);

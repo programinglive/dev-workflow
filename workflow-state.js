@@ -1006,7 +1006,9 @@ async function reportToMonitorSafe({ state, stateFile, createdAt }) {
       state,
       sessionKey: match ? match[1] : "",
       projectPath: (state && state.projectDir) || "",
-      sessionStartedAt: createdAt || "",
+      // Waktu mulai TASK diambil dari state (`taskStartedAt`), yang bertahan
+      // melewati restart proses. Cadangan: waktu mulai sesi proses.
+      sessionStartedAt: (state && state.taskStartedAt) || createdAt || "",
     });
 
     // Penutupan task HARUS tetap terkirim walau sesi ini sudah lama idle.
@@ -1062,6 +1064,14 @@ export class WorkflowState {
     // membedakan "task ini milik kita" dari "task ini ditulis proses lain
     // sesudah kita memuat" - tanpa ini penulis basi menang tanpa perlawanan.
     this.loadedTask = "";
+    // Kapan sesi ini mulai melapor. Dipakai dashboard untuk menghitung sudah
+    // berapa lama task berjalan.
+    //
+    // MASALAH NYATA (2 November 2026): properti ini dibaca di dua tempat tetapi
+    // TIDAK PERNAH diisi, sehingga `started_at` di dashboard selalu kosong dan
+    // durasi task tidak mungkin dihitung. Pemilik memintanya secara eksplisit:
+    // "setiap task mesti ada counter timenya".
+    this.sessionStartedAt = new Date().toISOString();
     // Konflik penyimpanan terakhir, dibaca oleh lapisan tool untuk memberi tahu
     // pengguna. Null berarti penyimpanan terakhir aman.
     this.lastConflict = null;

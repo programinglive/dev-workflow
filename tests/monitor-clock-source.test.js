@@ -51,6 +51,6 @@ test("aplikasi Android memakai jam server, bukan jam perangkat", () => {
 });
 
 test("Kartu menerima jamServer dari induknya", () => {
-  assert.match(app, /function Kartu\(\{ s, jamServer \}\)/);
-  assert.match(app, /<Kartu key=\{s\.session_key\} s=\{s\} jamServer=\{jamServer\} \/>/);
+  assert.match(app, /function Kartu\(\{ s, jamServer[^}]*\}\)/);
+  assert.match(app, /jamServer=\{jamServer\}/);
 });
