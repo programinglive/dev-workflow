@@ -15,6 +15,9 @@ const __dirname = path.dirname(__filename);
 
 /** Satu laporan monitor berjalan dalam satu waktu; lihat reportToMonitorSafe. */
 let monitorInFlight = false;
+/** Berapa lama setelah boot laporan tidak ditunggu. */
+const BOOT_QUIET_MS = 3000;
+const processStartTime = Date.now();
 const STATE_DIR = ".state";
 const PROJECTS_DIR = "projects";
 const STATE_FILENAME = "workflow-state.json";
@@ -1005,6 +1008,17 @@ async function reportToMonitorSafe({ state, stateFile, createdAt }) {
       projectPath: (state && state.projectDir) || "",
       sessionStartedAt: createdAt || "",
     });
+
+    // Selama proses baru boot, laporan TIDAK ditunggu. Server MCP harus siap
+    // di bawah 2 detik, dan satu permintaan jaringan di jalur boot sudah cukup
+    // untuk melewatinya (terukur 2109ms). Sesudah jendela ini, laporan ditunggu
+    // supaya proses CLI yang keluar cepat tidak membunuhnya.
+    const booting = Date.now() - processStartTime < BOOT_QUIET_MS;
+    if (booting) {
+      void mod.reportSnapshot({ snapshot }).catch(() => false);
+      return false;
+    }
+
     monitorInFlight = true;
     try {
       return await mod.reportSnapshot({ snapshot });
