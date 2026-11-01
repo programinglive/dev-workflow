@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.19.10](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.9...v1.19.10) (2026-11-01)
+
+
+### 🐛 Bug Fixes
+
+* **monitor:** retensi MATI secara bawaan, tidak menghapus tanpa izin ([f167dac](https://github.com/programinglive/dev-workflow-mcp-server/commit/f167dacc7567917020f92a205783ef9b5a13cb44))
+
 ### [1.19.9](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.8...v1.19.9) (2026-11-01)
 
 ### [1.19.8](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.7...v1.19.8) (2026-11-01)
