@@ -11,11 +11,32 @@
 const http = require('node:http');
 const pg = require('pg');
 const { buildSessionsQuery } = require('./sessions-query.cjs');
+const {
+  buildPruneEventsQuery,
+  buildPruneSessionsQuery,
+  isWriteAuthorized,
+  DEFAULT_RETENTION_DAYS,
+  DEFAULT_SESSION_RETENTION_DAYS,
+} = require('./retention.cjs');
 
 const PORT = Number(process.env.PORT || 3100);
 const HOST = process.env.HOST || '0.0.0.0';
 const DB_URL = process.env.DATABASE_URL || '';
 const POLL_MS = 3000;
+/**
+ * Token bersama untuk endpoint TULIS.
+ *
+ * Membaca tetap bebas - dashboard harus terbuka tanpa login. Menulis tidak:
+ * tanpa ini, perangkat mana pun di tailnet bisa mengirim sesi palsu ke layar
+ * tablet. Kosong berarti SEMUA penulisan ditolak, bukan diterima.
+ */
+const WRITE_TOKEN = process.env.DEVWF_MONITOR_TOKEN || '';
+const RETENTION_DAYS = Number(process.env.RETENTION_DAYS || DEFAULT_RETENTION_DAYS);
+const SESSION_RETENTION_DAYS = Number(
+  process.env.SESSION_RETENTION_DAYS || DEFAULT_SESSION_RETENTION_DAYS,
+);
+/** Seberapa sering pembersihan dijalankan. */
+const PRUNE_EVERY_MS = Number(process.env.PRUNE_EVERY_MS || 6 * 60 * 60 * 1000);
 /**
  * Berapa lama sesi `idle` masih ditampilkan.
  *
@@ -136,6 +157,40 @@ function readBody(req, limit = 256 * 1024) {
 const str = (v, max = 4000) => String(v == null ? '' : v).slice(0, max);
 const int = (v) => (Number.isFinite(Number(v)) ? Math.trunc(Number(v)) : 0);
 
+/**
+ * Tolak penulisan tanpa token yang benar.
+ *
+ * Pesannya sengaja menyebut penyebab yang paling sering terjadi - token belum
+ * diisi di environment mesin pengirim - supaya kegagalan ini tidak berakhir
+ * sebagai "dashboard tidak pernah update" yang misterius.
+ */
+function denyWrite(res) {
+  res.writeHead(401, { 'content-type': 'application/json' });
+  return res.end(JSON.stringify({
+    ok: false,
+    error: 'unauthorized',
+    hint: WRITE_TOKEN
+      ? 'Kirim header Authorization: Bearer <DEVWF_MONITOR_TOKEN>.'
+      : 'Server ini belum punya DEVWF_MONITOR_TOKEN, jadi semua penulisan ditolak.',
+  }));
+}
+
+/** Buang baris lama supaya tabel tidak tumbuh selamanya. */
+async function pruneOldRows() {
+  try {
+    const events = buildPruneEventsQuery({ retentionDays: RETENTION_DAYS });
+    const sessions = buildPruneSessionsQuery({ sessionRetentionDays: SESSION_RETENTION_DAYS });
+    const a = await query(events.sql, events.params);
+    const b = await query(sessions.sql, sessions.params);
+    if (a.rowCount || b.rowCount) {
+      console.log(`prune: ${a.rowCount} events, ${b.rowCount} idle sessions`);
+    }
+  } catch (error) {
+    // Pembersihan yang gagal tidak boleh menghentikan dashboard.
+    console.error('prune gagal:', String(error && error.message || error));
+  }
+}
+
 async function upsertSession(body) {
   const key = str(body.sessionKey, 200);
   if (!key) throw new Error('sessionKey wajib');
@@ -184,12 +239,18 @@ const server = http.createServer(async (req, res) => {
       return res.end(JSON.stringify({ ok: true, at: new Date().toISOString() }));
     }
     if (url.pathname === '/api/session' && req.method === 'POST') {
+      if (!isWriteAuthorized({ header: req.headers.authorization, expectedToken: WRITE_TOKEN })) {
+        return denyWrite(res);
+      }
       const body = JSON.parse(await readBody(req) || '{}');
       const key = await upsertSession(body);
       res.writeHead(200, { 'content-type': 'application/json' });
       return res.end(JSON.stringify({ ok: true, sessionKey: key }));
     }
     if (url.pathname === '/api/event' && req.method === 'POST') {
+      if (!isWriteAuthorized({ header: req.headers.authorization, expectedToken: WRITE_TOKEN })) {
+        return denyWrite(res);
+      }
       const body = JSON.parse(await readBody(req) || '{}');
       await insertEvent(body);
       res.writeHead(200, { 'content-type': 'application/json' });
@@ -227,4 +288,11 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
   console.log(`devwf-monitor listening on ${HOST}:${PORT}`);
+  if (!WRITE_TOKEN) {
+    console.warn('PERINGATAN: DEVWF_MONITOR_TOKEN kosong - semua penulisan ditolak.');
+  }
+  // Pembersihan berkala: sekali saat start, lalu tiap PRUNE_EVERY_MS.
+  void pruneOldRows();
+  const timer = setInterval(() => void pruneOldRows(), PRUNE_EVERY_MS);
+  if (typeof timer.unref === 'function') timer.unref();
 });
