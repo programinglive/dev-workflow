@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.17.1](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.17.0...v1.17.1) (2026-11-01)
+
+
+### 📝 Documentation
+
+* **spec:** tandai spec isolasi state selesai sebagai 1.17.0 ([5c9bb08](https://github.com/programinglive/dev-workflow-mcp-server/commit/5c9bb0880dd66f4915fabcd4661f15229f55905d))
+
+
+### 🐛 Bug Fixes
+
+* **review:** tutup jalan pintas gerbang, user-id ganda, dan penjaga yang membeku ([db9e330](https://github.com/programinglive/dev-workflow-mcp-server/commit/db9e3307a7d795ccf870e84897c1e5d503e7ad9d))
+
 ## [1.17.0](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.16.0...v1.17.0) (2026-11-01)
 
 
