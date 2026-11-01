@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.19.20](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.19...v1.19.20) (2026-11-01)
+
+
+### ✨ Features
+
+* **monitor:** judul sesi OpenCode, grid dua kolom, dan counter timer ([419894b](https://github.com/programinglive/dev-workflow-mcp-server/commit/419894be28298e962d7f4e2ff04d93c3eb789ecc))
+
 ### [1.19.19](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.18...v1.19.19) (2026-11-01)
 
 
