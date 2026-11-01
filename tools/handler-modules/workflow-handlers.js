@@ -12,6 +12,7 @@ import {
 } from "./docs.js";
 import { activeForeignLock, projectLockDir, currentIsAlive, DEFAULT_LOCK_STALE_MS } from "../../process-lock.js";
 import { resolveProjectDir, setActiveProjectDir } from "../../exec.js";
+import { pinSessionProject, resolveHistoryFile } from "../../workflow-state.js";
 
 /**
  * Catat repo proyek untuk sesi ini.
@@ -232,6 +233,30 @@ export async function handleStartTask(args, workflowState, git) {
   workflowState.state.lastPushBranch = "";
   // Setelah reset(), karena reset mengosongkan projectDir.
   const project = pinProjectDir(args, workflowState);
+
+  // Catat proyek yang BENAR untuk sesi ini, lalu pindahkan state ke sana.
+  //
+  // Tanpa langkah ini identitas proyek hanya ditebak dari `process.cwd()`, yang
+  // milik PROSES MCP dan sering bukan tempat sesi bekerja. Diukur 1 November
+  // 2026: satu direktori `projects/Default-Project-<hash>/` menampung state dari
+  // sesi yang mengerjakan `D:\code\belajar`, repo uji, dan repo ini sekaligus -
+  // history tercampur dan `start_task` saling menolak antar proyek.
+  if (workflowState.state.projectDir) {
+    const pinned = pinSessionProject({
+      stateFile: workflowState.stateFile,
+      projectDir: workflowState.state.projectDir,
+    });
+
+    if (pinned && pinned.stateFile !== workflowState.stateFile) {
+      // Bawa task yang baru saja disiapkan ke berkas proyek yang benar.
+      const carried = { ...workflowState.state };
+      workflowState.stateFile = pinned.stateFile;
+      workflowState.historyFile = resolveHistoryFile(pinned.stateFile);
+      workflowState.state = carried;
+      await workflowState.load();
+      workflowState.state = carried;
+    }
+  }
 
   // Catat berkas yang SUDAH kotor sebelum task ini dimulai.
   //
