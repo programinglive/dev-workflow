@@ -1009,6 +1009,28 @@ async function reportToMonitorSafe({ state, stateFile, createdAt }) {
       sessionStartedAt: createdAt || "",
     });
 
+    // Penutupan task HARUS tetap terkirim walau sesi ini sudah lama idle.
+    //
+    // MASALAH NYATA (1 November 2026): sesi berhenti melapor setelah 74 menit
+    // padahal prosesnya masih hidup. Penyebabnya bukan kerusakan - implementasi
+    // ini memang hanya melapor saat `save()` dipanggil, jadi sesi yang
+    // menganggur tidak mengirim apa pun dan dashboard memakainya sebagai
+    // penanda umur. Akibatnya task yang SUDAH selesai tetap tampak "mungkin
+    // macet" sampai jendela 2 jam habis.
+    //
+    // Snapshot yang fase-nya `idle` adalah bukti penutupan; itu selalu dikirim
+    // dan selalu ditunggu, karena inilah satu-satunya kabar yang membuat kartu
+    // di tablet hilang. Laporan rutin tetap mengikuti aturan boot di bawah.
+    const isClosure = String((state && state.currentPhase) || "") === "idle";
+    if (isClosure) {
+      monitorInFlight = true;
+      try {
+        return await mod.reportSnapshot({ snapshot });
+      } finally {
+        monitorInFlight = false;
+      }
+    }
+
     // Selama proses baru boot, laporan TIDAK ditunggu. Server MCP harus siap
     // di bawah 2 detik, dan satu permintaan jaringan di jalur boot sudah cukup
     // untuk melewatinya (terukur 2109ms). Sesudah jendela ini, laporan ditunggu
