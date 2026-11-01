@@ -52,6 +52,20 @@ const MONOTONIC_STEP_FIELDS = [
   "documentationCreated",
 ];
 
+/**
+ * JSON dari berkas state, dengan toleransi BOM.
+ *
+ * PowerShell menulis BOM (EF BB BF) di awal berkas, dan `JSON.parse` menolaknya.
+ * Kegagalannya tidak kelihatan: `load()` menangkapnya lalu memperlakukan state
+ * sebagai kosong, sehingga task yang sedang berjalan hilang tanpa pesan - persis
+ * yang terjadi 1 November 2026 ketika skrip perbaikan menulis ulang
+ * `.state/workflow-state.json` lewat `Set-Content -Encoding UTF8`.
+ */
+function parseStateJson(text) {
+  const bersih = typeof text === "string" && text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+  return JSON.parse(bersih);
+}
+
 function migrateOwnerMetadata(value) {
   if(value?.owner && !value.owner.processMarker && /^proc-[A-Za-z0-9-]+$/.test(value.owner.token || '')) {
     value.owner.processMarker=value.owner.token;
@@ -316,7 +330,7 @@ async function migrateLegacyStateFile(targetPath) {
   }
 
   await fs.mkdir(stateDir, { recursive: true });
-  const migrated = migrateOwnerMetadata(JSON.parse(await fs.readFile(legacyPath, 'utf8')));
+  const migrated = migrateOwnerMetadata(parseStateJson(await fs.readFile(legacyPath, 'utf8')));
   assertSafeKnowledge(migrated);
 
   try {
@@ -421,7 +435,7 @@ async function ensureCompatibilityLinks(primaryPath) {
   if (!(await pathExists(resolvedPrimary))) {
     return;
   }
-  assertSafeKnowledge(JSON.parse(await fs.readFile(resolvedPrimary, 'utf8')));
+  assertSafeKnowledge(parseStateJson(await fs.readFile(resolvedPrimary, 'utf8')));
 
   const compatibilityPaths = getCompatibilityPaths(resolvedPrimary);
 
@@ -676,7 +690,7 @@ function migrateLegacyProjectState(legacyPath, targetPath, projectRoot) {
       return;
     }
 
-    const data = JSON.parse(readFileSync(legacyPath, "utf8"));
+    const data = parseStateJson(readFileSync(legacyPath, "utf8"));
     const pemilik = typeof data?.projectDir === "string" ? data.projectDir.trim() : "";
     if (!pemilik) {
       return;
@@ -803,7 +817,7 @@ export class WorkflowState {
     await migrateLegacyStateFile(this.stateFile);
     try {
       const data = await fs.readFile(this.stateFile, "utf-8");
-      const parsed = sanitize(migrateOwnerMetadata(JSON.parse(data)));
+      const parsed = sanitize(migrateOwnerMetadata(parseStateJson(data)));
       this.state = {
         ...this.state,
         ...parsed,
@@ -907,7 +921,7 @@ export class WorkflowState {
   async readHistoryFile() {
     try {
       const data = await fs.readFile(this.historyFile, "utf-8");
-      return JSON.parse(data);
+      return parseStateJson(data);
     } catch {
       return null;
     }
@@ -1163,7 +1177,7 @@ export class WorkflowState {
   async readDiskState() {
     try {
       const data = await fs.readFile(this.stateFile, "utf-8");
-      return sanitize(migrateOwnerMetadata(JSON.parse(data)));
+      return sanitize(migrateOwnerMetadata(parseStateJson(data)));
     } catch {
       return null;
     }
