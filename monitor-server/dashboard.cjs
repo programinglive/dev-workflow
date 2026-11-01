@@ -183,6 +183,8 @@ function render(data) {
           : '');
       return '<div class="card ' + cardCls + '">' +
         '<div class="row"><span class="' + chipCls + '">' + chipText + '</span>' +
+        '<span class="phase" style="background:#a371f71a;color:#d2a8ff;border-color:#a371f755">' +
+        esc(String(s.agent_tool || 'unknown').toUpperCase()) + '</span>' +
         '<span class="task">' + esc(s.task || '(tanpa task)') + '</span></div>' +
         note +
         '<div class="meta">' + esc(s.machine) + ' · ' + esc(s.project_name) +
@@ -292,8 +294,8 @@ async function upsertSession(body) {
   await query(
     `INSERT INTO sessions (session_key, machine, project_path, project_name, task, task_type, phase,
                            plan_json, plan_done, plan_total, dod_done, dod_total, dod_waived,
-                           owner_pid, started_at, session_title, updated_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,now())
+                           owner_pid, started_at, session_title, agent_tool, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,now())
      ON CONFLICT (session_key) DO UPDATE SET
        machine=EXCLUDED.machine, project_path=EXCLUDED.project_path, project_name=EXCLUDED.project_name,
        task=EXCLUDED.task, task_type=EXCLUDED.task_type, phase=EXCLUDED.phase,
@@ -303,6 +305,8 @@ async function upsertSession(body) {
        -- Judul bisa datang belakangan (OpenCode menamainya setelah beberapa
        -- pesan), jadi kiriman kosong tidak boleh menghapus judul yang ada.
        session_title=COALESCE(NULLIF(EXCLUDED.session_title, ''), sessions.session_title),
+       -- Tool yang tidak dikenali kiriman baru tidak boleh menghapus label lama.
+       agent_tool=COALESCE(NULLIF(EXCLUDED.agent_tool, ''), sessions.agent_tool),
        -- Ambil waktu mulai yang PALING AWAL dan sah.
        --
        -- HATI-HATI: LEAST(NULL, x) menghasilkan NULL di PostgreSQL, bukan x.
@@ -320,7 +324,8 @@ async function upsertSession(body) {
      JSON.stringify(plan), int(body.planDone), int(body.planTotal),
      int(body.dodDone), int(body.dodTotal), int(body.dodWaived),
      body.ownerPid ? int(body.ownerPid) : null, body.startedAt || null,
-     str(body.sessionTitle, 200)]);
+     str(body.sessionTitle, 200),
+     str(body.agentTool, 40) || 'unknown']);
   return key;
 }
 
@@ -452,5 +457,6 @@ server.listen(PORT, HOST, () => {
   const timer = setInterval(() => void pruneOldRows(), PRUNE_EVERY_MS);
   if (typeof timer.unref === 'function') timer.unref();
 });
+
 
 

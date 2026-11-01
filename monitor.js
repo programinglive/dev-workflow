@@ -26,12 +26,16 @@ import { createRequire } from "node:module";
 // supaya mesin tanpa berkas itu (mis. CLI saja) tetap jalan seperti biasa.
 const requireCjs = createRequire(import.meta.url);
 let sessionTitle = () => "";
+let detectTool = () => "unknown";
 try {
   ({ sessionTitle } = requireCjs("./opencode-session-title.cjs"));
+  ({ detectTool } = requireCjs("./agent-tool.cjs"));
 
   if (typeof sessionTitle !== "function") sessionTitle = () => "";
+  if (typeof detectTool !== "function") detectTool = () => "unknown";
 } catch {
   sessionTitle = () => "";
+  detectTool = () => "unknown";
 }
 
 const DEFAULT_TIMEOUT_MS = 1200;
@@ -83,6 +87,9 @@ export function buildSnapshot({ state, sessionKey = "", projectPath = "", sessio
     // Judul percakapan OpenCode, bila bisa dibaca. Dipakai kartu di tablet
     // supaya orang tahu sesi mana yang dimaksud, bukan kode `ses_...`.
     sessionTitle: sessionTitle(sessionKey, env),
+    // Alat AI pemanggil: codex, antigravity, opencode, atau unknown bila tidak
+    // ada petunjuk. Tidak pernah menebak.
+    agentTool: detectTool({ env, commandLine: String(process.argv.slice(0, 2).join(' ')) }),
   };
 }
 
