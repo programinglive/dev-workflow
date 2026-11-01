@@ -237,6 +237,13 @@ export async function handleStartTask(args, workflowState, git) {
   const { archivedTask } = workflowState.reset({ archive: true });
 
   workflowState.state.currentPhase = "coding";
+  // Disimpan DI STATE, bukan hanya di memori proses.
+  //
+  // MENGAPA: `started_at` sebelumnya diisi dari `this.sessionStartedAt` milik
+  // proses. Nilai itu hilang setiap proses MCP restart, sehingga dashboard
+  // menerima startedAt kosong dan counter durasi tidak pernah muncul. Dengan
+  // menyimpannya di state, waktunya ikut tersimpan ke disk dan bertahan.
+  workflowState.state.taskStartedAt = new Date().toISOString();
   workflowState.state.classification = classify(args);
   workflowState.state.taskDescription = args.description;
   workflowState.state.taskType = args.type;

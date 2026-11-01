@@ -1,11 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   AppState,
+  Modal,
+  Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from "react-native";
 import Constants from "expo-constants";
@@ -17,14 +20,16 @@ import Constants from "expo-constants";
  * -------------------------------
  * Website dibuka lewat intent Android, dan setiap pembukaan membuat aktivitas
  * Chrome baru - diukur 2 November 2026: 23 aktivitas di Xiaomi Pad 6 dan 13 di
- * POCO Pad M1 menumpuk dari percobaan saya sendiri. Aplikasi cukup dibuka
- * sekali; sesudah itu ia menyegarkan dirinya sendiri.
+ * POCO Pad M1 menumpuk. Aplikasi cukup dibuka sekali; sesudah itu ia
+ * menyegarkan dirinya sendiri.
  *
  * ATURAN TAMPILAN
  * ---------------
- * Status diambil dari SERVER (`state`), bukan disimpulkan dari `phase`.
- * Dashboard sudah memisahkan aktif / mungkin macet / berakhir, dan aplikasi
- * ini tidak boleh punya pendapat sendiri soal itu.
+ * 1. Status diambil dari SERVER (`state`), bukan disimpulkan dari `phase`.
+ * 2. Umur dihitung dari jam SERVER (`now`), bukan jam perangkat - jam tablet
+ *    yang meleset pernah membuat sesi 5 menit tampak "1d lalu".
+ * 3. Kartu disusun dua kolom supaya dua sesi terlihat sekaligus tanpa scroll.
+ * 4. Kartu bisa ditekan untuk membuka detail lengkap.
  */
 
 const MONITOR_URL =
@@ -33,6 +38,9 @@ const MONITOR_URL =
   "http://100.107.65.21:3100";
 
 const POLL_MS = 3000;
+
+/** Di bawah lebar ini, dua kolom terlalu sempit - pakai satu kolom. */
+const MIN_WIDTH_FOR_TWO_COLUMNS = 560;
 
 const WARNA = {
   bg: "#0b0f14",
@@ -47,7 +55,6 @@ const WARNA = {
   abu: "#8b949e",
 };
 
-/** Status dari server -> warna dan label. */
 function gayaStatus(state) {
   switch (state) {
     case "live":
@@ -61,7 +68,7 @@ function gayaStatus(state) {
   }
 }
 
-/** "3d lalu", "12m lalu", "2j lalu" - dihitung dari jam SERVER bila ada. */
+/** Umur dari jam SERVER bila tersedia. */
 function ago(iso, nowMs) {
   if (!iso) return "";
   const detik = ((nowMs || Date.now()) - new Date(iso).getTime()) / 1000;
@@ -72,12 +79,35 @@ function ago(iso, nowMs) {
   return Math.round(detik / 86400) + "h lalu";
 }
 
+/**
+ * Durasi sejak task dimulai, bentuk jam:menit:detik.
+ *
+ * Pemilik meminta "counter timenya biar tau berapa lama task itu selesai".
+ * Nilai ini bertambah sendiri setiap detik karena `nowMs` diambil dari jam
+ * server yang ikut menyegarkan tiap poll.
+ */
+function durasi(mulaiIso, nowMs) {
+  if (!mulaiIso) return null;
+  const mulai = new Date(mulaiIso).getTime();
+  if (!isFinite(mulai)) return null;
+  const detik = Math.max(0, Math.floor(((nowMs || Date.now()) - mulai) / 1000));
+  const j = Math.floor(detik / 3600);
+  const m = Math.floor((detik % 3600) / 60);
+  const d = detik % 60;
+  const dua = (n) => String(n).padStart(2, "0");
+  return j > 0 ? `${j}:${dua(m)}:${dua(d)}` : `${m}:${dua(d)}`;
+}
+
 export default function App() {
   const [data, setData] = useState(null);
   const [galat, setGalat] = useState(null);
   const [memuat, setMemuat] = useState(true);
   const [menyegarkan, setMenyegarkan] = useState(false);
+  const [dipilih, setDipilih] = useState(null);
   const hidup = useRef(true);
+  const { width } = useWindowDimensions();
+
+  const duaKolom = width >= MIN_WIDTH_FOR_TWO_COLUMNS;
 
   const ambil = useCallback(async () => {
     try {
@@ -104,8 +134,6 @@ export default function App() {
     hidup.current = true;
     ambil();
     const timer = setInterval(ambil, POLL_MS);
-    // Saat aplikasi kembali dari latar, langsung segarkan: data yang
-    // ditampilkan sesudah sekian jam tidak boleh tampak seperti sekarang.
     const sub = AppState.addEventListener("change", (s) => {
       if (s === "active") ambil();
     });
@@ -123,9 +151,14 @@ export default function App() {
 
   const sesi = (data && data.sessions) || [];
   const health = (data && data.health) || {};
-  // Jam SERVER, bukan jam perangkat. Emulator/produksi bisa punya jam meleset,
-  // dan itu membuat semua label umur salah tanpa sebab yang jelas.
   const jamServer = data && data.now ? new Date(data.now).getTime() : undefined;
+
+  // Detail ikut data terbaru: kalau sesinya berubah saat modal terbuka,
+  // isinya tidak boleh membeku di salinan lama.
+  const sesiDipilih = useMemo(
+    () => (dipilih ? sesi.find((s) => s.session_key === dipilih) || null : null),
+    [dipilih, sesi],
+  );
 
   return (
     <View style={gaya.layar}>
@@ -169,10 +202,16 @@ export default function App() {
           {sesi.length === 0 ? (
             <Text style={gaya.kosong}>belum ada sesi melapor</Text>
           ) : (
-            sesi.map((s) => <Kartu key={s.session_key} s={s} jamServer={jamServer} />)
+            <View style={[gaya.grid, !duaKolom && gaya.gridSatu]}>
+              {sesi.map((s) => (
+                <View key={s.session_key} style={duaKolom ? gaya.sel : gaya.selPenuh}>
+                  <Kartu s={s} jamServer={jamServer} onPress={() => setDipilih(s.session_key)} />
+                </View>
+              ))}
+            </View>
           )}
 
-          {(data && data.events && data.events.length > 0) && (
+          {data && data.events && data.events.length > 0 && (
             <View style={gaya.aktivitas}>
               <Text style={gaya.aktivitasJudul}>Aktivitas terakhir</Text>
               {data.events.slice(0, 8).map((e, i) => (
@@ -188,43 +227,83 @@ export default function App() {
           )}
         </ScrollView>
       )}
+
+      <DetailSesi
+        s={sesiDipilih}
+        jamServer={jamServer}
+        onClose={() => setDipilih(null)}
+      />
     </View>
   );
 }
 
-function Kartu({ s, jamServer }) {
+/** Batas langkah yang ditampilkan di kartu; sisanya lewat detail. */
+const LANGKAH_DI_KARTU = 4;
+
+function Kartu({ s, jamServer, onPress }) {
   const g = gayaStatus(s.state);
   const total = s.plan_total || 0;
   const selesai = s.plan_done || 0;
   const persen = total ? Math.min(100, Math.round((selesai / total) * 100)) : 0;
   const rencana = Array.isArray(s.plan_json) ? s.plan_json : [];
   const label = s.state === "idle" ? (s.phase || "idle").toUpperCase() : g.label;
+  const sisaLangkah = Math.max(0, rencana.length - LANGKAH_DI_KARTU);
 
   return (
-    <View style={[gaya.kartu, { borderColor: g.border }]}>
+    <Pressable
+      onPress={onPress}
+      android_ripple={{ color: "#ffffff14" }}
+      style={({ pressed }) => [
+        gaya.kartu,
+        { borderColor: g.border },
+        pressed && gaya.kartuDitekan,
+      ]}
+    >
       <View style={gaya.baris}>
         <View style={[gaya.chip, { backgroundColor: g.chipBg, borderColor: g.border }]}>
           <Text style={[gaya.chipTeks, { color: g.chipFg }]}>{label}</Text>
         </View>
-        <Text style={gaya.task} numberOfLines={2}>
-          {s.task || "(tanpa task)"}
-        </Text>
+        {(() => {
+          const t = durasi(s.started_at, jamServer);
+          return t ? (
+            <View style={gaya.timer}>
+              <Text style={gaya.timerTeks}>⏱ {t}</Text>
+            </View>
+          ) : null;
+        })()}
       </View>
+
+      <Text style={gaya.task} numberOfLines={2}>
+        {s.task || "(tanpa task)"}
+      </Text>
+
+      {/* Judul percakapan OpenCode: menjelaskan sesi mana ini, tanpa kode ses_. */}
+      {s.session_title ? (
+        <Text style={gaya.judulSesi} numberOfLines={1}>
+          💬 {s.session_title}
+        </Text>
+      ) : null}
+
+      {/* Nama proyek ditonjolkan karena pemilik memintanya eksplisit. */}
+      {s.project_name ? (
+        <Text style={gaya.proyek} numberOfLines={1}>
+          {s.project_name}
+        </Text>
+      ) : null}
 
       {s.state === "possibly_stuck" && (
         <Text style={[gaya.catatan, { color: WARNA.kuning }]}>
-          tidak ada kabar {ago(s.updated_at, jamServer)} — mungkin berhenti di tengah jalan
+          tidak ada kabar {ago(s.updated_at, jamServer)}
         </Text>
       )}
       {s.state === "ended" && (
         <Text style={[gaya.catatan, { color: WARNA.abu }]}>
-          berakhir {ago(s.updated_at, jamServer)} — kemungkinan sudah selesai tanpa penutupan
+          berakhir {ago(s.updated_at, jamServer)}
         </Text>
       )}
 
-      <Text style={gaya.meta}>
+      <Text style={gaya.meta} numberOfLines={1}>
         {s.machine}
-        {s.project_name ? " · " + s.project_name : ""}
         {s.task_type ? " · " + s.task_type : ""} · {ago(s.updated_at, jamServer)}
       </Text>
 
@@ -240,20 +319,123 @@ function Kartu({ s, jamServer }) {
         </>
       )}
 
-      {rencana.slice(0, 8).map((p) => {
+      {rencana.slice(0, LANGKAH_DI_KARTU).map((p) => {
         const beres = p.status === "done";
         return (
           <Text
             key={p.id || p.text}
             style={[gaya.langkah, beres && gaya.langkahBeres]}
-            numberOfLines={2}
+            numberOfLines={1}
           >
             {beres ? "✓ " : "• "}
             {p.text}
           </Text>
         );
       })}
-    </View>
+
+      <View style={gaya.kartuKaki}>
+        {sisaLangkah > 0 && <Text style={gaya.sisa}>+{sisaLangkah} langkah lagi</Text>}
+        <Text style={gaya.ketuk}>ketuk untuk detail ›</Text>
+      </View>
+    </Pressable>
+  );
+}
+
+function DetailSesi({ s, jamServer, onClose }) {
+  if (!s) return null;
+  const g = gayaStatus(s.state);
+  const rencana = Array.isArray(s.plan_json) ? s.plan_json : [];
+  const total = s.plan_total || 0;
+  const selesai = s.plan_done || 0;
+  const label = s.state === "idle" ? (s.phase || "idle").toUpperCase() : g.label;
+
+  return (
+    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+      <View style={gaya.modalLatar}>
+        <View style={gaya.modalKotak}>
+          <View style={gaya.baris}>
+            <View style={[gaya.chip, { backgroundColor: g.chipBg, borderColor: g.border }]}>
+              <Text style={[gaya.chipTeks, { color: g.chipFg }]}>{label}</Text>
+            </View>
+            <Pressable onPress={onClose} hitSlop={16} style={gaya.tutup}>
+              <Text style={gaya.tutupTeks}>✕</Text>
+            </Pressable>
+          </View>
+
+          <Text style={gaya.modalJudul}>{s.task || "(tanpa task)"}</Text>
+          {s.session_title ? (
+            <Text style={gaya.judulSesi}>💬 {s.session_title}</Text>
+          ) : null}
+          {s.project_name ? (
+            <Text style={[gaya.proyek, { fontSize: 15 }]}>{s.project_name}</Text>
+          ) : null}
+          <Text style={gaya.meta}>
+            {s.machine}
+            {s.task_type ? " · " + s.task_type : ""} · {ago(s.updated_at, jamServer)}
+          </Text>
+          <Text style={gaya.meta}>{s.project_path || ""}</Text>
+          {(() => {
+            const t = durasi(s.started_at, jamServer);
+            return t ? (
+              <Text style={[gaya.timerTeks, { marginTop: 8 }]}>⏱ berjalan {t}</Text>
+            ) : (
+              <Text style={[gaya.meta, { color: WARNA.kuning }]}>
+                ⏱ waktu mulai tidak tercatat (sesi ini dibuat sebelum perbaikan
+                started_at)
+              </Text>
+            );
+          })()}
+
+          <ScrollView style={gaya.modalIsi}>
+            {total > 0 && (
+              <>
+                <Text style={gaya.bagianJudul}>Rencana {selesai}/{total}</Text>
+                <View style={gaya.barLuar}>
+                  <View
+                    style={[
+                      gaya.barDalam,
+                      { width: Math.min(100, Math.round((selesai / total) * 100)) + "%" },
+                    ]}
+                  />
+                </View>
+                {rencana.map((p) => {
+                  const beres = p.status === "done";
+                  return (
+                    <Text
+                      key={p.id || p.text}
+                      style={[gaya.langkah, beres && gaya.langkahBeres]}
+                    >
+                      {beres ? "✓ " : "• "}
+                      {p.text}
+                    </Text>
+                  );
+                })}
+              </>
+            )}
+
+            <Text style={gaya.bagianJudul}>
+              Definition of Done {s.dod_done || 0}/{s.dod_total || 0}
+              {s.dod_waived ? " · " + s.dod_waived + " dilewati" : ""}
+            </Text>
+            {(s.dod_total || 0) === 0 && (
+              <Text style={gaya.langkah}>(belum ada item DoD)</Text>
+            )}
+
+            <Text style={gaya.bagianJudul}>Sesi</Text>
+            <Text style={gaya.langkah}>kunci: {s.session_key}</Text>
+            <Text style={gaya.langkah}>fase: {s.phase}</Text>
+            <Text style={gaya.langkah}>status: {s.state_label || s.state || "-"}</Text>
+            <Text style={gaya.langkah}>
+              terakhir melapor: {ago(s.updated_at, jamServer)}
+            </Text>
+          </ScrollView>
+
+          <Pressable onPress={onClose} style={gaya.tombolTutup}>
+            <Text style={gaya.tombolTutupTeks}>Tutup</Text>
+          </Pressable>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -272,36 +454,93 @@ const gaya = StyleSheet.create({
   daftar: { paddingBottom: 40 },
   kosong: { color: WARNA.redup, textAlign: "center", marginTop: 60, fontSize: 16 },
 
+  // Dua kolom: kartu mengisi setengah lebar. `flexWrap` membuat baris baru
+  // otomatis, jadi 2 sesi duduk berdampingan dan 4 sesi jadi 2x2.
+  grid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between" },
+  gridSatu: { flexDirection: "column" },
+  sel: { width: "49%", marginBottom: 14 },
+  selPenuh: { width: "100%", marginBottom: 14 },
+
   kartu: {
     borderWidth: 1,
     borderRadius: 14,
     backgroundColor: WARNA.card,
-    padding: 16,
-    marginBottom: 14,
+    padding: 14,
+    flexGrow: 1,
   },
-  baris: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 10 },
-  chip: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 3 },
-  chipTeks: { fontSize: 11, fontWeight: "700", letterSpacing: 0.6 },
-  task: { color: WARNA.teks, fontSize: 17, fontWeight: "600", flexShrink: 1 },
-  catatan: { fontSize: 13, marginTop: 8 },
-  meta: { color: WARNA.redup, fontSize: 13, marginTop: 6 },
+  kartuDitekan: { opacity: 0.7 },
+  baris: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8 },
+  chip: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 9, paddingVertical: 3 },
+  chipTeks: { fontSize: 11, fontWeight: "700", letterSpacing: 0.5 },
+  timer: {
+    borderWidth: 1,
+    borderColor: "#3fb95055",
+    backgroundColor: "#3fb9501a",
+    borderRadius: 999,
+    paddingHorizontal: 9,
+    paddingVertical: 3,
+  },
+  timerTeks: { color: WARNA.hijau, fontSize: 12, fontWeight: "700", fontVariant: ["tabular-nums"] },
+  proyek: { color: WARNA.biruMuda, fontSize: 13, fontWeight: "600", marginTop: 6 },
+  judulSesi: { color: "#b9c3cf", fontSize: 12, fontStyle: "italic", marginTop: 6 },
+  task: { color: WARNA.teks, fontSize: 16, fontWeight: "600", flexShrink: 1, marginTop: 8 },
+  catatan: { fontSize: 12, marginTop: 6 },
+  meta: { color: WARNA.redup, fontSize: 12, marginTop: 5 },
 
   barLuar: {
-    height: 8,
+    height: 7,
     backgroundColor: WARNA.garis,
     borderRadius: 999,
     overflow: "hidden",
-    marginTop: 12,
+    marginTop: 10,
   },
   barDalam: { height: "100%", backgroundColor: WARNA.biru },
 
-  langkah: { color: "#9da7b3", fontSize: 14, marginTop: 6 },
+  langkah: { color: "#9da7b3", fontSize: 13, marginTop: 5 },
   langkahBeres: { color: WARNA.hijau, textDecorationLine: "line-through" },
+
+  kartuKaki: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginTop: 10,
+  },
+  sisa: { color: WARNA.redup, fontSize: 11 },
+  ketuk: { color: WARNA.biruMuda, fontSize: 11 },
 
   aktivitas: { marginTop: 8, borderTopWidth: 1, borderTopColor: WARNA.garis, paddingTop: 14 },
   aktivitasJudul: { color: WARNA.teks, fontSize: 15, fontWeight: "700", marginBottom: 8 },
   aktivitasItem: { color: WARNA.redup, fontSize: 12, marginBottom: 6 },
   aktivitasJenis: { color: WARNA.teks, fontWeight: "600" },
   aktivitasMeta: { color: "#5c6672" },
-});
 
+  modalLatar: {
+    flex: 1,
+    backgroundColor: "#000000cc",
+    justifyContent: "center",
+    padding: 24,
+  },
+  modalKotak: {
+    backgroundColor: WARNA.card,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: WARNA.garis,
+    padding: 20,
+    maxHeight: "90%",
+  },
+  modalJudul: { color: WARNA.teks, fontSize: 20, fontWeight: "700", marginTop: 8 },
+  modalIsi: { marginTop: 12 },
+  bagianJudul: { color: WARNA.teks, fontSize: 14, fontWeight: "700", marginTop: 16 },
+  tutup: { marginLeft: "auto", paddingHorizontal: 6 },
+  tutupTeks: { color: WARNA.redup, fontSize: 20, fontWeight: "700" },
+  tombolTutup: {
+    marginTop: 16,
+    backgroundColor: "#1f6feb33",
+    borderWidth: 1,
+    borderColor: "#1f6feb88",
+    borderRadius: 10,
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  tombolTutupTeks: { color: WARNA.biruMuda, fontWeight: "700", fontSize: 15 },
+});

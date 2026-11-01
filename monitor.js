@@ -20,6 +20,19 @@
  */
 
 import os from "node:os";
+import { createRequire } from "node:module";
+
+// Judul sesi dibaca dari opencode.db. Dimuat lewat createRequire + try/catch
+// supaya mesin tanpa berkas itu (mis. CLI saja) tetap jalan seperti biasa.
+const requireCjs = createRequire(import.meta.url);
+let sessionTitle = () => "";
+try {
+  ({ sessionTitle } = requireCjs("./opencode-session-title.cjs"));
+
+  if (typeof sessionTitle !== "function") sessionTitle = () => "";
+} catch {
+  sessionTitle = () => "";
+}
 
 const DEFAULT_TIMEOUT_MS = 1200;
 
@@ -39,8 +52,7 @@ export function machineName(env = process.env) {
 
 /** Ringkasan satu sesi, bentuk yang dipakai dashboard. */
 export function buildSnapshot({ state, sessionKey = "", projectPath = "", sessionStartedAt = "", env = process.env } = {}) {
-  const s = state || {};
-  const plan = Array.isArray(s.plan) ? s.plan : [];
+  const s = state || {};  const plan = Array.isArray(s.plan) ? s.plan : [];
   const dod = Array.isArray(s.definitionOfDone) ? s.definitionOfDone : [];
   const revision = Number(s.dodRevision) || 0;
 
@@ -68,6 +80,9 @@ export function buildSnapshot({ state, sessionKey = "", projectPath = "", sessio
     dodWaived,
     ownerPid: Number(s.owner && s.owner.pid) || null,
     startedAt: sessionStartedAt || "",
+    // Judul percakapan OpenCode, bila bisa dibaca. Dipakai kartu di tablet
+    // supaya orang tahu sesi mana yang dimaksud, bukan kode `ses_...`.
+    sessionTitle: sessionTitle(sessionKey, env),
   };
 }
 
