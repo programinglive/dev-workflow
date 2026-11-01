@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.19.4](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.3...v1.19.4) (2026-11-01)
+
+
+### 🐛 Bug Fixes
+
+* **test:** suite tidak lagi menulis sesi palsu ke dashboard ([efb85ba](https://github.com/programinglive/dev-workflow-mcp-server/commit/efb85ba12f4fe9f053b69ae0b97b70879c32b1a9))
+
 ### [1.19.3](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.2...v1.19.3) (2026-11-01)
 
 ### [1.19.2](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.1...v1.19.2) (2026-11-01)
