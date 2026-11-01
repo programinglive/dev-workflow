@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.19.8](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.7...v1.19.8) (2026-11-01)
+
+
+### ✨ Features
+
+* **monitor:** retensi data dan token untuk endpoint tulis ([81db966](https://github.com/programinglive/dev-workflow-mcp-server/commit/81db9667c33d6ddec342ded5cbea76655c97ecc1))
+
 ### [1.19.7](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.6...v1.19.7) (2026-11-01)
 
 ### [1.19.6](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.5...v1.19.6) (2026-11-01)
