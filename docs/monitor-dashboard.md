@@ -157,6 +157,37 @@ Diverifikasi dua arah di kedua tablet lewat `uiautomator dump`: peringatan
 muncul saat data sepi (`47m lalu`), dan hilang setelah ada laporan baru
 (`ageMs: 22`).
 
+## Status sesi: aktif, mungkin macet, berakhir
+
+Diukur 1 November 2026: task yang **sudah selesai** (commit, rilis, deploy)
+masih tampil sebagai kartu `CODING` 52 menit kemudian, karena penutupan manual
+tidak selalu mengubah `phase` menjadi `idle`. Dashboard mengaku ada pekerjaan
+hidup padahal tidak ada — kebohongan ke arah yang paling berbahaya, karena
+pemiliknya menunggu sesuatu yang tidak akan datang.
+
+Status kini **diturunkan dari umur laporan**, bukan diklaim dari `phase`:
+
+| Status | Syarat | Tampilan |
+|---|---|---|
+| `idle` | `phase = 'idle'` | chip abu-abu |
+| `live` | melapor ≤ 15 menit (`LIVE_MS`) | kartu biru |
+| `possibly_stuck` | ≤ 2 jam (`STUCK_MS`) | kartu kuning + "mungkin berhenti di tengah jalan" |
+| `ended` | > 2 jam | kartu redup + "kemungkinan sudah selesai tanpa penutupan" |
+
+Kata "mungkin" dipakai sengaja: umur laporan **tidak dapat membuktikan** sesi
+sudah mati, hanya bahwa kabarnya berhenti.
+
+### Mengapa bukan pemeriksaan PID
+
+Rencana awal adalah memeriksa `owner_pid` dari server. Itu **tidak bisa**
+dilakukan: PID berlaku per mesin, dan server adalah mesin yang berbeda. Diuji
+1 November 2026 — pid `11460` memang **hidup** di HELLOWORLD, tetapi
+`kill -0 11460` di server gagal. Kalau diperiksa dari server, **setiap** sesi
+akan tampak "sudah berakhir", bug yang lebih buruk daripada masalah aslinya.
+
+Batasnya bisa diatur lewat `LIVE_MS` dan `STUCK_MS` di
+`/etc/devwf-monitor.env`.
+
 ## Sesi `idle` yang basi disembunyikan
 Proses MCP mati bersama sesi OpenCode-nya, jadi baris `idle` tinggal selamanya.
 Tanpa filter, dashboard yang dipakai berhari-hari memenuhi layar tablet dengan
