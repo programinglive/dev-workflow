@@ -963,6 +963,32 @@ function migrateLegacyProjectState(legacyPath, targetPath, projectRoot) {
   migrateStateToSession({ sourcePath: legacyPath, targetPath, projectRoot });
 }
 
+/**
+ * Kirim ringkasan sesi ke dashboard. Tidak pernah melempar.
+ *
+ * Dipanggil setelah state benar-benar tersimpan - kalau dilaporkan lebih
+ * dulu, dashboard bisa menampilkan fase yang tidak pernah terjadi.
+ */
+async function reportToMonitorSafe({ state, stateFile, createdAt }) {
+  try {
+    // Impor dinamis: berkas ini bisa disalin sendirian oleh tes/CLI ke
+    // direktori lain, dan impor statis akan mematahkan seluruh modul hanya
+    // karena fitur pinggiran ini.
+    const mod = await import('./monitor.js');
+    const base = path.basename(String(stateFile || ""));
+    const match = /^workflow-state\.(.+)\.json$/.exec(base);
+    const snapshot = mod.buildSnapshot({
+      state,
+      sessionKey: match ? match[1] : "",
+      projectPath: (state && state.projectDir) || "",
+      sessionStartedAt: createdAt || "",
+    });
+    return await mod.reportSnapshot({ snapshot });
+  } catch {
+    return false;
+  }
+}
+
 export class WorkflowState {
   constructor(stateFilePath = resolveStateFile()) {
     this.stateFile = stateFilePath;
@@ -1395,6 +1421,18 @@ export class WorkflowState {
     this.lastReconcile = reconciled;
     this.loadedTask = this.state.taskDescription || "";
     await this.verifyPersisted(this.loadedTask);
+
+    // Laporan ke dashboard pusat. DITUNGGU tetapi berbatas waktu keras di
+    // dalam `reportSnapshot`: proses CLI yang keluar segera setelah simpan akan
+    // membunuh permintaan yang belum terkirim, dan dashboard lalu tidak pernah
+    // melihat sesi itu. Bila monitor mati, laporan gagal dalam ~1,2 detik dan
+    // penyimpanan tetap berhasil - laporan tidak pernah melempar.
+    await reportToMonitorSafe({
+      state: this.state,
+      stateFile: this.stateFile,
+      createdAt: this.sessionStartedAt || "",
+    });
+
     return reconciled;
   }
 
