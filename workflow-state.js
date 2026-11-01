@@ -6,10 +6,12 @@ import { assertSafeKnowledge } from './security/policy.js';
 import { sanitize } from './security/sanitizer.js';
 import { normalizeItems as normalizeDodItems, mergeDefinitionOfDone as mergeDodItems } from './tools/handler-modules/dod.js';
 import { fileURLToPath } from "url";
+import { createHash } from "crypto";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const STATE_DIR = ".state";
+const PROJECTS_DIR = "projects";
 const STATE_FILENAME = "workflow-state.json";
 const LEGACY_STATE_FILENAME = ".workflow-state.json";
 const PROJECT_SUMMARY_FILENAME = "project-summary.json";
@@ -590,10 +592,6 @@ export function resolveProjectRootForState(stateFilePath) {
 
 export function resolveStateFile({ sessionId = null } = {}) {
   const customPath = process.env.DEV_WORKFLOW_STATE_FILE;
-  if (customPath) {
-    return path.resolve(customPath);
-  }
-
   const moduleRoot = path.resolve(__dirname, "..");
   const cwdResolved = path.resolve(process.cwd());
   const initCwd = process.env.INIT_CWD ? path.resolve(process.env.INIT_CWD) : null;
@@ -606,12 +604,38 @@ export function resolveStateFile({ sessionId = null } = {}) {
     projectRoot = findProjectRoot(initCwd);
   }
 
-  // 3. Fall back to the project containing this module
+  if (customPath) {
+    const resolvedCustom = path.resolve(customPath);
+
+    // 3. Pin tanpa proyek yang dikenali: pakai berkasnya apa adanya. SENGAJA
+    //    tidak jatuh ke direktori modul - kalau begitu, direktori acak akan
+    //    dianggap proyek "dev-workflow-mcp-server" dan state-nya nyasar ke sana.
+    if (!projectRoot) {
+      return resolvedCustom;
+    }
+
+    /*
+     * Pin = DIREKTORI DASAR, bukan satu berkas untuk semua proyek.
+     *
+     * 1 November 2026: satu berkas bersama membuat semua proyek berbagi satu
+     * slot task. Dua sesi saling menimpa, penjaga "sesi lain" menyala untuk
+     * proyek yang tidak berhubungan, dan bukti DoD satu task tertulis ke task
+     * proyek lain. Sekarang tiap proyek punya berkasnya sendiri di bawah
+     * `<dasar>/projects/<proyek>/`, sehingga isolasi tidak lagi bergantung
+     * pada disiplin config.
+     */
+    const baseDir = path.dirname(resolvedCustom);
+    const target = path.join(baseDir, PROJECTS_DIR, projectKey(projectRoot), STATE_FILENAME);
+    migrateLegacyProjectState(resolvedCustom, target, projectRoot);
+    return target;
+  }
+
+  // 4. Fall back to the project containing this module
   if (!projectRoot) {
     projectRoot = findProjectRoot(moduleRoot);
   }
 
-  // 4. Final fallback: use a non-root working directory or the module root
+  // 5. Final fallback: use a non-root working directory or the module root
   if (!projectRoot) {
     projectRoot = !isRootPath(cwdResolved) ? cwdResolved : moduleRoot;
   }
@@ -619,6 +643,55 @@ export function resolveStateFile({ sessionId = null } = {}) {
   const stateDir = path.join(projectRoot, STATE_DIR);
   const userDir = getUserScopedDir(stateDir);
   return path.join(userDir, sessionStateFilename(process.env, sessionId));
+}
+
+/**
+ * Nama subdirektori per proyek: nama folder yang masih terbaca manusia, plus
+ * potongan hash supaya dua proyek bernama sama (mis. `clinic` di dua root)
+ * tidak bertabrakan.
+ */
+function projectKey(projectRoot) {
+  const resolved = path.resolve(projectRoot);
+  const nama = path.basename(resolved)
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40) || "proyek";
+  const hash = createHash("sha1").update(resolved.toLowerCase()).digest("hex").slice(0, 10);
+  return `${nama}-${hash}`;
+}
+
+/**
+ * Pindahkan sekali state lama (satu berkas bersama) ke berkas proyeknya.
+ *
+ * Hanya dipindahkan bila `projectDir` di dalamnya memang proyek ini; state
+ * milik proyek lain dibiarkan, karena memindahkannya justru mengulang
+ * kesalahan yang sedang diperbaiki. Berkas lama tidak dihapus - ia juga
+ * menyimpan riwayat era sebelumnya.
+ *
+ * Best-effort: kegagalan migrasi tidak boleh menghalangi server hidup.
+ */
+function migrateLegacyProjectState(legacyPath, targetPath, projectRoot) {
+  try {
+    if (!existsSync(legacyPath) || existsSync(targetPath)) {
+      return;
+    }
+
+    const data = JSON.parse(readFileSync(legacyPath, "utf8"));
+    const pemilik = typeof data?.projectDir === "string" ? data.projectDir.trim() : "";
+    if (!pemilik) {
+      return;
+    }
+
+    const sama = path.resolve(pemilik).toLowerCase() === path.resolve(projectRoot).toLowerCase();
+    if (!sama) {
+      return;
+    }
+
+    mkdirSync(path.dirname(targetPath), { recursive: true });
+    writeFileSync(targetPath, JSON.stringify(data, null, 2), "utf8");
+  } catch {
+    // Biarkan: state baru akan dibuat bersih oleh WorkflowState.
+  }
 }
 
 export class WorkflowState {

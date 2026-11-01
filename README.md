@@ -399,7 +399,7 @@ DEV_WORKFLOW_DB_URL=postgresql://USER:[REDACTED]@HOST:5432/database
 | `DEV_WORKFLOW_DB_URL` | — | Connection string (MySQL/Postgres) |
 | `DEV_WORKFLOW_DB_PATH` | `.state/dev-workflow.db` | SQLite path (optional) |
 | `DEV_WORKFLOW_USER_ID` | auto-generated | User ID for multi-user isolation |
-| `DEV_WORKFLOW_STATE_FILE` | auto-resolved | Override for `workflow-state.json` |
+| `DEV_WORKFLOW_STATE_FILE` | auto-resolved | Base for workflow state. Treated as a FILE only when no project is recognised; otherwise its DIRECTORY holds one subdirectory per project (`projects/<proyek>/`), so two projects never share a task slot. See `docs/2026-11-01-state-per-project.md` |
 | `FACTORY_URL` | - | Factory base URL, e.g. `https://factory.programinglive.com` |
 | `FACTORY_TOKEN` | - | PocketBase `activity_users` token sent as a Bearer header |
 | `FACTORY_EMAIL` | - | `activity_users` email, exchanged for a token on demand |
