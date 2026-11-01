@@ -97,6 +97,35 @@ DEVWF_MACHINE=<nama mesin>
 Kalau token belum diisi di mesin pengirim, pelaporannya ditolak `401` dan
 dashboard tidak pernah bertambah — periksa `journalctl -u devwf-monitor`.
 
+## Merotasi token
+
+Token tulis bisa diganti dengan satu perintah, tanpa memutus mesin mana pun:
+
+```bash
+/root/command/rotate-monitor-token.sh            # mode kering: hanya melaporkan
+/root/command/rotate-monitor-token.sh --apply    # benar-benar merotasi
+/root/command/rotate-monitor-token.sh --revoke-previous   # cabut yang lama
+```
+
+Urutannya sengaja dibuat **tanpa downtime**:
+
+1. Server diberi token baru, dan token lama disimpan sebagai
+   `DEVWF_MONITOR_TOKEN_PREVIOUS` sehingga **masih diterima sementara**.
+2. Mesin pengirim diperbarui satu per satu.
+3. Setelah semua memakai yang baru, `--revoke-previous` mencabut yang lama.
+
+Tanpa masa tenggang itu, setiap mesin yang belum diperbarui langsung ditolak
+`401` dan kartunya hilang diam-diam — kegagalan yang baru ketahuan berhari-hari
+kemudian.
+
+Skrip **tidak pernah mencetak token**, dan membuat cadangan `.bak-<stamp>`
+sebelum menulis. Cadangan itu memuat kredensial, jadi setelah rotasi diverifikasi
+**hapus cadangannya** (`shred -u`).
+
+Diuji 2 November 2026: token lama `401`, token baru `200`, tanpa token `401`,
+`GET /api/sessions` tetap `200`. Ketiga mesin (`HELLOWORLD`, `MMCH`, `Mac`)
+memakai token baru.
+
 ## Retensi: MATI secara bawaan
 
 **Tidak ada data yang dihapus tanpa persetujuan eksplisit.** Aturan ini ada
