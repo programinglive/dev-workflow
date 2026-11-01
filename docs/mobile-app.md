@@ -63,11 +63,10 @@ proyek (`EALLOWSCRIPTS`). Efeknya sama.
 
 Menyalakannya menuntut **PIN layar** perangkat, jadi harus dilakukan pemiliknya:
 
-1. Settings → About tablet → ketuk "OS version" 7× (kalau Developer options
-   belum ada)
-2. Settings → Additional settings → Developer options
-3. **Apps from unverified developers** → nyalakan → masukkan PIN layar
-4. Pasang APK: buka file manager, ketuk `app-release.apk`, izinkan instalasi
+1. Settings → Additional settings → Developer options
+   (kalau belum ada: Settings → About tablet → ketuk "OS version" 7×)
+2. **Apps from unverified developers** → nyalakan → masukkan PIN layar
+3. Pasang APK: buka file manager, ketuk `app-release.apk`, izinkan instalasi
 
 Sesudah izin itu menyala, pemasangan lewat adb juga bekerja:
 
@@ -75,6 +74,35 @@ Sesudah izin itu menyala, pemasangan lewat adb juga bekerja:
 adb connect 100.81.240.34:5555
 adb -s 100.81.240.34:5555 install -r android/app/build/outputs/apk/release/app-release.apk
 ```
+
+## Sudah diuji di emulator
+
+Aplikasi ini **tidak** hanya berhasil dibangun — sudah dijalankan dan dibaca
+isinya di emulator Android 35 (`google_apis;x86_64`):
+
+- APK terpasang: `Success`, `MainActivity` terbuka
+- Saat server sepi: layar menampilkan `Tidak ada laporan masuk` — cocok dengan
+  kondisi server, jadi bukan data palsu
+- Dengan sesi aktif: chip **AKTIF**, task, `EMULATOR-TEST · dev-workflow-mcp-server · feature`,
+  `rencana 1/3 · DoD 0/1`, langkah bertanda centang, dan `step_done` di aktivitas
+- logcat: `FATAL EXCEPTION` 0, `E AndroidRuntime` 0, `ReactNativeJS Error` 0
+
+Yang **belum** teruji adalah pemasangan di kedua tablet MIUI, karena alasan di
+atas. Tampilan dan jaringan sudah terbukti bekerja.
+
+### Catatan emulator
+
+AVD lama `Pixel_7_Pro_API_35` menunjuk `google_apis_playstore` yang tidak
+terpasang, sehingga emulator gagal start dengan
+`Cannot find AVD system path`. Image `system-images;android-35;google_apis;x86_64`
+diunduh lewat `sdkmanager`, lalu AVD baru dibuat dengan `avdmanager`. Untuk
+memakainya:
+
+```bash
+export ANDROID_SDK_ROOT="$LOCALAPPDATA/Android/Sdk"
+emulator -avd <nama> -no-snapshot-load -no-boot-anim -no-window -gpu swiftshader_indirect
+```
+
 
 ## Memperbarui aplikasi
 
