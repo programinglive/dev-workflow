@@ -15,6 +15,8 @@ const PROJECTS_DIR = "projects";
 const STATE_FILENAME = "workflow-state.json";
 /** Jejak task yang sedang berjalan saat tata letak state berubah. */
 export const STRANDED_TASK_FILENAME = "stranded-task.json";
+/** Direktori penunjuk "sesi ini bekerja di proyek mana". */
+const SESSIONS_DIR = "sessions";
 const LEGACY_STATE_FILENAME = ".workflow-state.json";
 const PROJECT_SUMMARY_FILENAME = "project-summary.json";
 const USER_ID_FILENAME = "user-id";
@@ -686,10 +688,40 @@ export function resolveStateFile({ sessionId = null } = {}) {
      * lalu kembali berbagi satu berkas state. Identitas di sini dihitung ulang
      * dari `process.cwd()` saja.
      */
-    const identityRoot =
-      findProjectRoot(path.resolve(process.cwd())) || path.resolve(process.cwd());
     const baseDir = path.dirname(resolvedCustom);
-    const projectDir = path.join(baseDir, PROJECTS_DIR, projectKey(identityRoot));
+    const sessionKey = resolveSessionKey(process.env, sessionId);
+
+    /*
+     * MENGAPA ADA PENUNJUK PER SESI
+     * -----------------------------
+     * `process.cwd()` milik PROSES MCP, dan sering bukan tempat sesi bekerja:
+     * di mesin ini semua sesi dijalankan dari `Documents\Default Project`.
+     * Diukur 1 November 2026: satu direktori `projects/Default-Project-<hash>/`
+     * berisi state dari sesi yang mengerjakan `D:\code\belajar`, repo uji, dan
+     * repo ini sekaligus. History, lock, dan rekomendasi tercampur antar proyek
+     * yang tidak berhubungan - dan `start_task` saling menolak.
+     *
+     * `start_task` mencatat proyek yang BENAR di sini begitu `projectDir`
+     * dipin, sehingga panggilan berikutnya memakai proyek itu, bukan cwd proses.
+     */
+    const pointer = readSessionPointer(baseDir, sessionKey);
+    // Penunjuk dianggap sah hanya bila repo aslinya DAN direktori state-nya
+    // masih ada. Repo yang dipindah atau dihapus meninggalkan penunjuk basi;
+    // memakainya berarti state nyasar ke proyek yang sudah tidak ada.
+    const pointedProjectDir =
+      pointer?.projectDirPath &&
+      pointer?.projectDir &&
+      existsSync(pointer.projectDirPath) &&
+      existsSync(pointer.projectDir)
+        ? pointer.projectDirPath
+        : "";
+
+    const identityRoot =
+      (pointedProjectDir && pointer.projectDir) ||
+      findProjectRoot(path.resolve(process.cwd())) ||
+      path.resolve(process.cwd());
+
+    const projectDir = pointedProjectDir || path.join(baseDir, PROJECTS_DIR, projectKey(identityRoot));
 
     const userDir = getUserScopedDir(projectDir);
     const target = path.join(userDir, sessionStateFilename(process.env, sessionId));
@@ -741,6 +773,96 @@ function projectKey(projectRoot) {
     .slice(0, 40) || "proyek";
   const hash = createHash("sha1").update(resolved.toLowerCase()).digest("hex").slice(0, 10);
   return `${nama}-${hash}`;
+}
+
+/**
+ * Direktori dasar (`<dasar>`) dari sebuah berkas state.
+ *
+ * Dicari lewat segmen `projects`, bukan dengan menghitung `dirname`: kedalaman
+ * tata letak sudah berubah sekali dan akan berubah lagi.
+ */
+function resolveBaseDirFromState(stateFile) {
+  const resolved = path.resolve(stateFile);
+  const segments = resolved.split(path.sep);
+  const index = segments.lastIndexOf(PROJECTS_DIR);
+  if (index > 0) {
+    return segments.slice(0, index).join(path.sep);
+  }
+  return path.dirname(resolved);
+}
+
+/**
+ * Kunci sesi dari nama berkas state.
+ *
+ * Berkasnya sudah berbentuk `workflow-state.<sesi>.json`, jadi kuncinya tidak
+ * perlu dioper ulang. Memakai `resolveSessionKey(env, null)` di sini SALAH:
+ * pemanggil yang memberi `sessionId` eksplisit akan membaca penunjuk dengan
+ * kunci itu, sementara penunjuk ditulis dengan kunci env - dua kunci berbeda,
+ * dan pengalihan proyek tidak pernah terbaca.
+ */
+function sessionKeyFromStateFile(stateFile) {
+  const base = path.basename(path.resolve(stateFile));
+  const match = /^workflow-state\.(.+)\.json$/.exec(base);
+  return match ? match[1] : resolveSessionKey(process.env, null);
+}
+
+function sessionPointerPath(baseDir, sessionKey) {
+  return path.join(baseDir, SESSIONS_DIR, `${sessionKey}.json`);
+}
+
+/** Proyek yang tercatat untuk sesi ini, atau null. */
+export function readSessionPointer(baseDir, sessionKey) {
+  try {
+    return JSON.parse(readFileSync(sessionPointerPath(baseDir, sessionKey), "utf-8"));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Catat proyek yang sedang dikerjakan sesi ini, dan kembalikan letak state
+ * yang seharusnya.
+ *
+ * Dipanggil `start_task` setelah `projectDir` dipin. Tanpa ini, identitas
+ * proyek hanya bisa ditebak dari `process.cwd()` - dan di mesin ini semua sesi
+ * berjalan dari `Documents\Default Project`, sehingga sesi yang mengerjakan
+ * repo berbeda berbagi satu direktori proyek: history tercampur, lock saling
+ * menolak, dan rekomendasi satu proyek muncul di proyek lain.
+ */
+export function pinSessionProject({ stateFile, projectDir }) {
+  const target = path.resolve(String(projectDir || ""));
+  if (!target) {
+    return null;
+  }
+
+  // Hanya untuk tata letak BER-PIN yang sudah berbentuk
+  // `<dasar>/projects/<proyek>/users/<user>/`. Untuk path state eksplisit
+  // (tes, CLI, skrip perbaikan) tidak ada tata letak seperti itu, dan
+  // memindahkan berkasnya justru membuat pemanggil membaca berkas kosong.
+  if (!path.resolve(stateFile).split(path.sep).includes(PROJECTS_DIR)) {
+    return null;
+  }
+
+  const baseDir = resolveBaseDirFromState(stateFile);
+  const sessionKey = sessionKeyFromStateFile(stateFile);
+  const projectDirPath = path.join(baseDir, PROJECTS_DIR, projectKey(target));
+
+  try {
+    mkdirSync(path.join(baseDir, SESSIONS_DIR), { recursive: true });
+    writeFileSync(
+      sessionPointerPath(baseDir, sessionKey),
+      JSON.stringify({ projectDir: target, projectDirPath, updatedAt: new Date().toISOString() }, null, 2),
+      "utf8",
+    );
+  } catch {
+    // Penunjuk gagal ditulis bukan alasan menggagalkan start_task: sesi tetap
+    // berjalan, hanya identitas proyeknya kembali ke cwd.
+  }
+
+  return {
+    projectDirPath,
+    stateFile: path.join(getUserScopedDir(projectDirPath), sessionStateFilename(process.env, sessionKey)),
+  };
 }
 
 /**

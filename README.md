@@ -238,6 +238,7 @@ Each session gets its own state file, inside a per-project directory:
 - **History is per project.** `next_steps` and `view_history` read the same file from every session, so a follow-up written in one window is visible in the next.
 - **The lock is per project**, not per machine. Two unrelated projects no longer block each other.
 - **A non-repository working directory still isolates.** The project directory is derived from the working directory itself, so sessions started from a folder that is not a git repo no longer fall back to one shared file.
+- **`projectDir` decides the project, not the process's working directory.** When `start_task` pins a `projectDir`, that choice is recorded per session, so a session opened in `Documents\Default Project` but working on `D:\code\belajar` gets its own project directory instead of sharing one with every other session started from the same folder. Deleting or moving that repository makes the pointer stale, and the session falls back to the working directory.
 
 `start_task` refuses to replace a task that is still running in another live MCP process, **even with `force: true`** — starting a new task would clear that task's Definition of Done, and its evidence cannot be recovered from history. The guard stops applying once the owning process has not written state for 10 minutes, so a leftover MCP process cannot block a session forever. If a layout change finds a running task in an old file, it is not copied; `get_workflow_status` reports it instead of letting it disappear.
 
