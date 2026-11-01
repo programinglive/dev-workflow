@@ -34,7 +34,8 @@
     "release:patch": "node scripts/release.cjs patch",
     "web": "npm start --prefix web",
     "release:first": "node scripts/release.cjs --first-release",
-    "verify:bundle": "node scripts/verify-bundle.mjs"
+    "verify:bundle": "node scripts/verify-bundle.mjs",
+    "update:check": "node scripts/check-update.mjs"
   },
   "keywords": [
     "mcp",

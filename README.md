@@ -110,7 +110,7 @@ See [MCP client configuration](#mcp-client-configuration).
 
 ## Available Tools
 
-25 tools.
+34 tools.
 
 | Tool | Purpose |
 |---|---|
@@ -123,12 +123,14 @@ See [MCP client configuration](#mcp-client-configuration).
 | `create_tests` | Mark tests as written |
 | `skip_tests` | Skip tests with a justification |
 | `run_tests` | Record test results (blocks commit when failing) |
-| `create_documentation` | Mark docs as written |
+| `create_documentation` | Record docs as written; `files` are verified against the working tree |
+| `waive_documentation` | Exclude the documentation gate with a written reason |
 | `check_ready_to_commit` | Verify every required step is complete |
 | `commit_and_push` | `git add` → `commit` → `push`, refusing to sweep in another session's work |
 | `perform_release` | Record a release; runs even when only another session's files are left unstaged |
 | `skip_release` | Skip the release step with a justification |
-| `complete_task` | Finish and reset the workflow |
+| `complete_task` | Finish, report what to do next, and reset the workflow |
+| `next_steps` | Show the follow-ups stored by the last completed task |
 | `get_workflow_status` | Show the current phase |
 | `continue_workflow` | Get guidance on the next step |
 | `view_history` | List completed tasks |
@@ -171,6 +173,62 @@ Each item is later either **proven** or **excluded**, and the workflow refuses t
 - A task claimed from the Factory board imports the board checklist as **open** items: a checked box on the board is someone's plan, not proof that this machine ran anything.
 - `set_definition_of_done` fills the checklist of a task started before this rule existed. Replacing a list that already has proven items is refused unless `append: true`.
 - `force_complete_task` is the audited escape hatch: `forced: true`, your reason, and the DoD summary land in history.
+
+### Documentation gate
+
+`create_documentation` used to accept a label. `documentationType: "inline-comments"` closed the step exactly as well as `"README"`, nothing read the working tree, and READMEs fell behind for months while `check_ready_to_commit` reported "Documentation created ✅".
+
+The step now needs **file evidence**:
+
+```json
+{
+  "documentationType": "README",
+  "summary": "Document the new update:check script",
+  "files": ["README.md"]
+}
+```
+
+Every path in `files` must be a documentation path **and** appear as a change in the working tree. `check_ready_to_commit` adds one checklist row, *Documentation updated for code changes*, and `commit_and_push` inherits it, so a commit cannot slip past.
+
+| Situation | Result |
+|---|---|
+| No source file changed | passes |
+| Source changed, a documentation file changed | passes |
+| Source changed, no documentation changed, no waiver | **blocked** |
+| Source changed, `waive_documentation` with a reason | passes, waiver recorded |
+| Repo has no README and no `docs/` | passes (`no-docs`) |
+
+Details worth knowing:
+
+- A documentation file that was **already dirty before `start_task`** does not count, because it cannot be told apart from another session's work. Naming it in `files` claims it explicitly, and that claim is recorded.
+- Test files, lockfiles, CI config and data files never trigger the gate. Only source code does.
+- `waive_documentation { reason }` is a decision, not a shortcut: the reason goes into history, into the `commit_and_push` report, and into the next session's recommendations. Waiving every task becomes visible instead of silent.
+- `run_full_workflow` checks the gate **before the first step**, so it refuses rather than stopping halfway. Pass `documentationFiles` or `documentationWaiverReason`.
+
+### What to do next
+
+`complete_task` no longer just resets. It reports follow-ups built from facts the session produced, and stores them:
+
+- Definition-of-done items that were waived, with their reasons
+- Tests that were skipped, with the reason
+- Documentation waived, with the reason
+- Files left uncommitted (another session's work)
+- `TODO`/`FIXME`/`HACK` comments that entered the diff, with `path:line`
+- A run of bugfix tasks in the recent history
+- A diff that touched an unusually large number of files
+
+You can add your own with `nextSteps` (1-5 items, 10-200 characters). Invalid values are rejected with an explanation, never dropped silently. Facts and your suggestions are printed separately, because a recommendation that always appears for every task gets ignored.
+
+`next_steps` shows the stored list again, at any time — history is per project, so the next session sees it.
+
+### Checking for updates
+
+```bash
+npm run update:check        # human-readable
+npm run update:check -- --json
+```
+
+Compares the installed version against `origin` (for clone installs) and against the npm registry, then prints the exact command. Exit code `0` means up to date, `1` means an update is available, `2` means no source could be checked — "could not check" is not the same as "current". Nothing runs automatically: the tool path that is called most often must never wait on the network.
 
 ### Factory task integration
 

@@ -206,21 +206,56 @@ export function getToolList() {
     {
       name: "create_documentation",
       description:
-        "Mark that documentation has been created/updated. This is required before committing.",
+        "Mark that documentation has been created/updated. This is required before committing. " +
+        "Pass 'files' with the documentation paths you actually changed: they are verified against " +
+        "the working tree, and 'check_ready_to_commit' blocks while source code changed without a " +
+        "documentation change. Without 'files' the step is recorded but the gate stays open.",
       inputSchema: {
         type: "object",
         properties: {
           documentationType: {
             type: "string",
             enum: ["PRD", "README", "RELEASE_NOTES", "inline-comments", "API-docs", "changelog", "other"],
-            description: "Type of documentation created",
+            description: "Type of documentation created. A label for humans; it does not satisfy the gate on its own.",
           },
           summary: {
             type: "string",
             description: "What was documented",
           },
+          files: {
+            type: "array",
+            items: { type: "string" },
+            maxItems: 20,
+            description:
+              "Documentation files you changed, e.g. ['README.md', 'docs/api.md']. Each must be a " +
+              "documentation path AND appear as a change in the working tree. This is the evidence the " +
+              "documentation gate accepts. Naming a file that was already dirty before 'start_task' " +
+              "claims it for this task, which is how a README edited by another session is counted.",
+          },
         },
         required: ["documentationType", "summary"],
+      },
+    },
+    {
+      name: "waive_documentation",
+      description:
+        "Exclude the documentation gate for this task with a written reason. Use it when the change " +
+        "genuinely alters nothing the documentation describes. The reason is recorded in history, " +
+        "reported by 'commit_and_push', and shown again in the next session's recommendations - so " +
+        "waiving every task becomes visible rather than silent.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          reason: {
+            type: "string",
+            minLength: 5,
+            maxLength: 500,
+            description:
+              "Why the documentation does not need updating, e.g. 'perubahan hanya refactor internal, " +
+              "perilaku publik tidak berubah'. Minimum 5 characters.",
+          },
+        },
+        required: ["reason"],
       },
     },
     {
@@ -314,7 +349,10 @@ export function getToolList() {
     {
       name: "complete_task",
       description:
-        "Mark the task as complete after successful commit & push. Resets workflow for next task.",
+        "Mark the task as complete after successful commit & push. Resets workflow for next task. " +
+        "Reports what to do next, built from facts this session produced (waived DoD items, skipped " +
+        "tests, new TODOs in the diff, files left uncommitted) plus the 'nextSteps' you supply. " +
+        "The recommendations are stored in history and readable later with 'next_steps'.",
       inputSchema: {
         type: "object",
         properties: {
@@ -322,8 +360,28 @@ export function getToolList() {
             type: "string",
             description: "The commit message used",
           },
+          nextSteps: {
+            type: "array",
+            items: { type: "string" },
+            maxItems: 5,
+            description:
+              "1-5 follow-ups you noticed while working that the tool cannot infer, 10-200 characters each, " +
+              "e.g. ['refreshToken belum menangani clock skew']. Invalid values are rejected with an explanation " +
+              "rather than dropped. Stored in history and shown by 'next_steps' in the next session.",
+          },
         },
         required: ["commitMessage"],
+      },
+    },
+    {
+      name: "next_steps",
+      description:
+        "Show the follow-up recommendations stored by the last completed task, split into facts this " +
+        "session produced and suggestions the agent wrote. Use it at the start of a session to see what " +
+        "was left behind. History is per project, so another session's recommendations are visible here.",
+      inputSchema: {
+        type: "object",
+        properties: {},
       },
     },
     {
@@ -429,6 +487,24 @@ export function getToolList() {
             type: "string",
             description: "Summary of documentation updates",
           },
+          documentationFiles: {
+            type: "array",
+            items: { type: "string" },
+            maxItems: 20,
+            description:
+              "Documentation files that actually changed, e.g. ['README.md']. Verified against the working tree. " +
+              "Required whenever source code changed and no documentation file changed: the workflow refuses to run " +
+              "at all rather than stop halfway through at the ready check.",
+          },
+          documentationWaiverReason: {
+            type: "string",
+            minLength: 5,
+            maxLength: 500,
+            description:
+              "Why the documentation does not need updating. The alternative to 'documentationFiles' when the change " +
+              "genuinely alters nothing the documentation describes. Recorded just before the ready check, so it " +
+              "describes code that has already been written.",
+          },
           commitMessage: {
             type: "string",
             description: "Commit message used for commit_and_push and complete_task",
@@ -461,6 +537,13 @@ export function getToolList() {
           preset: {
             type: "string",
             description: "Optional preset argument for perform_release",
+          },
+          nextSteps: {
+            type: "array",
+            items: { type: "string" },
+            maxItems: 5,
+            description:
+              "Optional follow-ups for the next session, 10-200 characters each, stored with the completed task.",
           },
         },
         required: [

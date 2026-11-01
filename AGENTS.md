@@ -15,8 +15,8 @@ Before taking any action or answering user requests regarding code changes, chec
 4. **Prove the Definition of Done**: For each item, call `mark_dod_item` with `evidence` (5-500 characters naming what you actually ran or checked, e.g. `npm test -> 505 pass`). An item that turned out not to apply is excluded with `waive_dod_item` and a written reason - never silently dropped.
 5. **Create Tests**: Create appropriate unit/integration tests covering your changes.
 6. **Run Tests**: Execute your test suite and call `run_tests` with `passed: true` and the test command. **Never commit if tests fail!**
-7. **Document**: Update documentation (README, PRD, release notes) and call `create_documentation`.
-8. **Ready Check**: Call `check_ready_to_commit` to verify all steps. It fails while any definition-of-done item is still open.
+7. **Document**: Update documentation (README, PRD, release notes) and call `create_documentation` **with `files`** — the paths you actually changed, e.g. `files: ["README.md"]`. They are verified against the working tree, and the commit is blocked while source code changed without a documentation change. If the change genuinely alters nothing the documentation describes, call `waive_documentation { reason }` instead; the reason is recorded and shown again later.
+8. **Ready Check**: Call `check_ready_to_commit` to verify all steps. It fails while any definition-of-done item is still open, and while source changed without a documentation change or a waiver.
 9. **Commit & Push**: Call `commit_and_push` with a conventional commit message. It refuses while any item is open.
 
    If the repo also contains another session's uncommitted work, `commit_and_push`
@@ -25,7 +25,7 @@ Before taking any action or answering user requests regarding code changes, chec
    belongs in this commit. Never resolve it by overwriting the other session's
    files.
 10. **Release**: Call `perform_release` with the release command (or `skip_release` if non-Node/docs-only).
-11. **Complete**: Call `complete_task` to finish the session and reset the workflow. It refuses while any item is open, and records `dodSummary` in history.
+11. **Complete**: Call `complete_task` to finish the session and reset the workflow. It refuses while any item is open, and records `dodSummary` in history. Pass `nextSteps` (1-5 items, 10-200 characters) with the follow-ups you noticed while working; the tool adds its own from facts the session produced. `next_steps` shows the stored list again in a later session.
 
 ### Definition of Done
 

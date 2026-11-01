@@ -94,6 +94,9 @@ Then mark documentation as complete:
 Use create_documentation tool:
 - documentationType: "README" (or "inline-comments", "API-docs", "changelog")
 - summary: "[What you documented]"
+- files: ["README.md"]   # REQUIRED for the gate: paths you actually changed,
+                         # verified against the working tree. Without it the
+                         # commit is blocked while source code changed.
 ```
 
 ### 7. Commit and Push

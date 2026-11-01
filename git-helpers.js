@@ -296,3 +296,110 @@ export async function getPrimaryBranch() {
   // Fallback to current branch if neither main nor master exist
   return await getCurrentBranch();
 }
+
+/**
+ * Tanggal commit terakhir yang menyentuh satu path.
+ *
+ * Dipakai gerbang dokumentasi untuk menyebut berapa lama README dibiarkan.
+ * Alasan sebenarnya README tertinggal bukan karena tidak ada yang tahu cara
+ * memperbaruinya, tetapi karena tidak ada yang menyadari sudah berapa lama.
+ *
+ * Best-effort: path yang belum pernah di-commit menjawab `""`, dan kegagalan
+ * git tidak boleh menggagalkan ready check.
+ */
+export async function getLastCommitForPath(filePath) {
+  const target = String(filePath ?? "").trim();
+  if (!target) {
+    return "";
+  }
+
+  try {
+    const { stdout } = await exec("git", {
+      executable: "git",
+      arguments: ["log", "-1", "--format=%cI", "--", target],
+    });
+    return stdout.trim();
+  } catch {
+    return "";
+  }
+}
+
+/** Baris yang menandai pekerjaan yang sengaja ditunda. */
+const TODO_PATTERN = /\b(TODO|FIXME|HACK|XXX)\b/;
+const MAX_TODO_TEXT = 160;
+const MAX_TODOS = 50;
+
+/**
+ * Isi satu commit: berkas yang berubah dan TODO yang BARU MASUK.
+ *
+ * Satu panggilan `git show` menghasilkan dua sinyal sekaligus, karena
+ * rekomendasi tindak lanjut membutuhkan keduanya. TODO yang hanya DIHAPUS
+ * sengaja tidak dilaporkan: pekerjaan yang sudah dibereskan bukan pekerjaan
+ * yang tersisa.
+ */
+export async function inspectCommitDiff(sha) {
+  const ref = String(sha ?? "").trim() || "HEAD";
+
+  const { stdout } = await exec("git", {
+    executable: "git",
+    arguments: ["show", "--unified=0", "--no-color", "--no-renames", "--format=", ref],
+  });
+
+  const paths = [];
+  const seenPaths = new Set();
+  const todos = [];
+
+  let oldPath = "";
+  let currentPath = "";
+  let nextLine = 0;
+
+  for (const raw of String(stdout ?? "").split("\n")) {
+    const line = raw.replace(/\r$/, "");
+
+    if (line.startsWith("--- ")) {
+      const value = line.slice(4).trim();
+      oldPath = value === "/dev/null" ? "" : value.replace(/^a\//, "");
+      continue;
+    }
+
+    if (line.startsWith("+++ ")) {
+      const value = line.slice(4).trim();
+      currentPath = value === "/dev/null" ? oldPath : value.replace(/^b\//, "");
+      if (currentPath && !seenPaths.has(currentPath)) {
+        seenPaths.add(currentPath);
+        paths.push(currentPath);
+      }
+      continue;
+    }
+
+    const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+    if (hunk) {
+      nextLine = Number(hunk[1]);
+      continue;
+    }
+
+    if (line.startsWith("+")) {
+      const body = line.slice(1);
+      if (currentPath && todos.length < MAX_TODOS && TODO_PATTERN.test(body)) {
+        todos.push({
+          path: currentPath,
+          line: nextLine,
+          text: body.trim().slice(0, MAX_TODO_TEXT),
+        });
+      }
+      nextLine += 1;
+      continue;
+    }
+
+    if (line.startsWith("-")) {
+      // Baris yang dihapus tidak menempati nomor baris di versi baru.
+      continue;
+    }
+
+    if (line.startsWith(" ")) {
+      nextLine += 1;
+    }
+  }
+
+  return { paths, todos };
+}

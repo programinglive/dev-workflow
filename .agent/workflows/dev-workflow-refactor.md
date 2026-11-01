@@ -92,6 +92,10 @@ Update documentation for new structure:
 Use create_documentation tool:
 - documentationType: "inline-comments"
 - summary: "[What you documented]"
+- files: []   # a refactor that changes no documented behaviour has no file to
+              # name. The gate will block the commit, so call
+              # waive_documentation { reason: "perilaku publik tidak berubah" }
+              # instead of leaving the reason out.
 ```
 
 ### 8. Commit and Push

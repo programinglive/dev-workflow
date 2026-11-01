@@ -90,6 +90,9 @@ Update documentation:
 Use create_documentation tool:
 - documentationType: "changelog"
 - summary: "[What you documented]"
+- files: ["CHANGELOG.md"]   # REQUIRED for the gate: paths you actually changed,
+                            # verified against the working tree. Without it the
+                            # commit is blocked while source code changed.
 ```
 
 ### 7. Commit and Push

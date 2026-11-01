@@ -1,16 +1,18 @@
-import { textResponse, isReleaseSatisfied, isErrorResponse } from "./shared.js";
+import { textResponse, isReleaseSatisfied, isErrorResponse, loadDocGateInputs } from "./shared.js";
+import { evaluateDocGate, isGateSatisfied, formatRelativeAge, renderDocGateFailure, MIN_WAIVER_REASON } from "./docs.js";
 import { assertSafeKnowledge } from '../../security/policy.js';
 import { safeLog, securityOutputFilter } from '../../security/sanitizer.js';
 import { securityAudit } from '../../security/audit.js';
 import path from 'node:path';
 import { assertSafeToolCommand } from '../../security/commands.js';
 import { sessionKeyFromRequest } from "../../workflow-state.js";
-import { handleStartTask, handleMarkBugFixed, handleCreateTests, handleSkipTests, handleRunTests, handleCreateDocumentation, handleCreateFeatureFlow } from "./workflow-handlers.js";
+import { handleStartTask, handleMarkBugFixed, handleCreateTests, handleSkipTests, handleRunTests, handleCreateDocumentation, handleCreateFeatureFlow, handleWaiveDocumentation } from "./workflow-handlers.js";
 import { handleSkipRelease, handlePerformRelease } from "./release-handlers.js";
 import { handleCommitAndPush, handleCompleteTask, handleForceCompleteTask, handleDropTask } from "./commit-handlers.js";
 import { handleProjectSummary, handleProjectSummaryData, handleProjectSummaryDb, handleViewHistory } from "./summary-handlers.js";
 import { handleGetWorkflowStatus, handleReadyCheck, handleContinueWorkflow, handleRerunWorkflow } from "./status-handlers.js";
 import { handleSetDefinitionOfDone, handleMarkDodItem, handleWaiveDodItem } from "./dod-handlers.js";
+import { handleNextSteps } from "./next-steps-handlers.js";
 import { openItems, MIN_EVIDENCE } from "./dod.js";
 import { handleListFactoryTasks, handleClaimFactoryTask, handleSyncTaskStatus, handleListFactoryProjects, handleCreateFactoryTask, handleUpdateFactoryTask } from "./factory-handlers.js";
 
@@ -97,6 +99,63 @@ async function handleRunFullWorkflow(args, { workflowState, exec, git, utils }) 
   const steps = [];
   let dodApplied = false;
   const testsPassed = typeof args.testsPassed === "boolean" ? args.testsPassed : true;
+
+  // Gerbang dokumentasi diperiksa DI DEPAN, bukan setelah tujuh langkah.
+  //
+  // `start_task` tidak lagi bisa ditutup oleh label `documentationType`. Kalau
+  // gerbang baru diperiksa di ready check, `run_full_workflow` akan mencatat
+  // mark_bug_fixed, create_tests, run_tests, dan create_documentation lebih dulu,
+  // lalu berhenti - task tertinggal setengah jadi. Lebih baik menolak sebelum
+  // satu langkah pun berjalan, sama seperti perlakuan `dodEvidence` di atas.
+  const waiverReasonArg =
+    typeof args.documentationWaiverReason === "string" ? args.documentationWaiverReason.trim() : "";
+  const declaredDocsArg = Array.isArray(args.documentationFiles)
+    ? args.documentationFiles.map((entry) => String(entry ?? "").trim()).filter(Boolean)
+    : [];
+
+  const gateInputs = await loadDocGateInputs({ workflowState, git });
+  const gate = evaluateDocGate({
+    changedPaths: gateInputs.changedPaths,
+    dirtyAtStart: gateInputs.dirtyAtStart,
+    declaredFiles: declaredDocsArg.length > 0 ? declaredDocsArg : gateInputs.declaredFiles,
+    hasDocumentation: gateInputs.hasDocumentation,
+    waived: Boolean(workflowState.state.documentationWaived) || waiverReasonArg !== "",
+  });
+
+  if (!isGateSatisfied(gate.status)) {
+    let readmeAge = "";
+    if (gateInputs.readmePath && typeof git?.getLastCommitForPath === "function") {
+      try {
+        readmeAge = formatRelativeAge(await git.getLastCommitForPath(gateInputs.readmePath));
+      } catch {
+        readmeAge = "";
+      }
+    }
+
+    return textResponse(
+      `⚠️ Dibatalkan sebelum satu langkah pun berjalan: dokumentasi belum diperbarui.\n\n` +
+        renderDocGateFailure({
+          sourceChanged: gate.sourceChanged,
+          readmePath: gateInputs.readmePath,
+          readmeAge,
+          legacy: false,
+        }) +
+        `\n\nUntuk 'run_full_workflow', kirim salah satu argumen ini:\n` +
+        `  "documentationFiles": ["README.md"]        (berkas yang benar-benar berubah)\n` +
+        `  "documentationWaiverReason": "..."        (alasan tidak perlu diubah)\n\n` +
+        `Tidak ada langkah yang dicatat; workflow tidak berubah.`
+    );
+  }
+
+  if (waiverReasonArg !== "" && waiverReasonArg.length < MIN_WAIVER_REASON) {
+    return textResponse(
+      `⚠️ Dibatalkan sebelum satu langkah pun berjalan: 'documentationWaiverReason' minimal ` +
+        `${MIN_WAIVER_REASON} karakter; dikirim ${waiverReasonArg.length}.\n\n` +
+        `Tulis KENAPA dokumentasi tidak perlu diubah. Alasan ini masuk history.\n\n` +
+        `Tidak ada langkah yang dicatat; workflow tidak berubah.`
+    );
+  }
+
   const testDetails = typeof args.testDetails === "string" ? args.testDetails : "";
   const releaseArgs = {
     command: args.releaseCommand,
@@ -159,14 +218,34 @@ async function handleRunFullWorkflow(args, { workflowState, exec, git, utils }) 
 
     if (!state.documentationCreated) {
       const resp = await executeStep("create_documentation", handleCreateDocumentation, [
-        { documentationType: args.documentationType, summary: args.documentationSummary },
+        {
+          documentationType: args.documentationType,
+          summary: args.documentationSummary,
+          files: declaredDocsArg,
+        },
         workflowState,
+        { git },
       ]);
       if (isErrorResponse(resp)) return resp;
       continue;
     }
 
     if (!state.readyCheckCompleted) {
+      // Waiver dokumentasi dicatat di sini, bukan di awal: `waive_documentation`
+      // mensyaratkan tes sudah lulus, dan waiver baru bermakna setelah kode yang
+      // sebenarnya akan di-commit selesai ditulis. Pola yang sama dengan
+      // `dodEvidence` di bawah.
+      if (waiverReasonArg !== "" && !state.documentationWaived) {
+        const waiveResponse = await handleWaiveDocumentation(
+          { reason: waiverReasonArg },
+          workflowState,
+        );
+        if (isErrorResponse(waiveResponse)) return waiveResponse;
+        steps.push("waive_documentation: gerbang dokumentasi dikecualikan");
+        await workflowState.load();
+        continue;
+      }
+
       // Buktikan item DoD dari `dodEvidence` sebelum ready check, sekali saja.
       //
       // Diletakkan di sini, bukan di awal, karena bukti baru benar setelah
@@ -189,7 +268,7 @@ async function handleRunFullWorkflow(args, { workflowState, exec, git, utils }) 
         }
       }
 
-      const resp = await executeStep("check_ready_to_commit", handleReadyCheck, [workflowState]);
+      const resp = await executeStep("check_ready_to_commit", handleReadyCheck, [workflowState, { git }]);
       if (isErrorResponse(resp)) return resp;
       continue;
     }
@@ -215,7 +294,11 @@ async function handleRunFullWorkflow(args, { workflowState, exec, git, utils }) 
       continue;
     }
 
-    const completeResponse = await handleCompleteTask({ commitMessage: args.commitMessage }, workflowState);
+    const completeResponse = await handleCompleteTask(
+      { commitMessage: args.commitMessage, nextSteps: args.nextSteps },
+      workflowState,
+      { git },
+    );
     if (isErrorResponse(completeResponse)) {
       return completeResponse;
     }
@@ -283,9 +366,11 @@ async function dispatchToolCall({
       case "run_tests":
         return handleRunTests(args, workflowState);
       case "create_documentation":
-        return handleCreateDocumentation(args, workflowState);
+        return handleCreateDocumentation(args, workflowState, { git });
+      case "waive_documentation":
+        return handleWaiveDocumentation(args, workflowState);
       case "check_ready_to_commit":
-        return handleReadyCheck(workflowState);
+        return handleReadyCheck(workflowState, { git });
       case "commit_and_push":
         return handleCommitAndPush(args, { workflowState, exec, git, utils });
       case "perform_release":
@@ -293,7 +378,9 @@ async function dispatchToolCall({
       case "skip_release":
         return handleSkipRelease(args, workflowState);
       case "complete_task":
-        return handleCompleteTask(args, workflowState);
+        return handleCompleteTask(args, workflowState, { git });
+      case "next_steps":
+        return handleNextSteps(args, workflowState);
       case "force_complete_task":
         return handleForceCompleteTask(args, workflowState);
       case "drop_task":
