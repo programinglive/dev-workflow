@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.19.23](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.22...v1.19.23) (2026-11-01)
+
+
+### ✨ Features
+
+* **monitor:** label alat AI pemanggil (codex/antigravity/opencode) ([28c7f50](https://github.com/programinglive/dev-workflow-mcp-server/commit/28c7f50ad7bf3a649bfa39b82fe712c90c8a88e8))
+
 ### [1.19.22](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.21...v1.19.22) (2026-11-01)
 
 
