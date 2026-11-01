@@ -18,6 +18,7 @@ import {
   MAX_WAIVER_REASON,
 } from "./docs.js";
 import { activeForeignLock, projectLockDir, currentIsAlive, DEFAULT_LOCK_STALE_MS } from "../../process-lock.js";
+import { reportEventSafe } from "../../monitor.js";
 import { resolveProjectDir, setActiveProjectDir } from "../../exec.js";
 import { pinSessionProject, resolveHistoryFile } from "../../workflow-state.js";
 
@@ -299,6 +300,12 @@ export async function handleStartTask(args, workflowState, git) {
   // bukan dihapus.
   const reconciled = await workflowState.save({ allowReplaceRunningTask: true });
 
+  await reportEventSafe(
+    workflowState.state,
+    "task_started",
+    `${workflowState.state.taskDescription} (${workflowState.state.taskType}, ${workflowState.state.plan.length} langkah)`,
+  );
+
   const warnings = [];
   const preservedForeign = reconciled?.preservedTask || preservedBeforeSave?.preservedTask;
   if (preservedForeign) {
@@ -525,6 +532,8 @@ export async function handleRunTests(args, workflowState) {
   workflowState.state.currentPhase = "documentation";
   await workflowState.save();
 
+  await reportEventSafe(workflowState.state, "tests_passed", args.testCommand);
+
   return textResponse(
     `✅ All tests passed! 🎉\n\nTest command: ${args.testCommand}\n\n📝 Now create or update documentation using 'create_documentation' with:\n- documentationType: "PRD", "README", "RELEASE_NOTES", "inline-comments", "API-docs", "changelog", or "other"\n- summary: Brief description of what was documented\n\nNext Steps:\n1. ✓ Fix/implement feature\n2. ✓ Create tests\n3. ✓ Run tests (GREEN!)\n4. ⏳ Create/update documentation\n5. ⏳ Run 'check_ready_to_commit'\n6. ⏳ Run 'commit_and_push'\n7. ⏳ Run 'perform_release' (or use 'skip_release' if no release is needed)\n8. ⏳ Complete task`
   );
@@ -593,6 +602,14 @@ export async function handleMarkPlanStep(args, workflowState) {
     entry.id === id ? { ...entry, status, updatedAt: new Date().toISOString() } : entry,
   );
   await workflowState.save();
+
+  // Peristiwa dikirim SESUDAH simpan berhasil: kalau simpan gagal, dashboard
+  // tidak boleh mencatat langkah yang tidak pernah tercapai.
+  await reportEventSafe(
+    workflowState.state,
+    status === "done" ? "step_done" : "step_reopened",
+    `${id}: ${item.text}`,
+  );
 
   const progress = planProgress(workflowState.state.plan);
   return textResponse(
@@ -752,3 +769,6 @@ export async function handleWaiveDocumentation(args, workflowState) {
       `sesi berikutnya. Lanjutkan dengan 'check_ready_to_commit'.`
   );
 }
+
+
+
