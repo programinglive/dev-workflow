@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.19.12](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.11...v1.19.12) (2026-11-01)
+
+
+### ✨ Features
+
+* **monitor:** penanda data masih hidup di dashboard ([4e3b6c5](https://github.com/programinglive/dev-workflow-mcp-server/commit/4e3b6c56de381a4853f36aab0bf4e486520c5b76))
+
 ### [1.19.11](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.10...v1.19.11) (2026-11-01)
 
 ### [1.19.10](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.9...v1.19.10) (2026-11-01)
