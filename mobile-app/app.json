@@ -1,0 +1,42 @@
+{
+  "expo": {
+    "name": "Dev Workflow Monitor",
+    "slug": "devwf-monitor",
+    "version": "1.0.0",
+    "orientation": "landscape",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0b0f14",
+    "newArchEnabled": true,
+    "splash": {
+      "backgroundColor": "#0b0f14",
+      "resizeMode": "contain",
+      "image": "./assets/splash-icon.png"
+    },
+    "android": {
+      "package": "com.programinglive.devwfmonitor",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png",
+        "backgroundColor": "#0b0f14"
+      },
+      "permissions": ["android.permission.INTERNET"],
+      "usesCleartextTraffic": true
+    },
+    "plugins": [
+    [
+      "expo-build-properties",
+      {
+        "android": {
+          "usesCleartextTraffic": true
+        }
+      }
+    ]
+  ],
+    "extra": {
+      "monitorUrl": "http://100.107.65.21:3100"
+    }
+  }
+}
