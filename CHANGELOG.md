@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.19.15](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.14...v1.19.15) (2026-11-01)
+
+
+### ✨ Features
+
+* **monitor:** penutupan task selalu dikirim, kartu langsung hilang ([1cd5c72](https://github.com/programinglive/dev-workflow-mcp-server/commit/1cd5c72d4618efdcc4bc89fc92232c863602827c))
+
 ### [1.19.14](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.13...v1.19.14) (2026-11-01)
 
 ### [1.19.13](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.12...v1.19.13) (2026-11-01)
