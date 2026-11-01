@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.19.22](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.21...v1.19.22) (2026-11-01)
+
+
+### 🐛 Bug Fixes
+
+* **monitor:** gabungkan kartu kembar supaya layar tidak menampilkan sesi dobel ([fda0626](https://github.com/programinglive/dev-workflow-mcp-server/commit/fda0626321e937cf76fe67f65f8d6fc643b72b5a))
+
 ### [1.19.21](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.20...v1.19.21) (2026-11-01)
 
 
