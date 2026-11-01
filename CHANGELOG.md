@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.16.0](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.15.0...v1.16.0) (2026-11-01)
+
+
+### ✅ Tests
+
+* update tests/handlers-commit.test.js and tools/handler-modules/commit-handlers.js ([762e684](https://github.com/programinglive/dev-workflow-mcp-server/commit/762e68403bd778d94f41f914ac2f7083c65fe3ce))
+
+
+### 🧹 Chores
+
+* **release:** 1.15.1 🚀 ([f6335ef](https://github.com/programinglive/dev-workflow-mcp-server/commit/f6335ef056b26fcb654bc1d62446e7d54e89dafe))
+
+
+### 🐛 Bug Fixes
+
+* **lock:** detak jantung jalan di jalur normal, bukan hanya saat lock gagal ([70bef7f](https://github.com/programinglive/dev-workflow-mcp-server/commit/70bef7f7a906413d49d044948edb1a741f4c152e))
+* **state:** satu state per proyek saat DEV_WORKFLOW_STATE_FILE dipasang ([5e10599](https://github.com/programinglive/dev-workflow-mcp-server/commit/5e10599955a5d842c7592e46fe1eb935574c4795))
+* **state:** toleransi BOM, supaya berkas yang ditulis PowerShell tidak menghapus task ([38be409](https://github.com/programinglive/dev-workflow-mcp-server/commit/38be40906cb82de14ba2022c0cf516f2b8278331))
+
+
+### ✨ Features
+
+* **workflow:** gerbang dokumentasi, rekomendasi tindak lanjut, dan pemeriksaan update ([0fab371](https://github.com/programinglive/dev-workflow-mcp-server/commit/0fab371bd904f34030aa4cca3d801b2934ba41b8))
+
 ### [1.15.1](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.15.0...v1.15.1) (2026-10-31)
 
 
