@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.19.18](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.17...v1.19.18) (2026-11-01)
+
+
+### 🐛 Bug Fixes
+
+* **clock:** label umur pakai waktu server, bukan jam perangkat ([30285b8](https://github.com/programinglive/dev-workflow-mcp-server/commit/30285b84322b41b015d103c0a5d3436ea305b0d2))
+
 ### [1.19.17](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.16...v1.19.17) (2026-11-01)
 
 
