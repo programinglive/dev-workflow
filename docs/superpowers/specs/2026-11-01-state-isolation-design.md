@@ -1,7 +1,7 @@
 # Isolasi State per Sesi dan per Proyek — Design
 
 **Tanggal:** 2026-11-01
-**Status:** Menunggu review spec
+**Status:** Selesai — diimplementasikan dan dirilis sebagai 1.17.0 (commit `7954504`)
 **Repo:** `D:\code\dev-workflow-mcp-server`
 **Rilis yang direncanakan:** 1.17.0 (minor)
 
