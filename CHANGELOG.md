@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.19.16](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.15...v1.19.16) (2026-11-01)
+
+
+### ✨ Features
+
+* **mobile:** aplikasi Expo untuk tablet, penutup masalah tab Chrome ([ac96ab3](https://github.com/programinglive/dev-workflow-mcp-server/commit/ac96ab3471b6454f5882f4919a38d617c53ed3c5))
+
+
+### 🧹 Chores
+
+* **mobile:** kunci dependensi aplikasi Expo ([ddd21f6](https://github.com/programinglive/dev-workflow-mcp-server/commit/ddd21f6489954a4225ac55bbf7b179643b3d2bb8))
+
 ### [1.19.15](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.14...v1.19.15) (2026-11-01)
 
 
