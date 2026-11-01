@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.19.1](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.0...v1.19.1) (2026-11-01)
+
+
+### ✨ Features
+
+* **monitor:** peristiwa otomatis untuk aksi penting ([b3ab528](https://github.com/programinglive/dev-workflow-mcp-server/commit/b3ab528ebe645aed83141f9d2069fcee01342f39))
+
+
+### 🐛 Bug Fixes
+
+* **monitor:** jangan menahan boot lebih dari satu laporan ([7cb59d3](https://github.com/programinglive/dev-workflow-mcp-server/commit/7cb59d36e4d24c1bf24c4e6f1f3ccc721bd55bcc))
+* **monitor:** jangan tunggu laporan selama 3 detik pertama boot ([eaf0ba4](https://github.com/programinglive/dev-workflow-mcp-server/commit/eaf0ba4e87a7c2aa1851d6f3bb5897db6d8ff515))
+* **test:** ukur startup yang dilaporkan server, bukan waktu dinding ([becf2a4](https://github.com/programinglive/dev-workflow-mcp-server/commit/becf2a44b0cbe63688d74f7327cc5a2e7ec56096))
+
 ## [1.19.0](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.18.1...v1.19.0) (2026-11-01)
 
 
