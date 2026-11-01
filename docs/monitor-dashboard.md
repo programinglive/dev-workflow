@@ -62,8 +62,58 @@ siapa pun yang punya akses baca ke unit. Kredensial ada di
 
 ```
 DATABASE_URL=postgres://devwf:SANDI@127.0.0.1:5432/devwf_monitor
+DEVWF_MONITOR_TOKEN=<token acak panjang>
 IDLE_TTL=30 minutes
+EMPTY_IDLE_TTL=5 minutes
 ```
+
+## Menulis butuh token, membaca tidak
+
+Dashboard memang harus terbuka tanpa login — itu tujuannya. Tetapi **menulis**
+berbeda: tanpa pemeriksaan, perangkat mana pun yang bisa menjangkau port 3100
+di tailnet dapat mengirim `POST /api/session` dan memunculkan sesi palsu di
+layar tablet.
+
+`GET /`, `/api/sessions`, `/api/events`, dan `/health` tetap bebas.
+`POST /api/session` dan `POST /api/event` wajib menyertakan:
+
+```
+Authorization: Bearer <DEVWF_MONITOR_TOKEN>
+```
+
+Tanpa `DEVWF_MONITOR_TOKEN` di server, **semua** penulisan ditolak dan server
+menulis peringatan di log saat start. Itu pilihan sadar: monitor yang lupa
+dikonfigurasi lebih baik berhenti menerima laporan daripada diam-diam menerima
+laporan dari siapa saja.
+
+Setiap mesin pengirim harus memakai token yang sama:
+
+```
+DEVWF_MONITOR_URL=http://100.107.65.21:3100
+DEVWF_MONITOR_TOKEN=<token yang sama>
+DEVWF_MACHINE=<nama mesin>
+```
+
+Kalau token belum diisi di mesin pengirim, pelaporannya ditolak `401` dan
+dashboard tidak pernah bertambah — periksa `journalctl -u devwf-monitor`.
+
+## Retensi: tabel tidak tumbuh selamanya
+
+Tanpa pembersihan, `events` tumbuh terus dan tidak ada yang menyadarinya sampai
+`/api/sessions` mulai lambat berbulan-bulan kemudian. Diukur 1 November 2026:
+belum ada satu pun `DELETE` di server.
+
+Pembersihan berjalan sekali saat start, lalu tiap `PRUNE_EVERY_MS`
+(bawaan 6 jam):
+
+| Variabel | Bawaan | Yang dibuang |
+|---|---|---|
+| `RETENTION_DAYS` | 30 | `events` lebih tua dari itu |
+| `SESSION_RETENTION_DAYS` | 7 | sesi `idle` lebih tua dari itu |
+
+Hanya `idle` yang dihapus. Sesi yang masih bekerja tidak pernah disentuh,
+karena baris itulah yang sedang tampil di tablet.
+
 
 ## Sesi `idle` yang basi disembunyikan
 

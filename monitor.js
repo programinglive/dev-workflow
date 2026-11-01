@@ -71,6 +71,17 @@ export function buildSnapshot({ state, sessionKey = "", projectPath = "", sessio
   };
 }
 
+/**
+ * Token bersama untuk endpoint tulis monitor.
+ *
+ * Kosong berarti header tidak dikirim sama sekali. Itu penting untuk monitor
+ * lama yang belum mewajibkan token: pelaporan tetap jalan seperti sebelumnya,
+ * dan server yang sudah mewajibkannya akan menolak dengan jelas di log.
+ */
+export function monitorToken(env = process.env) {
+  return typeof env.DEVWF_MONITOR_TOKEN === "string" ? env.DEVWF_MONITOR_TOKEN.trim() : "";
+}
+
 async function post({ env, path, payload, fetchImpl, timeoutMs }) {
   const base = monitorUrl(env);
   if (!base || !payload) return false;
@@ -78,10 +89,14 @@ async function post({ env, path, payload, fetchImpl, timeoutMs }) {
   const controller = typeof AbortController === "function" ? new AbortController() : null;
   const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
 
+  const headers = { "content-type": "application/json" };
+  const token = monitorToken(env);
+  if (token) headers.authorization = `Bearer ${token}`;
+
   try {
     const response = await fetchImpl(base.replace(/\/+$/, "") + path, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers,
       body: JSON.stringify(payload),
       signal: controller ? controller.signal : undefined,
     });
