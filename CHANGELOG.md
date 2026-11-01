@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.18.1](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.18.0...v1.18.1) (2026-11-01)
+
+
+### 🐛 Bug Fixes
+
+* **workflow:** pesan gerbang jujur, batas waktu git, dan dokumen tata letak state ([30cb08e](https://github.com/programinglive/dev-workflow-mcp-server/commit/30cb08e7f7753c9e23159057b3332e9cd3c1eb69))
+
 ## [1.18.0](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.17.2...v1.18.0) (2026-11-01)
 
 
