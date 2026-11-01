@@ -54,6 +54,20 @@ konfigurasi npm global memakai `allow-scripts`, dan `npx expo install` memanggil
 `npm install --allow-scripts` yang **ditolak** pada instalasi berlingkup
 proyek (`EALLOWSCRIPTS`). Efeknya sama.
 
+## Jam: label umur memakai waktu SERVER
+
+Aplikasi **tidak** menghitung "4m lalu" dari jamnya sendiri. `/api/sessions`
+mengirim field `now`, dan klien memakainya sebagai acuan.
+
+Alasannya nyata: emulator MuMu pernah menampilkan `14d lalu` untuk sesi yang
+baru 4 menit, karena jam perangkat bergeser. Kesalahan seperti itu tidak
+memunculkan error apa pun — hanya angka yang salah, tanpa cara mengetahui
+sebabnya.
+
+Dijaga `tests/monitor-clock-source.test.js`: server wajib mengirim `now`, web
+tidak boleh memakai `Date.now()` telanjang, dan setiap pemanggilan `ago()` di
+`App.js` wajib menyertakan `jamServer`.
+
 ## Memasang ke tablet
 
 **Blokir MIUI.** Kedua tablet menolak instalasi lewat adb dengan

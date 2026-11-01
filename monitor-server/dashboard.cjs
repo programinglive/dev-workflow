@@ -113,17 +113,20 @@ const PAGE = `<!doctype html>
 <div id="events" class="events"></div>
 <script>
 const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-function ago(iso) {
+function ago(iso, nowMs) {
   if (!iso) return '';
-  const d = (Date.now() - new Date(iso).getTime()) / 1000;
+  const d = ((nowMs || Date.now()) - new Date(iso).getTime()) / 1000;
+  if (!isFinite(d) || d < 0) return 'baru saja';
   if (d < 60) return Math.round(d) + 'd lalu';
   if (d < 3600) return Math.round(d/60) + 'm lalu';
   if (d < 86400) return Math.round(d/3600) + 'j lalu';
   return Math.round(d/86400) + 'h lalu';
 }
 function render(data) {
+  // Jam SERVER: label umur tidak boleh bergantung pada jam perangkat.
+  const jNow = data.now ? new Date(data.now).getTime() : Date.now();
   document.getElementById('sub').textContent =
-    data.sessions.length + ' sesi · ' + new Date().toLocaleTimeString('id-ID');
+    data.sessions.length + ' sesi · ' + new Date(jNow).toLocaleTimeString('id-ID');
   // Penanda "data masih hidup". Tanpa ini, monitor yang mati tampak persis
   // seperti monitor yang memang tidak ada pekerjaan - dan pemiliknya tidak
   // punya cara membedakannya.
@@ -133,7 +136,7 @@ function render(data) {
     warn.innerHTML = '<div class="warn"><b>⚠ Tidak ada laporan masuk</b><br>' +
       (h.never
         ? 'Belum pernah ada laporan sama sekali. Periksa DEVWF_MONITOR_URL dan token di mesin pengirim.'
-        : 'Terakhir ' + ago(h.lastReportAt) + '. Bisa berarti tidak ada yang bekerja, ' +
+        : 'Terakhir ' + ago(h.lastReportAt, jNow) + '. Bisa berarti tidak ada yang bekerja, ' +
           'atau pelaporannya terputus — periksa mesin atau service devwf-monitor.') +
       '</div>';
   } else {
@@ -157,16 +160,16 @@ function render(data) {
       const chipCls = st === 'possibly_stuck' ? 'phase stuck' : (st === 'ended' ? 'phase ended' : 'phase');
       const chipText = st === 'idle' ? esc(s.phase) : esc(s.state_label || st);
       const note = st === 'possibly_stuck'
-        ? '<div class="meta">tidak ada kabar ' + ago(s.updated_at) + ' — mungkin berhenti di tengah jalan</div>'
+        ? '<div class="meta">tidak ada kabar ' + ago(s.updated_at, jNow) + ' — mungkin berhenti di tengah jalan</div>'
         : (st === 'ended'
-          ? '<div class="meta">berakhir ' + ago(s.updated_at) + ' — kemungkinan sudah selesai tanpa penutupan</div>'
+          ? '<div class="meta">berakhir ' + ago(s.updated_at, jNow) + ' — kemungkinan sudah selesai tanpa penutupan</div>'
           : '');
       return '<div class="card ' + cardCls + '">' +
         '<div class="row"><span class="' + chipCls + '">' + chipText + '</span>' +
         '<span class="task">' + esc(s.task || '(tanpa task)') + '</span></div>' +
         note +
         '<div class="meta">' + esc(s.machine) + ' · ' + esc(s.project_name) +
-        ' · ' + esc(s.task_type) + ' · ' + ago(s.updated_at) + '</div>' +
+        ' · ' + esc(s.task_type) + ' · ' + ago(s.updated_at, jNow) + '</div>' +
         (total ? '<div class="bar"><i style="width:' + pct + '%"></i></div>' +
           '<div class="meta">rencana ' + done + '/' + total + ' · DoD ' + s.dod_done + '/' + s.dod_total +
           (s.dod_waived ? ' (' + s.dod_waived + ' dilewati)' : '') + '</div>' : '') +
@@ -176,7 +179,7 @@ function render(data) {
   }
   document.getElementById('events').innerHTML = (data.events || []).map(e =>
     '<div><b>' + esc(e.kind) + '</b> ' + esc(e.detail) +
-    '<span class="meta"> · ' + esc(e.project_name) + ' · ' + ago(e.at) + '</span></div>').join('')
+    '<span class="meta"> · ' + esc(e.project_name) + ' · ' + ago(e.at, jNow) + '</span></div>').join('')
     || '<div>—</div>';
 }
 async function tick() {
@@ -334,6 +337,14 @@ const server = http.createServer(async (req, res) => {
         lastReportAt: last.rows[0] ? last.rows[0].last_report_at : null,
         staleAfterMs: STALE_AFTER_MS,
       });
+      // Waktu acuan SERVER, dikirim ke klien.
+      //
+      // MENGAPA: aplikasi menghitung "4m lalu" dari jam PERANGKAT. Kalau jam
+      // tablet atau emulator meleset - dan emulator MuMu terbukti bisa
+      // menampilkan tanggal yang jauh berbeda - semua label umur jadi salah
+      // tanpa ada yang tahu sebabnya. Klien kini memakai `now` ini, bukan
+      // jamnya sendiri.
+      const serverNow = new Date().toISOString();
       // Status diturunkan dari umur laporan, bukan diklaim dari `phase`.
       // Task yang selesai tanpa mengubah phase menjadi idle akan tampak
       // "mungkin macet" atau "berakhir", bukan "aktif" selamanya.
@@ -349,7 +360,7 @@ const server = http.createServer(async (req, res) => {
         return { ...row, state: s.status, state_label: LABELS[s.status] || s.status };
       });
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
-      return res.end(JSON.stringify({ sessions: rows, events: events.rows, health }));
+      return res.end(JSON.stringify({ now: serverNow, sessions: rows, events: events.rows, health }));
     }
     if (url.pathname === '/api/events') {
       const rows = await query(
@@ -382,3 +393,4 @@ server.listen(PORT, HOST, () => {
   const timer = setInterval(() => void pruneOldRows(), PRUNE_EVERY_MS);
   if (typeof timer.unref === 'function') timer.unref();
 });
+
