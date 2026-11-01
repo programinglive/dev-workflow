@@ -188,6 +188,24 @@ akan tampak "sudah berakhir", bug yang lebih buruk daripada masalah aslinya.
 Batasnya bisa diatur lewat `LIVE_MS` dan `STUCK_MS` di
 `/etc/devwf-monitor.env`.
 
+### Mengapa sesi berhenti melapor
+
+Diperiksa 1 November 2026: sesi HELLOWORLD berhenti melapor setelah **74
+menit** padahal prosesnya masih hidup. Itu **bukan kerusakan** — implementasi
+ini memang hanya melapor saat `save()` dipanggil, jadi sesi yang menganggur
+tidak mengirim apa pun. Tidak ada penolakan token di log, tidak ada error.
+
+Konsekuensinya dulu: task yang sudah selesai tetap tampak "mungkin macet"
+sampai jendela 2 jam habis, karena tidak ada kabar penutupan yang dikirim.
+
+Sekarang snapshot dengan fase `idle` (yaitu penutupan task) **selalu dikirim
+dan selalu ditunggu**, melewati aturan boot. Itulah satu-satunya kabar yang
+membuat kartu di tablet hilang. Laporan rutin tetap mengikuti aturan boot agar
+startup tetap di bawah 2 detik.
+
+Diverifikasi dengan sesi sungguhan: `start_task` → kartu tampil `live`, lalu
+`drop_task` → baris langsung menjadi `idle` dan kartunya hilang.
+
 ## Sesi `idle` yang basi disembunyikan
 Proses MCP mati bersama sesi OpenCode-nya, jadi baris `idle` tinggal selamanya.
 Tanpa filter, dashboard yang dipakai berhari-hari memenuhi layar tablet dengan
