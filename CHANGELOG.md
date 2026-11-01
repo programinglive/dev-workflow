@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.19.21](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.20...v1.19.21) (2026-11-01)
+
+
+### ✨ Features
+
+* **monitor:** daftar mesin supaya MMCH dan Mac tidak hilang saat menganggur ([470aa6f](https://github.com/programinglive/dev-workflow-mcp-server/commit/470aa6fd07b9435ee400f482e29231ed12e80c68))
+
 ### [1.19.20](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.19...v1.19.20) (2026-11-01)
 
 
