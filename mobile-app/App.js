@@ -61,11 +61,11 @@ function gayaStatus(state) {
   }
 }
 
-/** "3d lalu", "12m lalu", "2j lalu" - sama seperti versi web. */
-function ago(iso) {
+/** "3d lalu", "12m lalu", "2j lalu" - dihitung dari jam SERVER bila ada. */
+function ago(iso, nowMs) {
   if (!iso) return "";
-  const detik = (Date.now() - new Date(iso).getTime()) / 1000;
-  if (detik < 0) return "baru saja";
+  const detik = ((nowMs || Date.now()) - new Date(iso).getTime()) / 1000;
+  if (!isFinite(detik) || detik < 0) return "baru saja";
   if (detik < 60) return Math.round(detik) + "d lalu";
   if (detik < 3600) return Math.round(detik / 60) + "m lalu";
   if (detik < 86400) return Math.round(detik / 3600) + "j lalu";
@@ -123,6 +123,9 @@ export default function App() {
 
   const sesi = (data && data.sessions) || [];
   const health = (data && data.health) || {};
+  // Jam SERVER, bukan jam perangkat. Emulator/produksi bisa punya jam meleset,
+  // dan itu membuat semua label umur salah tanpa sebab yang jelas.
+  const jamServer = data && data.now ? new Date(data.now).getTime() : undefined;
 
   return (
     <View style={gaya.layar}>
@@ -148,7 +151,7 @@ export default function App() {
             {health.never
               ? "Belum pernah ada laporan sama sekali. Periksa URL dan token di mesin pengirim."
               : "Terakhir " +
-                ago(health.lastReportAt) +
+                ago(health.lastReportAt, jamServer) +
                 ". Bisa berarti tidak ada yang bekerja, atau pelaporannya terputus."}
           </Text>
         </View>
@@ -166,7 +169,7 @@ export default function App() {
           {sesi.length === 0 ? (
             <Text style={gaya.kosong}>belum ada sesi melapor</Text>
           ) : (
-            sesi.map((s) => <Kartu key={s.session_key} s={s} />)
+            sesi.map((s) => <Kartu key={s.session_key} s={s} jamServer={jamServer} />)
           )}
 
           {(data && data.events && data.events.length > 0) && (
@@ -177,7 +180,7 @@ export default function App() {
                   <Text style={gaya.aktivitasJenis}>{e.kind}</Text> {e.detail}
                   <Text style={gaya.aktivitasMeta}>
                     {"  · "}
-                    {e.project_name} · {ago(e.at)}
+                    {e.project_name} · {ago(e.at, jamServer)}
                   </Text>
                 </Text>
               ))}
@@ -189,7 +192,7 @@ export default function App() {
   );
 }
 
-function Kartu({ s }) {
+function Kartu({ s, jamServer }) {
   const g = gayaStatus(s.state);
   const total = s.plan_total || 0;
   const selesai = s.plan_done || 0;
@@ -210,19 +213,19 @@ function Kartu({ s }) {
 
       {s.state === "possibly_stuck" && (
         <Text style={[gaya.catatan, { color: WARNA.kuning }]}>
-          tidak ada kabar {ago(s.updated_at)} — mungkin berhenti di tengah jalan
+          tidak ada kabar {ago(s.updated_at, jamServer)} — mungkin berhenti di tengah jalan
         </Text>
       )}
       {s.state === "ended" && (
         <Text style={[gaya.catatan, { color: WARNA.abu }]}>
-          berakhir {ago(s.updated_at)} — kemungkinan sudah selesai tanpa penutupan
+          berakhir {ago(s.updated_at, jamServer)} — kemungkinan sudah selesai tanpa penutupan
         </Text>
       )}
 
       <Text style={gaya.meta}>
         {s.machine}
         {s.project_name ? " · " + s.project_name : ""}
-        {s.task_type ? " · " + s.task_type : ""} · {ago(s.updated_at)}
+        {s.task_type ? " · " + s.task_type : ""} · {ago(s.updated_at, jamServer)}
       </Text>
 
       {total > 0 && (
@@ -301,3 +304,4 @@ const gaya = StyleSheet.create({
   aktivitasJenis: { color: WARNA.teks, fontWeight: "600" },
   aktivitasMeta: { color: "#5c6672" },
 });
+
