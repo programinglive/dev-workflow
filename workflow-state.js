@@ -7,6 +7,7 @@ import { sanitize } from './security/sanitizer.js';
 import { normalizeItems as normalizeDodItems, mergeDefinitionOfDone as mergeDodItems } from './tools/handler-modules/dod.js';
 import { normalizePlan } from './tools/handler-modules/plan.js';
 import { fileURLToPath } from "url";
+import { pathToFileURL } from "url";
 import { createHash } from "crypto";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -969,14 +970,26 @@ function migrateLegacyProjectState(legacyPath, targetPath, projectRoot) {
  * Dipanggil setelah state benar-benar tersimpan - kalau dilaporkan lebih
  * dulu, dashboard bisa menampilkan fase yang tidak pernah terjadi.
  */
+/**
+ * Kirim ringkasan sesi ke dashboard. Tidak pernah melempar.
+ *
+ * MENGAPA IMPOR DIPISAH
+ * ---------------------
+ * `workflow-state.js` disalin sendirian oleh beberapa tes ke direktori
+ * sementara, sehingga impor relatif apa pun di berkas ini akan mematahkan
+ * seluruh modul hanya karena fitur pinggiran ini. Monitor ditemukan lewat
+ * `PACKAGE_ROOT` (lihat exec.js) atau direktori berkas ini sendiri, dan bila
+ * tidak ditemukan laporan cukup dilewati.
+ */
 async function reportToMonitorSafe({ state, stateFile, createdAt }) {
   try {
-    // Impor dinamis: berkas ini bisa disalin sendirian oleh tes/CLI ke
-    // direktori lain, dan impor statis akan mematahkan seluruh modul hanya
-    // karena fitur pinggiran ini.
-    const mod = await import('./monitor.js');
     const base = path.basename(String(stateFile || ""));
     const match = /^workflow-state\.(.+)\.json$/.exec(base);
+    const monitorPath = path.join(__dirname, "monitor.js");
+    if (!existsSync(monitorPath)) {
+      return false;
+    }
+    const mod = await import(pathToFileURL(monitorPath).href);
     const snapshot = mod.buildSnapshot({
       state,
       sessionKey: match ? match[1] : "",

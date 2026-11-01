@@ -109,3 +109,46 @@ export async function reportEvent({ env = process.env, event, fetchImpl = fetch,
   if (!event || !event.kind) return false;
   return post({ env, path: "/api/event", payload: { machine: machineName(env), ...event }, fetchImpl, timeoutMs });
 }
+
+/**
+ * Ringkasan sesi untuk sebuah peristiwa, diambil dari state saat ini.
+ *
+ * Tanpa ini setiap pemanggil harus mengoper lima field yang sama, dan satu
+ * pemanggil yang lupa akan menghasilkan baris tanpa nama proyek di dashboard.
+ */
+export function eventFor(state, kind, detail = "") {
+  const s = state || {};
+  const projectPath = String(s.projectDir || "");
+  return {
+    sessionKey: "",
+    kind,
+    detail: String(detail || "").slice(0, 1000),
+    projectName: projectPath.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || "",
+    task: String(s.taskDescription || ""),
+  };
+}
+
+/**
+ * Kirim peristiwa tanpa pernah melempar, tetapi DITUNGGU.
+ *
+ * MENGAPA DITUNGGU: proses MCP/CLI bisa keluar segera setelah handler selesai
+ * (`node index.js call ...`, sesi OpenCode ditutup). Permintaan yang tidak
+ * ditunggu dibunuh sebelum terkirim, dan dashboard tidak pernah melihat
+ * peristiwanya - gejala yang membuat tabel events tetap kosong meski handler
+ * jelas memanggil fungsi ini.
+ *
+ * Batas waktunya ada di dalam `reportEvent` (1,2 detik); kegagalan apa pun
+ * dikembalikan sebagai false dan tidak pernah dilempar ke pemanggil.
+ */
+export async function reportEventSafe(state, kind, detail = "") {
+  try {
+    const payload = eventFor(state, kind, detail);
+    return await reportEvent({ event: payload }).catch(() => false);
+  } catch {
+    return false;
+  }
+}
+
+
+
+

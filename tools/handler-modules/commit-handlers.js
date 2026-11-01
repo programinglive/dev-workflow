@@ -2,6 +2,7 @@ import { textResponse, isReleaseSatisfied, formatChecklist } from "./shared.js";
 import { handleReadyCheck } from "./status-handlers.js";
 import { openItems, renderChecklist, renderOutstanding, summarize } from "./dod.js";
 import { containsTestFilesInStatus } from "../../git-helpers.js";
+import { reportEventSafe } from "../../monitor.js";
 import { validateAiSuggestions, collectSignals, buildRecommendations, renderRecommendations } from "./next-steps.js";
 import { resolveProjectDir, setActiveProjectDir, getActiveProjectDir } from "../../exec.js";
 import path from "path";
@@ -355,6 +356,8 @@ export async function handleCommitAndPush(args, context) {
   workflowState.state.currentPhase = isReleaseSatisfied(workflowState.state) ? "ready_to_complete" : "release";
   await workflowState.save();
 
+  await reportEventSafe(workflowState.state, "committed", generatedSummary);
+
   // Berkas yang ditinggalkan sengaja tetap disebut: kalau tidak, orang
   // mengira seluruh pekerjaan sudah ter-commit padahal ada yang tertinggal.
   //
@@ -477,6 +480,11 @@ export async function handleCompleteTask(args, workflowState, context = {}) {
   };
 
   workflowState.addToHistory(entry);
+  await reportEventSafe(
+    { taskDescription: "", projectDir: workflowState.state.projectDir || "" },
+    "task_done",
+    entry.commitMessage || "",
+  );
   workflowState.reset();
   await workflowState.save();
 
@@ -539,3 +547,5 @@ export async function handleDropTask(args, workflowState) {
 
   return textResponse("⚠️ Task dropped. Workflow state reset.");
 }
+
+
