@@ -40,6 +40,20 @@ process.env.DEV_WORKFLOW_NO_COMPAT_LINKS = "1";
 // Penanda supaya tes bisa membuktikan isolasi ini aktif.
 process.env.DEV_WORKFLOW_TEST_STATE_DIR = stateDir;
 
+// Pelaporan monitor DIMATIKAN untuk seluruh suite.
+//
+// MASALAH NYATA (1 November 2026): state sudah diisolasi, tetapi monitor tidak.
+// Mesin yang punya DEVWF_MONITOR_URL di environment-nya - yaitu mesin yang
+// memang sedang memakai dashboard - menjalankan `npm test` dan diam-diam
+// mengirim setiap sesi palsu dari suite ke dashboard PRODUKSI. Hasilnya:
+// sembilan kartu "Task sesi X", "Task tanpa metadata", "Task milik sesi A/B"
+// berjejer di layar tablet, dan sesi sungguhan tenggelam di antaranya.
+//
+// Dikosongkan, bukan dihapus: `monitorUrl()` memperlakukan string kosong
+// sebagai "mati", dan tes yang sengaja menguji pelaporan mengisi variabel ini
+// sendiri (tests/monitor-*.test.js).
+process.env.DEVWF_MONITOR_URL = "";
+
 function cleanup() {
   try {
     rmSync(stateDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });

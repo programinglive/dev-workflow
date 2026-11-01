@@ -84,6 +84,32 @@ DEVWF_MACHINE=<nama mesin>
 Tanpa `DEVWF_MONITOR_URL`, pelaporan tidak aktif sama sekali dan tidak ada
 permintaan jaringan keluar.
 
+## Suite tes tidak boleh menulis ke dashboard
+
+`tests/setup-env.js` mengosongkan `DEVWF_MONITOR_URL` untuk seluruh proses tes.
+
+Tanpa itu, mesin yang memang memakai dashboard — variabelnya ada di environment
+— akan mengirim setiap sesi palsu dari suite ke database **produksi** setiap
+kali `npm test` dijalankan. Terjadi 1 November 2026: sembilan kartu
+"Task sesi X", "Task tanpa metadata", dan "Task milik sesi A/B" muncul di layar
+tablet, dan sesi sungguhan tenggelam di antaranya.
+
+Isolasi state (`DEV_WORKFLOW_STATE_FILE`, `DEV_WORKFLOW_DB_PATH`) sudah ada
+sebelumnya; yang terlupa adalah jalur keluar. Tes yang sengaja menguji
+pelaporan mengisi variabel itu sendiri, jadi perilaku aslinya tetap teruji.
+`tests/setup-env-isolation.test.js` menjaga keduanya: URL monitor kosong, dan
+isolasi state tetap ada.
+
+Untuk membersihkan baris yang sudah terlanjur masuk:
+
+```sql
+DELETE FROM sessions WHERE session_key IN ('ses-aaa','ses-bbb','ses_XXX','ses_YYY','ses_AAA','ses_BBB');
+DELETE FROM events   WHERE detail LIKE 'Coba %' OR detail = 'feat: add feature';
+```
+
+Periksa dulu dengan `SELECT` — jangan hapus berdasarkan pola waktu saja, karena
+sesi nyata bisa jatuh di jendela yang sama.
+
 ## Diuji
 
 - `tests/monitor-sessions-query.test.js` — filter hanya menyentuh `idle`, limit
