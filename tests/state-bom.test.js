@@ -49,10 +49,14 @@ test("migrasi per proyek tidak batal hanya karena BOM", () => {
   fs.mkdirSync(path.join(proyek, ".git"), { recursive: true });
   const base = path.join(root, "state");
   const lama = path.join(base, "workflow-state.json");
+  // State menganggur dengan sengaja: sejak 1.17.0 state bertask aktif memang
+  // TIDAK dimigrasikan, dan yang diuji di sini adalah toleransi BOM pada
+  // pembacaannya, bukan aturan migrasi itu.
   tulisState(lama, {
-    currentPhase: "commit",
-    taskDescription: "task lama ber-BOM",
+    currentPhase: "idle",
+    taskDescription: "",
     projectDir: proyek,
+    marker: "task lama ber-BOM",
   });
 
   const cwdLama = process.cwd();
@@ -74,5 +78,5 @@ test("migrasi per proyek tidak batal hanya karena BOM", () => {
 
   assert.ok(fs.existsSync(baru), "state proyek harus dibuat dari berkas ber-BOM");
   const isi = JSON.parse(fs.readFileSync(baru, "utf8"));
-  assert.equal(isi.taskDescription, "task lama ber-BOM");
+  assert.equal(isi.marker, "task lama ber-BOM");
 });
