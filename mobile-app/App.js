@@ -284,6 +284,10 @@ function Kartu({ s, jamServer, onPress }) {
         <View style={[gaya.chip, { backgroundColor: g.chipBg, borderColor: g.border }]}>
           <Text style={[gaya.chipTeks, { color: g.chipFg }]}>{label}</Text>
         </View>
+        {/* Alat AI pemanggil: codex / antigravity / opencode / unknown. */}
+        <View style={gaya.chipAlat}>
+          <Text style={gaya.chipAlatTeks}>{String(s.agent_tool || "unknown").toUpperCase()}</Text>
+        </View>
         {(() => {
           const t = durasi(s.started_at, jamServer);
           return t ? (
@@ -446,6 +450,7 @@ function DetailSesi({ s, jamServer, onClose }) {
             <Text style={gaya.langkah}>kunci: {s.session_key}</Text>
             <Text style={gaya.langkah}>fase: {s.phase}</Text>
             <Text style={gaya.langkah}>status: {s.state_label || s.state || "-"}</Text>
+            <Text style={gaya.langkah}>alat: {s.agent_tool || "unknown"}</Text>
             <Text style={gaya.langkah}>
               terakhir melapor: {ago(s.updated_at, jamServer)}
             </Text>
@@ -502,6 +507,15 @@ const gaya = StyleSheet.create({
     paddingVertical: 3,
   },
   timerTeks: { color: WARNA.hijau, fontSize: 12, fontWeight: "700", fontVariant: ["tabular-nums"] },
+  chipAlat: {
+    borderWidth: 1,
+    borderColor: "#a371f755",
+    backgroundColor: "#a371f71a",
+    borderRadius: 999,
+    paddingHorizontal: 9,
+    paddingVertical: 3,
+  },
+  chipAlatTeks: { color: "#d2a8ff", fontSize: 10, fontWeight: "700", letterSpacing: 0.5 },
   proyek: { color: WARNA.biruMuda, fontSize: 13, fontWeight: "600", marginTop: 6 },
   judulSesi: { color: "#b9c3cf", fontSize: 12, fontStyle: "italic", marginTop: 6 },
   task: { color: WARNA.teks, fontSize: 16, fontWeight: "600", flexShrink: 1, marginTop: 8 },

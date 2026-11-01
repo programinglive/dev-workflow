@@ -33,7 +33,7 @@ function buildSessionsQuery({
   return {
     sql: `SELECT session_key, machine, project_path, project_name, task, task_type, phase,
                  plan_json, plan_done, plan_total, dod_done, dod_total, dod_waived,
-                 started_at, session_title, updated_at
+                 started_at, session_title, agent_tool, updated_at
             FROM sessions
            WHERE NOT (
                    phase = 'idle'
