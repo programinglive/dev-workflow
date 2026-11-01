@@ -12,6 +12,9 @@ import { createHash } from "crypto";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+/** Satu laporan monitor berjalan dalam satu waktu; lihat reportToMonitorSafe. */
+let monitorInFlight = false;
 const STATE_DIR = ".state";
 const PROJECTS_DIR = "projects";
 const STATE_FILENAME = "workflow-state.json";
@@ -983,6 +986,12 @@ function migrateLegacyProjectState(legacyPath, targetPath, projectRoot) {
  */
 async function reportToMonitorSafe({ state, stateFile, createdAt }) {
   try {
+    // In-flight guard: `startup-resilience.test.js` menuntut MCP hidup di bawah
+    // 2 detik. Laporan yang ditunggu menambah latensi jaringan ke jalur boot.
+    // Satu laporan yang sudah berjalan cukup; yang berikutnya dilewati.
+    if (monitorInFlight) {
+      return false;
+    }
     const base = path.basename(String(stateFile || ""));
     const match = /^workflow-state\.(.+)\.json$/.exec(base);
     const monitorPath = path.join(__dirname, "monitor.js");
@@ -996,7 +1005,12 @@ async function reportToMonitorSafe({ state, stateFile, createdAt }) {
       projectPath: (state && state.projectDir) || "",
       sessionStartedAt: createdAt || "",
     });
-    return await mod.reportSnapshot({ snapshot });
+    monitorInFlight = true;
+    try {
+      return await mod.reportSnapshot({ snapshot });
+    } finally {
+      monitorInFlight = false;
+    }
   } catch {
     return false;
   }
