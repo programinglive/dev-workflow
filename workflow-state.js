@@ -570,6 +570,20 @@ function sessionStateFilename(env = process.env, explicitSessionId = null) {
  */
 export function resolveHistoryFile(stateFilePath) {
   const resolved = path.resolve(stateFilePath);
+
+  // Tata letak per proyek: `<dasar>/projects/<proyek>/users/<user>/<berkas>`.
+  // History harus di akar PROYEK, bukan di direktori user - kalau tidak,
+  // rekomendasi dan riwayat task terpecah per sesi dan sesi berikutnya tidak
+  // bisa membacanya. Dicari lewat segmen `projects`, bukan dengan menghitung
+  // `dirname` berkali-kali: kedalaman berubah, dan angka `dirname` diam-diam
+  // menghasilkan root yang salah.
+  const segments = resolved.split(path.sep);
+  const projectIndex = segments.lastIndexOf("projects");
+  if (projectIndex >= 0 && segments.length > projectIndex + 3) {
+    const projectDir = segments.slice(0, projectIndex + 2).join(path.sep);
+    return path.join(projectDir, STATE_FILENAME);
+  }
+
   const dir = path.dirname(resolved);
   const inUserTree = path.basename(path.dirname(dir)) === "users";
   return inUserTree ? path.join(dir, STATE_FILENAME) : resolved;
@@ -621,26 +635,59 @@ export function resolveStateFile({ sessionId = null } = {}) {
   if (customPath) {
     const resolvedCustom = path.resolve(customPath);
 
-    // 3. Pin tanpa proyek yang dikenali: pakai berkasnya apa adanya. SENGAJA
-    //    tidak jatuh ke direktori modul - kalau begitu, direktori acak akan
-    //    dianggap proyek "dev-workflow-mcp-server" dan state-nya nyasar ke sana.
-    if (!projectRoot) {
-      return resolvedCustom;
-    }
-
     /*
      * Pin = DIREKTORI DASAR, bukan satu berkas untuk semua proyek.
      *
      * 1 November 2026: satu berkas bersama membuat semua proyek berbagi satu
      * slot task. Dua sesi saling menimpa, penjaga "sesi lain" menyala untuk
      * proyek yang tidak berhubungan, dan bukti DoD satu task tertulis ke task
-     * proyek lain. Sekarang tiap proyek punya berkasnya sendiri di bawah
-     * `<dasar>/projects/<proyek>/`, sehingga isolasi tidak lagi bergantung
-     * pada disiplin config.
+     * proyek lain. Sekarang tiap proyek punya direktori sendiri di bawah
+     * `<dasar>/projects/<proyek>/`, dan di dalamnya tiap SESI punya berkasnya
+     * sendiri di `users/<user>/`.
+     *
+     * MENGAPA PER SESI, BUKAN HANYA PER PROYEK
+     * ----------------------------------------
+     * Per-proyek saja tidak cukup: dua jendela OpenCode pada repo yang sama
+     * tetap berbagi satu berkas. Diukur 1 November 2026 - `resolveStateFile`
+     * dengan dua `sessionId` berbeda menjawab path yang SAMA, karena
+     * `sessionId` diterima sebagai parameter lalu tidak dipakai.
+     *
+     * MENGAPA JALUR CADANGAN TIDAK BOLEH MENGEMBALIKAN BERKAS PIN
+     * ----------------------------------------------------------
+     * `findProjectRoot(cwd)` null berarti direktori kerja bukan repo - dan itu
+     * keadaan normal di mesin ini (`Documents\Default Project`). Dulu fungsi ini
+     * mengembalikan berkas pin apa adanya, sehingga isolasi per proyek tidak
+     * pernah aktif, berapa kali pun server di-restart. Sekarang direktori proyek
+     * dibentuk dari direktori kerja pemanggil, satu-satunya identitas yang
+     * tersedia. `projectKey` menambahkan potongan hash, jadi dua direktori kerja
+     * berbeda tidak bertabrakan.
+     *
+     * MENGAPA TIDAK MEMAKAI `projectRoot` HASIL FALLBACK
+     * -------------------------------------------------
+     * `projectRoot` di atas bisa berasal dari `INIT_CWD`, yang diisi npm dengan
+     * tempat perintah dijalankan - bukan tempat sesi bekerja. Diukur di suite
+     * penuh: dua direktori kerja berbeda sama-sama dianggap proyek paket ini,
+     * lalu kembali berbagi satu berkas state. Identitas di sini dihitung ulang
+     * dari `process.cwd()` saja.
      */
+    const identityRoot =
+      findProjectRoot(path.resolve(process.cwd())) || path.resolve(process.cwd());
     const baseDir = path.dirname(resolvedCustom);
-    const target = path.join(baseDir, PROJECTS_DIR, projectKey(projectRoot), STATE_FILENAME);
-    migrateLegacyProjectState(resolvedCustom, target, projectRoot);
+    const projectDir = path.join(baseDir, PROJECTS_DIR, projectKey(identityRoot));
+
+    const userDir = getUserScopedDir(projectDir);
+    const target = path.join(userDir, sessionStateFilename(process.env, sessionId));
+
+    // Dua sumber lama, keduanya hanya menyalin state menganggur:
+    //   1. berkas pin bersama (era pra-1.16.0)
+    //   2. <proyek>/workflow-state.json (era 1.16.0, satu berkas per proyek)
+    migrateStateToSession({ sourcePath: resolvedCustom, targetPath: target, projectRoot: identityRoot });
+    migrateStateToSession({
+      sourcePath: path.join(projectDir, STATE_FILENAME),
+      targetPath: target,
+      projectRoot: identityRoot,
+    });
+
     return target;
   }
 
@@ -675,7 +722,63 @@ function projectKey(projectRoot) {
 }
 
 /**
+ * Salin satu berkas state lama ke berkas sesi, sekali.
+ *
+ * Dipakai dua sumber:
+ *   1. berkas pin bersama (`.state/workflow-state.json`, era pra-1.16.0)
+ *   2. `<proyek>/workflow-state.json` (era 1.16.0, satu berkas per proyek)
+ *
+ * ATURAN
+ * ------
+ * - Berkas lama tidak pernah dihapus. Ia menyimpan riwayat era sebelumnya, dan
+ *   menghapusnya adalah tindakan yang tidak bisa dibatalkan.
+ * - Hanya disalin bila `projectDir` di dalamnya memang proyek ini. State milik
+ *   proyek lain tidak boleh dipindahkan - memindahkannya justru mengulang
+ *   kesalahan yang sedang diperbaiki.
+ * - State yang PUNYA TASK AKTIF tidak disalin. Menyalinnya membuat sesi baru
+ *   mewarisi fase dan DoD task yang sedang dikerjakan sesi lain - persis
+ *   kehilangan yang sedang diperbaiki, hanya dengan arah berlawanan. Task itu
+ *   tetap terlihat di berkas lamanya dan di history.
+ * - Ditulis dengan flag `wx`: dua sesi bisa memanggil ini serempak untuk proyek
+ *   yang sama, dan yang kedua tidak boleh menimpa state yang sudah mulai diisi
+ *   yang pertama.
+ *
+ * Best-effort: kegagalan migrasi tidak boleh menghalangi server hidup.
+ */
+function migrateStateToSession({ sourcePath, targetPath, projectRoot }) {
+  try {
+    if (!existsSync(sourcePath) || existsSync(targetPath)) {
+      return;
+    }
+
+    const data = parseStateJson(readFileSync(sourcePath, "utf8"));
+
+    const pemilik = typeof data?.projectDir === "string" ? data.projectDir.trim() : "";
+    if (pemilik && projectRoot) {
+      const sama = path.resolve(pemilik).toLowerCase() === path.resolve(projectRoot).toLowerCase();
+      if (!sama) {
+        return;
+      }
+    }
+
+    const phase = typeof data?.currentPhase === "string" ? data.currentPhase : "idle";
+    const description = typeof data?.taskDescription === "string" ? data.taskDescription.trim() : "";
+    if (phase !== "idle" || description !== "") {
+      return;
+    }
+
+    mkdirSync(path.dirname(targetPath), { recursive: true });
+    writeFileSync(targetPath, JSON.stringify(data, null, 2), { encoding: "utf8", flag: "wx" });
+  } catch {
+    // Berkas sudah ada (sesi lain menang lebih dulu) atau tidak bisa ditulis:
+    // keduanya bukan alasan menggagalkan start server.
+  }
+}
+
+/**
  * Pindahkan sekali state lama (satu berkas bersama) ke berkas proyeknya.
+ *
+ * Dipertahankan untuk tata letak pra-1.16.0 (`.state/workflow-state.json`).
  *
  * Hanya dipindahkan bila `projectDir` di dalamnya memang proyek ini; state
  * milik proyek lain dibiarkan, karena memindahkannya justru mengulang
@@ -685,27 +788,7 @@ function projectKey(projectRoot) {
  * Best-effort: kegagalan migrasi tidak boleh menghalangi server hidup.
  */
 function migrateLegacyProjectState(legacyPath, targetPath, projectRoot) {
-  try {
-    if (!existsSync(legacyPath) || existsSync(targetPath)) {
-      return;
-    }
-
-    const data = parseStateJson(readFileSync(legacyPath, "utf8"));
-    const pemilik = typeof data?.projectDir === "string" ? data.projectDir.trim() : "";
-    if (!pemilik) {
-      return;
-    }
-
-    const sama = path.resolve(pemilik).toLowerCase() === path.resolve(projectRoot).toLowerCase();
-    if (!sama) {
-      return;
-    }
-
-    mkdirSync(path.dirname(targetPath), { recursive: true });
-    writeFileSync(targetPath, JSON.stringify(data, null, 2), "utf8");
-  } catch {
-    // Biarkan: state baru akan dibuat bersih oleh WorkflowState.
-  }
+  migrateStateToSession({ sourcePath: legacyPath, targetPath, projectRoot });
 }
 
 export class WorkflowState {

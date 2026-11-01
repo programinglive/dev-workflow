@@ -43,12 +43,28 @@ export function projectLockDir(stateFilePath) {
   let current = path.dirname(resolved);
   const { root } = path.parse(current);
 
-  // Tata letak per proyek: `<dasar>/projects/<proyek>/workflow-state.json`.
-  // Di sini lock HARUS per proyek - kalau naik sampai `.state`, semua proyek
-  // kembali berbagi satu lock dan penjaga menyala untuk proyek yang tidak
-  // berhubungan (kejadian 1 November 2026).
-  if (path.basename(path.dirname(current)) === "projects") {
-    return current;
+  // Tata letak per proyek: `<dasar>/projects/<proyek>/...`, dengan kedalaman
+  // yang bisa berubah (`users/<user>/` ada di bawahnya). Di sini lock HARUS per
+  // proyek - kalau naik sampai `.state`, semua proyek kembali berbagi satu lock
+  // dan penjaga menyala untuk proyek yang tidak berhubungan (kejadian
+  // 1 November 2026).
+  //
+  // Dicari sampai kedalaman mana pun, bukan hanya satu tingkat: deteksi lama
+  // (`basename(dirname(current)) === "projects"`) gagal begitu state dipindah
+  // ke `projects/<proyek>/users/<user>/`, dan lock diam-diam kembali global.
+  {
+    let probe = path.dirname(resolved);
+    const { root: probeRoot } = path.parse(probe);
+    while (true) {
+      if (path.basename(path.dirname(probe)) === "projects") {
+        return probe;
+      }
+      const parent = path.dirname(probe);
+      if (parent === probe || probe === probeRoot) {
+        break;
+      }
+      probe = parent;
+    }
   }
 
   while (true) {

@@ -221,6 +221,28 @@ You can add your own with `nextSteps` (1-5 items, 10-200 characters). Invalid va
 
 `next_steps` shows the stored list again, at any time — history is per project, so the next session sees it.
 
+### Where the workflow state lives
+Each session gets its own state file, inside a per-project directory:
+
+```
+<base>/projects/<project>-<hash>/
+    workflow-state.json                      ← shared history and recommendations
+    project-summary.json
+    mcp-process.lock                         ← one writer per project
+    users/<user>/
+        user-id
+        workflow-state.<session>.json        ← this session's task, phase and DoD
+```
+
+- **State is per session.** Two OpenCode windows on the same repo no longer overwrite each other's Definition of Done. Before 1.17.0 they shared one file: on 1 November 2026 a session lost its entire DoD twice in one hour.
+- **History is per project.** `next_steps` and `view_history` read the same file from every session, so a follow-up written in one window is visible in the next.
+- **The lock is per project**, not per machine. Two unrelated projects no longer block each other.
+- **A non-repository working directory still isolates.** The project directory is derived from the working directory itself, so sessions started from a folder that is not a git repo no longer fall back to one shared file.
+
+`start_task` refuses to replace a task that is still running in another live MCP process, **even with `force: true`** — starting a new task would clear that task's Definition of Done, and its evidence cannot be recovered from history. `force` remains useful when the owning process is gone.
+
+Existing state files are never deleted. An idle state is copied into the new per-session file; a state with a running task is left where it is, so a new session does not inherit work it did not start.
+
 ### Checking for updates
 
 ```bash

@@ -137,6 +137,47 @@ export async function handleStartTask(args, workflowState, git) {
     );
   }
 
+  // Task HIDUP milik proses lain tidak boleh dihapus, bahkan dengan `force`.
+  //
+  // 1 November 2026: satu sesi kehilangan seluruh Definition of Done-nya dua
+  // kali dalam satu jam. Penyebabnya bukan hanya tabrakan berkas - `force: true`
+  // bisa melewati `activeForeignLock`, lalu `reset()` mengosongkan
+  // `definitionOfDone` milik task yang sedang dikerjakan sesi lain. Bukti DoD
+  // yang sudah dikumpulkan tidak bisa dipulihkan dari arsip `history`.
+  //
+  // Penjaga ini membaca ISI STATE, bukan berkas lock: state adalah kebenaran,
+  // lock hanya petunjuk. Kalau lock hilang atau rusak, penjaga tetap bekerja.
+  // `force` tetap berguna untuk satu kasus sah - pemiliknya sudah mati.
+  {
+    const disk = await workflowState.readDiskState();
+    if (disk) {
+      const phase = typeof disk.currentPhase === "string" ? disk.currentPhase : "idle";
+      const description = typeof disk.taskDescription === "string" ? disk.taskDescription.trim() : "";
+      const ownerPid = Number(disk.owner?.pid);
+      const foreignOwner = Number.isFinite(ownerPid) && ownerPid !== process.pid;
+
+      if (phase !== "idle" && description !== "" && foreignOwner && currentIsAlive()(ownerPid)) {
+        const started = Number.isFinite(Number(disk.owner?.startedAt))
+          ? new Date(Number(disk.owner.startedAt)).toISOString()
+          : "waktu tidak diketahui";
+
+        return textResponse(
+          `⚠️ Dibatalkan: task lain sedang berjalan di proses MCP PID ${ownerPid}.\n\n` +
+            `Task      : "${description}"\n` +
+            `Fase      : ${phase}\n` +
+            `Pemilik   : PID ${ownerPid}, hidup sejak ${started}\n\n` +
+            `Memulai task baru di sini akan mengosongkan Definition of Done task itu, dan buktinya ` +
+            `tidak bisa dipulihkan dari history. Karena itu 'force' TIDAK bisa melewati penjaga ini.\n\n` +
+            `Pilih salah satu:\n` +
+            `  1. Selesaikan atau batalkan task itu dari sesi pemiliknya (complete_task / drop_task).\n` +
+            `  2. Beri sesi ini worktree sendiri: opencode.worktree_create, lalu jalankan sesi dari sana.\n` +
+            `  3. Kalau proses itu sudah mati, ulangi dengan { "force": true }.\n\n` +
+            `Task BELUM dimulai; tidak ada state yang diubah.`
+        );
+      }
+    }
+  }
+
   // Validasi DoD SEBELUM menyentuh state apa pun. Task yang ditolak tidak boleh
   // mengganti task yang sedang berjalan, dan tidak boleh meninggalkan state
   // setengah jadi yang membuat `get_workflow_status` membingungkan.
