@@ -158,6 +158,9 @@ Update documentation:
 Use create_documentation tool:
 - documentationType: "README"
 - summary: "Added profile page documentation with API reference, usage examples, and screenshots"
+- files: ["README.md", "docs/profile.md"]   # REQUIRED for the gate: paths you
+                                            # actually changed, verified against
+                                            # the working tree.
 ```
 
 **Response:**

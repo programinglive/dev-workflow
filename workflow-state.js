@@ -731,6 +731,12 @@ export class WorkflowState {
       testsSkipped: false,
       testsSkippedReason: "",
       documentationCreated: false,
+      // Bukti berkas untuk gerbang dokumentasi. `documentationCreated` hanya
+      // berarti "agen mengaku sudah"; daftar ini berisi path yang benar-benar
+      // berubah di working tree, atau waiver dengan alasan tertulis.
+      documentationFiles: [],
+      documentationWaived: false,
+      documentationWaiverReason: "",
       readyToCommit: false,
       readyCheckCompleted: false,
       released: false,
@@ -741,6 +747,9 @@ export class WorkflowState {
       commitAndPushCompleted: false,
       lastCommitMessage: "",
       lastPushBranch: "",
+      // SHA yang benar-benar ter-push. Dipakai rekomendasi tindak lanjut untuk
+      // membaca diff commit ini (TODO baru, jumlah berkas) tanpa menebak HEAD.
+      lastCommitSha: "",
       // Repo proyek untuk sesi ini. Ditentukan saat start_task, dipakai semua
       // operasi git berikutnya. Kosong berarti ikuti urutan resolusi di exec.js.
       projectDir: "",
@@ -783,6 +792,12 @@ export class WorkflowState {
       testsSkipped: false,
       testsSkippedReason: "",
       documentationCreated: false,
+      // Bukti berkas untuk gerbang dokumentasi. `documentationCreated` hanya
+      // berarti "agen mengaku sudah"; daftar ini berisi path yang benar-benar
+      // berubah di working tree, atau waiver dengan alasan tertulis.
+      documentationFiles: [],
+      documentationWaived: false,
+      documentationWaiverReason: "",
       readyToCommit: false,
       readyCheckCompleted: false,
       released: false,
@@ -793,6 +808,9 @@ export class WorkflowState {
       commitAndPushCompleted: false,
       lastCommitMessage: "",
       lastPushBranch: "",
+      // SHA yang benar-benar ter-push. Dipakai rekomendasi tindak lanjut untuk
+      // membaca diff commit ini (TODO baru, jumlah berkas) tanpa menebak HEAD.
+      lastCommitSha: "",
       // Repo proyek untuk sesi ini. Ditentukan saat start_task, dipakai semua
       // operasi git berikutnya. Kosong berarti ikuti urutan resolusi di exec.js.
       projectDir: "",
@@ -886,6 +904,22 @@ export class WorkflowState {
         this.state.dodRevision = 0;
       } else {
         this.state.dodRevision = Math.trunc(Number(this.state.dodRevision));
+      }
+      // Berkas state yang ditulis sebelum gerbang dokumentasi ada tidak punya
+      // field ini. Ia harus muncul sebagai "belum ada bukti berkas", bukan
+      // undefined yang membuat perbandingan panjang melempar TypeError.
+      this.state.documentationFiles = Array.isArray(this.state.documentationFiles)
+        ? this.state.documentationFiles
+            .filter((entry) => typeof entry === "string" && entry.trim() !== "")
+        : [];
+      if (typeof this.state.documentationWaived !== "boolean") {
+        this.state.documentationWaived = false;
+      }
+      if (typeof this.state.documentationWaiverReason !== "string") {
+        this.state.documentationWaiverReason = "";
+      }
+      if (typeof this.state.lastCommitSha !== "string") {
+        this.state.lastCommitSha = "";
       }
     } catch (error) {
       if (error?.code !== "ENOENT") {
@@ -1419,6 +1453,12 @@ export class WorkflowState {
       testsSkipped: false,
       testsSkippedReason: "",
       documentationCreated: false,
+      // Bukti berkas untuk gerbang dokumentasi. `documentationCreated` hanya
+      // berarti "agen mengaku sudah"; daftar ini berisi path yang benar-benar
+      // berubah di working tree, atau waiver dengan alasan tertulis.
+      documentationFiles: [],
+      documentationWaived: false,
+      documentationWaiverReason: "",
       readyToCommit: false,
       readyCheckCompleted: false,
       released: false,
@@ -1429,6 +1469,9 @@ export class WorkflowState {
       commitAndPushCompleted: false,
       lastCommitMessage: "",
       lastPushBranch: "",
+      // SHA yang benar-benar ter-push. Dipakai rekomendasi tindak lanjut untuk
+      // membaca diff commit ini (TODO baru, jumlah berkas) tanpa menebak HEAD.
+      lastCommitSha: "",
       // Repo proyek untuk sesi ini. Ditentukan saat start_task, dipakai semua
       // operasi git berikutnya. Kosong berarti ikuti urutan resolusi di exec.js.
       projectDir: "",

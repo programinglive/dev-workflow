@@ -1,6 +1,14 @@
 import { classify } from '../../security/policy.js';
-import { textResponse, isReleaseSatisfied, isErrorResponse, ensurePrdExists } from "./shared.js";
+import { textResponse, isReleaseSatisfied, isErrorResponse, ensurePrdExists, loadDocGateInputs } from "./shared.js";
 import { validateItemTexts } from "./dod.js";
+import {
+  evaluateDocGate,
+  isDocumentationPath,
+  isGateSatisfied,
+  normalizePath,
+  MIN_WAIVER_REASON,
+  MAX_WAIVER_REASON,
+} from "./docs.js";
 import { activeForeignLock, projectLockDir, currentIsAlive, DEFAULT_LOCK_STALE_MS } from "../../process-lock.js";
 import { resolveProjectDir, setActiveProjectDir } from "../../exec.js";
 
@@ -411,7 +419,7 @@ export async function handleRunTests(args, workflowState) {
   );
 }
 
-export async function handleCreateDocumentation(args, workflowState) {
+export async function handleCreateDocumentation(args, workflowState, context = {}) {
   if (!workflowState.state.testsPassed) {
     return textResponse("⚠️ Please ensure tests are passing first! Run 'run_tests' with passed=true.");
   }
@@ -422,9 +430,54 @@ export async function handleCreateDocumentation(args, workflowState) {
     );
   }
 
+  // `files` diverifikasi terhadap working tree. Tanpa ini, langkah dokumentasi
+  // kembali menjadi klaim: `documentationType: "inline-comments"` dulu cukup
+  // untuk menutupnya, dan README tidak pernah tersentuh.
+  const requested = Array.isArray(args.files)
+    ? args.files.map((entry) => String(entry ?? "").trim()).filter(Boolean)
+    : [];
+
+  const inputs = await loadDocGateInputs({ workflowState, git: context.git });
+  const changed = new Set(inputs.changedPaths.map(normalizePath));
+
+  if (requested.length > 0) {
+    const notDocumentation = requested.filter((p) => !isDocumentationPath(p));
+    if (notDocumentation.length > 0) {
+      return textResponse(
+        `⚠️ Dibatalkan: ini bukan berkas dokumentasi: ${notDocumentation.join(", ")}\n\n` +
+          `Berkas dokumentasi adalah README*, CHANGELOG*, CONTRIBUTING*, apa pun di bawah ` +
+          `docs/ atau doc/, serta berkas .md/.mdx/.rst/.adoc di luar direktori tes.`
+      );
+    }
+
+    const missing = requested.filter((p) => !changed.has(normalizePath(p)));
+    if (missing.length > 0) {
+      const actual = inputs.changedPaths.length > 0
+        ? inputs.changedPaths.map((p) => `   • ${p}`).join("\n")
+        : "   (tidak ada perubahan sama sekali)";
+      return textResponse(
+        `⚠️ Dibatalkan: berkas ini disebut sebagai dokumentasi tetapi tidak muncul ` +
+          `sebagai perubahan di working tree: ${missing.join(", ")}\n\n` +
+          `Yang benar-benar berubah sekarang:\n${actual}\n\n` +
+          `Perbarui berkasnya lebih dulu, lalu sebut ulang. ` +
+          `Kalau dokumentasi memang tidak perlu diubah, pakai 'waive_documentation' { reason }.\n\n` +
+          `Tidak ada state yang diubah.`
+      );
+    }
+  }
+
+  const gate = evaluateDocGate({
+    changedPaths: inputs.changedPaths,
+    dirtyAtStart: inputs.dirtyAtStart,
+    declaredFiles: requested.length > 0 ? requested : inputs.declaredFiles,
+    hasDocumentation: inputs.hasDocumentation,
+    waived: Boolean(workflowState.state.documentationWaived),
+  });
+
   workflowState.state.documentationCreated = true;
   workflowState.state.documentationType = args.documentationType;
   workflowState.state.documentationSummary = args.summary;
+  workflowState.state.documentationFiles = requested;
   workflowState.state.currentPhase = "ready";
   workflowState.state.readyToCommit = true;
   workflowState.state.readyCheckCompleted = false;
@@ -436,7 +489,76 @@ export async function handleCreateDocumentation(args, workflowState) {
   workflowState.state.lastPushBranch = "";
   await workflowState.save();
 
+  // Pesan sukses WAJIB diawali ✅. `isErrorResponse` memperlakukan awalan ⚠️
+  // sebagai kegagalan, dan `run_full_workflow` akan berhenti di langkah ini.
+  const gateNote = isGateSatisfied(gate.status)
+    ? requested.length > 0
+      ? `✅ Gerbang dokumentasi terpenuhi oleh: ${requested.join(", ")}`
+      : `✅ Gerbang dokumentasi terpenuhi (${gate.status}).`
+    : `⚠️ Gerbang dokumentasi belum terpenuhi: ${gate.sourceChanged.length} berkas source ` +
+      `berubah tanpa berkas dokumentasi.\n` +
+      `   'check_ready_to_commit' akan menolak sampai Anda memakai 'files: [...]' ` +
+      `atau 'waive_documentation'.`;
+
   return textResponse(
-    `✅ Documentation created/updated!\n\nType: ${args.documentationType}\nSummary: ${args.summary}\n✅ PRD verified: docs/product/PRD.md exists\n\n🎉 You're ready to verify your work!\n\nNext Steps:\n1. ✓ Fix/implement feature\n2. ✓ Create tests\n3. ✓ Run tests (GREEN!)\n4. ✓ Create/update documentation\n5. ⏳ Run 'check_ready_to_commit' to verify\n6. ⏳ Run 'commit_and_push'\n7. ⏳ Run 'perform_release' (or 'skip_release' when applicable)\n8. ⏳ Mark as complete with 'complete_task'`
+    `✅ Documentation created/updated!\n\n` +
+      `Type: ${args.documentationType}\nSummary: ${args.summary}\n` +
+      (requested.length > 0 ? `Files: ${requested.join(", ")}\n` : "") +
+      `✅ PRD check: docs/PRD.md ada di paket MCP (bukan di repo proyek).\n` +
+      `${gateNote}\n\n` +
+      `🎉 You're ready to verify your work!\n\n` +
+      `Next Steps:\n` +
+      `1. ✓ Fix/implement feature\n` +
+      `2. ✓ Create tests\n` +
+      `3. ✓ Run tests (GREEN!)\n` +
+      `4. ✓ Create/update documentation\n` +
+      `5. ⏳ Run 'check_ready_to_commit' to verify\n` +
+      `6. ⏳ Run 'commit_and_push'\n` +
+      `7. ⏳ Run 'perform_release' (or 'skip_release' when applicable)\n` +
+      `8. ⏳ Mark as complete with 'complete_task'`
+  );
+}
+
+/**
+ * Kecualikan gerbang dokumentasi dengan alasan tertulis.
+ *
+ * Waiver adalah KEPUTUSAN, bukan jalan pintas: alasannya ikut ke entri history,
+ * ke laporan commit, dan ke rekomendasi sesi berikutnya. Pola me-waive setiap
+ * task jadi terlihat, bukan tersembunyi.
+ */
+export async function handleWaiveDocumentation(args, workflowState) {
+  if (!workflowState.state.testsPassed && !workflowState.state.testsSkipped) {
+    return textResponse(
+      "⚠️ Selesaikan langkah tes lebih dulu (run_tests dengan passed=true, atau skip_tests), " +
+        "sebelum mengecualikan gerbang dokumentasi."
+    );
+  }
+
+  const reason = typeof args.reason === "string" ? args.reason.trim() : "";
+
+  if (reason.length < MIN_WAIVER_REASON) {
+    return textResponse(
+      `⚠️ Dibatalkan: alasan waiver minimal ${MIN_WAIVER_REASON} karakter.\n\n` +
+        `Tulis KENAPA dokumentasi tidak perlu diubah, bukan sekadar "tidak perlu". ` +
+        `Alasan ini masuk history dan akan terbaca lagi di sesi berikutnya.`
+    );
+  }
+
+  if (reason.length > MAX_WAIVER_REASON) {
+    return textResponse(
+      `⚠️ Dibatalkan: alasan waiver maksimal ${MAX_WAIVER_REASON} karakter; dikirim ${reason.length}.`
+    );
+  }
+
+  workflowState.state.documentationWaived = true;
+  workflowState.state.documentationWaiverReason = reason;
+  workflowState.state.readyCheckCompleted = false;
+  await workflowState.save();
+
+  return textResponse(
+    `✅ Gerbang dokumentasi dikecualikan untuk task ini.\n\n` +
+      `Alasan: ${reason}\n\n` +
+      `Alasan ini dicatat di history, disebut di laporan commit, dan muncul di rekomendasi ` +
+      `sesi berikutnya. Lanjutkan dengan 'check_ready_to_commit'.`
   );
 }

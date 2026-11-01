@@ -1,6 +1,42 @@
-import { textResponse, formatChecklist, isReleaseSatisfied, getContinueGuidance, resetToCommitIfWorkingChanges } from "./shared.js";
+import { textResponse, formatChecklist, isReleaseSatisfied, getContinueGuidance, resetToCommitIfWorkingChanges, loadDocGateInputs } from "./shared.js";
 import { handleCommitAndPush } from "./commit-handlers.js";
 import { openItems, renderChecklist, renderOutstanding, summarize } from "./dod.js";
+import { evaluateDocGate, isGateSatisfied, formatRelativeAge, renderDocGateFailure } from "./docs.js";
+
+/**
+ * Bahan gerbang dokumentasi untuk pesan penolakan.
+ *
+ * `unknown` dipakai saat git tidak tersedia: gerbang yang diam-diam memblokir
+ * lebih buruk daripada gerbang yang mengaku tidak tahu, dan handler dipanggil
+ * tanpa context di beberapa tes lama.
+ */
+async function evaluateDocumentationGate(workflowState, context) {
+  const git = context?.git;
+
+  if (!git || typeof git.getStatusOutput !== "function") {
+    return { status: "unknown", sourceChanged: [], docsTouched: [], readmePath: "", readmeAge: "" };
+  }
+
+  const inputs = await loadDocGateInputs({ workflowState, git });
+  const gate = evaluateDocGate({
+    changedPaths: inputs.changedPaths,
+    dirtyAtStart: inputs.dirtyAtStart,
+    declaredFiles: inputs.declaredFiles,
+    hasDocumentation: inputs.hasDocumentation,
+    waived: Boolean(workflowState.state.documentationWaived),
+  });
+
+  let readmeAge = "";
+  if (inputs.readmePath && typeof git.getLastCommitForPath === "function") {
+    try {
+      readmeAge = formatRelativeAge(await git.getLastCommitForPath(inputs.readmePath));
+    } catch {
+      readmeAge = "";
+    }
+  }
+
+  return { ...gate, readmePath: inputs.readmePath, readmeAge };
+}
 
 export async function handleGetWorkflowStatus(workflowState) {
   const status = workflowState.state;
@@ -54,7 +90,7 @@ Next step: ${nextStep}${sharedWarning}`
   );
 }
 
-export async function handleReadyCheck(workflowState) {
+export async function handleReadyCheck(workflowState, context = {}) {
   const status = workflowState.state;
   const testsCreatedDone = status.testsSkipped || status.testsCreated;
   const testsPassedDone = status.testsSkipped || status.testsPassed;
@@ -65,6 +101,12 @@ export async function handleReadyCheck(workflowState) {
   const dod = summarize(dodItems, status.dodRevision);
   const dodRecorded = dodItems.length > 0;
   const dodSatisfied = dodRecorded && dod.open === 0;
+
+  // Gerbang dokumentasi membaca working tree, bukan label. Inilah satu-satunya
+  // alasan `documentationType: "inline-comments"` tidak lagi cukup untuk
+  // menutup langkah dokumentasi.
+  const docGate = await evaluateDocumentationGate(workflowState, context);
+  const docGateSatisfied = isGateSatisfied(docGate.status);
 
   const checks = [
     { name: "Task started", done: status.currentPhase !== "idle" },
@@ -80,6 +122,7 @@ export async function handleReadyCheck(workflowState) {
       done: testsPassedDone,
     },
     { name: "Documentation created", done: status.documentationCreated },
+    { name: "Documentation updated for code changes", done: docGateSatisfied },
     { name: "Definition of done satisfied", done: dodSatisfied },
   ];
 
@@ -105,6 +148,22 @@ export async function handleReadyCheck(workflowState) {
   // Sebut item yang menghalangi, bukan hanya centang merah: agen yang ditolak
   // harus tahu persis apa yang harus dibuktikan atau dikecualikan.
   const hints = [];
+
+  if (!docGateSatisfied) {
+    hints.push(
+      renderDocGateFailure({
+        sourceChanged: docGate.sourceChanged,
+        readmePath: docGate.readmePath,
+        readmeAge: docGate.readmeAge,
+        // Catatan "mungkin task lama" hanya berguna saat langkah dokumentasi
+        // sudah dicatat tetapi tanpa bukti berkas - persis task yang berjalan
+        // sebelum gerbang ini ada.
+        legacy: Boolean(status.documentationCreated) &&
+          (!Array.isArray(status.documentationFiles) || status.documentationFiles.length === 0),
+      }),
+    );
+  }
+
   if (!dodRecorded) {
     hints.push(
       "Belum ada item DoD untuk task ini. Isi dengan 'set_definition_of_done' { items: [...] } " +
@@ -136,7 +195,7 @@ export async function handleContinueWorkflow(workflowState, context) {
   }
 
   if (status.currentPhase === "ready") {
-    return handleReadyCheck(workflowState);
+    return handleReadyCheck(workflowState, context);
   }
 
   if (status.currentPhase === "commit") {

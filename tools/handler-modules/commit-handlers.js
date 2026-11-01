@@ -2,6 +2,7 @@ import { textResponse, isReleaseSatisfied, formatChecklist } from "./shared.js";
 import { handleReadyCheck } from "./status-handlers.js";
 import { openItems, renderChecklist, renderOutstanding, summarize } from "./dod.js";
 import { containsTestFilesInStatus } from "../../git-helpers.js";
+import { validateAiSuggestions, collectSignals, buildRecommendations, renderRecommendations } from "./next-steps.js";
 import { resolveProjectDir, setActiveProjectDir, getActiveProjectDir } from "../../exec.js";
 import path from "path";
 
@@ -141,7 +142,7 @@ export async function handleCommitAndPush(args, context) {
   }
 
   if (!workflowState.state.readyToCommit || !workflowState.state.readyCheckCompleted) {
-    const readyResponse = await handleReadyCheck(workflowState);
+    const readyResponse = await handleReadyCheck(workflowState, { git });
     if (workflowState.state.currentPhase !== "commit") {
       return readyResponse;
     }
@@ -375,7 +376,7 @@ export async function handleCommitAndPush(args, context) {
   );
 }
 
-export async function handleCompleteTask(args, workflowState) {
+export async function handleCompleteTask(args, workflowState, context = {}) {
   // Sampai 31 Oktober 2026 fungsi ini tidak memeriksa apa pun: task bisa
   // ditutup dengan DoD kosong atau masih penuh item terbuka. Sekarang tidak.
   const dodState = workflowState.state;
@@ -400,20 +401,83 @@ export async function handleCompleteTask(args, workflowState) {
     );
   }
 
+  // Validasi SEBELUM menyentuh state: saran yang ditolak tidak boleh menutup
+  // task setengah jalan, dan saran yang hilang tanpa pesan membuat agen
+  // mengira sarannya tersimpan.
+  const suggestionsCheck = validateAiSuggestions(args.nextSteps);
+  if (!suggestionsCheck.ok) {
+    return textResponse(
+      `⚠️ ${suggestionsCheck.error}\n\n` +
+        `Task BELUM ditutup; workflow tidak berubah.\n` +
+        `Contoh: nextSteps: ["perbaiki refreshToken", "tambah tes retry"]`
+    );
+  }
+
+  const aiSuggestions = suggestionsCheck.items;
+
+  // Sinyal diff butuh git. Tanpa itu, rekomendasi tetap dibuat dari state, dan
+  // output menyebut terus terang bahwa sinyal diff tidak terbaca.
+  let commitInspection = null;
+  let diffNote = "";
+  const git = context?.git;
+  if (git && typeof git.inspectCommitDiff === "function") {
+    try {
+      commitInspection = await git.inspectCommitDiff(dodState.lastCommitSha || "");
+    } catch (error) {
+      diffNote = `\n\nℹ️ Diff commit tidak bisa dibaca (${error.message}); sinyal TODO dan ukuran diff dilewati.`;
+    }
+  } else {
+    diffNote = `\n\nℹ️ Git tidak tersedia di sini; sinyal TODO dan ukuran diff dilewati.`;
+  }
+
+  let statusOutput = "";
+  if (git && typeof git.getStatusOutput === "function") {
+    try {
+      statusOutput = await git.getStatusOutput();
+    } catch {
+      statusOutput = "";
+    }
+  }
+
+  const signals = collectSignals({
+    state: dodState,
+    commitInspection,
+    statusOutput,
+    dirtyAtStart: Array.isArray(dodState.dirtyAtStart) ? dodState.dirtyAtStart : [],
+  });
+
+  const recommendations = buildRecommendations({ signals, aiSuggestions });
+
   const entry = {
     taskDescription: workflowState.state.taskDescription,
     taskType: workflowState.state.taskType,
     commitMessage: args.commitMessage,
     definitionOfDoneSummary: dod,
+    documentation: {
+      type: workflowState.state.documentationType || "",
+      files: Array.isArray(workflowState.state.documentationFiles)
+        ? workflowState.state.documentationFiles.slice()
+        : [],
+      waived: Boolean(workflowState.state.documentationWaived),
+      waiverReason: workflowState.state.documentationWaiverReason || "",
+    },
+    recommendations,
+    aiSuggestions,
   };
 
   workflowState.addToHistory(entry);
   workflowState.reset();
   await workflowState.save();
 
+  const askForSuggestions = aiSuggestions.length === 0
+    ? `\n\n💡 Kirim 'nextSteps' saat 'complete_task' kalau ada yang Anda lihat selama ` +
+      `mengerjakan — itu yang dibaca sesi berikutnya lewat 'next_steps'.`
+    : "";
+
   return textResponse(
     `✅ Task completed!\n\nCommit message: ${args.commitMessage}\n` +
-      `DoD: ${dod.done}/${dod.total} terbukti, ${dod.waived} dikecualikan.\nHistory recorded.`
+      `DoD: ${dod.done}/${dod.total} terbukti, ${dod.waived} dikecualikan.\nHistory recorded.\n\n` +
+      `${renderRecommendations(recommendations)}${diffNote}${askForSuggestions}`
   );
 }
 

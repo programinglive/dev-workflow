@@ -162,7 +162,7 @@ export function getContinueGuidance(status) {
     case "release":
       return "Commit recorded. Execute 'perform_release' with the release command you ran to publish changes, or call 'skip_release' with a justification if no release is required.";
     case "ready_to_complete":
-      return "Release recorded. Finish up by calling 'complete_task' with the commit message you used.";
+      return "Release recorded. Siapkan 'nextSteps' (1-5 butir, 10-200 karakter) saat 'complete_task' — apa yang sebaiknya dikerjakan berikutnya — lalu tutup dengan 'complete_task'. 'next_steps' menampilkan rekomendasi yang tersimpan di history.";
     default:
       return "Review your workflow progress and complete the next required step.";
   }
@@ -186,4 +186,85 @@ export const prdPath = path.join(__dirname, "..", "..", "docs", "PRD.md");
 
 export function ensurePrdExists() {
   return existsSync(prdPath);
+}
+
+/** Kandidat berkas dokumentasi di akar repo, berurutan menurut prioritas. */
+const README_CANDIDATES = [
+  "README.md",
+  "readme.md",
+  "README",
+  "README.rst",
+  "README.txt",
+  "docs/README.md",
+];
+
+/**
+ * Apakah repo punya dokumentasi yang bisa dijaga, dan di mana README-nya.
+ *
+ * `hasDocumentation` salah berarti gerbang tidak memblokir apa pun: repo yang
+ * dokumentasinya ada di tempat lain tidak boleh dihukum oleh aturan yang tidak
+ * mengenal tempat itu.
+ */
+export function detectDocumentation(toplevel) {
+  if (!toplevel) {
+    return { hasDocumentation: false, readmePath: "" };
+  }
+
+  for (const candidate of README_CANDIDATES) {
+    if (existsSync(path.join(toplevel, candidate))) {
+      return { hasDocumentation: true, readmePath: candidate };
+    }
+  }
+
+  if (existsSync(path.join(toplevel, "docs"))) {
+    return { hasDocumentation: true, readmePath: "" };
+  }
+
+  return { hasDocumentation: false, readmePath: "" };
+}
+
+/**
+ * Bahan mentah untuk `evaluateDocGate`, diambil dari git dan state.
+ *
+ * Dipisah dari aturannya (`docs.js`) supaya aturan itu tetap murni dan bisa
+ * diuji tanpa repo. `available: false` berarti git tidak bisa dipakai - gerbang
+ * lalu menjawab "tidak tahu" alih-alih memblokir.
+ */
+export async function loadDocGateInputs({ workflowState, git } = {}) {
+  const state = workflowState?.state || {};
+  const declaredFiles = Array.isArray(state.documentationFiles) ? state.documentationFiles : [];
+  const dirtyAtStart = Array.isArray(state.dirtyAtStart) ? state.dirtyAtStart : [];
+
+  if (!git || typeof git.getStatusOutput !== "function") {
+    return {
+      changedPaths: [],
+      dirtyAtStart,
+      declaredFiles,
+      hasDocumentation: false,
+      readmePath: "",
+      available: false,
+    };
+  }
+
+  let changedPaths = [];
+  try {
+    const output = await git.getStatusOutput();
+    const entries = typeof git.parseStatusEntries === "function"
+      ? git.parseStatusEntries(output)
+      : [];
+    changedPaths = entries.map((entry) => entry.path).filter(Boolean);
+  } catch {
+    changedPaths = [];
+  }
+
+  let toplevel = "";
+  try {
+    toplevel = String((await git.getToplevel()) || "").trim();
+  } catch {
+    toplevel = "";
+  }
+
+  const { hasDocumentation, readmePath } = detectDocumentation(toplevel);
+
+  return { changedPaths, dirtyAtStart, declaredFiles, hasDocumentation, readmePath, available: true };
 }

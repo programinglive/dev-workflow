@@ -144,8 +144,10 @@ test("create_documentation verifies PRD file exists", async () => {
       "create_documentation response should mention created/updated",
     );
     assert.ok(
-      response.content[0].text.includes("PRD verified"),
-      "create_documentation response should verify PRD file",
+      // Dulu "PRD verified", padahal yang dicek docs/PRD.md milik paket MCP,
+      // bukan repo proyek. Bunyinya sekarang menyebut objek yang sebenarnya.
+      response.content[0].text.includes("PRD check"),
+      "create_documentation response should report the PRD check",
     );
   });
 });
