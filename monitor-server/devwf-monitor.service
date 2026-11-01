@@ -1,0 +1,21 @@
+[Unit]
+Description=Dev Workflow live monitor
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/devwf-monitor
+# Kredensial TIDAK ditulis di unit ini: unit bisa dibaca siapa pun lewat
+# `systemctl cat`, sedangkan berkas EnvironmentFile bermode 600 hanya root.
+# Contoh isinya ada di devwf-monitor.env.example.
+EnvironmentFile=/etc/devwf-monitor.env
+Environment=PORT=3100
+Environment=HOST=100.107.65.21
+ExecStart=/usr/bin/env node /opt/devwf-monitor/monitor.cjs
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
