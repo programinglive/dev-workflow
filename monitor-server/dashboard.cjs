@@ -19,10 +19,12 @@ const POLL_MS = 3000;
 /**
  * Berapa lama sesi `idle` masih ditampilkan.
  *
- * Tanpa ini, monitor yang dipakai berhari-hari menumpuk baris mati dan layar
- * tablet penuh dengan sesi yang sudah tidak ada prosesnya.
+ * Dua nilai, karena dua hal berbeda: kartu "IDLE (tanpa task)" tidak memberi
+ * informasi apa pun dan dibuang cepat, sedangkan sesi idle yang punya task
+ * menyimpan riwayat pekerjaan yang baru selesai.
  */
 const IDLE_TTL = process.env.IDLE_TTL || '30 minutes';
+const EMPTY_IDLE_TTL = process.env.EMPTY_IDLE_TTL || '5 minutes';
 
 const pool = DB_URL ? new pg.Pool({ connectionString: DB_URL, max: 4 }) : null;
 
@@ -199,7 +201,7 @@ const server = http.createServer(async (req, res) => {
       // mati bersama sesi OpenCode-nya, jadi barisnya tinggal sebagai sampah
       // dan memenuhi layar tablet. Sesi yang masih bekerja TIDAK pernah
       // disembunyikan, seberapa lama pun ia berjalan tanpa menyimpan state.
-      const { sql, params } = buildSessionsQuery({ limit, idleTtl: IDLE_TTL });
+      const { sql, params } = buildSessionsQuery({ limit, idleTtl: IDLE_TTL, emptyIdleTtl: EMPTY_IDLE_TTL });
       const sessions = await query(sql, params);
       const events = await query(
         `SELECT at, kind, detail, project_name, machine

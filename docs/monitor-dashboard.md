@@ -20,6 +20,33 @@ Berkas di `monitor-server/`:
 | `devwf-monitor.service` | Unit systemd; kredensial dibaca dari `EnvironmentFile` |
 | `devwf-monitor.env.example` | Contoh isi `/etc/devwf-monitor.env` |
 
+## Mengemudikan tablet lewat adb
+
+Kedua tablet membuka adb TCP di port 5555 di alamat Tailscale-nya:
+
+```powershell
+adb connect 100.81.240.34:5555    # Xiaomi Pad 6 (p1pa)
+adb connect 100.126.241.90:5555   # POCO Pad M1
+adb -s 100.81.240.34:5555 shell am start -n com.android.chrome/com.google.android.apps.chrome.Main -a android.intent.action.VIEW -d http://100.107.65.21:3100
+```
+
+Baca isi layar tanpa screenshot (berguna untuk verifikasi otomatis):
+
+```powershell
+adb -s <ip>:5555 shell uiautomator dump /sdcard/ui.xml
+adb -s <ip>:5555 shell cat /sdcard/ui.xml
+```
+
+Dua jebakan yang ditemui 1 November 2026:
+
+1. **Jangan pakai `am start -a VIEW -d URL` tanpa paket di Xiaomi Pad 6.** Browser
+   defaultnya Mi Browser, jadi intent itu memunculkan dialog "Open with", bukan
+   halaman. Sebut paketnya eksplisit: `-n com.android.chrome/com.google.android.apps.chrome.Main`.
+2. **Mi Browser dijaga App Lock Xiaomi** (`com.miui.securitycenter/…ConfirmAccessControl`,
+   "Unlock via password"). Jangan coba menembusnya; pakai Chrome. Kalau dialognya
+   tersangkut di atas aplikasi lain, `am force-stop com.miui.securitycenter`
+   setelah dua `KEYCODE_BACK` mengembalikan fokus ke launcher.
+
 ## Mengapa hanya menyimak IP Tailscale
 
 `HOST=100.107.65.21` mengikat server ke alamat Tailscale saja. Bind ke
@@ -44,15 +71,31 @@ Proses MCP mati bersama sesi OpenCode-nya, jadi baris `idle` tinggal selamanya.
 Tanpa filter, dashboard yang dipakai berhari-hari memenuhi layar tablet dengan
 sesi yang sudah tidak ada prosesnya.
 
-Filter hanya menyentuh `idle`:
+Ada **dua** batas umur, karena dua hal berbeda:
+
+| Jenis sesi | Batas | Alasan |
+|---|---|---|
+| `idle` **tanpa** task | `EMPTY_IDLE_TTL` (5 menit) | Kartunya hanya berbunyi "IDLE (tanpa task)" — tidak memberi informasi, tetapi menempati satu slot penuh di layar tablet |
+| `idle` **dengan** task | `IDLE_TTL` (30 menit) | Menyimpan riwayat pekerjaan yang baru selesai, masih berguna sesudah commit |
+| `coding` dan fase lain | tanpa batas | Satu tugas panjang yang jarang menyimpan state tetap pekerjaan nyata |
 
 ```sql
-WHERE NOT (phase = 'idle' AND updated_at < now() - $2::interval)
+WHERE NOT (
+        phase = 'idle'
+        AND (
+          (task = '' AND updated_at < now() - $3::interval)   -- idle kosong
+          OR updated_at < now() - $2::interval                -- idle bertask
+        )
+      )
 ```
 
-Sesi yang masih bekerja **tidak** punya batas umur: satu tugas panjang yang
-jarang menyimpan state tetap pekerjaan nyata. Ubah batasnya lewat `IDLE_TTL`
-(format interval Postgres, mis. `2 hours`).
+Diukur 1 November 2026: kedua tablet hanya menampilkan satu kartu
+"IDLE (tanpa task)" padahal dashboard penuh sesi nyata di mesin lain. Sesudah
+perbaikan, `uiautomator dump` pada kedua tablet membaca judul, fase `CODING`,
+nama task, dan progres rencana sekaligus.
+
+Atur lewat `IDLE_TTL` dan `EMPTY_IDLE_TTL` di `/etc/devwf-monitor.env` (format
+interval Postgres, mis. `2 hours`).
 
 ## Deploy
 
