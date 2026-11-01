@@ -642,7 +642,7 @@ Runner provisioning and troubleshooting: [docs/homelab/ci-runner.md](./docs/home
 
 | Job | Runner | Work |
 |---|---|---|
-| `build` | self-hosted MMCH | `npm ci` → `npm test` → `build:server` → verify the bundle starts → `npm pack` → upload tarball |
+| `build` | self-hosted MMCH | check the tag matches `package.json` → `npm ci` → `npm test` → `build:server` → verify the bundle starts → `npm pack` → upload tarball |
 | `publish` | `ubuntu-latest` | download tarball → `npm publish` → create/update the GitHub release |
 
 Publishing uses **Trusted Publishing (OIDC)**: no long-lived npm token is stored
@@ -657,6 +657,29 @@ npm trust github @programinglive/dev-workflow-mcp-server \
 ```
 
 The `file` must match the workflow filename exactly, or OIDC is rejected.
+
+### The tag must match `package.json`
+
+`build` checks out `ref: main`, while the version being released comes from the
+tag name. A tag created on a commit that never reached `main` therefore ships
+`main`'s version under the tag's name, and only npm notices:
+
+```
+npm error You cannot publish over the previously published versions: 1.15.0.
+```
+
+That is what happened on 31 October 2026: `v1.15.1` was tagged on
+`feat/dod-lock-guard` while `main` still said `1.15.0`.
+
+`scripts/check-release-version.mjs` now compares the two before `npm ci` and
+before `npm publish`, and fails early with both versions and the fix:
+
+```
+Tag v1.15.1 menunjuk versi 1.15.1, tetapi package.json berisi 1.17.1. ...
+Perbaikan: jalankan rilis dari main setelah versi package.json di-bump, lalu buat ulang tag.
+```
+
+Release from `main` after the version bump is committed, then tag that commit.
 
 ### No provenance
 
