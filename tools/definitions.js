@@ -44,6 +44,18 @@ export function getToolList() {
               "Each item must later be proven with 'mark_dod_item' (evidence required) or waived with " +
               "'waive_dod_item' (reason required). A task cannot be committed or closed while any item is open.",
           },
+          plan: {
+            type: "array",
+            items: { type: "string" },
+            minItems: 1,
+            maxItems: 15,
+            description:
+              "REQUIRED. The ordered steps you will actually take, 1-15 items of 3-200 characters, e.g. " +
+              "['telusuri handler yang ada', 'tulis tes yang gagal', 'implementasi minimum', 'jalankan suite']. " +
+              "This is what lets a human watch progress while you work: every tool reply shows " +
+              "'Rencana n/m - berikutnya: ...'. Mark steps with 'mark_plan_step'. " +
+              "It is not a gate - definitionOfDone decides when the task may close.",
+          },
           force: {
             type: "boolean",
             description:
@@ -52,7 +64,7 @@ export function getToolList() {
               "session or using a git worktree.",
           },
         },
-        required: ["description", "type", "definitionOfDone"],
+        required: ["description", "type", "definitionOfDone", "plan"],
       },
     },
     {
@@ -121,6 +133,69 @@ export function getToolList() {
           },
         },
         required: ["id", "reason"],
+      },
+    },
+    {
+      name: "set_plan",
+      description:
+        "Replace the work plan of the running task with a new ordered list of steps (1-15 items, " +
+        "3-200 characters each). Use it when the original plan turned out wrong. Steps whose text is " +
+        "unchanged keep their done state, so revising the plan does not erase real progress.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          steps: {
+            type: "array",
+            items: { type: "string" },
+            minItems: 1,
+            maxItems: 15,
+            description: "Ordered steps, one action per item.",
+          },
+        },
+        required: ["steps"],
+      },
+    },
+    {
+      name: "mark_plan_step",
+      description:
+        "Mark one plan step done (or reopen it with status 'open'). Idempotent. Every tool reply " +
+        "afterwards shows the updated 'Rencana n/m' progress line, which is how a human watches the " +
+        "work without asking.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          id: {
+            type: "string",
+            description: "Step id from the plan, e.g. 'plan-2'.",
+          },
+          status: {
+            type: "string",
+            enum: ["done", "open"],
+            description: "Defaults to 'done'. 'open' reopens a step that was marked too early.",
+          },
+        },
+        required: ["id"],
+      },
+    },
+    {
+      name: "resume_session",
+      description:
+        "Reconnect to a workflow state left behind by another session in THIS project. Called " +
+        "without arguments it lists what is resumable (task, phase, DoD and plan progress) and " +
+        "whether it is safe to take. With { adopt: \"<session-key>\" } it copies that state into " +
+        "this session and continues from there. Refuses tasks whose owner is still writing, " +
+        "refuses when this session already has a running task, and never deletes the source file.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          adopt: {
+            type: "string",
+            description:
+              "Session key to resume, exactly as listed by the no-argument call (e.g. 'ses_e69e5134...'). " +
+              "Omit to only list candidates.",
+          },
+        },
+        required: [],
       },
     },
     {

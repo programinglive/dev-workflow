@@ -110,11 +110,14 @@ See [MCP client configuration](#mcp-client-configuration).
 
 ## Available Tools
 
-34 tools.
+37 tools.
 
 | Tool | Purpose |
 |---|---|
-| `start_task` | Begin a task (always the first step); requires `definitionOfDone` |
+| `start_task` | Begin a task (always the first step); requires `definitionOfDone` and `plan` |
+| `set_plan` | Replace the work plan of the running task |
+| `mark_plan_step` | Mark one plan step done (or reopen it) |
+| `resume_session` | Reconnect to state left behind by another session in this project |
 | `set_definition_of_done` | Add or replace the checklist of the current task |
 | `mark_dod_item` | Prove one item, with evidence |
 | `waive_dod_item` | Exclude one item, with a reason |
@@ -243,6 +246,48 @@ Each session gets its own state file, inside a per-project directory:
 `start_task` refuses to replace a task that is still running in another live MCP process, **even with `force: true`** — starting a new task would clear that task's Definition of Done, and its evidence cannot be recovered from history. The guard stops applying once the owning process has not written state for 10 minutes, so a leftover MCP process cannot block a session forever. If a layout change finds a running task in an old file, it is not copied; `get_workflow_status` reports it instead of letting it disappear.
 
 Existing state files are never deleted. An idle state is copied into the new per-session file; a state with a running task is left where it is, so a new session does not inherit work it did not start.
+
+### Watching the work happen
+
+`definitionOfDone` says what must be true before the task may close. It does not say *what you are doing right now*. `start_task` therefore also requires `plan`: 1-15 ordered steps, 3-200 characters each.
+
+```
+start_task {
+  "description": "Tambah endpoint retry",
+  "type": "feature",
+  "definitionOfDone": ["tes retry lulus"],
+  "plan": ["telusuri handler retry", "tulis tes yang gagal",
+           "implementasi minimum", "jalankan suite", "perbarui README"]
+}
+```
+
+Every tool reply then ends with a progress line, so progress is visible while the work happens instead of only at the end:
+
+```
+📋 Rencana 2/5 — berikutnya: implementasi minimum
+```
+
+`mark_plan_step { id }` closes a step; `mark_plan_step { id, status: "open" }` reopens one that was marked too early. `set_plan { steps }` replaces the plan when the original turns out wrong — steps whose text is unchanged keep their done state, so revising does not erase real progress. `get_workflow_status` shows the full list.
+
+The plan is **not** a gate. Only `definitionOfDone` decides whether a task may close. Two gates for the same work would add friction without adding evidence.
+
+If `plan` is omitted, a temporary plan is derived from the DoD items and the reply says so plainly; the order is a guess, not your plan.
+
+### Resuming work left by another session
+
+State is per session, so a session that is closed leaves its work on disk: phase, DoD evidence, and plan. A new session starts from zero and cannot see it. On 1 November 2026 a task sat stranded at phase `release` and nothing could reach it.
+
+```bash
+resume_session                      # list what is resumable in this project
+resume_session { "adopt": "ses_..."} # copy it into this session and continue
+```
+
+The listing shows the task, phase, DoD and plan progress, and whether it is safe to take. It refuses four things:
+
+- a task whose owner process is still writing (a stopped process stops blocking after 10 minutes)
+- resuming while this session already has a running task
+- states from another project
+- deleting the source file — adoption is a copy, so the original stays as an audit trail
 
 ### Checking for updates
 

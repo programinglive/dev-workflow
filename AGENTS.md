@@ -7,7 +7,8 @@ You are connected to the `dev-workflow` MCP server. **You MUST NOT perform any c
 ### The Rule of Operation
 Before taking any action or answering user requests regarding code changes, check your workflow status and follow these exact steps in sequence:
 
-1. **Start Task**: Call `start_task` with a clear description, type (`feature`, `bugfix`, `refactor`, or `other`), `projectDir`, **and a `definitionOfDone` checklist**. Every task must say, up front, which concrete conditions must be true before it counts as finished.
+1. **Start Task**: Call `start_task` with a clear description, type (`feature`, `bugfix`, `refactor`, or `other`), `projectDir`, **a `definitionOfDone` checklist, and a `plan`** (1-15 ordered steps). The DoD says what must be true before it counts as finished; the plan is the order you will actually work in, and it is what lets a human watch progress.
+2. **Resume if needed**: if this session is new and a previous one left work behind, `resume_session` lists it and `{ adopt: "ses_..." }` continues from that state instead of restarting the task.
 
    `start_task` **refuses** when another live MCP process is working the same project (heartbeat within the last 10 minutes). Two sessions on one working tree overwrite each other's files silently - on 31 October 2026 a session lost every edit in `tools/handler-modules/index.js` that way. Close the other window, use a git worktree, or pass `force: true` when you know the other session is idle. The check runs before any state is touched, so a refused call changes nothing.
 
