@@ -31,6 +31,19 @@ const POLL_MS = 3000;
  * tablet. Kosong berarti SEMUA penulisan ditolak, bukan diterima.
  */
 const WRITE_TOKEN = process.env.DEVWF_MONITOR_TOKEN || '';
+/**
+ * Retensi: MATI secara bawaan.
+ *
+ * ATURAN: data monitor tidak boleh terhapus tanpa persetujuan eksplisit.
+ * Penghapusan otomatis yang menyala sendiri adalah cara paling mudah
+ * kehilangan riwayat tanpa ada yang menyadarinya, dan itu tidak boleh terjadi
+ * pada data yang dianggap penting oleh pemiliknya.
+ *
+ * Untuk menyalakannya, isi `PRUNE_ENABLED=1` di /etc/devwf-monitor.env.
+ * Tanpa itu, `pruneOldRows()` tidak menyentuh apa pun.
+ */
+const PRUNE_ENABLED = String(process.env.PRUNE_ENABLED || '').toLowerCase();
+const PRUNE_ON = PRUNE_ENABLED === '1' || PRUNE_ENABLED === 'true' || PRUNE_ENABLED === 'yes';
 const RETENTION_DAYS = Number(process.env.RETENTION_DAYS || DEFAULT_RETENTION_DAYS);
 const SESSION_RETENTION_DAYS = Number(
   process.env.SESSION_RETENTION_DAYS || DEFAULT_SESSION_RETENTION_DAYS,
@@ -175,8 +188,9 @@ function denyWrite(res) {
   }));
 }
 
-/** Buang baris lama supaya tabel tidak tumbuh selamanya. */
+/** Buang baris lama supaya tabel tidak tumbuh selamanya. Hanya bila DIMINTA. */
 async function pruneOldRows() {
+  if (!PRUNE_ON) return;
   try {
     const events = buildPruneEventsQuery({ retentionDays: RETENTION_DAYS });
     const sessions = buildPruneSessionsQuery({ sessionRetentionDays: SESSION_RETENTION_DAYS });
@@ -291,7 +305,12 @@ server.listen(PORT, HOST, () => {
   if (!WRITE_TOKEN) {
     console.warn('PERINGATAN: DEVWF_MONITOR_TOKEN kosong - semua penulisan ditolak.');
   }
-  // Pembersihan berkala: sekali saat start, lalu tiap PRUNE_EVERY_MS.
+  // Penghapusan otomatis MATI kecuali PRUNE_ENABLED diisi eksplisit.
+  if (!PRUNE_ON) {
+    console.log('retensi: MATI (set PRUNE_ENABLED=1 untuk menyalakan). Tidak ada data yang dihapus.');
+    return;
+  }
+  console.log(`retensi: AKTIF - events > ${RETENTION_DAYS} hari, sesi idle > ${SESSION_RETENTION_DAYS} hari.`);
   void pruneOldRows();
   const timer = setInterval(() => void pruneOldRows(), PRUNE_EVERY_MS);
   if (typeof timer.unref === 'function') timer.unref();

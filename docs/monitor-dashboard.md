@@ -97,22 +97,38 @@ DEVWF_MACHINE=<nama mesin>
 Kalau token belum diisi di mesin pengirim, pelaporannya ditolak `401` dan
 dashboard tidak pernah bertambah — periksa `journalctl -u devwf-monitor`.
 
-## Retensi: tabel tidak tumbuh selamanya
+## Retensi: MATI secara bawaan
 
-Tanpa pembersihan, `events` tumbuh terus dan tidak ada yang menyadarinya sampai
-`/api/sessions` mulai lambat berbulan-bulan kemudian. Diukur 1 November 2026:
-belum ada satu pun `DELETE` di server.
+**Tidak ada data yang dihapus tanpa persetujuan eksplisit.** Aturan ini ada
+karena penghapusan otomatis yang menyala sendiri adalah cara paling mudah
+kehilangan riwayat tanpa ada yang menyadarinya.
 
-Pembersihan berjalan sekali saat start, lalu tiap `PRUNE_EVERY_MS`
-(bawaan 6 jam):
+Bawaan: `PRUNE_ENABLED` kosong → server menulis `retensi: MATI` di log saat
+start dan tidak menjalankan satu pun `DELETE`. Diverifikasi dengan menanam
+baris berumur 400 hari lalu restart: barisnya tetap ada.
 
-| Variabel | Bawaan | Yang dibuang |
+Untuk menyalakannya, isi di `/etc/devwf-monitor.env`:
+
+```
+PRUNE_ENABLED=1
+RETENTION_DAYS=30          # event lebih tua dari ini
+SESSION_RETENTION_DAYS=7   # sesi idle lebih tua dari ini
+PRUNE_EVERY_MS=21600000    # 6 jam
+```
+
+Hanya nilai `1`, `true`, atau `yes` yang menyalakan. Nilai lain tetap mati.
+
+Saat aktif, pembersihan berjalan sekali saat start lalu tiap `PRUNE_EVERY_MS`:
+
+| Tabel | Yang dibuang | Yang TIDAK pernah dibuang |
 |---|---|---|
-| `RETENTION_DAYS` | 30 | `events` lebih tua dari itu |
-| `SESSION_RETENTION_DAYS` | 7 | sesi `idle` lebih tua dari itu |
+| `events` | baris lebih tua dari `RETENTION_DAYS` | — |
+| `sessions` | `phase = 'idle'` lebih tua dari `SESSION_RETENTION_DAYS` | sesi yang masih bekerja |
 
-Hanya `idle` yang dihapus. Sesi yang masih bekerja tidak pernah disentuh,
-karena baris itulah yang sedang tampil di tablet.
+Yang dihapus hanya **baris laporan di database dashboard**, bukan kode, git
+history, atau state workflow. Data aslinya tetap di tiap mesin
+(`.state/workflow-state.json`) dan di riwayat git.
+
 
 
 ## Sesi `idle` yang basi disembunyikan
