@@ -2060,8 +2060,9 @@ export class WorkflowState {
     if (!this.dbAdapter) {
       const mod = await import("./db/index.js");
       // `getLocalAdapter`, bukan `getAdapter`: penyimpanan state hidup SELALU
-      // SQLite, apa pun isi DEV_WORKFLOW_DB_TYPE.
-      this.dbAdapter = await mod.getLocalAdapter();
+      // SQLite, apa pun isi DEV_WORKFLOW_DB_TYPE. `stateFile` menentukan lokasi
+      // berkasnya: `.state` milik proyek ini, bukan akar drive.
+      this.dbAdapter = await mod.getLocalAdapter({ stateFile: this.stateFile });
     } else if (typeof this.dbAdapter.connect === "function") {
       // Adapter yang diinjeksi belum tentu sudah tersambung. `connect()`
       // idempoten, jadi memanggilnya di sini aman dan menghilangkan urutan
