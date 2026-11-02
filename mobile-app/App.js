@@ -73,6 +73,8 @@ function ago(iso, nowMs) {
   if (!iso) return "";
   const detik = ((nowMs || Date.now()) - new Date(iso).getTime()) / 1000;
   if (!isFinite(detik) || detik < 0) return "baru saja";
+  // Di bawah 10 detik disebut "baru saja", bukan "0d lalu" yang terbaca janggal.
+  if (detik < 10) return "baru saja";
   if (detik < 60) return Math.round(detik) + "d lalu";
   if (detik < 3600) return Math.round(detik / 60) + "m lalu";
   if (detik < 86400) return Math.round(detik / 3600) + "j lalu";
@@ -104,6 +106,8 @@ export default function App() {
   const [memuat, setMemuat] = useState(true);
   const [menyegarkan, setMenyegarkan] = useState(false);
   const [dipilih, setDipilih] = useState(null);
+  const [tab, setTab] = useState("aktif");
+  const [filter, setFilter] = useState("semua");
   const hidup = useRef(true);
   const { width } = useWindowDimensions();
 
@@ -152,12 +156,37 @@ export default function App() {
   const sesi = (data && data.sessions) || [];
   const health = (data && data.health) || {};
   const jamServer = data && data.now ? new Date(data.now).getTime() : undefined;
+  const riwayat = (data && data.history) || [];
+  const mesin = (data && data.machines) || [];
 
-  // Detail ikut data terbaru: kalau sesinya berubah saat modal terbuka,
-  // isinya tidak boleh membeku di salinan lama.
+  /**
+   * Filter riwayat per status.
+   *
+   * "selesai" TIDAK memakai field status, karena tidak ada status `done` di
+   * database: sesi ditutup dengan `phase = 'idle'`. Menyamakan keduanya dengan
+   * status turunan akan salah, sebab sesi yang baru saja berhenti melapor juga
+   * berstatus `ended` padahal tasknya belum tentu ditutup.
+   */
+  const FILTER = [
+    { id: "semua", label: "Semua", hitung: (h) => h.length },
+    { id: "selesai", label: "Selesai", hitung: (h) => h.filter((x) => x.phase === "idle").length },
+    { id: "berjalan", label: "Berjalan", hitung: (h) => h.filter((x) => x.state === "live").length },
+    { id: "macet", label: "Macet", hitung: (h) => h.filter((x) => x.state === "possibly_stuck").length },
+    { id: "berakhir", label: "Berakhir", hitung: (h) => h.filter((x) => x.state === "ended").length },
+  ];
+  const cocok = (h) => {
+    if (filter === "selesai") return h.phase === "idle";
+    if (filter === "berjalan") return h.state === "live";
+    if (filter === "macet") return h.state === "possibly_stuck";
+    if (filter === "berakhir") return h.state === "ended";
+    return true;
+  };
+
+  // Detail bisa berasal dari kartu aktif MAUPUN baris riwayat.
+  const semua = useMemo(() => [...sesi, ...riwayat], [sesi, riwayat]);
   const sesiDipilih = useMemo(
-    () => (dipilih ? sesi.find((s) => s.session_key === dipilih) || null : null),
-    [dipilih, sesi],
+    () => (dipilih ? semua.find((s) => s.session_key === dipilih) || null : null),
+    [dipilih, semua],
   );
 
   return (
@@ -199,78 +228,184 @@ export default function App() {
             <RefreshControl refreshing={menyegarkan} onRefresh={tarik} tintColor={WARNA.biru} />
           }
         >
-          {sesi.length === 0 ? (
-            <Text style={gaya.kosong}>belum ada sesi melapor</Text>
-          ) : (
-            <View style={[gaya.grid, !duaKolom && gaya.gridSatu]}>
-              {sesi.map((s) => (
-                <View key={s.session_key} style={duaKolom ? gaya.sel : gaya.selPenuh}>
-                  <Kartu s={s} jamServer={jamServer} onPress={() => setDipilih(s.session_key)} />
+          {tab === "aktif" && (
+            <>
+              {sesi.length === 0 ? (
+                <Text style={gaya.kosong}>belum ada sesi melapor</Text>
+              ) : (
+                <View style={[gaya.grid, !duaKolom && gaya.gridSatu]}>
+                  {sesi.map((s) => (
+                    <View key={s.session_key} style={duaKolom ? gaya.sel : gaya.selPenuh}>
+                      <Kartu s={s} jamServer={jamServer} onPress={() => setDipilih(s.session_key)} />
+                    </View>
+                  ))}
                 </View>
-              ))}
-            </View>
+              )}
+
+              {data && data.events && data.events.length > 0 && (
+                <View style={gaya.aktivitas}>
+                  <Text style={gaya.aktivitasJudul}>Aktivitas terakhir</Text>
+                  {data.events.slice(0, 8).map((e, i) => (
+                    <Text key={i} style={gaya.aktivitasItem}>
+                      <Text style={gaya.aktivitasJenis}>{e.kind}</Text> {e.detail}
+                      <Text style={gaya.aktivitasMeta}>
+                        {"  · "}
+                        {e.project_name} · {ago(e.at, jamServer)}
+                      </Text>
+                    </Text>
+                  ))}
+                </View>
+              )}
+            </>
           )}
 
-          {data && data.machines && data.machines.length > 0 && (
-            <View style={gaya.aktivitas}>
-              <Text style={gaya.aktivitasJudul}>Mesin terhubung</Text>
-              {data.machines.map((m) => (
-                <View key={m.machine} style={gaya.mesinBaris}>
-                  <View
-                    style={[
-                      gaya.titik,
-                      { backgroundColor: m.stale ? WARNA.kuning : WARNA.hijau },
-                    ]}
-                  />
-                  <Text style={gaya.mesinNama}>{m.machine}</Text>
-                  <Text style={gaya.mesinMeta} numberOfLines={1}>
-                    terakhir melapor {ago(m.last_seen, jamServer)}
-                    {m.last_project ? " · " + m.last_project : ""}
-                    {m.stale ? " · sudah lama tidak melapor" : ""}
-                  </Text>
-                </View>
-              ))}
-            </View>
-          )}
+          {tab === "riwayat" && (
+            <>
+              <View style={gaya.filterBaris}>
+                {FILTER.map((f) => {
+                  const aktif = filter === f.id;
+                  const jumlah = f.hitung(riwayat);
+                  return (
+                    <Pressable
+                      key={f.id}
+                      onPress={() => setFilter(f.id)}
+                      style={[gaya.filterChip, aktif && gaya.filterChipAktif]}
+                    >
+                      <Text style={[gaya.filterTeks, aktif && gaya.filterTeksAktif]}>
+                        {f.label} {jumlah > 0 ? jumlah : ""}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
 
-          {data && data.history && data.history.length > 0 && (
-            <View style={gaya.aktivitas}>
-              <Text style={gaya.aktivitasJudul}>Selesai (7 hari)</Text>
-              {data.history.map((h) => (
-                <View key={h.session_key} style={gaya.riwayatBaris}>
-                  <Text style={gaya.riwayatNama} numberOfLines={1}>
-                    {/* Saat task ditutup, `task` dikosongkan. Judul sesi atau
-                        nama proyek yang tersisa - jangan tampilkan baris kosong. */}
-                    {h.task || h.session_title || h.project_name || "(tanpa nama)"}
-                  </Text>
-                  <Text style={gaya.riwayatMeta} numberOfLines={1}>
-                    {h.agent_tool ? String(h.agent_tool).toUpperCase() + " · " : ""}
-                    {h.machine}
-                    {h.project_name ? " · " + h.project_name : ""} ·{" "}
-                    {h.duration_label ? "⏱ " + h.duration_label : "durasi tidak tercatat"} ·{" "}
-                    {ago(h.updated_at, jamServer)}
-                  </Text>
-                </View>
-              ))}
-            </View>
-          )}
-
-          {data && data.events && data.events.length > 0 && (
-            <View style={gaya.aktivitas}>
-              <Text style={gaya.aktivitasJudul}>Aktivitas terakhir</Text>
-              {data.events.slice(0, 8).map((e, i) => (
-                <Text key={i} style={gaya.aktivitasItem}>
-                  <Text style={gaya.aktivitasJenis}>{e.kind}</Text> {e.detail}
-                  <Text style={gaya.aktivitasMeta}>
-                    {"  · "}
-                    {e.project_name} · {ago(e.at, jamServer)}
-                  </Text>
+              {riwayat.filter(cocok).length === 0 ? (
+                <Text style={gaya.kosong}>
+                  tidak ada sesi dengan status "{FILTER.find((f) => f.id === filter).label.toLowerCase()}"
+                  {"\n"}({riwayat.length} sesi dalam 7 hari terakhir)
                 </Text>
-              ))}
-            </View>
+              ) : (
+                riwayat
+                  .filter(cocok)
+                  .map((h) => (
+                    <Pressable
+                      key={h.session_key}
+                      onPress={() => setDipilih(h.session_key)}
+                      style={({ pressed }) => [gaya.riwayatKartu, pressed && gaya.kartuDitekan]}
+                    >
+                      <View style={gaya.baris}>
+                        <View
+                          style={[
+                            gaya.chip,
+                            { borderColor: gayaStatus(h.state).border },
+                            { backgroundColor: gayaStatus(h.state).chipBg },
+                          ]}
+                        >
+                          <Text
+                            style={[gaya.chipTeks, { color: gayaStatus(h.state).chipFg }]}
+                          >
+                            {h.phase === "idle" ? "SELESAI" : gayaStatus(h.state).label}
+                          </Text>
+                        </View>
+                        {h.agent_tool ? (
+                          <View style={gaya.chipAlat}>
+                            <Text style={gaya.chipAlatTeks}>
+                              {String(h.agent_tool).toUpperCase()}
+                            </Text>
+                          </View>
+                        ) : null}
+                      </View>
+                      <Text style={gaya.riwayatNama} numberOfLines={2}>
+                        {h.task || h.session_title || h.project_name || "(tanpa nama)"}
+                      </Text>
+                      <Text style={gaya.riwayatMeta} numberOfLines={1}>
+                        {h.machine}
+                        {h.project_name ? " · " + h.project_name : ""} ·{" "}
+                        {h.duration_label ? "⏱ " + h.duration_label : "durasi tidak tercatat"} ·{" "}
+                        {ago(h.updated_at, jamServer)}
+                      </Text>
+                    </Pressable>
+                  ))
+              )}
+            </>
+          )}
+
+          {tab === "mesin" && (
+            <>
+              {mesin.length === 0 ? (
+                <Text style={gaya.kosong}>belum ada mesin melapor</Text>
+              ) : (
+                mesin.map((m) => (
+                  <View key={m.machine} style={gaya.riwayatKartu}>
+                    <View style={gaya.baris}>
+                      <View
+                        style={[
+                          gaya.titik,
+                          { backgroundColor: m.stale ? WARNA.kuning : WARNA.hijau },
+                        ]}
+                      />
+                      <Text style={gaya.mesinNamaBesar}>{m.machine}</Text>
+                    </View>
+                    <Text style={gaya.riwayatMeta}>
+                      terakhir melapor {ago(m.last_seen, jamServer)}
+                      {m.stale ? " · sudah lama tidak melapor" : ""}
+                    </Text>
+                    <Text style={gaya.riwayatMeta} numberOfLines={1}>
+                      {m.sessions} sesi · fase terakhir {m.last_phase || "-"}
+                      {m.last_project ? " · " + m.last_project : ""}
+                    </Text>
+                  </View>
+                ))
+              )}
+            </>
+          )}
+
+          {tab === "info" && (
+            <>
+              <View style={gaya.kotak}>
+                <Text style={gaya.kotakJudul}>Tentang</Text>
+                <Text style={gaya.kotakTeks}>
+                  Dashboard sesi dev-workflow dari semua mesin.{"\n"}
+                  Membaca tanpa login; penulisan wajib token.{"\n"}
+                  Data tidak pernah dihapus otomatis.
+                </Text>
+              </View>
+              <View style={gaya.kotak}>
+                <Text style={gaya.kotakJudul}>Server</Text>
+                <Text style={gaya.kotakTeks}>{MONITOR_URL}</Text>
+                <Text style={[gaya.kotakTeks, { marginTop: 6 }]}>
+                  {sesi.length} sesi aktif · {riwayat.length} riwayat · {mesin.length} mesin
+                </Text>
+                <Text style={[gaya.kotakTeks, { marginTop: 6 }]}>
+                  diperbarui tiap {Math.round(POLL_MS / 1000)} detik
+                </Text>
+              </View>
+            </>
           )}
         </ScrollView>
       )}
+
+      <View style={gaya.tabBar}>
+        {[
+          { id: "aktif", ikon: "▦", label: "Aktif" },
+          { id: "riwayat", ikon: "☰", label: "Riwayat" },
+          { id: "mesin", ikon: "▣", label: "Mesin" },
+          { id: "info", ikon: "ⓘ", label: "Info" },
+        ].map((t) => {
+          const aktif = tab === t.id;
+          return (
+            <Pressable
+              key={t.id}
+              onPress={() => setTab(t.id)}
+              style={gaya.tabItem}
+              android_ripple={{ color: "#ffffff10" }}
+            >
+              <Text style={[gaya.tabIkon, aktif && gaya.tabIkonAktif]}>{t.ikon}</Text>
+              <Text style={[gaya.tabLabel, aktif && gaya.tabLabelAktif]}>{t.label}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
 
       <DetailSesi
         s={sesiDipilih}
@@ -572,6 +707,42 @@ const gaya = StyleSheet.create({
   mesinNama: { color: WARNA.teks, fontSize: 13, fontWeight: "600", minWidth: 90 },
   mesinMeta: { color: WARNA.redup, fontSize: 12, flexShrink: 1 },
   riwayatBaris: { marginBottom: 8 },
+  riwayatKartu: {
+    borderWidth: 1,
+    borderColor: WARNA.garis,
+    borderRadius: 12,
+    backgroundColor: WARNA.card,
+    padding: 14,
+    marginBottom: 10,
+  },
+  mesinNamaBesar: { color: WARNA.teks, fontSize: 16, fontWeight: "700" },
+
+  filterBaris: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 14 },
+  filterChip: {
+    borderWidth: 1,
+    borderColor: WARNA.garis,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: WARNA.card,
+  },
+  filterChipAktif: { borderColor: WARNA.biru, backgroundColor: "#1f6feb22" },
+  filterTeks: { color: WARNA.redup, fontSize: 12, fontWeight: "600" },
+  filterTeksAktif: { color: WARNA.biruMuda },
+
+  tabBar: {
+    flexDirection: "row",
+    borderTopWidth: 1,
+    borderTopColor: WARNA.garis,
+    backgroundColor: "#0d1219",
+    paddingBottom: 10,
+    paddingTop: 8,
+  },
+  tabItem: { flex: 1, alignItems: "center", justifyContent: "center", paddingVertical: 4 },
+  tabIkon: { color: WARNA.redup, fontSize: 18, lineHeight: 22 },
+  tabIkonAktif: { color: WARNA.biruMuda },
+  tabLabel: { color: WARNA.redup, fontSize: 11, marginTop: 2 },
+  tabLabelAktif: { color: WARNA.biruMuda, fontWeight: "700" },
   riwayatNama: { color: WARNA.teks, fontSize: 13, fontWeight: "600" },
   riwayatMeta: { color: WARNA.redup, fontSize: 11, marginTop: 1 },
   aktivitasJudul: { color: WARNA.teks, fontSize: 15, fontWeight: "700", marginBottom: 8 },

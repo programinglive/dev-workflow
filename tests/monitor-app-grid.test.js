@@ -42,9 +42,10 @@ test("detail memuat rencana dan DoD, bukan hanya ringkasan", () => {
 });
 
 test("detail mengikuti data terbaru, bukan salinan beku", () => {
-  // Kalau sesi diperbarui saat modal terbuka, isinya harus ikut segar.
+  // Kalau sesi diperbarui saat modal terbuka, isinya harus ikut segar. Detail
+  // mencari di gabungan sesi aktif DAN riwayat, karena keduanya bisa dibuka.
   assert.match(app, /const sesiDipilih = useMemo\(/);
-  assert.match(app, /sesi\.find\(\(s\) => s\.session_key === dipilih\)/);
+  assert.match(app, /semua\.find\(\(s\) => s\.session_key === dipilih\)/);
 });
 
 test("setiap pemakaian ago() tetap memakai jam server", () => {

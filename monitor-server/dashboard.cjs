@@ -413,11 +413,26 @@ const server = http.createServer(async (req, res) => {
       // Riwayat sesi SELESAI. Durasi dihitung database supaya sama di semua
       // perangkat, dan tidak ada data yang dihapus.
       const hq = buildHistoryQuery({ historyDays: HISTORY_DAYS });
+      // Waktu acuan untuk menurunkan status, dipakai kartu aktif DAN riwayat.
+      const nowMs = Date.now();
       const historyRows = await query(hq.sql, hq.params);
-      const history = historyRows.rows.map((r) => ({
-        ...r,
-        duration_label: formatDuration(r.duration_seconds),
-      }));
+      const history = historyRows.rows.map((r) => {
+        // Status memakai fungsi yang SAMA dengan kartu aktif, supaya riwayat
+        // dan kartu tidak pernah berbeda pendapat soal sesi yang sama.
+        const st = classifySession({
+          phase: r.phase,
+          updatedAt: r.updated_at,
+          now: nowMs,
+          liveMs: LIVE_MS,
+          stuckMs: STUCK_MS,
+        });
+        return {
+          ...r,
+          duration_label: formatDuration(r.duration_seconds),
+          state: st.status,
+          state_label: LABELS[st.status] || st.status,
+        };
+      });
       // Waktu acuan SERVER, dikirim ke klien.
       //
       // MENGAPA: aplikasi menghitung "4m lalu" dari jam PERANGKAT. Kalau jam
@@ -429,7 +444,6 @@ const server = http.createServer(async (req, res) => {
       // Status diturunkan dari umur laporan, bukan diklaim dari `phase`.
       // Task yang selesai tanpa mengubah phase menjadi idle akan tampak
       // "mungkin macet" atau "berakhir", bukan "aktif" selamanya.
-      const nowMs = Date.now();
       const rows = sessions.rows.map((row) => {
         const s = classifySession({
           phase: row.phase,
