@@ -219,13 +219,14 @@ export default function App() {
                   <View
                     style={[
                       gaya.titik,
-                      { backgroundColor: m.online ? WARNA.hijau : WARNA.abu },
+                      { backgroundColor: m.stale ? WARNA.kuning : WARNA.hijau },
                     ]}
                   />
                   <Text style={gaya.mesinNama}>{m.machine}</Text>
                   <Text style={gaya.mesinMeta} numberOfLines={1}>
-                    {m.online ? "online" : "offline"} · {ago(m.last_seen, jamServer)}
+                    terakhir melapor {ago(m.last_seen, jamServer)}
                     {m.last_project ? " · " + m.last_project : ""}
+                    {m.stale ? " · sudah lama tidak melapor" : ""}
                   </Text>
                 </View>
               ))}
