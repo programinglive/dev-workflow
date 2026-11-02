@@ -88,6 +88,25 @@ export async function loadStateVersioned(input) {
   return db.loadStateVersioned(input);
 }
 
+/** Menitipkan satu perubahan ke antrean replika. Lihat db/replicate.js. */
+export async function enqueueSync(kind, dedupeKey, payload) {
+  const { enqueue } = await import("./replicate.js");
+  const db = await getAdapter();
+  return enqueue(db, kind, dedupeKey, payload);
+}
+
+/** Mengirim isi antrean replika sebentar saja. Tidak pernah melempar. */
+export async function drainSync(options = {}) {
+  const { drainSync: drain } = await import("./replicate.js");
+  return drain(options);
+}
+
+/** Jumlah dan umur baris yang belum terkirim ke replika. */
+export async function queueDepth() {
+  const { queueDepth: depth } = await import("./replicate.js");
+  return depth();
+}
+
 export async function getState(userId, projectPath) {
   const db = await getAdapter();
   return await db.getState(userId, projectPath);
