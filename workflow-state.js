@@ -5,6 +5,7 @@ import path from "path";
 import { assertSafeKnowledge } from './security/policy.js';
 import { sanitize } from './security/sanitizer.js';
 import { normalizeItems as normalizeDodItems, mergeDefinitionOfDone as mergeDodItems } from './tools/handler-modules/dod.js';
+import { resolveSessionKeyWithSource } from './db/session-key.js';
 import { normalizePlan } from './tools/handler-modules/plan.js';
 import { fileURLToPath } from "url";
 import { pathToFileURL } from "url";
@@ -1170,6 +1171,21 @@ export class WorkflowState {
     // Konflik penyimpanan terakhir, dibaca oleh lapisan tool untuk memberi tahu
     // pengguna. Null berarti penyimpanan terakhir aman.
     this.lastConflict = null;
+
+    // Penyimpanan state sekarang SQLite, bukan berkas JSON.
+    //
+    // `options.db` bisa diinjeksi supaya tes memakai database sementara tanpa
+    // menyentuh yang asli. `options.replica` adalah tujuan salinan best-effort
+    // (Postgres untuk dashboard); bila kosong, antrean replika tidak dipakai.
+    this.dbAdapter = options.db || null;
+    this.replica = options.replica || null;
+
+    // Identitas sesi untuk kunci baris. Diisi dispatcher lewat `useSession`, atau
+    // lewat `options.sessionId` pada pemanggil seperti tes dan CLI.
+    this.sessionId = options.sessionId || null;
+
+    // Versi baris yang kita pegang. `null` berarti "belum pernah menyimpan".
+    this.stateVersion = null;
     this.state = {
       currentPhase: "idle",
       classification: "INTERNAL",
@@ -1602,51 +1618,114 @@ export class WorkflowState {
 
   async save(options = {}) {
     assertSafeKnowledge(this.state);
-    const reconciled = await this.reconcileWithDisk();
-    assertSafeKnowledge(this.state);
+
+    const db = await this._db();
+    const { key: sessionKey, source: keySource } = this._sessionKey();
+    const userId = getCurrentUserId(this.stateFile);
+    const projectPath = this._projectPath();
+
+    // Baca baris SESI INI dari SQLite. `null` berarti sesi baru - bukan
+    // kegagalan. Isi yang rusak melempar dari adapter, dan itu memang benar:
+    // "gagal membaca" tidak boleh berubah menjadi "kosong".
+    const existing = await db.loadStateVersioned({ userId, projectPath, sessionKey });
+    const reconciled = this._reconciledFrom(existing);
 
     // Penulis basi tidak boleh menang.
     //
     // Bug 29 Okt 2026: satu proses MCP memegang state lama, lalu menyimpan
     // sesudah proses lain memulai task baru. Task baru tertimpa dan pemanggil
-    // tetap diberi tahu "berhasil" - `get_workflow_status` berikutnya
-    // menampilkan task yang sama sekali lain.
+    // tetap diberi tahu "berhasil". Pemeriksaan ini tetap ada, tetapi sekarang
+    // membaca baris milik sesi ini saja - bukan berkas yang dipakai bersama.
     const conflict = this.detectStaleOverwrite(reconciled, options);
+    this.mergeMonotonicProgress(reconciled);
+    this.mergeDefinitionOfDone(reconciled);
+
     if (conflict) {
-      await this.adoptDiskState();
+      this._adoptState(existing?.state ?? null);
       this.lastConflict = conflict;
+      await this._exportJson();
       return { ...reconciled, conflict, verified: false };
     }
     this.lastConflict = null;
-
-    // Dua proses MCP bisa melayani sesi yang SAMA (OpenCode men-spawn lebih dari
-    // satu instance), dan keduanya menulis berkas state yang sama. Tanpa ini,
-    // proses yang memegang state basi menimpa langkah yang sudah dicapai proses
-    // lain: `mark_bug_fixed` menjawab sukses, lalu `create_tests` menjawab
-    // "mark your feature/bug as fixed first". Gejalanya intermiten, sehingga
-    // mudah disalahkan pada hal lain.
-    //
-    // Langkah workflow bersifat monoton dalam satu task: sekali tercapai, tidak
-    // boleh mundur. Karena itu digabung dengan OR - tetapi HANYA bila task di
-    // disk memang task yang sama. `start_task` mengganti task, dan pada saat itu
-    // flag harus benar-benar direset, bukan dihidupkan kembali.
-    this.mergeMonotonicProgress(reconciled);
-    this.mergeDefinitionOfDone(reconciled);
 
     this.state.owner = {
       processMarker: PROCESS_TOKEN,
       pid: process.pid,
       updatedAt: new Date().toISOString(),
     };
-    await fs.writeFile(this.stateFile, JSON.stringify(this.state, null, 2));
-    // History ditulis ke berkas bersama supaya sesi lain melihat task yang
-    // selesai di sini, sementara task yang sedang berjalan tetap milik sesi.
-    await this.writeHistoryFile();
-    await ensureCompatibilityLinks(this.stateFile);
-    await this.updateProjectSummary();
-    await this.syncToDatabase();
+
+    let written;
+    try {
+      written = await db.saveStateVersioned({
+        userId,
+        projectPath,
+        sessionKey,
+        state: this.state,
+        expectedVersion: existing ? existing.version : null,
+      });
+    } catch (error) {
+      if (error?.code === "STATE_CONFLICT") {
+        // Ada penulis lain yang lebih dulu pada kunci yang sama. Bukan
+        // kerusakan: baris pemenang utuh. Pemanggil diberi tahu, bukan diberi
+        // "berhasil" palsu.
+        const winner = await db.loadStateVersioned({ userId, projectPath, sessionKey });
+        this._adoptState(winner?.state ?? null);
+        this.lastConflict = {
+          diskTask: winner?.state?.taskDescription || "",
+          staleTask: "",
+          diskPhase: winner?.state?.currentPhase || "idle",
+          reason: error.message,
+        };
+        await this._exportJson();
+        return { ...reconciled, conflict: this.lastConflict, verified: false };
+      }
+      throw error;
+    }
+
+    this.stateVersion = written.version;
     this.lastReconcile = reconciled;
     this.loadedTask = this.state.taskDescription || "";
+
+    // Catat siapa yang menulis, supaya dua proses pada kunci yang sama bisa
+    // terlihat di `get_workflow_status` alih-alih hanya terasa sebagai keanehan.
+    try {
+      db.db
+        .prepare(
+          `INSERT INTO state_writer (user_id, project_path, session_key, pid, process_token, key_source, last_write_at)
+           VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+           ON CONFLICT(user_id, project_path, session_key) DO UPDATE SET
+             pid = excluded.pid,
+             process_token = excluded.process_token,
+             key_source = excluded.key_source,
+             last_write_at = datetime('now')`,
+        )
+        .run(userId, projectPath, sessionKey, process.pid, PROCESS_TOKEN, keySource);
+    } catch (error) {
+      safeLog("warn", `Gagal mencatat penulis state: ${error.message}`);
+    }
+
+    // Berikutnya semuanya opsional: ekspor, history, ringkasan, replika, monitor.
+    // Tidak satu pun boleh menggagalkan penyimpanan yang sudah berhasil - itu
+    // kelas bug yang membuat dokumentasi hilang karena hal lain gagal.
+    await this._exportJson();
+
+    try {
+      await this.writeHistoryFile();
+      await this.updateProjectSummary();
+    } catch (error) {
+      safeLog("warn", `Riwayat/ringkasan gagal diperbarui: ${error.message}`);
+    }
+
+    if (this.replica) {
+      try {
+        const { enqueue, drainSync } = await import("./db/replicate.js");
+        await enqueue(db, "state", `${userId}|${projectPath}|${sessionKey}`, JSON.stringify(this.state));
+        await drainSync({ replica: this.replica, budgetMs: 1200, adapter: db });
+      } catch (error) {
+        safeLog("warn", `Replika state gagal: ${error.message}`);
+      }
+    }
+
     await this.verifyPersisted(this.loadedTask);
 
     // Laporan ke dashboard pusat. DITUNGGU tetapi berbatas waktu keras di
@@ -1660,7 +1739,7 @@ export class WorkflowState {
       createdAt: this.sessionStartedAt || "",
     });
 
-    return reconciled;
+    return { ...reconciled, verified: true, version: written.version };
   }
 
   /**
@@ -1720,14 +1799,20 @@ export class WorkflowState {
    * sudah ditimpa proses lain.
    */
   async verifyPersisted(expectedTask) {
-    const disk = await this.readDiskState();
-    if (!disk) {
-      return true;
-    }
-    const actual = disk.taskDescription || "";
+    // Dibaca ulang dari SQLite, bukan dari berkas: berkas JSON kini hanya
+    // ekspor, dan menganggapnya bukti kebenaran berarti memeriksa cermin.
+    const db = await this._db();
+    const { key: sessionKey } = this._sessionKey();
+    const userId = getCurrentUserId(this.stateFile);
+    const projectPath = this._projectPath();
+
+    const row = await db.loadStateVersioned({ userId, projectPath, sessionKey });
+    if (!row) return true;
+
+    const actual = row.state?.taskDescription || "";
     if (actual !== (expectedTask || "")) {
       throw new Error(
-        `State workflow tidak bertahan: yang ditulis "${expectedTask}" tetapi di disk "${actual}". ` +
+        `State workflow tidak bertahan: yang ditulis "${expectedTask}" tetapi tersimpan "${actual}". ` +
         `Proses MCP lain menimpanya. Muat ulang state sebelum melanjutkan.`
       );
     }
@@ -1871,6 +1956,83 @@ export class WorkflowState {
     });
     result.preservedTask = disk.taskDescription;
     return result;
+  }
+
+  /**
+   * Adapter SQLite yang dipakai menyimpan state hidup.
+   *
+   * Dimuat malas supaya modul ini tetap bisa diimpor oleh tes yang tidak
+   * menyentuh database sama sekali.
+   */
+  async _db() {
+    if (!this.dbAdapter) {
+      const mod = await import("./db/index.js");
+      this.dbAdapter = await mod.getAdapter();
+    }
+    return this.dbAdapter;
+  }
+
+  /** Kunci sesi untuk baris state, beserta asalnya untuk dicatat. */
+  _sessionKey() {
+    return resolveSessionKeyWithSource(process.env, this.sessionId);
+  }
+
+  /** Identitas proyek yang dipakai baris database. Sama dengan yang dipakai migrasi. */
+  _projectPath() {
+    return resolveProjectRootForState(this.stateFile);
+  }
+
+  /**
+   * Membentuk objek `reconciled` dari baris database, bukan dari berkas.
+   *
+   * Bentuknya sengaja dibuat sama dengan hasil `reconcileWithDisk` supaya
+   * `detectStaleOverwrite`, `mergeMonotonicProgress`, dan `mergeDefinitionOfDone`
+   * tetap bisa dipakai apa adanya - aturan penggabungannya masih benar, yang
+   * berubah hanya sumber datanya.
+   */
+  _reconciledFrom(existing) {
+    const state = existing?.state ?? null;
+    return {
+      diskState: state,
+      diskTask: state?.taskDescription || "",
+      diskPhase: state?.currentPhase || "idle",
+      diskVersion: existing?.version ?? null,
+      fromDatabase: true,
+    };
+  }
+
+  /** Mengambil state pemenang setelah konflik. */
+  _adoptState(otherState) {
+    if (!otherState) return false;
+    const ourHistory = Array.isArray(this.state.history) ? this.state.history : [];
+    this.state = { ...otherState, history: ourHistory };
+    this.loadedTask = this.state.taskDescription || "";
+    return true;
+  }
+
+  /**
+   * Menulis salinan JSON sebagai ekspor.
+   *
+   * Ini BUKAN sumber kebenaran lagi, dan kegagalan menulisnya tidak boleh
+   * menggagalkan penyimpanan: tugasnya memudahkan pembacaan manual dan alat
+   * lama, bukan menjaga data.
+   */
+  async _exportJson() {
+    try {
+      const tmp = `${this.stateFile}.tmp-${process.pid}`;
+      await fs.mkdir(path.dirname(this.stateFile), { recursive: true });
+      await fs.writeFile(tmp, JSON.stringify(this.state, null, 2));
+      await fs.rename(tmp, this.stateFile);
+
+      // Cermin ke lokasi kompatibilitas lama. Tetap dilakukan karena alat lama
+      // membaca jalur itu; yang berubah hanya statusnya - sekarang salinan,
+      // bukan sumber kebenaran.
+      await ensureCompatibilityLinks(this.stateFile);
+      return true;
+    } catch (error) {
+      safeLog("warn", `Ekspor JSON gagal ditulis (state tetap tersimpan di SQLite): ${error.message}`);
+      return false;
+    }
   }
 
   async updateProjectSummary() {

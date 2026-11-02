@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { WorkflowState, ensureUserIdFile } from "../workflow-state.js";
+import { SqliteAdapter } from "../db/adapters/sqlite.js";
 
 /**
  * TES PERILAKU: "GAGAL MEMBACA" TIDAK BOLEH BERARTI "TIDAK ADA ISI"
@@ -143,29 +144,35 @@ test("history bersama tetap digabung normal (tidak ada regresi)", async () => {
   });
 });
 
-test("berkas state yang TIDAK TERBACA tidak ditimpa oleh state di memori", async () => {
-  await withLayout(async ({ stateFile }) => {
-    const milikSesiLain = {
-      currentPhase: "coding",
-      taskDescription: "pekerjaan sesi lain yang masih berjalan",
-      taskType: "feature",
-      history: [],
-      owner: { processMarker: "proc-other", pid: 4242, updatedAt: new Date().toISOString() },
-    };
-    await writeFile(stateFile, JSON.stringify(milikSesiLain, null, 2));
+test("state yang RUSAK di penyimpanan tidak ditimpa oleh state di memori", async () => {
+  await withLayout(async ({ tempDir, stateFile }) => {
+    const adapter = new SqliteAdapter({ dbPath: path.join(tempDir, "state.db") });
+    await adapter.connect();
+    const tugas = new WorkflowState(stateFile, { db: adapter, sessionId: "ses-uji" });
 
-    const tugas = new WorkflowState(stateFile, { fs: fsGagal(stateFile) });
     tugas.state.currentPhase = "coding";
-    tugas.state.taskDescription = "tugas proses ini yang sudah basi";
+    tugas.state.taskDescription = "pekerjaan sesi lain yang masih berjalan";
+    await tugas.save();
+
+    // Rusakkan isi baris seperti tulisan yang terpotong atau disk yang korup.
+    adapter.db.prepare("UPDATE workflow_state SET state_json = '{ terpotong'").run();
+
+    const tugasBasi = new WorkflowState(stateFile, { db: adapter, sessionId: "ses-uji" });
+    tugasBasi.state.currentPhase = "coding";
+    tugasBasi.state.taskDescription = "tugas proses ini yang sudah basi";
 
     await assert.rejects(
-      () => tugas.save(),
-      /tidak bisa dibaca/i,
-      "menyimpan harus DITOLAK, bukan menimpa pekerjaan proses lain",
+      () => tugasBasi.save(),
+      (e) => e.code === "STATE_UNAVAILABLE",
+      "state yang tidak bisa dibaca harus DITOLAK, bukan ditimpa",
     );
 
-    const isi = JSON.parse(await readFile(stateFile, "utf-8"));
-    assert.equal(isi.taskDescription, "pekerjaan sesi lain yang masih berjalan");
+    const masihRusak = adapter.db
+      .prepare("SELECT state_json FROM workflow_state WHERE session_key = 'ses-uji'")
+      .get().state_json;
+    assert.equal(masihRusak, "{ terpotong", "isi asli tidak boleh tertimpa");
+
+    await adapter.close();
   });
 });
 
