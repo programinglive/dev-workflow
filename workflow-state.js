@@ -5,7 +5,7 @@ import path from "path";
 import { assertSafeKnowledge } from './security/policy.js';
 import { sanitize } from './security/sanitizer.js';
 import { normalizeItems as normalizeDodItems, mergeDefinitionOfDone as mergeDodItems } from './tools/handler-modules/dod.js';
-import { resolveSessionKeyWithSource, sanitizeSessionKey } from './db/session-key.js';
+import { resolveSessionKeyWithSource, sanitizeSessionKey, normalizeProjectPath } from './db/session-key.js';
 import { StateUnavailable, StateConflict } from './db/errors.js';
 import { normalizePlan } from './tools/handler-modules/plan.js';
 import { fileURLToPath } from "url";
@@ -1805,16 +1805,10 @@ export class WorkflowState {
       safeLog("warn", `Sinkronisasi history ke database gagal: ${error.message}`);
     }
 
-    if (this.replica) {
-      try {
-        const { enqueue, drainSync } = await import("./db/replicate.js");
-        await enqueue(db, "state", `${userId}|${projectPath}|${sessionKey}`, JSON.stringify(this.state));
-        await drainSync({ replica: this.replica, budgetMs: 1200, adapter: db });
-      } catch (error) {
-        safeLog("warn", `Replika state gagal: ${error.message}`);
-      }
-    }
-
+    // Sambungkan antrean replika: laporan yang gagal terkirim ke dashboard
+    // ditampung di sini, bukan ditelan. Kegagalannya tidak pernah menggagalkan
+    // penyimpanan - lihat _replicate.
+    await this._replicate(db, userId, projectPath, sessionKey);
     await this.verifyPersisted(this.loadedTask);
 
     // Laporan ke dashboard pusat. DITUNGGU tetapi berbatas waktu keras di
@@ -2253,9 +2247,66 @@ export class WorkflowState {
     }
   }
 
-  /** Identitas proyek yang dipakai baris database. Sama dengan yang dipakai migrasi. */
+  /**
+   * Mengirim salinan state ke dashboard, dengan antrean sebagai penampung.
+   *
+   * Antrean ini BUKAN jalur kedua. Dashboard tetap menerima data dari satu
+   * tempat: `reportSnapshot`. Yang berubah: kalau pengiriman gagal - server mati,
+   * laptop di luar jaringan - laporannya masuk antrean dan dicoba lagi pada
+   * penyimpanan berikutnya. Sebelumnya laporan itu ditelan, dan dashboard tidak
+   * pernah tahu ada langkah yang terlewat.
+   *
+   * Tidak pernah melempar: penyimpanan state sudah berhasil sebelum ini.
+   */
+  async _replicate(db, userId, projectPath, sessionKey) {
+    try {
+      const monitorPath = path.join(__dirname, "monitor.js");
+      if (!existsSync(monitorPath)) return;
+      const mod = await import(pathToFileURL(monitorPath).href);
+
+      // Tanpa tujuan yang dikonfigurasi dan tanpa replika yang diinjeksi, tidak
+      // ada gunanya mengisi antrean: tidak akan pernah ada yang mengurasnya.
+      if (!this.replica && !mod.monitorUrl()) return;
+
+      const snapshot = mod.buildSnapshot({
+        state: this.state,
+        sessionKey,
+        projectPath: this.state.projectDir || "",
+        sessionStartedAt: this.state.taskStartedAt || this.sessionStartedAt || "",
+      });
+
+      const { enqueue, drainSync } = await import("./db/replicate.js");
+      await enqueue(db, "snapshot", `${userId}|${projectPath}|${sessionKey}`, JSON.stringify(snapshot));
+
+      const replica = this.replica || {
+        // `reportSnapshot` mengembalikan `false` saat gagal - termasuk saat
+        // server menolak atau jaringannya putus - dan TIDAK melempar. Antrean
+        // membaca "selesai tanpa error" sebagai terkirim, jadi `false` harus
+        // diubah menjadi lemparan. Tanpa ini barisnya dihapus tanpa pernah
+        // sampai, dan antreannya kosong padahal dashboard tidak menerima apa pun.
+        push: async (row) => {
+          const terkirim = await mod.reportSnapshot({ snapshot: JSON.parse(row.payload) });
+          if (!terkirim) {
+            throw new Error("dashboard tidak menerima laporan (tidak terjangkau atau menolak)");
+          }
+        },
+      };
+
+      await drainSync({ replica, budgetMs: 1200, adapter: db });
+    } catch (error) {
+      safeLog("warn", `Replika state gagal: ${error.message}`);
+    }
+  }
+
+  /**
+   * Identitas proyek yang dipakai baris database. Sama dengan yang dipakai migrasi.
+   *
+   * Dinormalkan supaya satu proyek tidak menjadi dua baris hanya karena ejaannya
+   * berbeda (`D:\Code\Foo` vs `d:/code/foo`). Tanpa ini, `state_writer` dan
+   * `workflow_state` bisa menunjuk proyek yang sama dengan dua ejaan.
+   */
   _projectPath() {
-    return resolveProjectRootForState(this.stateFile);
+    return normalizeProjectPath(resolveProjectRootForState(this.stateFile));
   }
 
   /**
