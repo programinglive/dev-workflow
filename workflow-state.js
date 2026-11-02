@@ -1183,6 +1183,10 @@ export class WorkflowState {
 
     // Versi baris yang kita pegang. `null` berarti "belum pernah menyimpan".
     this.stateVersion = null;
+
+    // Berapa entri riwayat yang SUDAH ada di tabel. Dipakai supaya penyimpanan
+    // hanya mengirim entri baru, bukan meng-upsert seluruh riwayat setiap kali.
+    this._syncedHistoryCount = 0;
     this.state = {
       currentPhase: "idle",
       classification: "INTERNAL",
@@ -1332,6 +1336,7 @@ export class WorkflowState {
       if (!adopted) {
         // Benar-benar sesi baru: state default dari constructor sudah tepat.
         // History proyek tetap dibaca supaya rekomendasi tidak buta.
+        await this._hydrateHistoryFromDatabase(db, userId, projectPath);
         await this.mergeSharedHistory();
         this.loadedTask = "";
         // Ekspor awal supaya alat yang membaca JSON tidak menemui berkas hilang
@@ -1354,6 +1359,8 @@ export class WorkflowState {
       ...this.state,
       ...parsed,
     };
+    // Riwayat dipulihkan dari TABEL, karena ia tidak lagi ikut di `state_json`.
+    await this._hydrateHistoryFromDatabase(db, userId, projectPath);
     await this.mergeSharedHistory();
     this.loadedTask = this.state.taskDescription || "";
       if (typeof this.state.testsCreated !== "boolean") {
@@ -1662,12 +1669,20 @@ export class WorkflowState {
     };
 
     let written;
+    // `history` TIDAK ikut ke `state_json`.
+    //
+    // Riwayat sudah tersimpan di tabel `workflow_history`, dan menyimpannya dua
+    // kali membuat setiap langkah workflow menulis ulang seluruh riwayat. Yang
+    // diukur di mesin ini: 96 KB per simpan, 74% di antaranya riwayat, dan
+    // angkanya naik terus seiring usia proyek - di jalur terpanas sistem.
+    const { history: _omitHistory, ...persistedState } = this.state;
+
     try {
       written = await db.saveStateVersioned({
         userId,
         projectPath,
         sessionKey,
-        state: this.state,
+        state: persistedState,
         // Versi yang KITA PEGANG, bukan yang barusan dibaca ulang. Memakai
         // hasil baca ulang membuat pemeriksaan versi tidak pernah menolak
         // apa pun: celah antara baca dan tulis nyaris nol, sehingga dua proses
@@ -1708,11 +1723,12 @@ export class WorkflowState {
           };
 
           try {
+            const { history: _omitRetryHistory, ...retryState } = this.state;
             written = await db.saveStateVersioned({
               userId,
               projectPath,
               sessionKey,
-              state: this.state,
+              state: retryState,
               expectedVersion: latest.version,
             });
           } catch (retryError) {
@@ -2145,32 +2161,95 @@ export class WorkflowState {
   }
 
   /**
-   * Menyalin history sesi ini ke tabel `workflow_history`.
+   * Menyalin riwayat ke tabel `workflow_history`.
    *
-   * Satu entri yang gagal tidak boleh menghentikan sisanya: dulu kegagalan
-   * pertama membatalkan seluruh fungsi, sehingga riwayat proyek diam-diam
-   * berhenti tersimpan sama sekali.
+   * Hanya entri yang BELUM tersimpan yang dikirim. Sebelumnya seluruh riwayat
+   * di-upsert setiap penyimpanan: pada riwayat 85 entri itu berarti 85 upsert
+   * per langkah workflow, dan angkanya tumbuh seiring usia proyek.
+   *
+   * `_syncedHistoryCount` diisi saat `load()` dari jumlah baris yang sudah ada,
+   * dan dinaikkan setiap kali entri berhasil dikirim. Satu entri yang gagal
+   * tidak menghentikan sisanya - dulu kegagalan pertama membatalkan seluruh
+   * fungsi sehingga riwayat berhenti tersimpan tanpa ada yang tahu.
    */
   async _syncHistoryToDatabase(db, userId, projectPath) {
-    if (typeof db.insertHistoryEntry !== "function") return { skipped: 0 };
+    if (typeof db.insertHistoryEntry !== "function") return { skipped: 0, sent: 0 };
 
+    const history = Array.isArray(this.state.history) ? this.state.history : [];
+    const from = Math.min(this._syncedHistoryCount || 0, history.length);
     let skipped = 0;
-    for (const entry of this.state.history || []) {
+    let sent = 0;
+
+    for (const entry of history.slice(from)) {
       try {
         await db.insertHistoryEntry(userId, projectPath, entry);
+        sent += 1;
+        this._syncedHistoryCount = from + sent;
       } catch (error) {
         skipped += 1;
         safeLog("warn", `Entri history dilewati: ${error.message}`);
       }
     }
 
-    try {
-      await db.updateSummaryForUser(userId, projectPath);
-    } catch (error) {
-      safeLog("warn", `Ringkasan proyek gagal diperbarui: ${error.message}`);
+    // Ringkasan hanya perlu dihitung ulang bila ada yang berubah.
+    if (sent > 0) {
+      try {
+        await db.updateSummaryForUser(userId, projectPath);
+      } catch (error) {
+        safeLog("warn", `Ringkasan proyek gagal diperbarui: ${error.message}`);
+      }
     }
 
-    return { skipped };
+    return { skipped, sent };
+  }
+
+  /**
+   * Memulihkan riwayat dari tabel, bukan dari `state_json`.
+   *
+   * Riwayat dikeluarkan dari `state_json` supaya setiap penyimpanan tidak
+   * menulis ulang seluruh riwayat. Tabelnya sudah lama ada dan berkunci per
+   * PROYEK - tempat yang benar untuk catatan proyek.
+   */
+  async _hydrateHistoryFromDatabase(db, userId, projectPath) {
+    const history = this.state.history || [];
+
+    if (typeof db.getHistoryForUser !== "function") {
+      this._syncedHistoryCount = history.length;
+      return 0;
+    }
+
+    try {
+      const result = await db.getHistoryForUser(userId, projectPath, { pageSize: 100, page: 1 });
+      const stored = (result?.entries || []).map((row) => ({
+        classification: row.classification || "INTERNAL",
+        taskDescription: row.task_description || "",
+        taskType: row.task_type || "other",
+        commitMessage: row.commit_message || "",
+        timestamp: row.timestamp,
+        ...(row.forced ? { forced: true, forceReason: row.force_reason || "" } : {}),
+        ...(row.dropped ? { dropped: true, dropReason: row.drop_reason || "" } : {}),
+      }));
+
+      // Urutan tabel menurun (terbaru dulu); memori memakai urutan naik.
+      const merged = [...stored].reverse();
+      const existingKeys = new Set(
+        history.map((entry) => `${entry.timestamp}|${entry.taskDescription}`),
+      );
+      for (const entry of merged) {
+        const key = `${entry.timestamp}|${entry.taskDescription}`;
+        if (!existingKeys.has(key)) {
+          history.push(entry);
+          existingKeys.add(key);
+        }
+      }
+      this.state.history = history;
+      this._syncedHistoryCount = history.length;
+      return merged.length;
+    } catch (error) {
+      safeLog("warn", `Riwayat tidak bisa dibaca dari database: ${error.message}`);
+      this._syncedHistoryCount = history.length;
+      return 0;
+    }
   }
 
   /** Identitas proyek yang dipakai baris database. Sama dengan yang dipakai migrasi. */

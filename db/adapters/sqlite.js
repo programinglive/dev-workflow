@@ -1,12 +1,35 @@
 import { safeLog } from '../../security/sanitizer.js';
 import Database from "better-sqlite3";
 import { existsSync, mkdirSync } from "fs";
+import os from "os";
 import path from "path";
 import { DbAdapter, normalizeTaskType } from "./base.js";
 import { assertSafeKnowledge, classify } from '../../security/policy.js';
 import { ensureSchema } from "../schema.js";
 import { normalizeProjectPath } from "../session-key.js";
 import { StateConflict, StateUnavailable } from "../errors.js";
+
+/**
+ * Apakah proses ini bagian dari `node --test`.
+ *
+ * Dua jalur: proses anak membawa `NODE_TEST_CONTEXT`, sedangkan proses utama
+ * membawa `--test` di argumennya.
+ */
+export function isTestProcess({ argv = process.argv, env = process.env } = {}) {
+  if (env && env.NODE_TEST_CONTEXT) return true;
+  return Array.isArray(argv) && argv.includes("--test");
+}
+
+/** Apakah berkas database berada di direktori sementara sistem. */
+export function isTempDatabasePath(dbPath) {
+  const value = typeof dbPath === "string" ? dbPath.trim() : "";
+  if (value === "") return false;
+  if (value === ":memory:") return true;
+
+  const resolved = path.resolve(value).toLowerCase();
+  const temp = path.resolve(os.tmpdir()).toLowerCase();
+  return resolved === temp || resolved.startsWith(temp + path.sep);
+}
 
 /**
  * Kunci sesi untuk snapshot tingkat proyek.
@@ -54,6 +77,22 @@ export class SqliteAdapter extends DbAdapter {
     async connect() {
         if (!this.db) {
             const dbPath = this.getDbPath();
+
+            // Penjaga isolasi tes. Database ini adalah SUMBER KEBENARAN state
+            // workflow; menjalankan tes yang menulis ke sini berarti mencampur
+            // sesi palsu dengan pekerjaan sungguhan, dan pada 2 November 2026
+            // itu benar-benar terjadi (2.544 baris riwayat uji di database
+            // produksi). Ditangkap SEBELUM berkas dibuka, supaya tidak ada
+            // setengah tulisan yang terlanjur masuk.
+            if (isTestProcess() && !isTempDatabasePath(dbPath)) {
+                throw new StateUnavailable(
+                    `Menolak membuka database state di "${dbPath}" dari proses tes. ` +
+                        `Tes harus memakai direktori sementara agar tidak menulis ke state sungguhan. ` +
+                        `Jalankan dengan '--import ./tests/setup-env.js', atau setel ` +
+                        `DEV_WORKFLOW_DB_PATH ke path di dalam tmp.`
+                );
+            }
+
             try {
                 // Direktori induk belum tentu ada: pada clone bersih, `.state/`
                 // belum pernah dibuat. Tanpa ini SQLite melempar
