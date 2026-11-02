@@ -10,6 +10,51 @@ import { normalizeProjectPath } from "../session-key.js";
 import { StateConflict, StateUnavailable } from "../errors.js";
 
 /**
+ * Menentukan lokasi berkas database state.
+ *
+ * MENGAPA TIDAK LAGI MENCARI `package.json`
+ * -----------------------------------------
+ * Versi sebelumnya berjalan naik dari `INIT_CWD` mencari `package.json`, berhenti
+ * di tempat pertama yang punya, lalu menaruh `.state/dev-workflow.db` di sana.
+ * Diukur 2 November 2026: direktori kerja sesi ini (`Documents\Default Project`)
+ * tidak punya `package.json`, akar drive juga tidak, sehingga pencarian berhenti
+ * di `C:\` dan database dibuat di `C:\.state\dev-workflow.db`.
+ *
+ * Akibatnya berkas sumber kebenaran TIDAK ikut bila folder proyek disalin atau
+ * di-backup, dan dokumentasi yang menyebut `<proyek>/.state/` menjadi bohong.
+ *
+ * Jangkar yang dipakai sekarang: direktori `.state` milik berkas state sesi itu
+ * sendiri - tempat seluruh state lain sudah tinggal. Bila berkas state belum
+ * diketahui, `.state` di bawah direktori kerja.
+ *
+ * `DEV_WORKFLOW_DB_PATH` tetap menang, karena tes dan CLI membutuhkannya.
+ */
+export function resolveDbPath({ stateFile = null, env = process.env, cwd = process.cwd() } = {}) {
+  const override = typeof env?.DEV_WORKFLOW_DB_PATH === "string" ? env.DEV_WORKFLOW_DB_PATH.trim() : "";
+  if (override) return override;
+
+  const dbName = "dev-workflow.db";
+
+  // 1. Dari berkas state: cari segmen `.state`, lalu taruh di dalamnya.
+  if (typeof stateFile === "string" && stateFile.trim() !== "") {
+    const resolved = path.resolve(stateFile);
+    const parts = resolved.split(path.sep);
+
+    const index = parts.lastIndexOf(".state");
+    if (index > 0) {
+      return path.join(parts.slice(0, index + 1).join(path.sep), dbName);
+    }
+
+    // Berkas state di luar tata letak `.state` (path eksplisit untuk tes/CLI).
+    return path.join(path.dirname(resolved), dbName);
+  }
+
+  // 2. Tanpa berkas state: `.state` di bawah direktori kerja.
+  const workDir = path.resolve(cwd || process.cwd());
+  return path.join(workDir, ".state", dbName);
+}
+
+/**
  * Apakah proses ini bagian dari `node --test`.
  *
  * Dua jalur: proses anak membawa `NODE_TEST_CONTEXT`, sedangkan proses utama
@@ -53,25 +98,14 @@ export class SqliteAdapter extends DbAdapter {
     }
 
     getDbPath() {
-        // If a specific path is provided in config, use it
+        // Jalur eksplisit menang (tes, CLI, atau DEV_WORKFLOW_DB_PATH).
         if (this.config.dbPath) {
             return this.config.dbPath;
         }
 
-        // Otherwise, attempt to find project root relative to CWD
-        const initCwd = process.env.INIT_CWD || process.cwd();
-        let projectRoot = initCwd;
-        let limit = 20; // Prevent infinite loop in weird environments
-        while (projectRoot !== path.dirname(projectRoot) && limit > 0) {
-            if (existsSync(path.join(projectRoot, "package.json"))) break;
-            projectRoot = path.dirname(projectRoot);
-            limit--;
-        }
-        if (limit === 0) {
-            safeLog('error', "Warning: Could not find project root effectively, defaulting to INIT_CWD");
-            projectRoot = initCwd;
-        }
-        return path.join(projectRoot, ".state", DB_FILENAME);
+        // Selain itu, jangkar ke `.state` milik berkas state sesi ini. Tidak
+        // pernah ke akar drive: lihat resolveDbPath.
+        return resolveDbPath({ stateFile: this.config.stateFile });
     }
 
     async connect() {
