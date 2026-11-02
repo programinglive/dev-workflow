@@ -6,6 +6,7 @@ import { assertSafeKnowledge } from './security/policy.js';
 import { sanitize } from './security/sanitizer.js';
 import { normalizeItems as normalizeDodItems, mergeDefinitionOfDone as mergeDodItems } from './tools/handler-modules/dod.js';
 import { resolveSessionKeyWithSource } from './db/session-key.js';
+import { StateUnavailable } from './db/errors.js';
 import { normalizePlan } from './tools/handler-modules/plan.js';
 import { fileURLToPath } from "url";
 import { pathToFileURL } from "url";
@@ -1245,11 +1246,18 @@ export class WorkflowState {
    * true bila berkas benar-benar berpindah.
    */
   async useSession(sessionId) {
+    // Identitas sesi HARUS disimpan: kunci baris SQLite memakainya. Sebelumnya
+    // `sessionId` hanya dipakai untuk memilih nama berkas, sehingga kunci state
+    // jatuh ke environment - dan satu variabel environment membuat semua sesi
+    // di proses ini berbagi satu baris.
+    const explicit = typeof sessionId === "string" ? sessionId.trim() : "";
     const target = resolveStateFile({ sessionId });
-    if (target === this.stateFile) return false;
+    if (target === this.stateFile && explicit === this.sessionId) return false;
 
+    this.sessionId = explicit || null;
     this.stateFile = target;
     this.historyFile = resolveHistoryFile(target);
+    this.stateVersion = null;
     // Mulai dari state bersih, lalu muat milik sesi itu. Menyalin state sesi
     // sebelumnya akan membuat sesi baru mewarisi gerbang kualitas sesi lain.
     this.state = {
@@ -1305,41 +1313,53 @@ export class WorkflowState {
   }
 
   async load() {
+    // Berkas bernama lama (`.workflow-state.json`) dipindahkan ke nama sekarang
+    // SEBELUM apa pun dibaca. Tanpa ini, pengguna yang memutakhirkan dari versi
+    // pra-1.16 akan tampak kehilangan seluruh state-nya.
     await migrateLegacyStateFile(this.stateFile);
-    try {
-      const hasil = await readJsonStateFile(this.stateFile, this.fs);
-      if (hasil.status === "missing") {
-        // Berkas memang belum ada: bukan kegagalan.
-        await this.ensurePrimaryFile();
+
+    const db = await this._db();
+    const { key: sessionKey } = this._sessionKey();
+    const userId = getCurrentUserId(this.stateFile);
+    const projectPath = this._projectPath();
+
+    // Migrasi berkas JSON lama dijalankan SEKALI per database, bukan tiap load.
+    await this._ensureMigrated(db, projectPath);
+
+    const row = await db.loadStateVersioned({ userId, projectPath, sessionKey });
+    this.stateVersion = row?.version ?? null;
+
+    if (!row) {
+      // Sesi ini belum punya baris. Bila berkas JSON-nya ada, adopsi sekali
+      // supaya task yang sedang berjalan tidak hilang saat pemutakhiran.
+      const adopted = await this._adoptLegacyJsonIfPresent(db, userId, projectPath, sessionKey);
+      if (!adopted) {
+        // Benar-benar sesi baru: state default dari constructor sudah tepat.
+        // History proyek tetap dibaca supaya rekomendasi tidak buta.
         await this.mergeSharedHistory();
+        this.loadedTask = "";
+        // Ekspor awal supaya alat yang membaca JSON tidak menemui berkas hilang
+        // hanya karena sesinya belum pernah menyimpan.
+        await this._exportJson();
+        try {
+          await this.updateProjectSummary();
+        } catch (error) {
+          safeLog("warn", `Ringkasan proyek awal gagal ditulis: ${error.message}`);
+        }
         return;
       }
-      if (hasil.status === "corrupt") {
-        const cadangan = await backupDamagedFile(this.stateFile, this.fs);
-        throw new Error(
-          `Berkas state "${this.stateFile}" rusak dan tidak bisa dibaca. ` +
-            `Isi aslinya disimpan di "${cadangan}". Perbaiki atau hapus berkas itu ` +
-            `sebelum melanjutkan - memuat state baru diam-diam akan membuat agen ` +
-            `lupa task yang sedang berjalan.`,
-        );
-      }
-      if (hasil.status === "unreadable") {
-        throw new Error(
-          `Berkas state "${this.stateFile}" tidak bisa dibaca ` +
-            `(${hasil.error?.code || hasil.error?.message}). Penulisan dibatalkan ` +
-            `supaya pekerjaan sesi lain tidak tertimpa.`,
-        );
-      }
-      const parsed = sanitize(migrateOwnerMetadata(hasil.data));
-      this.state = {
-        ...this.state,
-        ...parsed,
-      };
-      // Ensure compatibility mirrors exist whenever the primary file is present
-      // Run this as non-blocking to speed up startup
-      ensureCompatibilityLinks(this.stateFile).catch(() => { });
-      await this.mergeSharedHistory();
-      this.loadedTask = this.state.taskDescription || "";
+    }
+
+    const current = row ?? (await db.loadStateVersioned({ userId, projectPath, sessionKey }));
+    this.stateVersion = current?.version ?? null;
+
+    const parsed = sanitize(migrateOwnerMetadata(current.state));
+    this.state = {
+      ...this.state,
+      ...parsed,
+    };
+    await this.mergeSharedHistory();
+    this.loadedTask = this.state.taskDescription || "";
       if (typeof this.state.testsCreated !== "boolean") {
         this.state.testsCreated = false;
       }
@@ -1418,15 +1438,6 @@ export class WorkflowState {
       }
       // Berkas state dari versi sebelum fitur rencana tidak punya field ini.
       this.state.plan = normalizePlan(this.state.plan);
-    } catch (error) {
-      if (error?.code !== "ENOENT") {
-        throw error;
-      }
-      // Missing file is fine; bootstrap fresh artifacts for downstream consumers.
-      await this.ensurePrimaryFile();
-      // Sesi baru tetap harus melihat riwayat proyek yang sudah ada.
-      await this.mergeSharedHistory();
-    }
   }
 
   /**
@@ -1716,6 +1727,13 @@ export class WorkflowState {
       safeLog("warn", `Riwayat/ringkasan gagal diperbarui: ${error.message}`);
     }
 
+    // History milik PROYEK, jadi masuk tabel bersama - bukan hanya berkas.
+    try {
+      await this._syncHistoryToDatabase(db, userId, projectPath);
+    } catch (error) {
+      safeLog("warn", `Sinkronisasi history ke database gagal: ${error.message}`);
+    }
+
     if (this.replica) {
       try {
         const { enqueue, drainSync } = await import("./db/replicate.js");
@@ -1968,13 +1986,124 @@ export class WorkflowState {
     if (!this.dbAdapter) {
       const mod = await import("./db/index.js");
       this.dbAdapter = await mod.getAdapter();
+    } else if (typeof this.dbAdapter.connect === "function") {
+      // Adapter yang diinjeksi belum tentu sudah tersambung. `connect()`
+      // idempoten, jadi memanggilnya di sini aman dan menghilangkan urutan
+      // pemanggilan yang mudah salah.
+      await this.dbAdapter.connect();
     }
     return this.dbAdapter;
+  }
+
+  /**
+   * Mengadopsi berkas JSON sesi ini HANYA bila database belum punya barisnya.
+   *
+   * Ini jalur migrasi, bukan jalur baca. Sesi yang sudah punya baris tidak akan
+   * pernah menyentuh berkas JSON lagi - itulah janji yang dijaga desain ini.
+   * Tanpa adopsi, task yang sedang berjalan saat pemutakhiran dipasang akan
+   * hilang, dan itu kerugian yang tidak bisa diterima.
+   *
+   * Berkas yang RUSAK atau TIDAK TERBACA tetap menggagalkan load: memulai dari
+   * nol berarti melupakan task yang sedang berjalan.
+   */
+  async _adoptLegacyJsonIfPresent(db, userId, projectPath, sessionKey) {
+    const hasil = await readJsonStateFile(this.stateFile, this.fs);
+
+    if (hasil.status === "missing") return null;
+
+    if (hasil.status === "corrupt") {
+      const cadangan = await backupDamagedFile(this.stateFile, this.fs);
+      throw new StateUnavailable(
+        `Berkas state "${this.stateFile}" rusak dan tidak bisa dibaca, ` +
+          `sehingga state sesi "${sessionKey}" tidak boleh dimulai dari kosong. ` +
+          `Isi aslinya disimpan di "${cadangan}". Perbaiki atau hapus berkas itu ` +
+          `sebelum melanjutkan - memulai dari state kosong akan membuat agen lupa ` +
+          `task yang sedang berjalan.`,
+      );
+    }
+
+    if (hasil.status === "unreadable") {
+      throw new StateUnavailable(
+        `Berkas state "${this.stateFile}" tidak bisa dibaca ` +
+          `(${hasil.error?.code || hasil.error?.message}). Memulai dari state kosong ` +
+          `akan membuat pekerjaan sesi ini hilang tanpa jejak.`,
+      );
+    }
+
+    const state = sanitize(migrateOwnerMetadata(hasil.data));
+    if (!state || typeof state !== "object") return null;
+
+    try {
+      await db.saveStateVersioned({ userId, projectPath, sessionKey, state, expectedVersion: null });
+      safeLog("info", `State sesi "${sessionKey}" diadopsi dari berkas JSON ke SQLite.`);
+      return state;
+    } catch {
+      // Ada penulis lain yang lebih dulu menyiapkan baris ini; biarkan ia menang.
+      return null;
+    }
   }
 
   /** Kunci sesi untuk baris state, beserta asalnya untuk dicatat. */
   _sessionKey() {
     return resolveSessionKeyWithSource(process.env, this.sessionId);
+  }
+
+  /**
+   * Menjalankan migrasi berkas JSON lama SEKALI per database.
+   *
+   * Ditandai di `migration_log`, bukan dihitung ulang tiap load. Tanpa penanda,
+   * setiap start proses akan memindai seluruh pohon `.state` - dan pada mesin
+   * dengan ratusan berkas itu memperlambat setiap panggilan pertama.
+   */
+  async _ensureMigrated(db, projectPath) {
+    const done = db.db
+      .prepare("SELECT name FROM migration_log WHERE name = ?")
+      .get("legacy-json-v1");
+    if (done) return null;
+
+    const baseDir = path.join(projectPath, STATE_DIR);
+    const { migrateLegacyJson } = await import("./db/migrate-legacy.js");
+    const result = await migrateLegacyJson(db, { baseDir });
+
+    safeLog(
+      "info",
+      `Migrasi JSON lama: ${result.sessions} sesi masuk, ${result.legacyFallback} cadangan, ${result.skipped} dilewati.`,
+    );
+
+    db.db
+      .prepare("INSERT OR IGNORE INTO migration_log (name, applied_at) VALUES (?, datetime('now'))")
+      .run("legacy-json-v1");
+
+    return result;
+  }
+
+  /**
+   * Menyalin history sesi ini ke tabel `workflow_history`.
+   *
+   * Satu entri yang gagal tidak boleh menghentikan sisanya: dulu kegagalan
+   * pertama membatalkan seluruh fungsi, sehingga riwayat proyek diam-diam
+   * berhenti tersimpan sama sekali.
+   */
+  async _syncHistoryToDatabase(db, userId, projectPath) {
+    if (typeof db.insertHistoryEntry !== "function") return { skipped: 0 };
+
+    let skipped = 0;
+    for (const entry of this.state.history || []) {
+      try {
+        await db.insertHistoryEntry(userId, projectPath, entry);
+      } catch (error) {
+        skipped += 1;
+        safeLog("warn", `Entri history dilewati: ${error.message}`);
+      }
+    }
+
+    try {
+      await db.updateSummaryForUser(userId, projectPath);
+    } catch (error) {
+      safeLog("warn", `Ringkasan proyek gagal diperbarui: ${error.message}`);
+    }
+
+    return { skipped };
   }
 
   /** Identitas proyek yang dipakai baris database. Sama dengan yang dipakai migrasi. */

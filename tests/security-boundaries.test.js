@@ -83,7 +83,10 @@ test('JSON persistence rejects secrets before writing state or generated knowled
   state.state.taskDescription=key;
   await assert.rejects(state.save(),{code:'SECRET_CONTENT_DENIED'});
   assert.ok(!(await fs.readFile(state.stateFile,'utf8')).includes(key));
-  assert.ok(!(await fs.readFile(path.join(dir,'project-summary.json'),'utf8')).includes(key));
+  // Ringkasan proyek mungkin belum pernah ditulis untuk sesi baru; yang penting
+  // adalah bila ada, isinya tidak memuat rahasia.
+  const summary=await fs.readFile(path.join(dir,'project-summary.json'),'utf8').catch(()=>'');
+  assert.ok(!summary.includes(key));
 }));
 
 test('legacy knowledge and async handler failures are filtered before MCP output',async()=>temporary(async dir=>{
