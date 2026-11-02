@@ -348,7 +348,7 @@ export class SqliteAdapter extends DbAdapter {
 
     async insertHistoryEntry(userId, projectPath, entry) {
         await this.connect();
-        const normalizedProjectPath = projectPath || '';
+        const normalizedProjectPath = normalizeProjectPath(projectPath);
 
         // SQLite upsert syntax
         const stmt = this.db.prepare(`
@@ -382,7 +382,7 @@ export class SqliteAdapter extends DbAdapter {
 
     async updateSummaryForUser(userId, projectPath) {
         await this.connect();
-        const normalizedProjectPath = projectPath || '';
+        const normalizedProjectPath = normalizeProjectPath(projectPath);
 
         const getHistory = this.db.prepare(`
       SELECT classification, task_type, timestamp, task_description
@@ -433,7 +433,7 @@ export class SqliteAdapter extends DbAdapter {
 
     async getSummaryForUser(userId, projectPath) {
         await this.connect();
-        const normalizedProjectPath = projectPath || '';
+        const normalizedProjectPath = normalizeProjectPath(projectPath);
 
         const stmt = this.db.prepare(`
       SELECT * FROM project_summary WHERE user_id = ? AND project_path = ?
@@ -466,7 +466,7 @@ export class SqliteAdapter extends DbAdapter {
 
     async getHistoryForUser(userId, projectPath, options = {}) {
         await this.connect();
-        const normalizedProjectPath = projectPath || '';
+        const normalizedProjectPath = normalizeProjectPath(projectPath);
 
         const { page = 1, pageSize = 20, startDate, endDate } = options;
         const sanitizedPage = Math.max(1, Number.isFinite(Number(page)) ? Math.floor(Number(page)) : 1);
@@ -499,7 +499,7 @@ export class SqliteAdapter extends DbAdapter {
 
     async getHistorySummary(userId, projectPath, options = {}) {
         await this.connect();
-        const normalizedProjectPath = projectPath || '';
+        const normalizedProjectPath = normalizeProjectPath(projectPath);
 
         const { startDate, endDate, frequency = "daily" } = options;
         const format = FREQUENCY_FORMATS[frequency] || FREQUENCY_FORMATS.daily;
