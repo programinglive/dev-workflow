@@ -9,9 +9,16 @@ Berkas di `monitor-server/`:
 
 | Berkas | Isi |
 |---|---|
-| `dashboard.cjs` | Server HTTP: `/`, `/health`, `/api/sessions`, `/api/events`, `POST /api/session`, `POST /api/event` |
+| `dashboard.cjs` | Server HTTP: `/`, `/health`, `/api/sessions`, `/api/events`, `/api/share`, `POST /api/session`, `POST /api/event` |
 | `sessions-query.cjs` | Penyusun SQL daftar sesi (tanpa jaringan, bisa diuji) |
+| `share-links.cjs` | Token, URL publik, dan SQL `share_links` (murni) |
+| `share-page.cjs` | Halaman publik + OG tag + `PUBLIC_DENY` (murni) |
+| `share-route.cjs` | Penjaga Origin/header dan handler create/revoke/list |
+| `share-server.cjs` | Server publik `127.0.0.1:3200`, hanya `GET`/`HEAD` |
 | `devwf-monitor.service` | Unit systemd; kredensial dibaca dari `EnvironmentFile` |
+| `devwf-share.service` | Unit systemd untuk server publik |
+| `cloudflared-devwf-share.service` | Unit systemd tunnel `devwf-share` |
+| `share-tunnel.yml` | Config tunnel: `devwfshare.programinglive.com` -> `127.0.0.1:3200` |
 | `devwf-monitor.env.example` | Contoh isi `/etc/devwf-monitor.env` |
 
 ## Mengapa proses terpisah
@@ -24,9 +31,16 @@ Berkas di `monitor-server/`:
 
 | Berkas | Isi |
 |---|---|
-| `dashboard.cjs` | Server HTTP: `/`, `/health`, `/api/sessions`, `/api/events`, `POST /api/session`, `POST /api/event` |
+| `dashboard.cjs` | Server HTTP: `/`, `/health`, `/api/sessions`, `/api/events`, `/api/share`, `POST /api/session`, `POST /api/event` |
 | `sessions-query.cjs` | Penyusun SQL daftar sesi (tanpa jaringan, bisa diuji) |
+| `share-links.cjs` | Token, URL publik, dan SQL `share_links` (murni) |
+| `share-page.cjs` | Halaman publik + OG tag + `PUBLIC_DENY` (murni) |
+| `share-route.cjs` | Penjaga Origin/header dan handler create/revoke/list |
+| `share-server.cjs` | Server publik `127.0.0.1:3200`, hanya `GET`/`HEAD` |
 | `devwf-monitor.service` | Unit systemd; kredensial dibaca dari `EnvironmentFile` |
+| `devwf-share.service` | Unit systemd untuk server publik |
+| `cloudflared-devwf-share.service` | Unit systemd tunnel `devwf-share` |
+| `share-tunnel.yml` | Config tunnel: `devwfshare.programinglive.com` -> `127.0.0.1:3200` |
 | `devwf-monitor.env.example` | Contoh isi `/etc/devwf-monitor.env` |
 
 ## Mengemudikan tablet lewat adb
@@ -545,3 +559,132 @@ Setiap temuan di bawah ini punya bukti (uji nyata), bukan dugaan.
 - `tests/monitor-upsert-behavior.test.js` — **menjalankan SQL sungguhan ke
   PostgreSQL**: `unknown` tidak menimpa `codex`, tool baru tetap menggantikan,
   `project_name` bertahan, dan `started_at` tidak hilang.
+
+
+## Tautan berbagi sesi (share)
+
+Setiap sesi bisa dibagikan lewat tautan publik di domain utama:
+
+```
+https://devworkflow.programinglive.com/s/<token>
+```
+
+Tautan ini **permanen sampai dicabut**. Siapa pun yang memegangnya bisa
+membacanya tanpa login - itu memang tujuannya, supaya bisa ditempel ke
+WhatsApp. Isinya dibatasi ke status kerja.
+
+### Kenapa halaman publik dilayani proses KEDUA
+
+Situs `devworkflow.programinglive.com` adalah static export Netlify: tidak ada
+runtime, jadi ia tidak bisa membaca Postgres. Karena itu ada `share-server.cjs`
+di `127.0.0.1:3200`, dan Netlify mem-proxy `/s/*` ke tunnel yang mengarah ke
+sana.
+
+Memisahkan prosesnya juga membagi wewenang dengan bersih:
+
+| Port | Bind | Boleh menulis | Terjangkau |
+|---|---|---|---|
+| 3100 `dashboard.cjs` | IP Tailscale | ya (buat/cabut tautan) | tailnet saja |
+| 3200 `share-server.cjs` | `127.0.0.1` | **tidak ada jalur tulis** | internet, lewat tunnel |
+
+Kalau keduanya disatukan, satu kesalahan routing berubah menjadi "siapa pun di
+internet bisa membuat tautan atas nama pemilik".
+
+### Endpoint
+
+| Method | Path (port 3100) | Isi |
+|---|---|---|
+| `POST` | `/api/share` | body `{ sessionKey }` -> `{ token, url, fallbackUrl, views }`. Idempoten: menekan Bagikan dua kali mengembalikan token yang sama. |
+| `DELETE` | `/api/share?token=...` | setel `revoked_at`; balas `{ ok, revoked }` |
+| `GET` | `/api/share?sessionKey=...` | tautan hidup sesi itu, atau `{ url: null }` |
+
+Ketiganya wajib header `X-Devwf-Share: 1`. Origin diperiksa **bila ada**:
+`DEVWF_SHARE_ORIGINS` (bawaan `http://100.107.65.21:3100,http://localhost:3100`).
+
+**Mengapa Origin kosong diloloskan:** aplikasi tablet React Native tidak punya
+konsep origin dan tidak mengirim header itu. Menolaknya membuat tombol Bagikan
+di tablet selalu 403 sementara dashboard browser tampak normal - kegagalan yang
+paling sulit dilacak. Yang benar-benar diwajibkan adalah header penanda, dan
+header itu memaksa preflight sehingga formulir HTML biasa tidak bisa memalsukannya.
+
+### Kode status
+
+| Kode | Arti | Kalimat di halaman |
+|---|---|---|
+| `200` | tautan sah | halaman sesi |
+| `404` | token tidak dikenal | "Tautan tidak dikenal." |
+| `404` | sesi sudah dibersihkan retensi | "Sesi yang dibagikan sudah tidak tersimpan." |
+| `410` | dicabut pemilik | "Tautan ini sudah dicabut pemiliknya." |
+| `503` | tabel `share_links` belum ada | menyebutkan perintah DDL-nya |
+| `405` | metode selain GET/HEAD | `Allow: GET, HEAD` |
+
+`404` dan `410` sengaja dipisah supaya salah ketik tidak tertukar dengan tautan
+yang sengaja dimatikan. Sesi yang dibersihkan retensi juga `404`, bukan `410`,
+supaya pencabutan tidak dipalsukan oleh pembersihan data.
+
+### Aturan yang dijaga tes, bukan hanya niat
+
+- `PUBLIC_DENY` (`machine`, `project_path`, `project_name`, `session_key`,
+  `agent_tool`, `owner_pid`) diperiksa terhadap **HTML hasil render**.
+  Konsekuensinya: kelas CSS di `share-page.cjs` sengaja tidak memakai nama field
+  itu.
+- Teks dari manusia di-escape; `<script>`, `</title>`, `"` dan `&` diuji dengan
+  payload nyata.
+- `PRUNE_ENABLED` tidak menyentuh `share_links`. Tidak ada `DELETE` sama sekali;
+  pencabutan menyetel `revoked_at`.
+- Indeks unik parsial `(session_key) WHERE revoked_at IS NULL` membuat "satu
+  tautan hidup per sesi" jadi janji database, bukan janji kode.
+- `dashboard.cjs` di-parse dengan `node --check` oleh tes. Ini bukan kehati-hatian
+  berlebih: halaman dashboard adalah satu template literal, dan satu backtick di
+  dalam komentar pernah menutupnya lebih awal sehingga **dashboard mati total di
+  produksi sementara seluruh suite hijau** (2 November 2026).
+
+### Deploy
+
+```bash
+# 1. Berkas proses publik
+scp monitor-server/share-links.cjs monitor-server/share-page.cjs \
+    monitor-server/share-route.cjs monitor-server/share-server.cjs \
+    root@100.107.65.21:/tmp/
+ssh root@100.107.65.21
+install -m 644 /tmp/share-*.cjs /opt/devwf-monitor/
+install -m 644 /tmp/devwf-share.service /etc/systemd/system/
+systemctl daemon-reload && systemctl enable --now devwf-share
+curl -s http://127.0.0.1:3200/health
+
+# 2. Tunnel (sekali saja)
+#    cloudflared tunnel create devwf-share  -> kredensial ke /etc/cloudflared/devwf-share.json (600)
+#    CNAME devwfshare.programinglive.com -> <tunnel-id>.cfargotunnel.com, proxied ON
+install -m 644 monitor-server/share-tunnel.yml /etc/cloudflared/share-tunnel.yml
+install -m 644 monitor-server/cloudflared-devwf-share.service /etc/systemd/system/
+systemctl daemon-reload && systemctl enable --now cloudflared-devwf-share
+curl -sI https://devwfshare.programinglive.com/health
+
+# 3. Rewrite Netlify: deploy lewat CI (.github/workflows/deploy-web.yml)
+```
+
+**Mengapa hostname tunnel-nya `devwfshare.programinglive.com`, bukan
+`share.devworkflow.programinglive.com`:** sertifikat Universal SSL zona ini
+hanya `programinglive.com` + `*.programinglive.com` - satu label.
+`share.devworkflow...` adalah dua label di bawah titik wildcard, dan handshake
+TLS-nya gagal (`sslv3 alert handshake failure`) sampai sertifikat tambahan
+dipesan. Satu label langsung tercakup. Pembaca tidak pernah melihatnya: tautan
+yang dibagikan tetap domain utama.
+
+### Diuji
+
+- `tests/monitor-share-links.test.js` - bentuk token, penolakan bentuk aneh,
+  URL, dan SQL.
+- `tests/monitor-share-page.test.js` - `PUBLIC_DENY` terhadap HTML hasil render,
+  escaping, OG tag, header keamanan.
+- `tests/monitor-share-route.test.js` - guard Origin/header, idempotensi,
+  503 untuk tabel yang hilang.
+- `tests/monitor-share-server.test.js` - 404/410/405/HEAD, rate limit, `views`
+  dihitung sesudah balasan.
+- `tests/monitor-share-db.test.js` - **PostgreSQL sungguhan**: indeks parsial,
+  `DO NOTHING`, pencabutan, dan sesi yang dibersihkan.
+- `tests/monitor-share-parse.test.js` - `node --check` untuk seluruh modul
+  monitor.
+- `tests/monitor-share-mobile.test.js` - header penanda, `Share.share`, dan
+  hook sebelum `return null`.
+- `tests/web-share-route.test.js` - rewrite `/s/*` berada di ATAS catch-all 404.

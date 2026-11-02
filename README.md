@@ -69,6 +69,29 @@ graph LR
 
 ---
 
+## What lives where
+
+The README is the map: you should be able to find any behaviour from this table
+without opening a file. If a change makes a row here wrong, the change is not
+finished.
+
+| Path | Single responsibility |
+|---|---|
+| `index.js` | MCP entry point: registers the 37 tools and their handlers |
+| `workflow-state.js` | The state machine and its persistence (phase, DoD, plan, history) |
+| `db/` | Storage adapters: SQLite (default), PostgreSQL, MySQL, plus migration and replication |
+| `monitor.js` | Fire-and-forget reporting of the current session to the live dashboard; never blocks or throws |
+| `monitor-server/` | The dashboard process (`dashboard.cjs`), the public share process (`share-server.cjs`), their SQL builders, and their systemd units |
+| `web/` | The public marketing site: Next.js static export published to `devworkflow.programinglive.com` |
+| `mobile-app/` | The tablet client (Expo/React Native) that shows the same sessions on a wall screen |
+| `security/` | Secret references, output scanning, and the audit |
+| `factory-*.js`, `db/` | Software Factory integration: claiming board tasks, pushing results |
+| `scripts/` | Release, build, verification, and server setup helpers |
+| `tests/` | One file per behaviour; `monitor-*` covers the dashboard, `web-*` the site |
+| `docs/` | Deployment guides, architecture notes, and the specs/plans this project was built from |
+
+---
+
 ## Quick Start
 
 ### 1. Clone and install
@@ -344,8 +367,46 @@ The listing shows the task, phase, DoD and plan progress, and whether it is safe
 - states from another project
 - deleting the source file — adoption is a copy, so the original stays as an audit trail
 
-### Checking for updates
+### Sharing a session
 
+Each session on the live dashboard and in the tablet app has a **Bagikan
+(Share)** button. It produces a permanent link on the main domain:
+
+```
+https://devworkflow.programinglive.com/s/<token>
+```
+
+**What the public page shows:** task title and type, current phase, the plan
+with completed steps struck through, Definition of Done progress, when it
+started, how long it has run, and how long ago it last reported.
+
+**What it never shows:** machine name, project path, project name, session id,
+and agent tool. These are enforced by `PUBLIC_DENY` in
+`monitor-server/share-page.cjs`, and the test asserts against the rendered HTML
+- not the source - so a new template line that leaks a field fails the suite.
+
+**The link is open.** Anyone holding it can read the page, with no login. That
+is deliberate: the point is pasting it into WhatsApp. Treat it like an
+unlisted document, and revoke it when the work is done.
+
+| Action | How | Effect |
+|---|---|---|
+| Create | Press **Bagikan** | One live link per session; pressing twice returns the same link |
+| Copy again | Press **Salin tautan** | No new token, no new row |
+| Revoke | Press **Cabut** | The URL answers `410 Gone` on the next request |
+
+Codes you will see: `200` the page, `404` unknown token or a session already
+removed by retention, `410` deliberately revoked. `404` and `410` are kept
+apart so a typo is never confused with a link the owner switched off.
+
+Sessions are cleaned up by retention; **share links are not**. `PRUNE_ENABLED`
+never touches `share_links`, so a link to a pruned session answers `404` with an
+explanation instead of silently disappearing.
+
+Deployment (Cloudflare Tunnel, DNS, Netlify rewrite) is in
+[docs/monitor-dashboard.md](docs/monitor-dashboard.md).
+
+### Checking for updates
 ```bash
 npm run update:check        # human-readable
 npm run update:check -- --json

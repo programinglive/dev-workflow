@@ -34,11 +34,32 @@ const {
 } = require('./project-summary.cjs');
 const { classifySession, LABELS, DEFAULT_LIVE_MS, DEFAULT_STUCK_MS } = require('./status.cjs');
 const { buildSessionUpsert } = require('./session-upsert.cjs');
+const {
+  shareGuard,
+  handleCreateShare,
+  handleRevokeShare,
+  handleListShares,
+  listLiveShares,
+} = require('./share-route.cjs');
+const { ensureTableSql } = require('./share-links.cjs');
 
 const PORT = Number(process.env.PORT || 3100);
 const HOST = process.env.HOST || '0.0.0.0';
 const DB_URL = process.env.DATABASE_URL || '';
 const POLL_MS = 3000;
+/**
+ * Origin yang boleh membuat/mencabut tautan share.
+ *
+ * Dashboard dibuka dari IP Tailscale atau dari localhost saat dikembangkan.
+ * `DEVWF_SHARE_ORIGINS` menambah tanpa mengganti, supaya mesin lain dengan
+ * alamat tailnet sendiri tidak perlu menambal berkas ini.
+ */
+const SHARE_ORIGINS = String(
+  process.env.DEVWF_SHARE_ORIGINS || 'http://100.107.65.21:3100,http://localhost:3100',
+)
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
 /**
  * Token bersama untuk endpoint TULIS.
  *
@@ -145,6 +166,17 @@ const PAGE = `<!doctype html>
   .warn { border:1px solid #d2992255; background:#d299221a; color:#e3b341;
           border-radius:10px; padding:10px 12px; margin-bottom:12px; font-size:13px; }
   .warn b { color:#f0c674; }
+  .btnrow { display:flex; gap:8px; align-items:center; margin-top:10px; flex-wrap:wrap; }
+  .btn { background:#1f6feb22; color:#79c0ff; border:1px solid #1f6feb55; border-radius:8px;
+         padding:5px 11px; font-size:12px; cursor:pointer; font-family:inherit; }
+  .btn:hover { background:#1f6feb33; }
+  .btn:active { transform:translateY(1px); }
+  .btn:disabled { opacity:.55; cursor:default; }
+  .btn.danger { background:#f851491a; color:#ff7b72; border-color:#f8514955; }
+  .btn.danger:hover { background:#f8514928; }
+  .salin { width:100%; background:#0b0f14; color:#e6edf3; border:1px solid #2f81f7;
+           border-radius:8px; padding:7px 9px; font:12px/1.4 ui-monospace,monospace;
+           margin-top:8px; }
 </style></head><body>
 <h1>Dev Workflow Monitor</h1>
 <div class="sub" id="sub">menyambung…</div>
@@ -169,6 +201,146 @@ function ago(iso, nowMs) {
   if (d < 3600) return Math.round(d/60) + 'm lalu';
   if (d < 86400) return Math.round(d/3600) + 'j lalu';
   return Math.round(d/86400) + 'h lalu';
+}
+
+/**
+ * Salin teks dengan empat lapis percobaan.
+ *
+ * MENGAPA EMPAT, BUKAN SATU
+ * -------------------------
+ * Dashboard ini dibuka lewat http://100.107.65.21:3100 - BUKAN secure
+ * context. Di sana navigator.share tidak ada sama sekali, dan
+ * navigator.clipboard.writeText ada tetapi DITOLAK. Tombol Bagikan yang
+ * hanya memakai keduanya akan tampak berfungsi lalu gagal tanpa pesan.
+ * Urutan di bawah menuruni lapisan sampai ada yang berhasil; bila semuanya
+ * gagal, pemanggil menampilkan kotak teks tersorot.
+ *
+ * @returns {Promise<'share'|'clipboard'|'exec'|'manual'>}
+ */
+async function salinTeks(teks) {
+  if (navigator.share) {
+    try {
+      await navigator.share({ url: teks, title: 'Status pekerjaan' });
+      return 'share';
+    } catch (e) {
+      // Sheet ditutup pengguna, atau API ada tetapi menolak. Turun lapisan.
+    }
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    try {
+      await navigator.clipboard.writeText(teks);
+      return 'clipboard';
+    } catch (e) { /* bukan secure context, atau izin ditolak */ }
+  }
+  try {
+    var ta = document.createElement('textarea');
+    ta.value = teks;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.top = '-1000px';
+    document.body.appendChild(ta);
+    ta.select();
+    var ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    if (ok) return 'exec';
+  } catch (e) { /* execCommand dihapus di sebagian browser */ }
+  return 'manual';
+}
+
+/** Kotak teks tersorot untuk disalin tangan - jalan terakhir, bukan gagal diam. */
+function kotakSalinManual(url) {
+  var id = 'salin-' + Math.random().toString(36).slice(2);
+  setTimeout(function () {
+    var el = document.getElementById(id);
+    if (el) { el.focus(); el.select(); }
+  }, 0);
+  return '<textarea class="salin" id="' + id + '" readonly>' + esc(url) + '</textarea>';
+}
+
+/** Panggil /api/share. Header penanda wajib; server menolak tanpa itu. */
+async function mintaTautan(sessionKey) {
+  var r = await fetch('/api/share', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-devwf-share': '1' },
+    body: JSON.stringify({ sessionKey: sessionKey })
+  });
+  var body = await r.json().catch(function () { return {}; });
+  if (!r.ok) throw new Error(body.error || ('server menjawab ' + r.status));
+  return body;
+}
+
+async function cabutTautan(token) {
+  var r = await fetch('/api/share?token=' + encodeURIComponent(token), {
+    method: 'DELETE',
+    headers: { 'x-devwf-share': '1' }
+  });
+  var body = await r.json().catch(function () { return {}; });
+  if (!r.ok) throw new Error(body.error || ('server menjawab ' + r.status));
+  return body;
+}
+
+/**
+ * Pesan sementara di dalam kartu, bukan alert().
+ *
+ * alert() memblokir seluruh halaman - termasuk polling 3 detik yang membuat
+ * layar tablet tetap hidup dan jam "x lalu" tetap benar.
+ */
+function pesanKartu(tombol, teks) {
+  var kartu = tombol.closest('.card');
+  if (!kartu) return null;
+  var lama = kartu.querySelector('.pesan-share');
+  if (lama) lama.remove();
+  var div = document.createElement('div');
+  div.className = 'meta pesan-share';
+  div.style.marginTop = '6px';
+  div.textContent = teks;
+  kartu.appendChild(div);
+  return div;
+}
+
+async function tombolBagikan(sessionKey, tombol) {
+  tombol.disabled = true;
+  var asli = tombol.textContent;
+  tombol.textContent = 'menyiapkan...';
+  try {
+    var hasil = await mintaTautan(sessionKey);
+    var cara = await salinTeks(hasil.url);
+    if (cara === 'manual') {
+      pesanKartu(tombol, 'Tautan siap - salin manual:');
+      tombol.insertAdjacentHTML('afterend', kotakSalinManual(hasil.url));
+    } else {
+      pesanKartu(tombol, 'Tautan disalin: ' + hasil.url);
+    }
+  } catch (e) {
+    pesanKartu(tombol, 'Gagal membuat tautan: ' + e.message);
+  } finally {
+    tombol.disabled = false;
+    tombol.textContent = asli;
+    tick();
+  }
+}
+
+async function tombolSalin(url, tombol) {
+  tombol.disabled = true;
+  try {
+    var cara = await salinTeks(url);
+    pesanKartu(tombol, cara === 'manual' ? 'Salin manual: ' + url : 'Tautan disalin.');
+  } finally {
+    tombol.disabled = false;
+  }
+}
+
+async function tombolCabut(token, tombol) {
+  tombol.disabled = true;
+  try {
+    var hasil = await cabutTautan(token);
+    pesanKartu(tombol, hasil.revoked ? 'Tautan dicabut.' : 'Tautan sudah tidak aktif.');
+  } catch (e) {
+    pesanKartu(tombol, 'Gagal mencabut: ' + e.message);
+  } finally {
+    tombol.disabled = false;
+    tick();
+  }
 }
 function render(data) {
   // Jam SERVER: label umur tidak boleh bergantung pada jam perangkat.
@@ -230,6 +402,19 @@ function render(data) {
         : (st === 'ended'
           ? '<div class="meta">berakhir ' + ago(s.updated_at, jNow) + ' — kemungkinan sudah selesai tanpa penutupan</div>'
           : '');
+      /**
+       * Tombol share per kartu.
+       *
+       * Diputuskan dari data SERVER (data.shares), bukan dari state lokal:
+       * dua perangkat yang membuka dashboard yang sama harus melihat hal yang
+       * sama, dan setelah menekan Share kartu digambar ulang dari tick().
+       */
+      const tautan = (data.shares || []).find(function (x) { return x.sessionKey === s.session_key; });
+      const tombolShare = tautan
+        ? '<div class="btnrow"><button class="btn" data-copy="' + esc(tautan.url) + '">Salin tautan</button>' +
+          '<button class="btn danger" data-revoke="' + esc(tautan.token) + '">Cabut</button>' +
+          '<span class="meta">dibuka ' + (tautan.views || 0) + '×</span></div>'
+        : '<div class="btnrow"><button class="btn" data-share="' + esc(s.session_key) + '">Bagikan</button></div>';
       return '<div class="card ' + cardCls + '">' +
         '<div class="row"><span class="' + chipCls + '">' + chipText + '</span>' +
         '<span class="phase" style="background:#a371f71a;color:#d2a8ff;border-color:#a371f755">' +
@@ -242,6 +427,7 @@ function render(data) {
           '<div class="meta">rencana ' + done + '/' + total + ' · DoD ' + s.dod_done + '/' + s.dod_total +
           (s.dod_waived ? ' (' + s.dod_waived + ' dilewati)' : '') + '</div>' : '') +
         (plan ? '<ul>' + plan + '</ul>' : '') +
+        tombolShare +
         '</div>';
     }).join('');
   }
@@ -277,6 +463,20 @@ async function tick() {
     document.getElementById('sub').textContent = 'terputus: ' + e.message;
   }
 }
+/**
+ * Satu listener untuk seluruh daftar kartu.
+ *
+ * Delegasi, bukan listener per tombol: kartu digambar ulang setiap 3 detik,
+ * jadi listener yang dipasang saat render akan hilang bersama elemennya dan
+ * tombolnya berhenti bekerja tanpa ada yang menyadarinya.
+ */
+document.getElementById('list').addEventListener('click', function (e) {
+  var t = e.target.closest('[data-share],[data-copy],[data-revoke]');
+  if (!t) return;
+  if (t.dataset.share) { void tombolBagikan(t.dataset.share, t); }
+  else if (t.dataset.copy) { void tombolSalin(t.dataset.copy, t); }
+  else if (t.dataset.revoke) { void tombolCabut(t.dataset.revoke, t); }
+});
 tick(); setInterval(tick, ${POLL_MS});
 </script></body></html>`;
 
@@ -376,6 +576,43 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/health') {
       res.writeHead(200, { 'content-type': 'application/json' });
       return res.end(JSON.stringify({ ok: true, at: new Date().toISOString() }));
+    }
+    if (url.pathname === '/api/share') {
+      /**
+       * Penjaga dijalankan SEBELUM apa pun yang lain.
+       *
+       * Bukan autentikasi penuh - port ini hanya terjangkau dari tailnet -
+       * tetapi tanpa ini halaman web lain yang dibuka di browser pemilik bisa
+       * membuat tautan atas namanya.
+       */
+      const izin = shareGuard({ headers: req.headers, allowedOrigins: SHARE_ORIGINS });
+      if (!izin.ok) {
+        res.writeHead(izin.status || 403, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({
+          ok: false,
+          error: izin.error || 'forbidden',
+          hint: 'Kirim header X-Devwf-Share: 1 dari origin dashboard.',
+        }));
+      }
+
+      if (req.method === 'POST') {
+        const body = JSON.parse((await readBody(req)) || '{}');
+        const hasil = await handleCreateShare({ query, sessionKey: body.sessionKey });
+        res.writeHead(hasil.status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+        return res.end(JSON.stringify(hasil.body));
+      }
+      if (req.method === 'DELETE') {
+        const hasil = await handleRevokeShare({ query, token: url.searchParams.get('token') });
+        res.writeHead(hasil.status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+        return res.end(JSON.stringify(hasil.body));
+      }
+      if (req.method === 'GET') {
+        const hasil = await handleListShares({ query, sessionKey: url.searchParams.get('sessionKey') });
+        res.writeHead(hasil.status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+        return res.end(JSON.stringify(hasil.body));
+      }
+      res.writeHead(405, { 'content-type': 'application/json', allow: 'GET, POST, DELETE' });
+      return res.end(JSON.stringify({ ok: false, error: 'method not allowed' }));
     }
     if (url.pathname === '/api/session' && req.method === 'POST') {
       if (!writeAllowed(req)) {
@@ -487,9 +724,23 @@ const server = http.createServer(async (req, res) => {
         stuckAlertMs: STUCK_ALERT_MS,
         machineSilentMs: MACHINE_SILENT_MS,
       });
+      /**
+       * Tautan share yang sedang hidup, untuk tombol di kartu.
+       *
+       * DI TRY SENDIRI: tabel `share_links` baru dibuat sesudah deploy, dan
+       * dashboard yang sudah berjalan harus tetap menampilkan sesi walau
+       * tabelnya belum ada. Kegagalan di sini tidak boleh menghapus seluruh
+       * layar tablet.
+       */
+      let shares = [];
+      try {
+        shares = await listLiveShares({ query });
+      } catch (error) {
+        console.error('daftar share gagal:', String((error && error.message) || error));
+      }
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       return res.end(
-        JSON.stringify({ now: serverNow, sessions: tampil, events: events.rows, health, machines: machineRows.rows, history, alerts, summary, summary_days: SUMMARY_DAYS }),
+        JSON.stringify({ now: serverNow, sessions: tampil, events: events.rows, health, machines: machineRows.rows, history, alerts, summary, shares, summary_days: SUMMARY_DAYS }),
       );
     }
     if (url.pathname === '/api/events') {
@@ -513,6 +764,18 @@ server.listen(PORT, HOST, () => {
   if (!WRITE_TOKEN) {
     console.warn('PERINGATAN: DEVWF_MONITOR_TOKEN kosong - semua penulisan ditolak.');
   }
+  // Tabel tautan share disiapkan di sini, TIDAK ditunggu dan TIDAK boleh
+  // menggagalkan boot: dashboard harus tetap menyala walau user database tidak
+  // punya hak CREATE. Bila gagal, SQL-nya dicetak supaya operator bisa
+  // menjalankannya sendiri.
+  void (async () => {
+    try {
+      await query(ensureTableSql);
+    } catch (error) {
+      console.error('GAGAL menyiapkan tabel share_links:', String((error && error.message) || error));
+      console.error('Jalankan sekali sebagai user database aplikasi:\n' + ensureTableSql);
+    }
+  })();
   // Penghapusan otomatis MATI kecuali PRUNE_ENABLED diisi eksplisit.
   if (!PRUNE_ON) {
     console.log('retensi: MATI (set PRUNE_ENABLED=1 untuk menyalakan). Tidak ada data yang dihapus.');
