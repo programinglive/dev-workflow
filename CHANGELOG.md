@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.19.30](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.29...v1.19.30) (2026-11-02)
+
+
+### 🐛 Bug Fixes
+
+* **monitor:** nama proyek tidak lagi hilang saat task ditutup, dan rekap durasi per proyek ([d5fc53a](https://github.com/programinglive/dev-workflow-mcp-server/commit/d5fc53a5b08409e795d4548e9415747a7454ea31))
+
 ### [1.19.29](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.28...v1.19.29) (2026-11-02)
 
 
