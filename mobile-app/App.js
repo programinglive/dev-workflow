@@ -191,6 +191,10 @@ export default function App() {
   );
   // Peringatan dihitung server, memakai baris yang sama dengan yang tampil.
   const alerts = (data && data.alerts) || [];
+  // Rekap durasi per proyek: hanya sesi yang sudah ditutup.
+  const rekap = (data && data.summary) || [];
+  // Jumlah hari ikut dari server supaya layar tidak menebak sendiri.
+  const rekapHari = (data && data.summary_days) || 7;
 
   return (
     <View style={gaya.layar}>
@@ -393,6 +397,41 @@ export default function App() {
             </>
           )}
 
+          {tab === "rekap" && (
+            <>
+              {rekap.length === 0 ? (
+                <Text style={gaya.kosong}>
+                  belum ada sesi selesai dalam {rekapHari} hari terakhir
+                </Text>
+              ) : (
+                <>
+                  <View style={gaya.kotak}>
+                    <Text style={gaya.kotakJudul}>
+                      Waktu per proyek · {rekapHari} hari terakhir
+                    </Text>
+                    <Text style={gaya.kotakTeks}>
+                      Hanya sesi yang sudah ditutup, karena durasi sesi berjalan
+                      masih bertambah dan tidak bisa dibandingkan.
+                    </Text>
+                  </View>
+                  {rekap.map((r) => (
+                    <View key={r.project} style={gaya.riwayatKartu}>
+                      <View style={gaya.baris}>
+                        <Text style={[gaya.mesinNamaBesar, { flex: 1 }]} numberOfLines={1}>
+                          {r.project}
+                        </Text>
+                        <Text style={gaya.rekapDurasi}>{r.total_label || "-"}</Text>
+                      </View>
+                      <Text style={gaya.riwayatMeta}>
+                        {r.sessions} sesi selesai · terakhir {ago(r.last_at, jamServer)}
+                      </Text>
+                    </View>
+                  ))}
+                </>
+              )}
+            </>
+          )}
+
           {tab === "info" && (
             <>
               <View style={gaya.kotak}>
@@ -422,6 +461,7 @@ export default function App() {
         {[
           { id: "aktif", ikon: "▦", label: "Aktif" },
           { id: "riwayat", ikon: "☰", label: "Riwayat" },
+          { id: "rekap", ikon: "Σ", label: "Rekap" },
           { id: "mesin", ikon: "▣", label: "Mesin" },
           { id: "info", ikon: "ⓘ", label: "Info" },
         ].map((t) => {
@@ -749,6 +789,7 @@ const gaya = StyleSheet.create({
     marginBottom: 10,
   },
   mesinNamaBesar: { color: WARNA.teks, fontSize: 16, fontWeight: "700" },
+  rekapDurasi: { color: WARNA.biruMuda, fontSize: 16, fontWeight: "700" },
 
   filterBaris: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 14 },
   filterChip: {

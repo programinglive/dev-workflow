@@ -27,7 +27,13 @@ const {
   DEFAULT_STUCK_ALERT_MS,
   DEFAULT_MACHINE_SILENT_MS,
 } = require('./alerts.cjs');
+const {
+  buildProjectSummaryQuery,
+  formatDuration: formatDurationSummary,
+  DEFAULT_SUMMARY_DAYS,
+} = require('./project-summary.cjs');
 const { classifySession, LABELS, DEFAULT_LIVE_MS, DEFAULT_STUCK_MS } = require('./status.cjs');
+const { buildSessionUpsert } = require('./session-upsert.cjs');
 
 const PORT = Number(process.env.PORT || 3100);
 const HOST = process.env.HOST || '0.0.0.0';
@@ -90,6 +96,8 @@ const STUCK_ALERT_MS = Number(process.env.STUCK_ALERT_MS || DEFAULT_STUCK_ALERT_
 const MACHINE_SILENT_MS = Number(
   process.env.MACHINE_SILENT_MS || DEFAULT_MACHINE_SILENT_MS,
 );
+/** Berapa hari rekap durasi per proyek dihitung. */
+const SUMMARY_DAYS = Number(process.env.SUMMARY_DAYS || DEFAULT_SUMMARY_DAYS);
 /**
  * Berapa lama sesi `idle` masih ditampilkan.
  *
@@ -143,6 +151,8 @@ const PAGE = `<!doctype html>
 <div id="warn"></div>
 <div id="alerts"></div>
 <div id="list"><div class="empty">memuat…</div></div>
+<h1 style="font-size:14px;margin-top:24px" id="summaryTitle">Waktu per proyek</h1>
+<div id="summary" class="events"></div>
 <h1 style="font-size:14px;margin-top:24px">Mesin terhubung</h1>
 <div id="machines" class="events"></div>
 <h1 style="font-size:14px;margin-top:24px">Selesai (7 hari)</h1>
@@ -235,6 +245,12 @@ function render(data) {
         '</div>';
     }).join('');
   }
+  document.getElementById('summaryTitle').textContent =
+    'Waktu per proyek · ' + (data.summary_days || 7) + ' hari (hanya yang sudah selesai)';
+  document.getElementById('summary').innerHTML = (data.summary || []).map(r =>
+    '<div><b style="color:#79c0ff">' + esc(r.total_label || '-') + '</b> ' + esc(r.project) +
+    '<span class="meta"> · ' + r.sessions + ' sesi selesai · terakhir ' + ago(r.last_at, jNow) + '</span></div>'
+  ).join('') || '<div>—</div>';
   document.getElementById('machines').innerHTML = (data.machines || []).map(m =>
     '<div><b style="color:' + (m.stale ? '#d29922' : '#3fb950') + '">' + (m.stale ? '⚠' : '●') + '</b> ' +
     esc(m.machine) + '<span class="meta"> · terakhir melapor ' + ago(m.last_seen, jNow) +
@@ -284,7 +300,6 @@ function readBody(req, limit = 256 * 1024) {
 }
 
 const str = (v, max = 4000) => String(v == null ? '' : v).slice(0, max);
-const int = (v) => (Number.isFinite(Number(v)) ? Math.trunc(Number(v)) : 0);
 
 /**
  * Tolak penulisan tanpa token yang benar.
@@ -335,45 +350,9 @@ async function pruneOldRows() {
 }
 
 async function upsertSession(body) {
-  const key = str(body.sessionKey, 200);
-  if (!key) throw new Error('sessionKey wajib');
-  const plan = Array.isArray(body.plan) ? body.plan.slice(0, 40) : [];
-  await query(
-    `INSERT INTO sessions (session_key, machine, project_path, project_name, task, task_type, phase,
-                           plan_json, plan_done, plan_total, dod_done, dod_total, dod_waived,
-                           owner_pid, started_at, session_title, agent_tool, updated_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,now())
-     ON CONFLICT (session_key) DO UPDATE SET
-       machine=EXCLUDED.machine, project_path=EXCLUDED.project_path, project_name=EXCLUDED.project_name,
-       task=EXCLUDED.task, task_type=EXCLUDED.task_type, phase=EXCLUDED.phase,
-       plan_json=EXCLUDED.plan_json, plan_done=EXCLUDED.plan_done, plan_total=EXCLUDED.plan_total,
-       dod_done=EXCLUDED.dod_done, dod_total=EXCLUDED.dod_total, dod_waived=EXCLUDED.dod_waived,
-       owner_pid=EXCLUDED.owner_pid,
-       -- Judul bisa datang belakangan (OpenCode menamainya setelah beberapa
-       -- pesan), jadi kiriman kosong tidak boleh menghapus judul yang ada.
-       session_title=COALESCE(NULLIF(EXCLUDED.session_title, ''), sessions.session_title),
-       -- Tool yang tidak dikenali kiriman baru tidak boleh menghapus label lama.
-       agent_tool=COALESCE(NULLIF(EXCLUDED.agent_tool, ''), sessions.agent_tool),
-       -- Ambil waktu mulai yang PALING AWAL dan sah.
-       --
-       -- HATI-HATI: LEAST(NULL, x) menghasilkan NULL di PostgreSQL, bukan x.
-       -- Versi pertama perbaikan ini memakai LEAST apa adanya dan justru
-       -- MENGHAPUS started_at yang sudah tersimpan setiap kali pelapor
-       -- mengirim nilai kosong. Karena itu tiap sisi dibungkus GREATEST, yang
-       -- di PostgreSQL mengabaikan NULL.
-       started_at=LEAST(
-         GREATEST(sessions.started_at, EXCLUDED.started_at),
-         GREATEST(EXCLUDED.started_at, sessions.started_at)
-       ),
-       updated_at=now()`,
-    [key, str(body.machine, 120), str(body.projectPath, 512), str(body.projectName, 160),
-     str(body.task, 500), str(body.taskType, 40), str(body.phase, 40),
-     JSON.stringify(plan), int(body.planDone), int(body.planTotal),
-     int(body.dodDone), int(body.dodTotal), int(body.dodWaived),
-     body.ownerPid ? int(body.ownerPid) : null, body.startedAt || null,
-     str(body.sessionTitle, 200),
-     str(body.agentTool, 40) || 'unknown']);
-  return key;
+  const { sql, params } = buildSessionUpsert(body);
+  await query(sql, params);
+  return str(body.sessionKey, 200);
 }
 
 async function insertEvent(body) {
@@ -490,6 +469,14 @@ const server = http.createServer(async (req, res) => {
       });
       // Buang kartu kembar (mesin + task sama) sebelum dikirim ke layar.
       const tampil = dedupeSessions(rows);
+      // Rekap durasi per proyek. Hanya sesi yang SUDAH DITUTUP, karena durasi
+      // sesi berjalan masih bertambah dan tidak bisa dibandingkan antar hari.
+      const sq = buildProjectSummaryQuery({ days: SUMMARY_DAYS });
+      const summaryRows = await query(sq.sql, sq.params);
+      const summary = summaryRows.rows.map((r) => ({
+        ...r,
+        total_label: formatDurationSummary(r.total_seconds),
+      }));
       // Peringatan: satu-satunya bagian dashboard yang berbicara lebih dulu.
       // Dihitung dari baris yang SUDAH ditampilkan, jadi angkanya tidak bisa
       // berbeda dengan yang dilihat pemilik di layar.
@@ -502,7 +489,7 @@ const server = http.createServer(async (req, res) => {
       });
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       return res.end(
-        JSON.stringify({ now: serverNow, sessions: tampil, events: events.rows, health, machines: machineRows.rows, history, alerts }),
+        JSON.stringify({ now: serverNow, sessions: tampil, events: events.rows, health, machines: machineRows.rows, history, alerts, summary, summary_days: SUMMARY_DAYS }),
       );
     }
     if (url.pathname === '/api/events') {
