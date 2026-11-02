@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.21.1](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.21.0...v1.21.1) (2026-11-02)
+
+
+### 🐛 Bug Fixes
+
+* **share:** return 400/409 instead of 500 on bad body and races ([725d489](https://github.com/programinglive/dev-workflow-mcp-server/commit/725d4898ab1cf11ad88cc9546a1d2e0e0bec7366))
+
 ## [1.21.0](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.20.4...v1.21.0) (2026-11-02)
 
 
