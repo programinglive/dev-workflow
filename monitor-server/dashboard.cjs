@@ -21,6 +21,7 @@ const {
 const { buildHealth, DEFAULT_STALE_AFTER_MS } = require('./health.cjs');
 const { buildMachinesQuery, DEFAULT_OFFLINE_AFTER_MINUTES } = require('./machines-query.cjs');
 const { dedupeSessions } = require('./dedupe-sessions.cjs');
+const { buildHistoryQuery, formatDuration, DEFAULT_HISTORY_DAYS } = require('./history-query.cjs');
 const { classifySession, LABELS, DEFAULT_LIVE_MS, DEFAULT_STUCK_MS } = require('./status.cjs');
 
 const PORT = Number(process.env.PORT || 3100);
@@ -72,6 +73,8 @@ const STUCK_MS = Number(process.env.STUCK_MS || DEFAULT_STUCK_MS);
 const OFFLINE_AFTER_MINUTES = Number(
   process.env.OFFLINE_AFTER_MINUTES || DEFAULT_OFFLINE_AFTER_MINUTES,
 );
+/** Berapa hari sesi selesai tetap tampil di riwayat. */
+const HISTORY_DAYS = Number(process.env.HISTORY_DAYS || DEFAULT_HISTORY_DAYS);
 /**
  * Berapa lama sesi `idle` masih ditampilkan.
  *
@@ -126,6 +129,8 @@ const PAGE = `<!doctype html>
 <div id="list"><div class="empty">memuat…</div></div>
 <h1 style="font-size:14px;margin-top:24px">Mesin terhubung</h1>
 <div id="machines" class="events"></div>
+<h1 style="font-size:14px;margin-top:24px">Selesai (7 hari)</h1>
+<div id="history" class="events"></div>
 <h1 style="font-size:14px;margin-top:24px">Aktivitas terakhir</h1>
 <div id="events" class="events"></div>
 <script>
@@ -200,6 +205,13 @@ function render(data) {
     '<div><b style="color:' + (m.online ? '#3fb950' : '#8b949e') + '">' + (m.online ? '●' : '○') + '</b> ' +
     esc(m.machine) + '<span class="meta"> · ' + (m.online ? 'online' : 'offline') + ' · ' +
     ago(m.last_seen, jNow) + (m.last_project ? ' · ' + esc(m.last_project) : '') + '</span></div>'
+  ).join('') || '<div>—</div>';
+  document.getElementById('history').innerHTML = (data.history || []).map(h =>
+    '<div><b style="color:#c9d1d9">' + esc(h.task || h.session_title || h.project_name || '(tanpa nama)') + '</b>' +
+    '<span class="meta"> · ' + esc(String(h.agent_tool || '').toUpperCase()) + ' · ' + esc(h.machine) +
+    (h.project_name ? ' · ' + esc(h.project_name) : '') +
+    (h.duration_label ? ' · ⏱ ' + esc(h.duration_label) : ' · durasi tidak tercatat') +
+    ' · ' + ago(h.updated_at, jNow) + '</span></div>'
   ).join('') || '<div>—</div>';
   document.getElementById('events').innerHTML = (data.events || []).map(e =>
     '<div><b>' + esc(e.kind) + '</b> ' + esc(e.detail) +
@@ -397,6 +409,14 @@ const server = http.createServer(async (req, res) => {
       // pekerjaan" tampak sama dengan "mesin tidak pernah terhubung".
       const mq = buildMachinesQuery({ offlineAfterMinutes: OFFLINE_AFTER_MINUTES });
       const machineRows = await query(mq.sql, mq.params);
+      // Riwayat sesi SELESAI. Durasi dihitung database supaya sama di semua
+      // perangkat, dan tidak ada data yang dihapus.
+      const hq = buildHistoryQuery({ historyDays: HISTORY_DAYS });
+      const historyRows = await query(hq.sql, hq.params);
+      const history = historyRows.rows.map((r) => ({
+        ...r,
+        duration_label: formatDuration(r.duration_seconds),
+      }));
       // Waktu acuan SERVER, dikirim ke klien.
       //
       // MENGAPA: aplikasi menghitung "4m lalu" dari jam PERANGKAT. Kalau jam
@@ -423,7 +443,7 @@ const server = http.createServer(async (req, res) => {
       const tampil = dedupeSessions(rows);
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       return res.end(
-        JSON.stringify({ now: serverNow, sessions: tampil, events: events.rows, health, machines: machineRows.rows }),
+        JSON.stringify({ now: serverNow, sessions: tampil, events: events.rows, health, machines: machineRows.rows, history }),
       );
     }
     if (url.pathname === '/api/events') {
