@@ -413,6 +413,55 @@ Tiga keputusan:
 3. **Rekap ini hanya mungkin setelah `project_name` diperbaiki.** Tanpa
    perbaikan itu, rekap selalu kosong.
 
+## 'unknown' bukan nilai, dan bukan izin menimpa
+
+Perbaikan pertama saya untuk `agent_tool` **lulus seluruh tes sambil tetap
+salah**. Tesnya memeriksa *teks SQL*, dan teks itu memang benar adanya — tetapi
+artinya tidak sesuai harapan, karena `'unknown'` **bukan string kosong**, jadi
+ia lolos dari `NULLIF(..., '')` dan tetap menimpa label `codex` yang sudah benar.
+
+Terbukti di produksi 2 November 2026:
+
+```
+laporan agentTool=codex    -> tersimpan codex
+laporan agentTool=unknown  -> tersimpan unknown   <- codex HILANG
+```
+
+Akibatnya 4 dari 9 sesi berlabel `unknown`.
+
+### Aturan yang sekarang
+
+```sql
+agent_tool = CASE
+  WHEN NULLIF(EXCLUDED.agent_tool, '') IS NULL           -- tidak dikirim
+    THEN COALESCE(NULLIF(sessions.agent_tool, ''), 'unknown')
+  WHEN lower(EXCLUDED.agent_tool) = 'unknown'            -- dikirim, tapi tidak tahu
+    THEN COALESCE(NULLIF(sessions.agent_tool, ''), 'unknown')
+  ELSE EXCLUDED.agent_tool                               -- tool lain: ganti
+END
+```
+
+`'unknown'` tetap **disimpan** untuk baris yang belum pernah punya label —
+kalau dikosongkan, layar kehilangan kemampuan membedakan "belum tahu" dari
+"kosong". Yang tidak boleh adalah ia **menimpa** label yang sudah ada.
+
+### Mengapa tesnya sekarang menyentuh database
+
+`tests/monitor-upsert-behavior.test.js` menjalankan SQL **sungguhan** ke
+PostgreSQL dan memeriksa isi tabel. Ini pelajaran langsung: tes yang hanya
+memeriksa bentuk SQL tidak akan pernah menangkap kelas kesalahan ini.
+
+Butuh `DEVWF_TEST_PG` (atau PostgreSQL di `127.0.0.1:5599`). Bila tidak ada,
+tes **dilewati dengan alasan yang terlihat** — bukan lulus diam-diam.
+
+### Data lama
+
+Dua sesi bisa dipulihkan dengan bukti: kuncinya berawalan `ses_` (berasal dari
+meta `ai.opencode/sessionID`) **dan** kunci yang sama ada di `opencode.db`
+mesin masing-masing. Dua sesi lain berawalan `pid-` dan **sengaja dibiarkan**
+`unknown` — tidak ada bukti tool mana yang menjalankannya, dan menebak berarti
+mengarang data.
+
 ## Diuji
 
 - `tests/monitor-sessions-query.test.js` — filter hanya menyentuh `idle`, limit
@@ -437,3 +486,6 @@ Tiga keputusan:
   selesai, dan `(tanpa proyek)` tidak ditebak.
 - `tests/monitor-summary-wiring.test.js` — rekap dikirim server dan tampil di
   kedua layar.
+- `tests/monitor-upsert-behavior.test.js` — **menjalankan SQL sungguhan ke
+  PostgreSQL**: `unknown` tidak menimpa `codex`, tool baru tetap menggantikan,
+  `project_name` bertahan, dan `started_at` tidak hilang.

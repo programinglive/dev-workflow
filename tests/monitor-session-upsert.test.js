@@ -29,6 +29,16 @@ const SESI = {
   phase: "coding",
 };
 
+/**
+ * PENTING: berkas ini menguji SUSUNAN SQL dan nilai parameter. Itu perlu,
+ * tetapi TIDAK CUKUP.
+ *
+ * Versi pertama perbaikan `agent_tool` lulus seluruh berkas ini sambil tetap
+ * salah, karena 'unknown' bukan string kosong sehingga NULLIF tidak
+ * menangkapnya. Perilaku sesungguhnya diuji dengan PostgreSQL sungguhan di
+ * tests/monitor-upsert-behavior.test.js.
+ */
+
 test("kiriman project_name kosong tidak menghapus nama yang sudah ada", () => {
   const { sql } = buildSessionUpsert(SESI);
   assert.match(
@@ -73,15 +83,28 @@ test("sessionKey kosong ditolak, bukan disimpan sebagai baris tanpa kunci", () =
   assert.throws(() => buildSessionUpsert({ ...SESI, sessionKey: "" }), /sessionKey/);
 });
 
-test("nilai bawaan 'unknown' tidak boleh menimpa label tool yang asli", () => {
-  // Perangkap halus: kalau agent_tool diisi 'unknown' sebagai bawaan, maka
-  // COALESCE(NULLIF(EXCLUDED.agent_tool,''), ...) tetap MENGISI nilai itu -
-  // 'unknown' bukan string kosong. Akibatnya label 'codex' yang sudah benar
-  // tertimpa 'unknown' pada laporan berikutnya.
-  const { sql } = buildSessionUpsert({ ...SESI, agentTool: "" });
-  assert.match(
-    sql,
-    /agent_tool=COALESCE\(NULLIF\(EXCLUDED\.agent_tool, ''\), sessions\.agent_tool, 'unknown'\)/,
-    "bawaan 'unknown' harus jadi pilihan TERAKHIR, setelah nilai lama",
-  );
+test("'unknown' bukan string kosong - itu yang membuat label tertimpa", () => {
+  // KESALAHAN SAYA: versi pertama hanya memasang COALESCE(NULLIF(...)) dan
+  // dianggap selesai, lalu tes ini MEMERIKSA TEKS SQL-NYA dan LULUS.
+  // Padahal 'unknown' bukan '', jadi ia lolos NULLIF dan tetap menimpa 'codex'.
+  // Terbukti di produksi: codex -> unknown.
+  //
+  // Karena itu di sini yang diuji adalah NILAI yang dikirim ke database, dan
+  // perilaku penyimpanannya diuji sungguhan di
+  // tests/monitor-upsert-behavior.test.js (menjalankan SQL ke PostgreSQL).
+  const { params } = buildSessionUpsert({ ...SESI, agentTool: "unknown" });
+  assert.equal(params[16], "unknown", "'unknown' tetap dikirim apa adanya");
+  const { params: kosong } = buildSessionUpsert({ ...SESI, agentTool: "" });
+  assert.equal(kosong[16], "unknown", "tanpa info tetap dicatat unknown, bukan string kosong");
+});
+
+test("SQL menyatakan aturan 'unknown tidak menimpa' secara eksplisit", () => {
+  const { sql } = buildSessionUpsert(SESI);
+  assert.match(sql, /WHEN lower\(EXCLUDED\.agent_tool\) = 'unknown'/);
+  assert.match(sql, /COALESCE\(NULLIF\(sessions\.agent_tool, ''\), 'unknown'\)/);
+});
+
+test("nama tool dinormalkan ke huruf kecil", () => {
+  const { params } = buildSessionUpsert({ ...SESI, agentTool: "Codex" });
+  assert.equal(params[16], "codex");
 });
