@@ -4,6 +4,8 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { namaSesi } from "../mobile-app/session-name.js";
+
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const app = readFileSync(path.join(ROOT, "mobile-app", "App.js"), "utf8");
 
@@ -47,9 +49,27 @@ test("baris riwayat bisa diketuk untuk membuka detail", () => {
   assert.match(app, /const semua = useMemo\(\(\) => \[\.\.\.sesi, \.\.\.riwayat\]/);
 });
 
+test("baris tanpa nama tetap bisa dibedakan", () => {
+  // Dua sesi kosong (task, judul, dan proyek semuanya kosong) tadinya tampil
+  // sebagai "(tanpa nama)" dan tidak bisa dibedakan satu sama lain.
+  const kosong = { session_key: "ses_e682c43cbffe9kORMSpYnlKLV8", task: "", session_title: "", project_name: "" };
+  const lain = { session_key: "ses_hist_uji", task: "", session_title: "", project_name: "" };
+  assert.notEqual(namaSesi(kosong), namaSesi(lain), "dua baris kosong harus bisa dibedakan");
+  assert.ok(!/tanpa nama/.test(namaSesi(kosong)));
+  // Kalau ada isinya, isinya yang dipakai - bukan kunci.
+  assert.equal(namaSesi({ ...kosong, task: "Perbaiki kartu" }), "Perbaiki kartu");
+  assert.equal(namaSesi({ ...kosong, session_title: "Judul sesi" }), "Judul sesi");
+  assert.equal(namaSesi({ ...kosong, project_name: "proyek" }), "proyek");
+});
+
 test("tab menggantikan bagian yang dipilih, bukan menumpuk", () => {
   assert.match(app, /tab === "aktif" &&/);
   assert.match(app, /tab === "riwayat" &&/);
   assert.match(app, /tab === "mesin" &&/);
   assert.match(app, /tab === "info" &&/);
+});
+
+test("aplikasi memakai penamaan itu, bukan label generik", () => {
+  assert.match(app, /import \{ namaSesi \} from "\.\/session-name"/);
+  assert.match(app, /\{namaSesi\(h\)\}/);
 });

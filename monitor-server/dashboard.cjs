@@ -22,6 +22,11 @@ const { buildHealth, DEFAULT_STALE_AFTER_MS } = require('./health.cjs');
 const { buildMachinesQuery, DEFAULT_STALE_AFTER_DAYS } = require('./machines-query.cjs');
 const { dedupeSessions } = require('./dedupe-sessions.cjs');
 const { buildHistoryQuery, formatDuration, DEFAULT_HISTORY_DAYS } = require('./history-query.cjs');
+const {
+  buildAlerts,
+  DEFAULT_STUCK_ALERT_MS,
+  DEFAULT_MACHINE_SILENT_MS,
+} = require('./alerts.cjs');
 const { classifySession, LABELS, DEFAULT_LIVE_MS, DEFAULT_STUCK_MS } = require('./status.cjs');
 
 const PORT = Number(process.env.PORT || 3100);
@@ -69,12 +74,22 @@ const STALE_AFTER_MS = Number(process.env.STALE_AFTER_MS || DEFAULT_STALE_AFTER_
 /** Batas "masih bekerja aktif" dan "mungkin berakhir" untuk sesi non-idle. */
 const LIVE_MS = Number(process.env.LIVE_MS || DEFAULT_LIVE_MS);
 const STUCK_MS = Number(process.env.STUCK_MS || DEFAULT_STUCK_MS);
-/** Mesin dianggap offline bila tidak melapor selama ini. Tetap ditampilkan. */
+/** Mesin dianggap basi bila tidak melapor selama ini. Tetap ditampilkan. */
 const STALE_AFTER_DAYS = Number(
   process.env.MACHINE_STALE_AFTER_DAYS || DEFAULT_STALE_AFTER_DAYS,
 );
 /** Berapa hari sesi selesai tetap tampil di riwayat. */
 const HISTORY_DAYS = Number(process.env.HISTORY_DAYS || DEFAULT_HISTORY_DAYS);
+/**
+ * Kapan monitor mulai memberi tahu, bukan hanya menunggu dilihat.
+ *
+ * Ambangnya sengaja longgar. Peringatan yang berbunyi terlalu sering akan
+ * diabaikan, dan itu sama saja dengan tidak punya peringatan.
+ */
+const STUCK_ALERT_MS = Number(process.env.STUCK_ALERT_MS || DEFAULT_STUCK_ALERT_MS);
+const MACHINE_SILENT_MS = Number(
+  process.env.MACHINE_SILENT_MS || DEFAULT_MACHINE_SILENT_MS,
+);
 /**
  * Berapa lama sesi `idle` masih ditampilkan.
  *
@@ -126,6 +141,7 @@ const PAGE = `<!doctype html>
 <h1>Dev Workflow Monitor</h1>
 <div class="sub" id="sub">menyambung…</div>
 <div id="warn"></div>
+<div id="alerts"></div>
 <div id="list"><div class="empty">memuat…</div></div>
 <h1 style="font-size:14px;margin-top:24px">Mesin terhubung</h1>
 <div id="machines" class="events"></div>
@@ -163,6 +179,24 @@ function render(data) {
       '</div>';
   } else {
     warn.innerHTML = '';
+  }
+  // Peringatan: bagian yang berbicara lebih dulu, bukan menunggu dilihat.
+  //
+  // Dihitung server dari baris yang SAMA dengan yang tampil, jadi angkanya
+  // tidak bisa berbeda dengan isi layar. Kalau kosong, tidak ada yang
+  // ditampilkan - peringatan yang selalu ada akan diabaikan.
+  const al = data.alerts || [];
+  const alBox = document.getElementById('alerts');
+  if (al.length) {
+    alBox.innerHTML = '<div class="warn"><b>' + al.length + ' hal perlu dilihat</b><br>' +
+      al.slice(0, 6).map(a =>
+        (a.kind === 'sesi_macet' ? '◆ ' : '● ') + esc(a.pesan)).join('<br>') +
+      (al.length > 6 ? '<br>dan ' + (al.length - 6) + ' lagi' : '') +
+      '<div class="meta" style="margin-top:6px">Disebut "mungkin macet" karena dari server ' +
+      'tidak bisa dibedakan antara macet dan task yang sudah ditutup lalu ditinggal.</div>' +
+      '</div>';
+  } else {
+    alBox.innerHTML = '';
   }
   const live = data.sessions.filter(s => s.state === 'live').length;
   const list = document.getElementById('list');
@@ -456,9 +490,19 @@ const server = http.createServer(async (req, res) => {
       });
       // Buang kartu kembar (mesin + task sama) sebelum dikirim ke layar.
       const tampil = dedupeSessions(rows);
+      // Peringatan: satu-satunya bagian dashboard yang berbicara lebih dulu.
+      // Dihitung dari baris yang SUDAH ditampilkan, jadi angkanya tidak bisa
+      // berbeda dengan yang dilihat pemilik di layar.
+      const alerts = buildAlerts({
+        sessions: tampil,
+        machines: machineRows.rows,
+        now: nowMs,
+        stuckAlertMs: STUCK_ALERT_MS,
+        machineSilentMs: MACHINE_SILENT_MS,
+      });
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       return res.end(
-        JSON.stringify({ now: serverNow, sessions: tampil, events: events.rows, health, machines: machineRows.rows, history }),
+        JSON.stringify({ now: serverNow, sessions: tampil, events: events.rows, health, machines: machineRows.rows, history, alerts }),
       );
     }
     if (url.pathname === '/api/events') {

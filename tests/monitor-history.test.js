@@ -23,12 +23,32 @@ test("riwayat memuat semua status, bukan hanya idle", () => {
   assert.match(sql, /phase,/);
 });
 
-test("syaratnya waktu mulai, bukan task", () => {
+test("syaratnya bukan task", () => {
   const { sql } = buildHistoryQuery({});
   // `task` DIKOSONGKAN saat task ditutup, jadi tidak boleh jadi syarat.
   assert.ok(!/task <> ''/.test(sql), "jangan menyaring pakai task");
-  assert.match(sql, /started_at IS NOT NULL/);
   assert.match(sql, /machine <> ''/);
+});
+
+test("sesi tanpa started_at TETAP masuk riwayat", () => {
+  // BUG NYATA (2 November 2026): 3 dari 9 sesi hilang dari tab Riwayat karena
+  // saya menjadikan `started_at IS NOT NULL` sebagai syarat. Sesi itu jelas
+  // terlihat di tab Aktif, lalu tidak ditemukan saat dicari di Riwayat.
+  // `started_at` hanya dipakai untuk MENGHITUNG durasi, bukan untuk menyaring.
+  const { sql } = buildHistoryQuery({});
+  const syarat = sql.slice(sql.indexOf("WHERE"), sql.indexOf("ORDER BY"));
+  assert.ok(
+    !/started_at IS NOT NULL/.test(syarat),
+    "started_at tidak boleh menjadi syarat masuk riwayat",
+  );
+  assert.match(syarat, /updated_at > now\(\)/, "acuan batas hari adalah updated_at");
+});
+
+test("durasi kosong berarti tidak tercatat, bukan nol detik", () => {
+  // CASE WHEN started_at IS NULL THEN NULL: kalau diisi 0, layar berbohong
+  // seolah task selesai dalam 0 detik.
+  const { sql } = buildHistoryQuery({});
+  assert.match(sql, /CASE WHEN started_at IS NULL THEN NULL/);
 });
 
 test("durasi dihitung database, bukan aplikasi", () => {
