@@ -187,13 +187,15 @@ function buildTouchView({ token } = {}) {
 }
 
 /** Semua tautan hidup, untuk ditampilkan di kartu dashboard. */
-function buildLiveSharesQuery() {
+function buildLiveSharesQuery({ limit = 200 } = {}) {
+  const batas = Number(limit) > 0 ? Math.min(1000, Math.trunc(Number(limit))) : 200;
   return {
     sql: `SELECT session_key, token, created_at, views, last_view_at
             FROM share_links
            WHERE revoked_at IS NULL
-           ORDER BY created_at DESC`,
-    params: [],
+           ORDER BY created_at DESC
+           LIMIT $1`,
+    params: [batas],
   };
 }
 

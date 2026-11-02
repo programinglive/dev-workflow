@@ -140,10 +140,13 @@ function createShareServer({
   const izinkan = enableRateLimit ? buatPembatas({ perMenit: rateLimitPerMinute, sekarang: now }) : () => true;
 
   return http.createServer(async (req, res) => {
-    const url = new URL(req.url, 'http://x');
-    const rute = routeShare({ pathname: url.pathname, method: req.method });
-
     try {
+      // URL diparse DI DALAM try: target permintaan yang rusak akan melempar,
+      // dan tanpa ini lemparannya menjadi unhandled rejection di callback
+      // server - bukan 400 yang jujur.
+      const url = new URL(req.url, 'http://x');
+      const rute = routeShare({ pathname: url.pathname, method: req.method });
+
       if (rute.kind === 'health') {
         return kirimJson(res, 200, { ok: true, at: new Date().toISOString() });
       }

@@ -683,6 +683,8 @@ yang dibagikan tetap domain utama.
   dihitung sesudah balasan.
 - `tests/monitor-share-db.test.js` - **PostgreSQL sungguhan**: indeks parsial,
   `DO NOTHING`, pencabutan, dan sesi yang dibersihkan.
+- `tests/monitor-share-race.test.js` - balapan tiga tab tidak pernah menjadi
+  500; `OPTIONS` dari origin asing ditolak, dari origin sah dijawab 204.
 - `tests/monitor-share-parse.test.js` - `node --check` untuk seluruh modul
   monitor.
 - `tests/monitor-share-mobile.test.js` - header penanda, `Share.share`, dan

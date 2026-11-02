@@ -13,10 +13,22 @@
  *
  * Karena itu ada dua syarat:
  *
- *   1. Header `X-Devwf-Share: 1` - header ajaib tidak bisa dikirim oleh
- *      formulir HTML biasa maupun permintaan "simple request", jadi ia
- *      memaksa preflight. Ini bukan autentikasi; ini penanda protokol.
+ *   1. Header `X-Devwf-Share: 1` - penanda protokol. Formulir HTML biasa tidak
+ *      bisa mengirim header ini.
  *   2. `Origin` yang dikenal, bila ada.
+ *
+ * APA YANG SEBENARNYA MENAHAN SERANGAN
+ * ------------------------------------
+ * Jangan salah membaca: yang menahan tulisan lintas-situs adalah CORS, bukan
+ * header itu sendiri. Halaman web di browser pemilik BISA mengirim
+ * `x-devwf-share: 1`, tetapi permintaannya lebih dulu melewati preflight, dan
+ * preflight itulah yang ditolak. Header penanda hanya membuat permintaan tidak
+ * lagi "simple request", sehingga preflight-nya benar-benar terjadi.
+ *
+ * Versi pertama komentar ini mengklaim header-nya sendiri yang menahan
+ * serangan. Itu keliru, dan keliru dengan cara yang berbahaya: ia membuat
+ * orang mengira CORS boleh dilonggarkan. Karena itu `OPTIONS` sekarang
+ * dijawab eksplisit - lihat `shareGuard` dan pemanggilnya.
  *
  * MENGAPA ORIGIN KOSONG DIBERI LALU
  * ---------------------------------
@@ -61,20 +73,24 @@ function isOriginAllowed(origin, allowedOrigins = []) {
 }
 
 /**
- * @returns {{ ok: true } | { ok: false, status: 403, error: 'forbidden' }}
+ * @returns {{ ok: true, preflight?: boolean } | { ok: false, status: 403, error: 'forbidden' }}
  */
-function shareGuard({ headers, allowedOrigins = [] } = {}) {
+function shareGuard({ headers, allowedOrigins = [], method } = {}) {
   const h = headers || {};
   if (teks(h[SHARE_HEADER]) !== '1') {
     return { ok: false, status: 403, error: 'forbidden' };
   }
   const origin = h.origin;
+  const adaOrigin = !(origin === undefined || origin === null || teks(origin) === '');
   // Tidak ada Origin = aplikasi native. Bukan alasan untuk menolak.
-  if (origin === undefined || origin === null || teks(origin) === '') {
-    return { ok: true };
-  }
-  if (!isOriginAllowed(origin, allowedOrigins)) {
+  if (adaOrigin && !isOriginAllowed(origin, allowedOrigins)) {
     return { ok: false, status: 403, error: 'forbidden' };
+  }
+  // Preflight dari origin yang sah dijawab 204 oleh pemanggil, bukan 405.
+  // Tanpa ini, satu-satunya yang menahan tulisan lintas-situs adalah
+  // ketiadaan header CORS - kebetulan yang bisa hilang pada perubahan berikutnya.
+  if (String(method || '').toUpperCase() === 'OPTIONS') {
+    return { ok: true, preflight: true };
   }
   return { ok: true };
 }
@@ -116,7 +132,22 @@ function tautanBody(token, { createdAt, views } = {}) {
  * Urutannya penting: sesi diperiksa LEBIH DULU. Menyisipkan tautan untuk sesi
  * yang tidak ada akan meninggalkan baris yatim yang tidak bisa dibuka siapa
  * pun dan tidak bisa dijelaskan pemiliknya.
+ *
+ * BALAPAN, DAN MENGAPA BUKAN 500
+ * ------------------------------
+ * Dua tab yang menekan Bagikan bersamaan sama-sama lolos pemeriksaan sesi.
+ * Satu menang; yang kalah mendapat `DO NOTHING` dan harus membaca tautan si
+ * pemenang. Celahnya: bila pemenang mencabut tautannya tepat di antara
+ * sisipan dan pembacaan, yang kalah menemukan tidak ada baris hidup dan
+ * mencoba sekali lagi.
+ *
+ * Versi pertama melempar galat setelah satu percobaan ulang, dan itu menjadi
+ * **500** bagi pemilik yang tidak melakukan kesalahan apa pun. Sekarang
+ * pembacaan diulang beberapa kali, lalu berhenti dengan 409 - "coba lagi",
+ * bukan "server rusak".
  */
+const PERCOBAAN_MAKS = 3;
+
 async function handleCreateShare({ query, sessionKey } = {}) {
   const key = teks(sessionKey);
   if (!key.trim()) {
@@ -129,30 +160,34 @@ async function handleCreateShare({ query, sessionKey } = {}) {
       return { status: 404, body: { ok: false, error: 'sesi tidak ditemukan' } };
     }
 
-    const insert = buildInsertLink({ token: generateToken(), sessionKey: key });
-    const dibuat = await query(insert.sql, insert.params);
+    for (let percobaan = 0; percobaan < PERCOBAAN_MAKS; percobaan += 1) {
+      const insert = buildInsertLink({ token: generateToken(), sessionKey: key });
+      const dibuat = await query(insert.sql, insert.params);
 
-    if (dibuat && dibuat.rows && dibuat.rows.length > 0) {
-      return { status: 200, body: tautanBody(dibuat.rows[0].token, { views: 0 }) };
+      if (dibuat && dibuat.rows && dibuat.rows.length > 0) {
+        return { status: 200, body: tautanBody(dibuat.rows[0].token, { views: 0 }) };
+      }
+
+      // DO NOTHING berarti sudah ada tautan hidup: kembalikan yang itu, jangan
+      // membuat tautan kedua yang mematikan tautan pertama secara diam-diam.
+      const lama = buildLiveLinkQuery({ sessionKey: key });
+      const hasil = await query(lama.sql, lama.params);
+      const baris = hasil && hasil.rows && hasil.rows[0];
+      if (baris) {
+        return {
+          status: 200,
+          body: tautanBody(baris.token, { createdAt: baris.created_at, views: baris.views }),
+        };
+      }
+      // Tidak ada pemenang yang bisa dibaca - dicabut di tengah jalan. Ulangi.
     }
 
-    // DO NOTHING berarti sudah ada tautan hidup: kembalikan yang itu, jangan
-    // membuat tautan kedua yang mematikan tautan pertama secara diam-diam.
-    const lama = buildLiveLinkQuery({ sessionKey: key });
-    const hasil = await query(lama.sql, lama.params);
-    const baris = hasil && hasil.rows && hasil.rows[0];
-    if (!baris) {
-      // Balapan: baris ada lalu dicabut di antara dua query. Coba sekali lagi
-      // dengan token baru, dan berhenti bila masih gagal.
-      const ulang = buildInsertLink({ token: generateToken(), sessionKey: key });
-      const kedua = await query(ulang.sql, ulang.params);
-      const tokenKedua = kedua && kedua.rows && kedua.rows[0] && kedua.rows[0].token;
-      if (!tokenKedua) throw new Error('gagal membuat tautan share');
-      return { status: 200, body: tautanBody(tokenKedua, { views: 0 }) };
-    }
+    // Tiga percobaan habis: tab lain terus berlomba mencabut dan membuat.
+    // Mengatakannya apa adanya lebih baik daripada mengarang 500 atau
+    // mengembalikan tautan yang mungkin sudah mati.
     return {
-      status: 200,
-      body: tautanBody(baris.token, { createdAt: baris.created_at, views: baris.views }),
+      status: 409,
+      body: { ok: false, error: 'tautan sedang dibuat ulang oleh permintaan lain, coba lagi' },
     };
   } catch (error) {
     return gagal(error);
@@ -201,10 +236,16 @@ async function handleListShares({ query, sessionKey } = {}) {
  *
  * Kegagalan menjadi array kosong - BUKAN lemparan - karena satu tabel yang
  * belum ada tidak boleh membuat dashboard berhenti menampilkan sesi.
+ *
+ * DIBATASI: dashboard menyegarkan diri tiap 3 detik, dan setiap tautan yang
+ * pernah dibuat tetap hidup sampai dicabut. Tanpa batas, riwayat berbulan-bulan
+ * ikut terkirim di setiap poll dan layar tablet membayarnya.
  */
-async function listLiveShares({ query } = {}) {
+const BATAS_TAUTAN_HIDUP = 200;
+
+async function listLiveShares({ query, limit = BATAS_TAUTAN_HIDUP } = {}) {
   try {
-    const { sql, params } = buildLiveSharesQuery();
+    const { sql, params } = buildLiveSharesQuery({ limit });
     const hasil = await query(sql, params);
     return ((hasil && hasil.rows) || []).map((r) => ({
       sessionKey: r.session_key,

@@ -22,6 +22,7 @@
     "local": "node index.js",
     "setup": "node scripts/setup-stack.js",
     "test": "node --no-deprecation --import ./tests/setup-env.js --test",
+    "test:db": "node --no-deprecation --import ./tests/setup-env.js --test tests/monitor-share-db.test.js tests/monitor-upsert-behavior.test.js",
     "test:security": "node --no-deprecation --test tests/security*.test.js",
     "security:audit": "node index.js call security_audit",
     "lint": "node scripts/lint.mjs",

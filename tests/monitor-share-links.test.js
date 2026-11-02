@@ -89,6 +89,15 @@ test("daftar tautan hidup hanya yang belum dicabut", () => {
   assert.match(sql, /session_key/);
 });
 
+test("daftar tautan hidup dibatasi supaya payload poll tidak tumbuh selamanya", () => {
+  // Dashboard menyegarkan diri tiap 3 detik dan tautan hidup sampai dicabut.
+  assert.match(buildLiveSharesQuery().sql, /LIMIT \$1/);
+  assert.deepEqual(buildLiveSharesQuery().params, [200]);
+  assert.deepEqual(buildLiveSharesQuery({ limit: 5 }).params, [5]);
+  assert.deepEqual(buildLiveSharesQuery({ limit: 5000 }).params, [1000], "dibatasi atas");
+  assert.deepEqual(buildLiveSharesQuery({ limit: 0 }).params, [200], "nol jatuh ke bawaan");
+});
+
 test("daftar per sesi memakai parameter, bukan tempelan", () => {
   const { sql, params } = buildLiveLinkQuery({ sessionKey: "ses_1" });
   assert.match(sql, /WHERE session_key = \$1/);

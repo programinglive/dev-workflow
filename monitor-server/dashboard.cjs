@@ -255,9 +255,7 @@ function kotakSalinManual(url) {
     if (el) { el.focus(); el.select(); }
   }, 0);
   return '<textarea class="salin" id="' + id + '" readonly>' + esc(url) + '</textarea>';
-}
-
-/** Panggil /api/share. Header penanda wajib; server menolak tanpa itu. */
+}/** Panggil /api/share. Header penanda wajib; server menolak tanpa itu. */
 async function mintaTautan(sessionKey) {
   var r = await fetch('/api/share', {
     method: 'POST',
@@ -307,7 +305,16 @@ async function tombolBagikan(sessionKey, tombol) {
     var cara = await salinTeks(hasil.url);
     if (cara === 'manual') {
       pesanKartu(tombol, 'Tautan siap - salin manual:');
-      tombol.insertAdjacentHTML('afterend', kotakSalinManual(hasil.url));
+      // Kotak ditaruh di KARTU, bukan setelah tombol: .btnrow adalah flex row,
+      // jadi textarea di dalamnya ikut aturan flex dan tampak janggal. Dan
+      // hapus yang lama lebih dulu supaya klik ganda sebelum repaint tidak
+      // menumpuk dua kotak.
+      var kartu = tombol.closest('.card');
+      if (kartu) {
+        var lama = kartu.querySelector('textarea.salin');
+        if (lama) lama.remove();
+        kartu.insertAdjacentHTML('beforeend', kotakSalinManual(hasil.url));
+      }
     } else {
       pesanKartu(tombol, 'Tautan disalin: ' + hasil.url);
     }
@@ -585,7 +592,7 @@ const server = http.createServer(async (req, res) => {
        * tetapi tanpa ini halaman web lain yang dibuka di browser pemilik bisa
        * membuat tautan atas namanya.
        */
-      const izin = shareGuard({ headers: req.headers, allowedOrigins: SHARE_ORIGINS });
+      const izin = shareGuard({ headers: req.headers, allowedOrigins: SHARE_ORIGINS, method: req.method });
       if (!izin.ok) {
         res.writeHead(izin.status || 403, { 'content-type': 'application/json' });
         return res.end(JSON.stringify({
@@ -594,10 +601,41 @@ const server = http.createServer(async (req, res) => {
           hint: 'Kirim header X-Devwf-Share: 1 dari origin dashboard.',
         }));
       }
+      /**
+       * Preflight dari origin yang SAH dijawab 204 dengan header CORS.
+       *
+       * Hanya untuk origin yang lolos guard, jadi ini tidak membuka pintu:
+       * halaman asing tetap ditolak 403 sebelum sampai ke sini. Menjawab 405
+       * seperti sebelumnya berarti satu-satunya yang menahan tulisan
+       * lintas-situs adalah ketiadaan header CORS - kebetulan, bukan aturan.
+       */
+      if (izin.preflight) {
+        res.writeHead(204, {
+          'access-control-allow-origin': String(req.headers.origin),
+          'access-control-allow-methods': 'GET, POST, DELETE, OPTIONS',
+          'access-control-allow-headers': 'content-type, x-devwf-share',
+          'access-control-max-age': '600',
+          vary: 'origin',
+        });
+        return res.end();
+      }
 
       if (req.method === 'POST') {
-        const body = JSON.parse((await readBody(req)) || '{}');
-        const hasil = await handleCreateShare({ query, sessionKey: body.sessionKey });
+        /**
+         * Body yang bukan JSON dijawab 400, bukan 500.
+         *
+         * JSON.parse yang melempar akan jatuh ke catch teratas dan mengirim
+         * `error.message` dari V8 ke pemanggil - pesan parser yang tidak
+         * berguna bagi pemilik dan sedikit membocorkan bentuk internal.
+         */
+        let body;
+        try {
+          body = JSON.parse((await readBody(req)) || '{}');
+        } catch {
+          res.writeHead(400, { 'content-type': 'application/json' });
+          return res.end(JSON.stringify({ ok: false, error: 'body bukan JSON yang sah' }));
+        }
+        const hasil = await handleCreateShare({ query, sessionKey: body && body.sessionKey });
         res.writeHead(hasil.status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
         return res.end(JSON.stringify(hasil.body));
       }

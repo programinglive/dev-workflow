@@ -114,8 +114,7 @@ test("halaman tanpa JavaScript", () => {
   assert.ok(!/onclick=/i.test(out));
 });
 
-test("sesi tanpa rencana dan tanpa waktu mulai tetap dirender jujur", () => {
-  const out = html({
+test("sesi tanpa rencana dan tanpa waktu mulai tetap dirender jujur", () => {  const out = html({
     ...SESI,
     plan_json: [],
     plan_done: 0,
@@ -138,8 +137,23 @@ test("task kosong tidak menghasilkan judul kosong", () => {
   assert.equal(shareTitle({ ...SESI, task: "   ", session_title: "" }), "Sesi dev workflow");
 });
 
-test("halaman status untuk 404 dan 410 berbunyi berbeda", () => {
-  const hilang = renderStatusPage({ status: 404, message: "Tautan tidak dikenal." });
+test("rencana yang dipotong menyebut jumlah sisanya", () => {
+  // Rencana 60 langkah dulu tampil 40 tanpa keterangan, sehingga tampak
+  // selesai padahal tidak. Halaman yang menyembunyikan sisa pekerjaan
+  // membohongi pembacanya.
+  const banyak = Array.from({ length: 60 }, (_, i) => ({ id: "p" + i, text: "langkah " + i, status: "open" }));
+  const out = html({ ...SESI, plan_json: banyak, plan_done: 0, plan_total: 60 });
+  assert.ok(out.includes("langkah 39"), "40 langkah pertama tampil");
+  assert.ok(!out.includes("langkah 40<"), "langkah ke-41 tidak dirender");
+  assert.match(out, /dan 20 langkah lain|dan\s*20\s*langkah/);
+});
+
+test("jumlah kunjungan disebut sebagai milik pembaca sebelumnya", () => {
+  const out = html();
+  assert.match(out, /sebelum Anda/, "angka views dibaca sebelum kunjungan ini dihitung");
+});
+
+test("halaman status untuk 404 dan 410 berbunyi berbeda", () => {  const hilang = renderStatusPage({ status: 404, message: "Tautan tidak dikenal." });
   const dicabut = renderStatusPage({ status: 410, message: "Tautan ini sudah dicabut pemiliknya." });
   assert.ok(hilang.includes("Tautan tidak dikenal"));
   assert.ok(dicabut.includes("sudah dicabut"));

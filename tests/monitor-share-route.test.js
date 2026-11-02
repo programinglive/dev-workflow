@@ -144,8 +144,7 @@ test("tabel yang belum ada dibalas 503, bukan 500", () => {
   assert.equal(shareErrorStatus(new Error("apa saja")), 500);
 });
 
-test("kegagalan database tidak melempar ke pemanggil", async () => {
-  const query = async () => {
+test("kegagalan database tidak melempar ke pemanggil", async () => {  const query = async () => {
     throw Object.assign(new Error('relation "share_links" does not exist'), { code: "42P01" });
   };
   const buat = await handleCreateShare({ query, sessionKey: "ses_1" });

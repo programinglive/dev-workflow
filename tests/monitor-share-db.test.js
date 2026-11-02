@@ -70,8 +70,8 @@ before(async () => {
 
 after(async () => {
   if (pool) {
-    await pool.query("DELETE FROM share_links WHERE session_key LIKE 'ses_uji_share%'").catch(() => {});
-    await pool.query("DELETE FROM sessions WHERE session_key LIKE 'ses_uji_share%'").catch(() => {});
+    await pool.query("DELETE FROM share_links WHERE session_key LIKE 'ses_share_uji%'").catch(() => {});
+    await pool.query("DELETE FROM sessions WHERE session_key LIKE 'ses_share_uji%'").catch(() => {});
     await pool.end().catch(() => {});
   }
 });
@@ -84,7 +84,7 @@ function lewati(t) {
   return false;
 }
 
-const KUNCI = "ses_uji_share_1";
+const KUNCI = "ses_share_uji_1";
 
 async function siapkanSesi(kunci = KUNCI) {
   await pool.query(
@@ -99,8 +99,8 @@ async function siapkanSesi(kunci = KUNCI) {
 }
 
 async function bersihkan() {
-  await pool.query("DELETE FROM share_links WHERE session_key LIKE 'ses_uji_share%'");
-  await pool.query("DELETE FROM sessions WHERE session_key LIKE 'ses_uji_share%'");
+  await pool.query("DELETE FROM share_links WHERE session_key LIKE 'ses_share_uji%'");
+  await pool.query("DELETE FROM sessions WHERE session_key LIKE 'ses_share_uji%'");
 }
 
 test("DDL bisa dijalankan dua kali tanpa gagal", async (t) => {
@@ -221,6 +221,6 @@ test("kunjungan menambah views dan tidak menyentuh isi sesi", async (t) => {
 test("tidak ada baris uji yang tertinggal", async (t) => {
   if (lewati(t)) return;
   await bersihkan();
-  const r = await pool.query("SELECT count(*)::int AS n FROM share_links WHERE session_key LIKE 'ses_uji_share%'");
+  const r = await pool.query("SELECT count(*)::int AS n FROM share_links WHERE session_key LIKE 'ses_share_uji%'");
   assert.equal(r.rows[0].n, 0);
 });
