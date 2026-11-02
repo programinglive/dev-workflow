@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.19.27](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.26...v1.19.27) (2026-11-02)
+
+
+### 🐛 Bug Fixes
+
+* **monitor:** label mesin jujur, bukan online/offline ([0640a60](https://github.com/programinglive/dev-workflow-mcp-server/commit/0640a60586d6b5e34a78b2e067f93f272f783f32))
+
 ### [1.19.26](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.25...v1.19.26) (2026-11-02)
 
 
