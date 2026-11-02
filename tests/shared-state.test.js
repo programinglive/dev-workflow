@@ -272,10 +272,27 @@ test("save() tidak menyentuh baris sesi lain sama sekali", async () => {
 // ---------------------------------------------------------------------------
 
 test("start_task memberi peringatan dan menyelamatkan task proses lain", async () => {
-  await withState(async (state, stateFile) => {
-    await writeForeignState(stateFile, {
-      taskDescription: "Pekerjaan penting sesi lain",
-    });
+  await withState(async (state) => {
+    // "Task asing" sekarang hanya bisa berarti satu hal: proses MCP KEDUA yang
+    // melayani sesi yang sama. Sesi lain punya barisnya sendiri, jadi tidak ada
+    // lagi yang perlu diselamatkan dari sana.
+    state.state.currentPhase = "coding";
+    state.state.taskDescription = "Pekerjaan penting sesi lain";
+    await state.save();
+
+    const sessionKey = state._sessionKey().key;
+    const row = state.dbAdapter.db
+      .prepare("SELECT state_json FROM workflow_state WHERE session_key = ?")
+      .get(sessionKey);
+    const stored = JSON.parse(row.state_json);
+    stored.owner = {
+      processMarker: "proc-other-session",
+      pid: 4242,
+      updatedAt: new Date().toISOString(),
+    };
+    state.dbAdapter.db
+      .prepare("UPDATE workflow_state SET state_json = ? WHERE session_key = ?")
+      .run(JSON.stringify(stored), sessionKey);
 
     const response = await callTool("start_task", { description: "Task baru saya", type: "bugfix", definitionOfDone: ["task tercatat"] }, state);
 
