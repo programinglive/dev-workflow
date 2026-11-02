@@ -232,6 +232,28 @@ export default function App() {
             </View>
           )}
 
+          {data && data.history && data.history.length > 0 && (
+            <View style={gaya.aktivitas}>
+              <Text style={gaya.aktivitasJudul}>Selesai (7 hari)</Text>
+              {data.history.map((h) => (
+                <View key={h.session_key} style={gaya.riwayatBaris}>
+                  <Text style={gaya.riwayatNama} numberOfLines={1}>
+                    {/* Saat task ditutup, `task` dikosongkan. Judul sesi atau
+                        nama proyek yang tersisa - jangan tampilkan baris kosong. */}
+                    {h.task || h.session_title || h.project_name || "(tanpa nama)"}
+                  </Text>
+                  <Text style={gaya.riwayatMeta} numberOfLines={1}>
+                    {h.agent_tool ? String(h.agent_tool).toUpperCase() + " · " : ""}
+                    {h.machine}
+                    {h.project_name ? " · " + h.project_name : ""} ·{" "}
+                    {h.duration_label ? "⏱ " + h.duration_label : "durasi tidak tercatat"} ·{" "}
+                    {ago(h.updated_at, jamServer)}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          )}
+
           {data && data.events && data.events.length > 0 && (
             <View style={gaya.aktivitas}>
               <Text style={gaya.aktivitasJudul}>Aktivitas terakhir</Text>
@@ -259,7 +281,7 @@ export default function App() {
 }
 
 /** Batas langkah yang ditampilkan di kartu; sisanya lewat detail. */
-const LANGKAH_DI_KARTU = 4;
+const LANGKAH_DI_KARTU = 2;
 
 function Kartu({ s, jamServer, onPress }) {
   const g = gayaStatus(s.state);
@@ -548,6 +570,9 @@ const gaya = StyleSheet.create({
   titik: { width: 8, height: 8, borderRadius: 999 },
   mesinNama: { color: WARNA.teks, fontSize: 13, fontWeight: "600", minWidth: 90 },
   mesinMeta: { color: WARNA.redup, fontSize: 12, flexShrink: 1 },
+  riwayatBaris: { marginBottom: 8 },
+  riwayatNama: { color: WARNA.teks, fontSize: 13, fontWeight: "600" },
+  riwayatMeta: { color: WARNA.redup, fontSize: 11, marginTop: 1 },
   aktivitasJudul: { color: WARNA.teks, fontSize: 15, fontWeight: "700", marginBottom: 8 },
   aktivitasItem: { color: WARNA.redup, fontSize: 12, marginBottom: 6 },
   aktivitasJenis: { color: WARNA.teks, fontWeight: "600" },
@@ -583,3 +608,4 @@ const gaya = StyleSheet.create({
   },
   tombolTutupTeks: { color: WARNA.biruMuda, fontWeight: "700", fontSize: 15 },
 });
+

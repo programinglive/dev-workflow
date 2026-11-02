@@ -97,7 +97,9 @@ test("ready check menyebut umur README saat menolak", async () => {
   const { state, dir } = await readyState();
   try {
     const r = await handleReadyCheck(state, ctx({ status: " M src/a.js", toplevel: dir }));
-    assert.match(text(r), /README\.md — commit terakhir 14 hari lalu/);
+    // Umurnya bergantung waktu nyata sejak commit terakhir di repo ini, jadi
+    // angkanya tidak boleh dipatok. Yang penting pesannya MENYEBUT umur.
+    assert.match(text(r), /README\.md — commit terakhir \d+ hari lalu/);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
