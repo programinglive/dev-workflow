@@ -64,6 +64,11 @@ Thumbs.db
 .netrc
 .superpowers/
 
+# Lokal: tidak pernah di-commit
+project-summary.json
+tmp-test-state.json
+user-id
+
 # Dibuat oleh web/scripts/generate-version.mjs saat build
 web/lib/version.generated.ts
 
