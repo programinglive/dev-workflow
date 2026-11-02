@@ -180,6 +180,24 @@ owner will check when approving. If a task has none (it was created before the
 field existed), fill it with `update_factory_task` — otherwise `done` is
 rejected with `409` no matter how much evidence the summary carries.
 
+### Automatic close from the workflow
+
+Since v1.19.32, `complete_task`, `force_complete_task`, and `drop_task` close
+the linked Factory task automatically when `dodFactoryTaskId` is set on the
+workflow state (i.e. the task was claimed via `claim_factory_task`):
+
+- `complete_task` / `force_complete_task` → Factory `done`
+- `drop_task` → Factory `cancelled`
+
+The helper `closeFactoryTask` in `tools/handler-modules/commit-handlers.js`
+reads `dodFactoryTaskId` **before** `workflowState.reset()`, calls
+`updateTaskStatus` through `context.factory` (injectable for tests), and never
+lets a Factory failure block the local state reset. The response text always
+reports whether the Factory task was closed.
+
+Tasks started with a manual `start_task` (no `dodFactoryTaskId`) leave
+Factory untouched — by design.
+
 ### Filling a missing definition of done
 
 ```
