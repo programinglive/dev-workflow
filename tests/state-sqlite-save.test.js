@@ -65,43 +65,18 @@ test("dua sesi pada proyek yang sama tidak saling menimpa", async () => {
   }
 });
 
-test("penulis dengan state basi mendapat conflict, bukan menimpa", async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), "devwf-stale-"));
-  const dbPath = path.join(dir, "state.db");
-  const stateFile = path.join(dir, ".state", "workflow-state.json");
-
-  try {
-    const mk = async () => {
-      const adapter = new SqliteAdapter({ dbPath });
-      const ws = new WorkflowState(stateFile, { db: adapter, sessionId: "ses_x" });
-      await ws.load();
-      return { ws, adapter };
-    };
-
-    const w1 = await mk();
-    const w2 = await mk();
-
-    w1.ws.state.currentPhase = "coding";
-    w1.ws.state.taskDescription = "pertama";
-    await w1.ws.save();
-
-    w2.ws.state.currentPhase = "coding";
-    w2.ws.state.taskDescription = "kedua";
-    const r = await w2.ws.save();
-
-    assert.ok(r.conflict, "save kedua harus melaporkan konflik, bukan mengaku berhasil");
-    assert.equal(r.verified, false);
-
-    const fresh = await mk();
-    assert.equal(fresh.ws.state.taskDescription, "pertama", "isi pemenang tidak boleh rusak");
-
-    await w1.adapter.close();
-    await w2.adapter.close();
-    await fresh.adapter.close();
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-});
+// Catatan: tes "penulis dengan state basi mendapat conflict" DIHAPUS.
+//
+// Skenario yang dulu diuji - dua penulis memakai state yang sama lalu yang kedua
+// menimpa - sekarang ditangani dengan MENGGABUNGKAN, bukan menolak: penulis yang
+// memegang versi lama menyumbang kemajuan monotonnya ke baris tersimpan
+// (lihat tests/state-merge-concurrency.test.js dan
+// tests/state-review-regressions.test.js "penulis yang memegang versi lama tidak
+// boleh mengembalikan fase").
+//
+// Penolakan versi tetap ada dan diuji di lapisan penyimpanan
+// (tests/db-state-versioned.test.js), dan tetap dilaporkan sebagai konflik bila
+// penggabungan pun kalah balapan.
 
 test("replika mati tidak menggagalkan save", async () => {
   await withState(

@@ -36,7 +36,7 @@ export function backoffSeconds(attempts) {
  */
 const CLAIM_SECONDS = 300;
 
-/** Menitipkan satu perubahan ke antrean. Kunci yang sama menimpa, bukan menumpuk. */
+/** Menitipkan satu perubahan ke antrean. Kunci yang sama menimpa isinya, bukan menumpuk. */
 export async function enqueue(adapter, kind, dedupeKey, payload) {
   await adapter.connect();
   adapter.db
@@ -44,8 +44,7 @@ export async function enqueue(adapter, kind, dedupeKey, payload) {
       `INSERT INTO sync_queue (kind, dedupe_key, payload, attempts, created_at)
        VALUES (?, ?, ?, 0, datetime('now'))
        ON CONFLICT(kind, dedupe_key) DO UPDATE SET
-         payload = excluded.payload,
-         next_attempt_at = NULL`,
+         payload = excluded.payload`,
     )
     .run(kind, dedupeKey, typeof payload === "string" ? payload : JSON.stringify(payload));
 }
