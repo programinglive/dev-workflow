@@ -124,18 +124,25 @@ export async function handleGetWorkflowStatus(workflowState) {
       }
     }
 
-    const sessionKey = workflowState._sessionKey().key;
-    const contenders = adapter.db
-      .prepare(
-        `SELECT count(DISTINCT process_token) AS c FROM state_writer_history
-          WHERE session_key = ? AND written_at > datetime('now', '-60 seconds')`,
-      )
-      .get(sessionKey).c;
+    const { userId, projectPath, sessionKey } = workflowState._storageIds();
+    const contenders = adapter.contenders(userId, projectPath, sessionKey);
 
     if (contenders > 1) {
       opsNote +=
         `\n⚠️ Dua proses menulis sesi yang sama dalam 60 detik terakhir. ` +
         `Pastikan "Task:" di atas benar-benar milik Anda sebelum menutup task.`;
+    }
+
+    // State sisa yang tersimpan tetapi tidak bisa dijangkau sesi mana pun:
+    // cadangan `legacy-project` dan baris `pid-*` dari era sebelum kunci sesi
+    // berubah. Itu data pengguna, jadi ditampilkan - bukan dibiarkan tak terlihat.
+    const orphans = adapter.findOrphanStates(userId, projectPath);
+    if (orphans.length > 0) {
+      opsNote += `\nState tersimpan yang tidak terpakai sesi mana pun (${orphans.length}):`;
+      for (const o of orphans.slice(0, 5)) {
+        opsNote += `\n   ${o.sessionKey}: "${o.taskDescription || "(tanpa task)"}" (${o.phase})`;
+      }
+      opsNote += `\n   Pulihkan dengan resume_session bila masih diperlukan.`;
     }
   } catch {
     // Laporan tambahan tidak boleh menghalangi status.

@@ -350,11 +350,20 @@ export class SqliteAdapter extends DbAdapter {
         await this.connect();
         const normalizedProjectPath = normalizeProjectPath(projectPath);
 
-        // SQLite upsert syntax
+        // Timestamp: pakai jam SQLite, bukan jam proses.
+        //
+        // MASALAH NYATA: jam mesin yang meleset membuat sebuah entri tampak
+        // "besok", sehingga urutannya kacau terhadap baris yang ditulis proses
+        // lain dengan jam benar - dan rekap per hari menghitungnya di hari yang
+        // salah. `entry.timestamp` tetap dihormati bila pemanggil memang
+        // memberikannya (mis. memulihkan riwayat lama).
+        const timestamp = entry.timestamp || null;
+        const sqlTimestamp = "COALESCE(?, datetime('now'))";
+
         const stmt = this.db.prepare(`
       INSERT INTO workflow_history
       (user_id, project_path, task_description, task_type, commit_message, timestamp, forced, force_reason, dropped, drop_reason, classification)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ${sqlTimestamp}, ?, ?, ?, ?, ?)
       ON CONFLICT(user_id, project_path, timestamp, task_description) DO UPDATE SET
         commit_message=excluded.commit_message,
         forced=excluded.forced,
@@ -369,7 +378,7 @@ export class SqliteAdapter extends DbAdapter {
             entry.taskDescription,
             normalizeTaskType(entry.taskType),
             entry.commitMessage,
-            entry.timestamp || new Date().toISOString(),
+            timestamp,
             entry.forced ? 1 : 0,
             entry.forceReason || null,
             entry.dropped ? 1 : 0,
@@ -527,6 +536,80 @@ export class SqliteAdapter extends DbAdapter {
      * bertabrakan dengan state hidup milik sesi sungguhan - dulu baris ini yang
      * dipakai bergantian oleh semua sesi, dan itu bug yang sedang diperbaiki.
      */
+    /**
+     * Berapa proses BERBEDA menulis sesi ini dalam 60 detik terakhir.
+     *
+     * `state_writer` hanya menyimpan satu baris per sesi, jadi dua proses yang
+     * bergantian menulis tidak terlihat di sana. Riwayat penulis inilah yang
+     * membuat pertikaian bisa dideteksi - dan dilaporkan, bukan ditebak.
+     */
+    contenders(userId, projectPath, sessionKey, windowSeconds = 60) {
+        const normalizedPath = normalizeProjectPath(projectPath);
+        const row = this.db
+            .prepare(
+                `SELECT count(DISTINCT process_token) AS c FROM state_writer_history
+                  WHERE user_id = ? AND project_path = ? AND session_key = ?
+                    AND written_at > datetime('now', '-' || ? || ' seconds')`,
+            )
+            .get(userId, normalizedPath, sessionKey, Math.max(1, Math.trunc(windowSeconds)));
+        return row?.c ?? 0;
+    }
+
+    /**
+     * Membuang riwayat penulis yang lebih tua dari `days`.
+     *
+     * Tabel ini tumbuh satu baris setiap `save()`. Tanpa retensi, pada sesi yang
+     * panjang ia menjadi tabel terbesar di database - padahal isinya hanya
+     * dipakai untuk jendela 60 detik.
+     */
+    pruneWriterHistory({ days = 7 } = {}) {
+        const umur = Math.max(1, Math.trunc(days));
+        const info = this.db
+            .prepare(
+                `DELETE FROM state_writer_history
+                  WHERE written_at < datetime('now', '-' || ? || ' days')`,
+            )
+            .run(umur);
+        return info.changes;
+    }
+
+    /**
+     * State sisa yang tersimpan tetapi tidak bisa dijangkau sesi mana pun.
+     *
+     * Dua bentuk: `legacy-project` (cadangan untuk proyek yang berkas JSON-nya
+     * sudah hilang) dan baris `pid-*` dari era sebelum kunci sesi berubah. Kedua
+     * duanya data pengguna yang masih berharga, jadi ditampilkan - bukan
+     * dibiarkan tidak terlihat.
+     */
+    findOrphanStates(userId, projectPath) {
+        const normalizedPath = normalizeProjectPath(projectPath);
+        const rows = this.db
+            .prepare(
+                `SELECT session_key, state_json, updated_at FROM workflow_state
+                  WHERE user_id = ? AND project_path = ?
+                    AND (session_key = 'legacy-project' OR session_key LIKE 'pid-%')
+                  ORDER BY updated_at DESC`,
+            )
+            .all(userId, normalizedPath);
+
+        const hasil = [];
+        for (const row of rows) {
+            try {
+                const state = JSON.parse(row.state_json);
+                hasil.push({
+                  sessionKey: row.session_key,
+                  taskDescription: state?.taskDescription || "",
+                  phase: state?.currentPhase || "idle",
+                  updatedAt: row.updated_at,
+                });
+            } catch {
+                // Baris rusak tidak boleh menyembunyikan baris lain.
+                hasil.push({ sessionKey: row.session_key, taskDescription: "", phase: "rusak", updatedAt: row.updated_at });
+            }
+        }
+        return hasil;
+    }
+
     async saveState(userId, projectPath, state) {
         await this.connect();
         const normalizedProjectPath = normalizeProjectPath(projectPath);

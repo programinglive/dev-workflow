@@ -52,13 +52,14 @@ test("antrean terisi menampilkan jumlahnya", async () => {
 
 test("satu proses menulis berulang tidak memicu peringatan pertikaian", async () => {
   await withStatus(async ({ ws, adapter }) => {
+    const { userId, projectPath, sessionKey } = ws._storageIds();
     const touch = () =>
       adapter.db
         .prepare(
           `INSERT INTO state_writer_history (user_id, project_path, session_key, process_token, written_at)
-           VALUES ('u','p','ses_status','t1',datetime('now'))`,
+           VALUES (?, ?, ?, 't1', datetime('now'))`,
         )
-        .run();
+        .run(userId, projectPath, sessionKey);
 
     touch();
     touch();
@@ -70,13 +71,14 @@ test("satu proses menulis berulang tidak memicu peringatan pertikaian", async ()
 
 test("dua proses berbeda pada sesi yang sama memicu peringatan", async () => {
   await withStatus(async ({ ws, adapter }) => {
+    const { userId, projectPath, sessionKey } = ws._storageIds();
     const touch = (token) =>
       adapter.db
         .prepare(
           `INSERT INTO state_writer_history (user_id, project_path, session_key, process_token, written_at)
-           VALUES ('u','p','ses_status',?,datetime('now'))`,
+           VALUES (?, ?, ?, ?, datetime('now'))`,
         )
-        .run(token);
+        .run(userId, projectPath, sessionKey, token);
 
     touch("t1");
     touch("t2");

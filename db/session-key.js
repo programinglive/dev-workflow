@@ -75,19 +75,42 @@ export function resolveSessionKeyWithSource(env = process.env, explicitSessionId
 /**
  * Menormalkan path proyek menjadi bentuk yang selalu sama.
  *
- * `D:\code\Foo`, `d:/code/foo`, dan `D:\code\Foo\` adalah proyek yang SAMA.
- * Tanpa normalisasi, ketiganya menjadi tiga baris berbeda dan riwayat sebuah
- * proyek terpecah hanya karena penulisan path berbeda antar pemanggil atau
- * antar sistem operasi.
+ * `D:\code\Foo`, `d:/code/foo`, dan `D:\code\Foo\` adalah proyek yang SAMA di
+ * Windows. Tanpa normalisasi, ketiganya menjadi tiga baris berbeda dan riwayat
+ * sebuah proyek terpecah hanya karena penulisan path berbeda antar pemanggil.
  *
- * Huruf drive dikecilkan; Windows sendiri tidak membedakan besar-kecil huruf
- * pada path, jadi mengecilkannya tidak menghilangkan informasi.
+ * MENGAPA PEKA PLATFORM
+ * ---------------------
+ * Di POSIX, `/srv/App` dan `/srv/app` adalah DUA direktori yang berbeda. Versi
+ * pertama fungsi ini mengecilkan SELURUH path, sehingga dua proyek yang tidak
+ * berhubungan bergabung menjadi satu baris - riwayatnya tercampur, dan rekap
+ * durasi menghitung pekerjaan orang lain.
+ *
+ * Karena itu huruf besar-kecil diseragamkan HANYA di Windows, tempat sistem
+ * berkasnya sendiri tidak membedakannya. Di POSIX, path dikembalikan apa adanya
+ * setelah garis miringnya diseragamkan.
+ *
+ * Jalur akar dipertahankan: `/` tetap `/`, dan `C:\` menjadi `c:/`, bukan string
+ * kosong - string kosong berarti "tanpa proyek" dan akan mencampur semuanya.
  */
 export function normalizeProjectPath(value) {
   if (value === null || value === undefined) return "";
   const text = String(value).trim();
   if (text === "") return "";
-  const slashed = text.replace(/\\/g, "/").replace(/\/+$/, "");
-  const lowered = slashed.toLowerCase();
-  return lowered;
+
+  const slashed = text.replace(/\\/g, "/");
+
+  // Buang garis miring di akhir, kecuali bila isinya memang hanya garis miring
+  // (akar POSIX). Akar drive Windows juga harus mempertahankan garis miringnya:
+  // `C:\` menjadi `c:/`, bukan `c:` - bentuk terakhir bukan path yang sah dan
+  // akan membingungkan pembaca yang mencoba membukanya.
+  let tanpaAkhir = /^\/+$/.test(slashed) ? slashed : slashed.replace(/\/+$/, "");
+  if (/^[A-Za-z]:$/.test(tanpaAkhir)) tanpaAkhir = `${tanpaAkhir}/`;
+
+  if (process.platform === "win32") {
+    return tanpaAkhir.toLowerCase();
+  }
+
+  // POSIX: path dipertahankan apa adanya setelah garis miring diseragamkan.
+  return tanpaAkhir;
 }

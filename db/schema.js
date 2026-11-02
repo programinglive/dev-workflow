@@ -120,6 +120,9 @@ const DDL_INDEXES = [
   `CREATE INDEX IF NOT EXISTS idx_project_summary_user_project ON project_summary(user_id, project_path)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_workflow_history_entry_v2 ON workflow_history(user_id, project_path, timestamp, task_description)`,
   `CREATE INDEX IF NOT EXISTS idx_sync_queue_due ON sync_queue(next_attempt_at)`,
+  // Pertikaian penulis ditanyakan pada setiap `get_workflow_status`. Tanpa index,
+  // tabel yang tumbuh satu baris per simpan akan discan penuh setiap kali.
+  `CREATE INDEX IF NOT EXISTS idx_writer_history_lookup ON state_writer_history(session_key, written_at)`,
 ];
 
 function tableExists(db, name) {
