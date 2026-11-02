@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.19.25](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.24...v1.19.25) (2026-11-02)
+
+
+### 🐛 Bug Fixes
+
+* **factory:** kirim header Origin supaya board menerima task lagi ([50aeb33](https://github.com/programinglive/dev-workflow-mcp-server/commit/50aeb33a451267a62cb11252dbd33f678f27c137))
+
 ### [1.19.24](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.23...v1.19.24) (2026-11-02)
 
 
