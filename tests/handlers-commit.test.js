@@ -200,6 +200,53 @@ const FOREIGN_STATUS = [
   " M src/index.js",
 ].join("\n");
 
+/**
+ * Kelas kesalahan yang sama dengan `agent_tool`: nilai baru yang KOSONG
+ * tidak boleh menghapus nilai lama. Kalau `getLastCommitMessage` gagal membaca
+ * (mis. riwayat git tidak ada), pesan commit yang sudah tercatat di state
+ * tetap harus bertahan - bukan diganti string kosong.
+ */
+test("pesan commit lama tidak dihapus saat git tidak bisa membacanya", async () => {
+  await withWorkflowState(async (workflowState) => {
+    workflowState.state.readyToCommit = true;
+    workflowState.state.readyCheckCompleted = true;
+    workflowState.state.testsSkipped = false;
+    workflowState.state.testsCreated = true;
+    workflowState.state.testsPassed = true;
+    workflowState.state.currentPhase = "commit";
+    workflowState.state.lastCommitMessage = "fix: pekerjaan sebelumnya";
+    await workflowState.save();
+
+    const execStub = async (command) => {
+      return { stdout: "" };
+    };
+
+    const response = await handleToolCall({
+      request: createRequest("commit_and_push", { commitMessage: "" }),
+      normalizeRequestArgs: (args) => ({ args, error: null }),
+      workflowState,
+      exec: execStub,
+      git: createGitMock({
+        hasWorkingChanges: async () => false,
+        getLastCommitMessage: async () => "",
+        getStatusOutput: async () => "",
+        containsTestFilesInStatus: (statusOutput) => statusOutput.includes("tests/"),
+      }),
+      utils: testUtils,
+    });
+
+    assert.ok(
+      response.content[0].text.includes("No changes detected"),
+      "response harus tetap jalan tanpa mengubah pesan lama"
+    );
+    assert.equal(
+      workflowState.state.lastCommitMessage,
+      "fix: pekerjaan sebelumnya",
+      "nilai lama tidak boleh terhapus oleh bacaan kosong"
+    );
+  });
+});
+
 test("commit_and_push menolak men-stage berkas yang sudah kotor sebelum task", async () => {
   await withWorkflowState(async (workflowState) => {
     await prepareCommitPhase(workflowState);

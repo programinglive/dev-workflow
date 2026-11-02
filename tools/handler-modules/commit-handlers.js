@@ -224,7 +224,9 @@ export async function handleCommitAndPush(args, context) {
     }
 
     workflowState.state.commitAndPushCompleted = true;
-    workflowState.state.lastCommitMessage = effectiveCommitMessage || "";
+    // Pesan commit lama tidak boleh terhapus oleh bacaan kosong: tanpa ini,
+    // kegagalan `git log` membuat riwayat kehilangan pesan commit sesungguhnya.
+    workflowState.state.lastCommitMessage = effectiveCommitMessage || workflowState.state.lastCommitMessage || "";
     workflowState.state.lastPushBranch = branchForPush;
     workflowState.state.currentPhase = isReleaseSatisfied(workflowState.state) ? "ready_to_complete" : "release";
     await workflowState.save();
