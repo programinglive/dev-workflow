@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.19.26](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.25...v1.19.26) (2026-11-02)
+
+
+### ✨ Features
+
+* **factory:** catat task otomatis ke board saat start_task ([ef2cfab](https://github.com/programinglive/dev-workflow-mcp-server/commit/ef2cfab924a25a53592aa10c38d966faf67132a8))
+
 ### [1.19.25](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.24...v1.19.25) (2026-11-02)
 
 
