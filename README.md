@@ -295,6 +295,12 @@ Running a single file without that flag fails loudly instead of quietly writing
 test rows into the database that holds your work. On 2 November 2026 that
 happened: 2.544 test rows landed in the production database.
 
+Concurrency is tested with **two real forked processes**
+(`tests/state-two-process.test.js`), because Node runs JavaScript one statement
+at a time: two promises in one process can never prove that a row claim or a
+version guard actually blocked anything. Each property there was verified by
+mutation — break the code on purpose, watch the test fail, restore it.
+
 
 ### Watching the work happen
 

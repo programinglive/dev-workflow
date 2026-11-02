@@ -100,3 +100,30 @@ berarti kosong.**
 Keduanya sengaja **tidak** ditaruh di dashboard: antrean tinggal di mesin klien,
 dan justru saat mesin itu tidak bisa menjangkau server, angkanya tidak bisa
 ditampilkan di sana.
+
+## Pengujian
+
+```bash
+node --no-deprecation --import ./tests/setup-env.js --test tests/*.test.js
+```
+
+Preload `setup-env.js` wajib: `SqliteAdapter` menolak membuka database di luar
+direktori sementara saat mendeteksi proses tes, supaya `npm test` tidak pernah
+menulis ke state sungguhan.
+
+Konkurensi diuji dengan **dua proses `fork` sungguhan** di
+`tests/state-two-process.test.js`, bukan dua promise dalam satu proses. Yang
+terbukti di sana, masing-masing diperiksa dengan mutasi (kode dirusak sengaja,
+tes harus gagal, lalu dipulihkan):
+
+| Sifat | Bukti |
+|---|---|
+| Tidak ada penulisan yang hilang saat dua proses menulis sesi yang sama | versi akhir = 1 + jumlah penulisan berhasil |
+| Penjagaan `version` menolak penulis basi antar proses | konflik terukur saat kedua proses memegang versi yang sama |
+| Dua penguras antrean tidak mengirim satu baris dua kali | mutasi yang menghapus klaim membuat baris terkirim dua kali |
+
+Yang **tidak** dibuktikan oleh tes itu: `busy_timeout = 5000`. Transaksi
+`better-sqlite3` bersifat sinkron dan sangat pendek, sehingga mutasi yang
+menghapus pragma itu tetap lulus. Ia dipertahankan sebagai pertahanan terhadap
+penulis yang lebih lambat (mis. proses lain yang sedang menjalankan `VACUUM`),
+bukan karena ada tes yang membuktikannya.
