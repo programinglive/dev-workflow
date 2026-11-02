@@ -40,6 +40,19 @@ function int(v) {
 }
 
 /**
+ * Nama tool yang disimpan: huruf kecil, atau 'unknown' bila tidak ada info.
+ *
+ * 'unknown' BUKAN nilai, melainkan ketiadaan informasi. Karena itu aturan
+ * "jangan menimpa yang lama" dinyatakan di SQL (lihat CASE pada agent_tool),
+ * bukan dengan mengosongkan nilai di sini - kalau dikosongkan sebelum SQL,
+ * baris baru kehilangan penanda "belum tahu" dan tampil kosong di layar.
+ */
+function normalTool(v) {
+  const s = str(v, 40).trim().toLowerCase();
+  return s || 'unknown';
+}
+
+/**
  * @param {object} body  kiriman dari pelapor
  * @returns {{ sql: string, params: Array }}
  */
@@ -70,10 +83,22 @@ function buildSessionUpsert(body = {}) {
            -- Judul bisa datang belakangan (OpenCode menamainya setelah beberapa
            -- pesan), jadi kiriman kosong tidak boleh menghapus judul yang ada.
            session_title=COALESCE(NULLIF(EXCLUDED.session_title, ''), sessions.session_title),
-           -- Tool yang tidak dikenali kiriman baru tidak boleh menghapus label
-           -- lama. 'unknown' adalah pilihan TERAKHIR: kalau dijadikan bawaan
-           -- pada EXCLUDED, ia akan menimpa label 'codex' yang sudah benar.
-           agent_tool=COALESCE(NULLIF(EXCLUDED.agent_tool, ''), sessions.agent_tool, 'unknown'),
+           -- 'unknown' BUKAN informasi, jadi tidak boleh menimpa label yang
+           -- sudah benar. Tetapi 'unknown' HARUS tetap tersimpan untuk baris
+           -- yang memang belum pernah punya label sama sekali - kalau tidak,
+           -- layar kehilangan kemampuan membedakan "belum tahu" dari "kosong".
+           --
+           -- Perbaikan pertama saya menaruh 'unknown' sebagai pilihan terakhir
+           -- di COALESCE dan menganggapnya selesai. Itu salah: 'unknown' bukan
+           -- string kosong, jadi ia lolos dari NULLIF(...,'') dan tetap
+           -- MENIMPA 'codex'. Terbukti di produksi 2 November 2026.
+           agent_tool=CASE
+             WHEN NULLIF(EXCLUDED.agent_tool, '') IS NULL
+               THEN COALESCE(NULLIF(sessions.agent_tool, ''), 'unknown')
+             WHEN lower(EXCLUDED.agent_tool) = 'unknown'
+               THEN COALESCE(NULLIF(sessions.agent_tool, ''), 'unknown')
+             ELSE EXCLUDED.agent_tool
+           END,
            -- Ambil waktu mulai yang PALING AWAL dan sah.
            --
            -- HATI-HATI: LEAST(NULL, x) menghasilkan NULL di PostgreSQL, bukan x.
@@ -103,7 +128,7 @@ function buildSessionUpsert(body = {}) {
       b.ownerPid ? int(b.ownerPid) : null,
       b.startedAt || null,
       str(b.sessionTitle, 200),
-      str(b.agentTool, 40),
+      normalTool(b.agentTool),
     ],
   };
 }
