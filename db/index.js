@@ -34,6 +34,35 @@ export async function getAdapter() {
   return adapterInstance;
 }
 
+let localAdapterInstance = null;
+
+/**
+ * Adapter penyimpanan state hidup: SELALU SQLite.
+ *
+ * `DEV_WORKFLOW_DB_TYPE` sengaja diabaikan di sini. Variabel itu dulu memilih
+ * backend untuk *semua* operasi, termasuk penyimpanan state. Kalau ia diisi
+ * `postgres` di sebuah mesin, seluruh `load()`/`save()` akan memanggil metode
+ * yang tidak ada di adapter Postgres dan gagal sebagai "Internal server error".
+ *
+ * "SQLite adalah sumber kebenaran" harus menjadi sifat kode, bukan konvensi
+ * konfigurasi.
+ */
+export async function getLocalAdapter() {
+  if (localAdapterInstance) {
+    // `connect()` idempoten, dan menghindari adapter yang sudah ditutup tes.
+    await localAdapterInstance.connect();
+    return localAdapterInstance;
+  }
+
+  const adapter = new SqliteAdapter({
+    connectionUrl: databaseConnectionUrl(),
+    dbPath: process.env.DEV_WORKFLOW_DB_PATH,
+  });
+  await adapter.connect();
+  localAdapterInstance = adapter;
+  return adapter;
+}
+
 // Proxies for backward compatibility (though call sites need to handle Promises now)
 
 export async function insertHistoryEntry(userId, projectPath, entry) {
@@ -64,6 +93,47 @@ export async function getHistorySummary(userId, projectPath, options) {
 export async function saveState(userId, projectPath, state) {
   const db = await getAdapter();
   await db.saveState(userId, projectPath, state);
+}
+
+/**
+ * Menyimpan state hidup satu sesi, dengan pemeriksaan versi.
+ *
+ * Berbeda dari `saveState` di atas yang berkunci `(user, proyek)` dan karena itu
+ * dipakai bergantian oleh semua sesi pada proyek yang sama.
+ */
+export async function saveStateVersioned(input) {
+  const db = await getAdapter();
+  return db.saveStateVersioned(input);
+}
+
+/**
+ * Membaca state hidup satu sesi.
+ *
+ * `null` berarti sesi ini belum pernah menyimpan - keadaan normal sesi baru.
+ * Isi rusak melempar `StateUnavailable`, bukan mengembalikan `null`.
+ */
+export async function loadStateVersioned(input) {
+  const db = await getAdapter();
+  return db.loadStateVersioned(input);
+}
+
+/** Menitipkan satu perubahan ke antrean replika. Lihat db/replicate.js. */
+export async function enqueueSync(kind, dedupeKey, payload) {
+  const { enqueue } = await import("./replicate.js");
+  const db = await getAdapter();
+  return enqueue(db, kind, dedupeKey, payload);
+}
+
+/** Mengirim isi antrean replika sebentar saja. Tidak pernah melempar. */
+export async function drainSync(options = {}) {
+  const { drainSync: drain } = await import("./replicate.js");
+  return drain(options);
+}
+
+/** Jumlah dan umur baris yang belum terkirim ke replika. */
+export async function queueDepth() {
+  const { queueDepth: depth } = await import("./replicate.js");
+  return depth();
 }
 
 export async function getState(userId, projectPath) {

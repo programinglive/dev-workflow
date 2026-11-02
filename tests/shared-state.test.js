@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { WorkflowState } from "../workflow-state.js";
+import { SqliteAdapter } from "../db/adapters/sqlite.js";
 import { handleToolCall } from "../tools/handlers.js";
 import { normalizeRequestArgs } from "../utils.js";
 
@@ -153,83 +154,116 @@ test("isForeignWrite: false untuk token proses sendiri", async () => {
 });
 
 // ---------------------------------------------------------------------------
-// 3. save() menyelamatkan pekerjaan proses lain
+// 3. save() tidak boleh menghilangkan pekerjaan sesi lain
+//
+// Empat tes di sini DULU menguji mekanisme "selamatkan task asing dari berkas
+// bersama": `reconcileWithDisk` membaca berkas, menemukan task proses lain, dan
+// mengarsipkannya ke history sebelum menimpanya. Mekanisme itu ada karena SATU
+// berkas dipakai semua sesi. Sejak state disimpan per sesi di SQLite, keadaan
+// "task orang lain ada di baris saya" tidak bisa terjadi lagi, sehingga tes
+// terhadap penyelamatan itu hanya bisa lulus kalau bug lamanya dikembalikan.
+//
+// Yang dijaga sekarang adalah janji yang sama dengan cara baru: pekerjaan sesi
+// lain tidak boleh hilang, dan penyimpanan berulang tidak menggandakan apa pun.
 // ---------------------------------------------------------------------------
 
-test("save() menyelamatkan task berjalan milik proses lain sebelum menimpanya", async () => {
-  await withState(async (state, stateFile) => {
-    await writeForeignState(stateFile, {
-      taskDescription: "Resize docker-alma 8 GB ke 4 GB",
-      currentPhase: "testing",
+async function withTwoSessions(callback) {
+  const dir = await mkdtemp(path.join(tmpdir(), "shared-rows-"));
+  const dbPath = path.join(dir, "state.db");
+
+  const make = async (sessionId) => {
+    const adapter = new SqliteAdapter({ dbPath });
+    await adapter.connect();
+    const ws = new WorkflowState(path.join(dir, `.state-${sessionId}`, "state.json"), {
+      db: adapter,
+      sessionId,
     });
+    await ws.load();
+    return { ws, adapter };
+  };
 
-    state.state.currentPhase = "coding";
-    state.state.taskDescription = "Task saya sendiri";
-    const reconciled = await state.save();
+  const a = await make("ses_shared_a");
+  const b = await make("ses_shared_b");
+  try {
+    await callback(a, b);
+  } finally {
+    await a.adapter.close();
+    await b.adapter.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+}
 
-    assert.equal(reconciled.preservedTask, "Resize docker-alma 8 GB ke 4 GB");
+test("task sesi lain tetap utuh setelah sesi ini menyimpan", async () => {
+  await withTwoSessions(async ({ ws: a }, { ws: b }) => {
+    a.state.currentPhase = "coding";
+    a.state.taskDescription = "Resize docker-alma 8 GB ke 4 GB";
+    await a.save();
 
-    const preserved = state.state.history.find(
-      (entry) => entry.taskDescription === "Resize docker-alma 8 GB ke 4 GB"
-    );
-    assert.ok(preserved, "task proses lain harus ada di history");
-    assert.equal(preserved.interrupted, true);
-    assert.equal(preserved.interruptedAtPhase, "testing");
-    assert.equal(preserved.interruptedBy, "proc-other-session");
-  });
-});
+    b.state.currentPhase = "coding";
+    b.state.taskDescription = "Task saya sendiri";
+    await b.save();
 
-test("save() menggabungkan history proses lain, bukan membuangnya", async () => {
-  await withState(async (state, stateFile) => {
-    const foreignEntry = {
-      taskDescription: "Task yang sudah selesai di sesi lain",
-      commitMessage: "feat: sesuatu",
-      timestamp: "2026-10-26T10:00:00.000Z",
-    };
-    await writeForeignState(stateFile, { history: [foreignEntry] });
-
-    state.state.currentPhase = "coding";
-    state.state.taskDescription = "Task saya";
-    const reconciled = await state.save();
-
-    assert.equal(reconciled.mergedHistory, 1);
-    assert.ok(
-      state.state.history.some(
-        (entry) => entry.taskDescription === "Task yang sudah selesai di sesi lain"
-      ),
-      "history proses lain harus ikut"
+    assert.equal(
+      a.state.taskDescription,
+      "Resize docker-alma 8 GB ke 4 GB",
+      "task sesi A tidak boleh tersentuh oleh penyimpanan sesi B",
     );
   });
 });
 
-test("arsip tidak dobel walau save() dipanggil berulang", async () => {
-  await withState(async (state, stateFile) => {
-    await writeForeignState(stateFile, { taskDescription: "Task asing" });
+test("menyimpan sesi lain tidak menghapus baris sesi ini", async () => {
+  await withTwoSessions(async ({ ws: a, adapter }, { ws: b }) => {
+    const rowOf = (key) =>
+      adapter.db
+        .prepare("SELECT state_json, version FROM workflow_state WHERE session_key = ?")
+        .get(key);
 
-    state.state.currentPhase = "coding";
-    state.state.taskDescription = "Task saya";
-    await state.save();
-    const firstCount = state.state.history.filter((e) => e.interrupted).length;
+    a.state.currentPhase = "coding";
+    a.state.taskDescription = "Task A";
+    await a.save();
+    const afterA = rowOf("ses_shared_a");
 
-    await state.save();
-    await state.save();
-    const laterCount = state.state.history.filter((e) => e.interrupted).length;
+    b.state.currentPhase = "coding";
+    b.state.taskDescription = "Task B";
+    await b.save();
 
-    assert.equal(firstCount, 1);
-    assert.equal(laterCount, 1, "tidak boleh menumpuk arsip yang sama");
+    const afterB = rowOf("ses_shared_a");
+    assert.deepEqual(afterB, afterA, "baris sesi A harus sama persis");
   });
 });
 
-test("save() tidak mengarsipkan task asing yang sudah idle", async () => {
-  await withState(async (state, stateFile) => {
-    await writeForeignState(stateFile, { currentPhase: "idle", taskDescription: "" });
+test("penyimpanan berulang tidak menggandakan baris state", async () => {
+  await withTwoSessions(async ({ ws: a, adapter }) => {
+    a.state.currentPhase = "coding";
+    a.state.taskDescription = "Task saya";
+    await a.save();
+    await a.save();
+    await a.save();
 
-    state.state.currentPhase = "coding";
-    state.state.taskDescription = "Task saya";
-    const reconciled = await state.save();
+    const rows = adapter.db
+      .prepare("SELECT count(*) c FROM workflow_state WHERE session_key = 'ses_shared_a'")
+      .get().c;
+    assert.equal(rows, 1, "satu sesi = satu baris, berapa kali pun menyimpan");
+  });
+});
 
-    assert.equal(reconciled.preservedTask, null);
-    assert.equal(state.state.history.filter((e) => e.interrupted).length, 0);
+test("save() tidak menyentuh baris sesi lain sama sekali", async () => {
+  await withTwoSessions(async ({ ws: a, adapter }, { ws: b }) => {
+    b.state.currentPhase = "idle";
+    b.state.taskDescription = "";
+    await b.save();
+    const before = adapter.db
+      .prepare("SELECT state_json, version FROM workflow_state WHERE session_key = 'ses_shared_b'")
+      .get();
+
+    a.state.currentPhase = "coding";
+    a.state.taskDescription = "Task saya";
+    await a.save();
+
+    const after = adapter.db
+      .prepare("SELECT state_json, version FROM workflow_state WHERE session_key = 'ses_shared_b'")
+      .get();
+    assert.deepEqual(after, before);
   });
 });
 
@@ -238,10 +272,27 @@ test("save() tidak mengarsipkan task asing yang sudah idle", async () => {
 // ---------------------------------------------------------------------------
 
 test("start_task memberi peringatan dan menyelamatkan task proses lain", async () => {
-  await withState(async (state, stateFile) => {
-    await writeForeignState(stateFile, {
-      taskDescription: "Pekerjaan penting sesi lain",
-    });
+  await withState(async (state) => {
+    // "Task asing" sekarang hanya bisa berarti satu hal: proses MCP KEDUA yang
+    // melayani sesi yang sama. Sesi lain punya barisnya sendiri, jadi tidak ada
+    // lagi yang perlu diselamatkan dari sana.
+    state.state.currentPhase = "coding";
+    state.state.taskDescription = "Pekerjaan penting sesi lain";
+    await state.save();
+
+    const sessionKey = state._sessionKey().key;
+    const row = state.dbAdapter.db
+      .prepare("SELECT state_json FROM workflow_state WHERE session_key = ?")
+      .get(sessionKey);
+    const stored = JSON.parse(row.state_json);
+    stored.owner = {
+      processMarker: "proc-other-session",
+      pid: 4242,
+      updatedAt: new Date().toISOString(),
+    };
+    state.dbAdapter.db
+      .prepare("UPDATE workflow_state SET state_json = ? WHERE session_key = ?")
+      .run(JSON.stringify(stored), sessionKey);
 
     const response = await callTool("start_task", { description: "Task baru saya", type: "bugfix", definitionOfDone: ["task tercatat"] }, state);
 

@@ -15,6 +15,7 @@ import { constants as fsConstants } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { SqliteAdapter } from "../db/adapters/sqlite.js";
 
 // Isolate these tests from the real database configuration
 delete process.env.DEV_WORKFLOW_DB_TYPE;
@@ -70,6 +71,10 @@ test("resolveStateFile prefers current working directory when multiple project m
 
   await writeFile(path.join(moduleDir, "package.json"), JSON.stringify({ name: "module", type: "module" }));
   await mkdir(path.join(moduleDir, "db"), { recursive: true });
+  // workflow-state.js juga mengimpor identitas sesi dan kelas error dari db/.
+  await cp(new URL("../db/session-key.js", import.meta.url), path.join(moduleDir, "db", "session-key.js"));
+  await cp(new URL("../db/errors.js", import.meta.url), path.join(moduleDir, "db", "errors.js"));
+  await cp(new URL("../db/migrate-legacy.js", import.meta.url), path.join(moduleDir, "db", "migrate-legacy.js"));
   await writeFile(path.join(moduleDir, "db", "index.js"), 'export function getDbAdapter() { return { connect: async () => {}, saveState: async () => {}, getState: async () => null }; } export async function insertHistoryEntry() {} export async function updateSummaryForUser() {} export async function saveState() {} export async function getState() {} export async function getSummaryForUser() { return { totalTasks: 0, taskTypes: {} }; } export async function getHistoryForUser() { return { entries: [], total: 0 }; }');
   await writeFile(path.join(projectA, "package.json"), JSON.stringify({ name: "project-a" }));
   await writeFile(path.join(projectB, "package.json"), JSON.stringify({ name: "project-b" }));
@@ -127,6 +132,10 @@ test("WorkflowState mirrors state file to compatibility locations", async () => 
   await cp(new URL("../tools/handler-modules/", import.meta.url), path.join(moduleDir, "tools", "handler-modules"), {recursive:true});
   await writeFile(path.join(moduleDir, "package.json"), JSON.stringify({ name: "module", type: "module" }));
   await mkdir(path.join(moduleDir, "db"), { recursive: true });
+  // workflow-state.js juga mengimpor identitas sesi dan kelas error dari db/.
+  await cp(new URL("../db/session-key.js", import.meta.url), path.join(moduleDir, "db", "session-key.js"));
+  await cp(new URL("../db/errors.js", import.meta.url), path.join(moduleDir, "db", "errors.js"));
+  await cp(new URL("../db/migrate-legacy.js", import.meta.url), path.join(moduleDir, "db", "migrate-legacy.js"));
   await writeFile(path.join(moduleDir, "db", "index.js"), 'export function getDbAdapter() { return { connect: async () => {}, saveState: async () => {}, getState: async () => null }; } export async function insertHistoryEntry() {} export async function updateSummaryForUser() {} export async function saveState() {} export async function getState() {} export async function getSummaryForUser() { return { totalTasks: 0, taskTypes: {} }; } export async function getHistoryForUser() { return { entries: [], total: 0 }; }');
   await writeFile(path.join(projectRoot, "package.json"), JSON.stringify({ name: "temp" }));
 
@@ -136,7 +145,11 @@ test("WorkflowState mirrors state file to compatibility locations", async () => 
   const moduleUrl = pathToFileURL(path.join(moduleDir, "workflow-state.js"));
   const { WorkflowState: TempWorkflowState } = await import(moduleUrl.href);
 
-  const state = new TempWorkflowState(stateFile);
+  // Modul ini sekarang butuh adapter SQLite sungguhan; strik `db/index.js` di
+  // salinan sementara hanya menyediakan fungsi lama, jadi adapter diinjeksi.
+  const adapter = new SqliteAdapter({ dbPath: path.join(tempRoot, "state.db") });
+  await adapter.connect();
+  const state = new TempWorkflowState(stateFile, { db: adapter, sessionId: "ses_compat" });
   await state.load();
   state.state.currentPhase = "commit";
   await state.save();
@@ -146,6 +159,7 @@ test("WorkflowState mirrors state file to compatibility locations", async () => 
   const primaryParsed = JSON.parse(primaryContent);
   assert.equal(primaryParsed.currentPhase, "commit", "primary state file should be updated");
 
+  await adapter.close();
   await rm(tempRoot, { recursive: true, force: true });
 });
 
@@ -162,6 +176,10 @@ test("WorkflowState avoids filesystem root when no project markers found", async
   await cp(new URL("../tools/handler-modules/", import.meta.url), path.join(moduleDir, "tools", "handler-modules"), {recursive:true});
   await writeFile(path.join(moduleDir, "package.json"), JSON.stringify({ name: "module", type: "module" }));
   await mkdir(path.join(moduleDir, "db"), { recursive: true });
+  // workflow-state.js juga mengimpor identitas sesi dan kelas error dari db/.
+  await cp(new URL("../db/session-key.js", import.meta.url), path.join(moduleDir, "db", "session-key.js"));
+  await cp(new URL("../db/errors.js", import.meta.url), path.join(moduleDir, "db", "errors.js"));
+  await cp(new URL("../db/migrate-legacy.js", import.meta.url), path.join(moduleDir, "db", "migrate-legacy.js"));
   await writeFile(path.join(moduleDir, "db", "index.js"), 'export function getDbAdapter() { return { connect: async () => {}, saveState: async () => {}, getState: async () => null }; } export async function insertHistoryEntry() {} export async function updateSummaryForUser() {} export async function saveState() {} export async function getState() {} export async function getSummaryForUser() { return { totalTasks: 0, taskTypes: {} }; } export async function getHistoryForUser() { return { entries: [], total: 0 }; }');
 
   const moduleUrl = pathToFileURL(path.join(moduleDir, "workflow-state.js"));
