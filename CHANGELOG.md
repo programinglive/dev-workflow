@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.21.0](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.20.4...v1.21.0) (2026-11-02)
+
+
+### ✨ Features
+
+* **share:** add revocable public share link per session ([cbcf0d0](https://github.com/programinglive/dev-workflow-mcp-server/commit/cbcf0d05234d8fb0ca9c38684666bfd1fbbde4ce))
+
 ### [1.20.4](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.20.3...v1.20.4) (2026-11-02)
 
 
