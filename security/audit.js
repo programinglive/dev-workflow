@@ -6,12 +6,41 @@ import { sanitize } from './sanitizer.js';
 import { isProtectedFile,protectedFileMetadata } from './files.js';
 import { databaseConnectionUrl } from './config.js';
 
-export async function auditDatabase({root,userId,projectPath=root,env=process.env}) {
+/**
+ * Lokasi berkas database SQLite yang dipakai audit.
+ *
+ * Harus SAMA dengan yang dipakai adapter. Dulu fungsi ini menghitung sendiri
+ * `path.join(root,'.state','dev-workflow.db')`, sementara adapter memakai
+ * `resolveDbPath` yang berjangkar pada direktori berkas state. Begitu keduanya
+ * berbeda, `auditDatabase` menjawab `not_present` dan berhenti memindai
+ * database yang justru sekarang menyimpan seluruh state workflow.
+ */
+export function auditDbPath({ stateFile = null, env = process.env, cwd = process.cwd() } = {}) {
+  const override = typeof env?.DEV_WORKFLOW_DB_PATH === "string" ? env.DEV_WORKFLOW_DB_PATH.trim() : "";
+  if (override) return override;
+
+  // Ditulis ulang di sini alih-alih mengimpor, supaya `security/` tidak
+  // bergantung pada `db/` (yang mengimpor `security/`). Aturannya satu:
+  // `.state` milik berkas state, atau `.state` di bawah direktori kerja.
+  if (typeof stateFile === "string" && stateFile.trim() !== "") {
+    const resolved = path.resolve(stateFile);
+    const parts = resolved.split(path.sep);
+    const index = parts.lastIndexOf(".state");
+    if (index > 0) {
+      return path.join(parts.slice(0, index + 1).join(path.sep), "dev-workflow.db");
+    }
+    return path.join(path.dirname(resolved), "dev-workflow.db");
+  }
+
+  return path.join(path.resolve(cwd || process.cwd()), ".state", "dev-workflow.db");
+}
+
+export async function auditDatabase({root,userId,projectPath=root,env=process.env,stateFile=null}) {
   const type=env.DEV_WORKFLOW_DB_TYPE || 'sqlite';
   const issues=[]; let close=async()=>{}; let query;
   try {
     if(type==='sqlite') {
-      const dbPath=env.DEV_WORKFLOW_DB_PATH || path.join(root,'.state','dev-workflow.db');
+      const dbPath=auditDbPath({stateFile,env,cwd:root});
       try {await fs.access(dbPath);} catch{return {status:'not_present',issues:[]};}
       const {default:Database}=await import('better-sqlite3');
       const db=new Database(dbPath,{readonly:true,fileMustExist:true});

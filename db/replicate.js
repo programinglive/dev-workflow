@@ -73,8 +73,15 @@ function claimNext(adapter) {
     )
     .run(row.id);
 
-  return claimed.changes === 1 ? row : null;
+  // Kalah balapan BUKAN alasan berhenti: penulis lain baru saja mengklaim baris
+  // kepala, dan baris sesudahnya masih bisa dikirim. Dulu fungsi ini
+  // mengembalikan `null` untuk kedua keadaan, sehingga penguras berhenti dan
+  // antrean tampak macet padahal ada pekerjaan yang bisa diselesaikan.
+  return claimed.changes === 1 ? row : LOST_CLAIM;
 }
+
+/** Penanda "baris ini baru saja diambil proses lain; coba baris berikutnya". */
+const LOST_CLAIM = Symbol("lost-claim");
 
 /**
  * Mengirim isi antrean ke replika, sebentar saja.
@@ -102,7 +109,12 @@ export async function drainSync({ replica, limit = 20, budgetMs = 1200, adapter 
     if (Date.now() - startedAt > budgetMs) break;
 
     const row = claimNext(ada);
-    if (!row) break;
+    if (row === null) break;
+
+    // Baris kepala baru saja diklaim proses lain. Karena klaimnya mendorong
+    // `next_attempt_at` ke depan, putaran berikutnya akan memilih baris
+    // sesudahnya - jadi cukup lanjutkan, bukan berhenti.
+    if (row === LOST_CLAIM) continue;
 
     try {
       await replica.push(row);

@@ -51,6 +51,14 @@ let cachedUserStateDir = null;
 const PROCESS_TOKEN = `proc-${process.pid}-${Math.random().toString(16).slice(2, 10)}`;
 
 /**
+ * Berapa kali `state_writer_history` ditulis proses ini.
+ *
+ * Dipakai retensi: tabel itu bertambah satu baris setiap `save()` tetapi hanya
+ * dibaca untuk jendela 60 detik, jadi tanpa pemangkasan ia tumbuh tanpa batas.
+ */
+let writerHistoryWrites = 0;
+
+/**
  * Langkah workflow yang hanya boleh MAJU dalam satu task.
  *
  * Hanya flag PENCAPAIAN. Gerbang kualitas (`readyToCommit`,
@@ -1782,6 +1790,18 @@ export class WorkflowState {
            VALUES (?, ?, ?, ?, datetime('now'))`,
         )
         .run(userId, projectPath, sessionKey, PROCESS_TOKEN);
+
+      // Retensi: tabel ini bertambah satu baris setiap `save()` tetapi hanya
+      // dipakai untuk jendela 60 detik. Tanpa pemangkasan ia menjadi tabel
+      // terbesar di database. Dijalankan sesekali, bukan setiap simpan.
+      writerHistoryWrites += 1;
+      if (writerHistoryWrites % 200 === 0) {
+        try {
+          db.pruneWriterHistory({ days: 7 });
+        } catch (error) {
+          safeLog("warn", `Retensi riwayat penulis gagal: ${error.message}`);
+        }
+      }
     } catch (error) {
       safeLog("warn", `Gagal mencatat penulis state: ${error.message}`);
     }
@@ -2296,6 +2316,15 @@ export class WorkflowState {
     } catch (error) {
       safeLog("warn", `Replika state gagal: ${error.message}`);
     }
+  }
+
+  /** Identitas penyimpanan sesi ini, dalam satu objek. */
+  _storageIds() {
+    return {
+      userId: getCurrentUserId(this.stateFile),
+      projectPath: this._projectPath(),
+      sessionKey: this._sessionKey().key,
+    };
   }
 
   /**
