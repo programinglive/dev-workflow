@@ -414,7 +414,13 @@ function attemptLogin(config, fetchImpl, { email, password }) {
 
   return fetchImpl(`${config.pocketBaseUrl}/api/collections/activity_users/auth-with-password`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      // PocketBase Factory menolak login tanpa Origin (403 "Asal permintaan
+      // tidak diizinkan"), dan galat itu mudah disalahartikan sebagai password
+      // salah. Dikirim eksplisit supaya tidak bergantung pada perilaku bawaan.
+      Origin: config.url,
+    },
     body: JSON.stringify({ identity: email, password }),
   });
 }
@@ -496,6 +502,11 @@ async function request(config, path, { method = "GET", body, fetchImpl = fetch }
     method,
     headers: {
       Authorization: `Bearer ${token}`,
+      // WAJIB. Server Factory menolak permintaan tanpa Origin dengan
+      // 403 "Asal permintaan tidak diizinkan", dan itu tampak seperti masalah
+      // kredensial padahal bukan. Diukur 2 November 2026: login langsung
+      // berhasil (200) hanya setelah header ini ditambahkan.
+      Origin: config.url,
       ...(body ? { "content-type": "application/json" } : {}),
     },
     ...(body ? { body: JSON.stringify(body) } : {}),
