@@ -7,14 +7,22 @@
  * --------------------------------------------
  * Tab riwayat punya filter status. Kalau isinya hanya baris `idle`, filter
  * "berjalan" dan "macet" akan selalu kosong dan tombol itu jadi hiasan.
- * Karena itu yang diambil adalah semua sesi yang punya `started_at` dalam
- * batas hari, dan statusnya diturunkan dari umur laporan dengan aturan yang
- * SAMA seperti kartu aktif - bukan aturan kedua yang bisa berbeda.
+ * Karena itu yang diambil adalah semua sesi dalam batas hari, dan statusnya
+ * diturunkan dari umur laporan dengan aturan yang SAMA seperti kartu aktif -
+ * bukan aturan kedua yang bisa berbeda.
  *
  * MENGAPA TIDAK MENYARING `task <> ''`
  * ------------------------------------
  * Saat task ditutup, pelapor mengosongkan `task`. Filter seperti itu membuat
  * riwayat selalu kosong; sudah pernah terjadi 2 November 2026.
+ *
+ * MENGAPA TIDAK MENYARING `started_at IS NOT NULL`
+ * ------------------------------------------------
+ * Kesalahan saya sendiri, 2 November 2026. Sesi lama tidak punya `started_at`,
+ * dan menyaring dengan syarat itu membuang 3 dari 9 sesi dari riwayat. Sesi
+ * yang sama terlihat di tab Aktif lalu tidak ditemukan saat dicari di Riwayat -
+ * persis kebohongan yang sedang saya perbaiki di tempat lain. `started_at`
+ * hanya dipakai MENGHITUNG durasi; kalau kosong, durasinya "tidak tercatat".
  *
  * Berkas ini tidak menyentuh jaringan, hanya menyusun SQL.
  */
@@ -37,7 +45,6 @@ function buildHistoryQuery({
                  plan_done, plan_total, dod_done, dod_total
             FROM sessions
            WHERE machine <> ''
-             AND started_at IS NOT NULL
              AND updated_at > now() - ($1::text || ' days')::interval
            ORDER BY updated_at DESC
            LIMIT $2`,

@@ -12,6 +12,7 @@ import {
   View,
 } from "react-native";
 import Constants from "expo-constants";
+import { namaSesi } from "./session-name";
 
 /**
  * Aplikasi monitor sesi dev-workflow.
@@ -188,6 +189,8 @@ export default function App() {
     () => (dipilih ? semua.find((s) => s.session_key === dipilih) || null : null),
     [dipilih, semua],
   );
+  // Peringatan dihitung server, memakai baris yang sama dengan yang tampil.
+  const alerts = (data && data.alerts) || [];
 
   return (
     <View style={gaya.layar}>
@@ -215,6 +218,36 @@ export default function App() {
               : "Terakhir " +
                 ago(health.lastReportAt, jamServer) +
                 ". Bisa berarti tidak ada yang bekerja, atau pelaporannya terputus."}
+          </Text>
+        </View>
+      ) : null}
+
+      {alerts.length > 0 && tab !== "info" ? (
+        <View style={[gaya.kotak, gaya.kotakPeringatan]}>
+          <Text style={gaya.kotakJudul}>{alerts.length} hal perlu dilihat</Text>
+          {alerts.slice(0, 4).map((a, i) => {
+            const bisaDiketuk = Boolean(a.session_key);
+            return (
+              <Pressable
+                key={i}
+                disabled={!bisaDiketuk}
+                onPress={() => bisaDiketuk && setDipilih(a.session_key)}
+                style={({ pressed }) => [pressed && gaya.kartuDitekan]}
+              >
+                <Text style={gaya.kotakTeks}>
+                  {a.kind === "sesi_macet" ? "◆ " : "● "}
+                  {a.pesan}
+                  {bisaDiketuk ? "  ›" : ""}
+                </Text>
+              </Pressable>
+            );
+          })}
+          {alerts.length > 4 ? (
+            <Text style={gaya.kotakTeks}>dan {alerts.length - 4} lagi</Text>
+          ) : null}
+          <Text style={[gaya.kotakTeks, { marginTop: 6, opacity: 0.75 }]}>
+            Dari server tidak bisa dibedakan antara macet dan task yang sudah
+            ditutup lalu ditinggal.
           </Text>
         </View>
       ) : null}
@@ -316,7 +349,7 @@ export default function App() {
                         ) : null}
                       </View>
                       <Text style={gaya.riwayatNama} numberOfLines={2}>
-                        {h.task || h.session_title || h.project_name || "(tanpa nama)"}
+                        {namaSesi(h)}
                       </Text>
                       <Text style={gaya.riwayatMeta} numberOfLines={1}>
                         {h.machine}

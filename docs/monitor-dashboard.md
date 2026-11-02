@@ -322,6 +322,50 @@ DELETE FROM events   WHERE detail LIKE 'Coba %' OR detail = 'feat: add feature';
 Periksa dulu dengan `SELECT` — jangan hapus berdasarkan pola waktu saja, karena
 sesi nyata bisa jatuh di jendela yang sama.
 
+## Peringatan: monitor yang memberi tahu, bukan yang ditunggu
+
+Sampai 2 November 2026 tablet hanya berguna kalau pemilik ingat melihatnya.
+Sesi yang macet dan mesin yang berhenti melapor tidak pernah memberi tahu siapa
+pun. `monitor-server/alerts.cjs` menutup itu.
+
+| Kejadian | Ambang | Jenis |
+|---|---|---|
+| Sesi `possibly_stuck` makin lama diam | 30 menit | `sesi_macet` |
+| Mesin tidak melapor | 24 jam (`MACHINE_SILENT_MS`) | `mesin_diam` |
+
+Ambangnya bisa diatur lewat `STUCK_ALERT_MS` dan `MACHINE_SILENT_MS`.
+
+Tiga aturan yang tidak boleh dilanggar:
+
+1. **Tidak mengklaim lebih dari yang bisa dibuktikan.** Dari server, sesi yang
+   diam tidak bisa dibedakan antara "macet" dan "task sudah ditutup lalu
+   ditinggal". Karena itu labelnya "mungkin macet", dan mesin yang diam disebut
+   "tidak melapor" — **bukan "mati"**. Dua kali kesalahan ini saya ulangi
+   (ambang 30 menit, label `online`/`offline`) dan keduanya berbohong ke arah
+   yang sama.
+
+2. **Ambang harus longgar.** Peringatan yang berbunyi terlalu sering akan
+   diabaikan, dan itu sama saja dengan tidak punya peringatan.
+
+3. **`idle` tidak pernah diperingatkan.** `idle` berarti task DITUTUP. Diam
+   adalah hasil yang benar, bukan masalah.
+
+Peringatan dihitung server dari baris yang **sama** dengan yang tampil
+(`sessions: tampil`), jadi angkanya tidak bisa berbeda dengan isi layar. Aturan
+ini dijaga `tests/monitor-alert-wiring.test.js`.
+
+Terbukti 2 November 2026: sesi yang sedang berjalan melewati ambang 30 menit dan
+kotak "1 hal perlu dilihat" muncul sendiri di web dan kedua tablet, tanpa data
+buatan.
+
+## Riwayat tidak boleh kehilangan baris
+
+`started_at` hanya dipakai untuk **menghitung** durasi, bukan untuk menyaring.
+Sempat dijadikan syarat masuk riwayat, dan akibatnya 3 dari 9 sesi hilang: sesi
+itu terlihat di tab Aktif lalu tidak ditemukan di Riwayat. Kalau `started_at`
+kosong, durasinya "tidak tercatat" — bukan 0 detik, dan bukan alasan membuang
+barisnya.
+
 ## Diuji
 
 - `tests/monitor-sessions-query.test.js` — filter hanya menyentuh `idle`, limit
@@ -330,3 +374,12 @@ sesi nyata bisa jatuh di jendela yang sama.
 - `tests/monitor-events.test.js` — peristiwa terkirim dan monitor mati tidak
   mengubah hasil tool.
 - `tests/monitor-boot.test.js` — boot tidak menunggu monitor yang menggantung.
+- `tests/monitor-machines.test.js` — ambang mesin dalam HARI, bukan menit, dan
+  teks `online`/`offline` tidak boleh kembali.
+- `tests/monitor-history.test.js` — riwayat memuat semua status, dan baris tanpa
+  `started_at` tidak hilang.
+- `tests/monitor-alerts.test.js` — kapan peringatan menyala dan kapan TIDAK.
+- `tests/monitor-alert-wiring.test.js` — server mengirim `alerts`, kedua layar
+  menampilkannya, dan teksnya tidak pernah mengklaim mesin "mati".
+- `tests/monitor-app-nav.test.js` — empat tab, filter status, dan penamaan sesi.
+- `tests/monitor-app-grid.test.js` — dua kolom dan detail yang ikut data terbaru.
