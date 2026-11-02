@@ -19,7 +19,7 @@ const {
   DEFAULT_SESSION_RETENTION_DAYS,
 } = require('./retention.cjs');
 const { buildHealth, DEFAULT_STALE_AFTER_MS } = require('./health.cjs');
-const { buildMachinesQuery, DEFAULT_OFFLINE_AFTER_MINUTES } = require('./machines-query.cjs');
+const { buildMachinesQuery, DEFAULT_STALE_AFTER_DAYS } = require('./machines-query.cjs');
 const { dedupeSessions } = require('./dedupe-sessions.cjs');
 const { buildHistoryQuery, formatDuration, DEFAULT_HISTORY_DAYS } = require('./history-query.cjs');
 const { classifySession, LABELS, DEFAULT_LIVE_MS, DEFAULT_STUCK_MS } = require('./status.cjs');
@@ -70,8 +70,8 @@ const STALE_AFTER_MS = Number(process.env.STALE_AFTER_MS || DEFAULT_STALE_AFTER_
 const LIVE_MS = Number(process.env.LIVE_MS || DEFAULT_LIVE_MS);
 const STUCK_MS = Number(process.env.STUCK_MS || DEFAULT_STUCK_MS);
 /** Mesin dianggap offline bila tidak melapor selama ini. Tetap ditampilkan. */
-const OFFLINE_AFTER_MINUTES = Number(
-  process.env.OFFLINE_AFTER_MINUTES || DEFAULT_OFFLINE_AFTER_MINUTES,
+const STALE_AFTER_DAYS = Number(
+  process.env.MACHINE_STALE_AFTER_DAYS || DEFAULT_STALE_AFTER_DAYS,
 );
 /** Berapa hari sesi selesai tetap tampil di riwayat. */
 const HISTORY_DAYS = Number(process.env.HISTORY_DAYS || DEFAULT_HISTORY_DAYS);
@@ -202,9 +202,10 @@ function render(data) {
     }).join('');
   }
   document.getElementById('machines').innerHTML = (data.machines || []).map(m =>
-    '<div><b style="color:' + (m.online ? '#3fb950' : '#8b949e') + '">' + (m.online ? '●' : '○') + '</b> ' +
-    esc(m.machine) + '<span class="meta"> · ' + (m.online ? 'online' : 'offline') + ' · ' +
-    ago(m.last_seen, jNow) + (m.last_project ? ' · ' + esc(m.last_project) : '') + '</span></div>'
+    '<div><b style="color:' + (m.stale ? '#d29922' : '#3fb950') + '">' + (m.stale ? '⚠' : '●') + '</b> ' +
+    esc(m.machine) + '<span class="meta"> · terakhir melapor ' + ago(m.last_seen, jNow) +
+    (m.last_project ? ' · ' + esc(m.last_project) : '') +
+    (m.stale ? ' · sudah lama tidak melapor' : '') + '</span></div>'
   ).join('') || '<div>—</div>';
   document.getElementById('history').innerHTML = (data.history || []).map(h =>
     '<div><b style="color:#c9d1d9">' + esc(h.task || h.session_title || h.project_name || '(tanpa nama)') + '</b>' +
@@ -407,7 +408,7 @@ const server = http.createServer(async (req, res) => {
       //
       // Tanpa ini, mesin yang menganggur hilang dari layar dan "tidak ada
       // pekerjaan" tampak sama dengan "mesin tidak pernah terhubung".
-      const mq = buildMachinesQuery({ offlineAfterMinutes: OFFLINE_AFTER_MINUTES });
+      const mq = buildMachinesQuery({ staleAfterDays: STALE_AFTER_DAYS });
       const machineRows = await query(mq.sql, mq.params);
       // Riwayat sesi SELESAI. Durasi dihitung database supaya sama di semua
       // perangkat, dan tidak ada data yang dihapus.
