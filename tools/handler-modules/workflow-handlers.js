@@ -337,12 +337,30 @@ export async function handleStartTask(args, workflowState, git) {
 
   const warningBlock = warnings.length > 0 ? `\n\n${warnings.join("\n\n")}` : "";
 
+  // Catat ke board Factory bila diminta. Tidak pernah menggagalkan start_task,
+  // tetapi kegagalannya DITAMPILKAN - kegagalan tak terlihat adalah persis yang
+  // membuat board diam dua hari tanpa ada yang tahu.
+  let factoryNote = "";
+  try {
+    const { createRequire } = await import("node:module");
+    const req = createRequire(import.meta.url);
+    const { recordToFactory } = req("../../factory-auto-task.cjs");
+    const hasil = await recordToFactory({ state: workflowState.state });    if (hasil.ok) {
+      workflowState.state.dodFactoryTaskId = hasil.id;
+      factoryNote = `\n\n🏭 Tercatat di Factory: ${hasil.id}`;
+    } else if (hasil.reason && hasil.reason !== "dimatikan") {
+      factoryNote = `\n\n⚠️ Factory TIDAK mencatat task ini: ${hasil.reason}`;
+    }
+  } catch (e) {
+    factoryNote = `\n\n⚠️ Factory TIDAK mencatat task ini: ${String(e && e.message).slice(0, 160)}`;
+  }
+
   const dodLines = workflowState.state.definitionOfDone
     .map((item) => `   ${item.id}: ${item.text}`)
     .join("\n");
 
   return textResponse(
-    `✅ Task Started: ${args.description}\n\n${project.message}${warningBlock}\n\n` +
+    `✅ Task Started: ${args.description}\n\n${project.message}${warningBlock}${factoryNote}\n\n` +
       `📋 Definition of Done (${workflowState.state.definitionOfDone.length} item, semua masih terbuka):\n${dodLines}\n` +
       `   Buktikan tiap item dengan 'mark_dod_item' { id, evidence } setelah benar-benar terbukti,\n` +
       `   atau kecualikan dengan 'waive_dod_item' { id, reason } bila memang tidak relevan.\n\n` +
