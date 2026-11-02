@@ -1,4 +1,4 @@
-import { SqliteAdapter } from "./adapters/sqlite.js";
+import { SqliteAdapter, resolveDbPath } from "./adapters/sqlite.js";
 import { MysqlAdapter } from "./adapters/mysql.js";
 import { PostgresAdapter } from "./adapters/postgres.js";
 import { databaseConnectionUrl } from '../security/config.js';
@@ -34,7 +34,7 @@ export async function getAdapter() {
   return adapterInstance;
 }
 
-let localAdapterInstance = null;
+const localAdapters = new Map();
 
 /**
  * Adapter penyimpanan state hidup: SELALU SQLite.
@@ -46,20 +46,27 @@ let localAdapterInstance = null;
  *
  * "SQLite adalah sumber kebenaran" harus menjadi sifat kode, bukan konvensi
  * konfigurasi.
+ *
+ * `stateFile` menentukan LOKASI berkas database: jangkar `.state` milik proyek
+ * itu. Satu adapter disimpan per lokasi, karena satu proses MCP bisa melayani
+ * beberapa proyek sekaligus - dan memakai satu database untuk semuanya berarti
+ * mengembalikan pencampuran yang baru saja dihapus.
  */
-export async function getLocalAdapter() {
-  if (localAdapterInstance) {
+export async function getLocalAdapter({ stateFile = null } = {}) {
+  const dbPath = process.env.DEV_WORKFLOW_DB_PATH
+    ? process.env.DEV_WORKFLOW_DB_PATH
+    : resolveDbPath({ stateFile });
+
+  const cached = localAdapters.get(dbPath);
+  if (cached) {
     // `connect()` idempoten, dan menghindari adapter yang sudah ditutup tes.
-    await localAdapterInstance.connect();
-    return localAdapterInstance;
+    await cached.connect();
+    return cached;
   }
 
-  const adapter = new SqliteAdapter({
-    connectionUrl: databaseConnectionUrl(),
-    dbPath: process.env.DEV_WORKFLOW_DB_PATH,
-  });
+  const adapter = new SqliteAdapter({ dbPath });
   await adapter.connect();
-  localAdapterInstance = adapter;
+  localAdapters.set(dbPath, adapter);
   return adapter;
 }
 
