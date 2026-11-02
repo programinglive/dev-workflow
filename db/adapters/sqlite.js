@@ -4,6 +4,17 @@ import { existsSync, mkdirSync } from "fs";
 import path from "path";
 import { DbAdapter, normalizeTaskType } from "./base.js";
 import { assertSafeKnowledge, classify } from '../../security/policy.js';
+import { ensureSchema } from "../schema.js";
+import { normalizeProjectPath } from "../session-key.js";
+import { StateConflict, StateUnavailable } from "../errors.js";
+
+/**
+ * Kunci sesi untuk snapshot tingkat proyek.
+ *
+ * Bukan nama sesi sungguhan, dan sengaja tidak mungkin bertabrakan dengan
+ * `ses_*`, `proc-*`, `pid-*`, atau `legacy-project`.
+ */
+const COMPAT_SESSION_KEY = "compat-project";
 
 const DB_FILENAME = "dev-workflow.db";
 const FREQUENCY_FORMATS = {
@@ -43,14 +54,131 @@ export class SqliteAdapter extends DbAdapter {
     async connect() {
         if (!this.db) {
             const dbPath = this.getDbPath();
-            // Direktori induk belum tentu ada: pada clone bersih, `.state/`
-            // belum pernah dibuat. Tanpa ini SQLite melempar
-            // "Cannot open database because the directory does not exist" -
-            // hijau di mesin penulis, merah di tempat lain.
-            mkdirSync(path.dirname(dbPath), { recursive: true });
-            this.db = new Database(dbPath);
+            try {
+                // Direktori induk belum tentu ada: pada clone bersih, `.state/`
+                // belum pernah dibuat. Tanpa ini SQLite melempar
+                // "Cannot open database because the directory does not exist" -
+                // hijau di mesin penulis, merah di tempat lain.
+                mkdirSync(path.dirname(dbPath), { recursive: true });
+                this.db = new Database(dbPath);
+            } catch (error) {
+                throw new StateUnavailable(
+                    `Penyimpanan state tidak bisa dibuka di "${dbPath}": ${error.message}. ` +
+                        `Perbaiki izin atau ruang disk sebelum melanjutkan - menulis ke tempat lain ` +
+                        `akan membuat pekerjaan sesi ini tidak bisa ditemukan lagi.`,
+                    { cause: error },
+                );
+            }
+
+            // `busy_timeout` penting karena dua proses MCP bisa membuka berkas
+            // yang sama. Tanpa ini SQLite langsung melempar SQLITE_BUSY alih-alih
+            // menunggu kunci lepas, dan penyimpanan yang seharusnya berhasil
+            // gagal hanya karena berpapasan beberapa milidetik.
+            this.db.pragma("busy_timeout = 5000");
             this.db.pragma("journal_mode = WAL");
             await this.migrate();
+        }
+        return this.db;
+    }
+
+    /** Menutup koneksi. Dipakai tes dan proses yang berumur pendek. */
+    async close() {
+        if (this.db) {
+            try { this.db.close(); } catch { /* sudah tertutup */ }
+            this.db = null;
+        }
+    }
+
+    /**
+     * Menyimpan state sesi dengan pemeriksaan versi.
+     *
+     * `expectedVersion === null` berarti "baris ini seharusnya belum ada".
+     * Selain itu, tulisan hanya diterima bila versi di disk masih sama - kalau
+     * tidak, ada penulis lain yang lebih dulu dan pemanggil harus membaca ulang.
+     * Ini yang mengubah "yang terakhir menang" menjadi "yang basi ditolak".
+     */
+    async saveStateVersioned({ userId, projectPath, sessionKey, state, expectedVersion = null }) {
+        await this.connect();
+        const normalizedPath = normalizeProjectPath(projectPath);
+        const json = JSON.stringify(state);
+
+        return this.db.transaction(() => {
+            if (expectedVersion === null) {
+                const info = this.db
+                    .prepare(
+                        `INSERT INTO workflow_state (user_id, project_path, session_key, state_json, version, updated_at)
+                         VALUES (?, ?, ?, ?, 1, datetime('now'))
+                         ON CONFLICT(user_id, project_path, session_key) DO NOTHING`,
+                    )
+                    .run(userId, normalizedPath, sessionKey, json);
+
+                if (info.changes === 0) {
+                    const current = this.db
+                        .prepare(
+                            "SELECT version FROM workflow_state WHERE user_id = ? AND project_path = ? AND session_key = ?",
+                        )
+                        .get(userId, normalizedPath, sessionKey);
+                    throw new StateConflict(
+                        `State untuk sesi "${sessionKey}" sudah ada di versi ${current?.version ?? "?"}.`,
+                        { sessionKey, expectedVersion: null, actualVersion: current?.version ?? null },
+                    );
+                }
+                return { version: 1 };
+            }
+
+            const info = this.db
+                .prepare(
+                    `UPDATE workflow_state
+                        SET state_json = ?, version = version + 1, updated_at = datetime('now')
+                      WHERE user_id = ? AND project_path = ? AND session_key = ? AND version = ?`,
+                )
+                .run(json, userId, normalizedPath, sessionKey, expectedVersion);
+
+            if (info.changes === 0) {
+                const current = this.db
+                    .prepare(
+                        "SELECT version FROM workflow_state WHERE user_id = ? AND project_path = ? AND session_key = ?",
+                    )
+                    .get(userId, normalizedPath, sessionKey);
+                throw new StateConflict(
+                    `State sesi "${sessionKey}" sudah berubah (versi di disk ${current?.version ?? "tidak ada"}, ` +
+                        `kita memegang ${expectedVersion}). Muat ulang state sebelum melanjutkan.`,
+                    { sessionKey, expectedVersion, actualVersion: current?.version ?? null },
+                );
+            }
+
+            return { version: expectedVersion + 1 };
+        })();
+    }
+
+    /**
+     * Membaca state satu sesi.
+     *
+     * Mengembalikan `null` bila barisnya belum ada - itu keadaan normal sesi
+     * baru, bukan kegagalan. Isi yang rusak TIDAK dikembalikan sebagai `null`:
+     * "gagal membaca" tidak pernah berarti "kosong".
+     */
+    async loadStateVersioned({ userId, projectPath, sessionKey }) {
+        await this.connect();
+        const normalizedPath = normalizeProjectPath(projectPath);
+
+        const row = this.db
+            .prepare(
+                "SELECT state_json, version FROM workflow_state WHERE user_id = ? AND project_path = ? AND session_key = ?",
+            )
+            .get(userId, normalizedPath, sessionKey);
+
+        if (!row) return null;
+
+        try {
+            return { state: JSON.parse(row.state_json), version: row.version };
+        } catch (error) {
+            throw new StateUnavailable(
+                `State sesi "${sessionKey}" tersimpan tetapi isinya rusak dan tidak bisa dibaca. ` +
+                    `Penyimpanan ini sengaja TIDAK diganti dengan state kosong, karena itu membuat ` +
+                    `task yang sedang berjalan hilang tanpa jejak.`,
+                { cause: error },
+            );
         }
     }
 
@@ -85,16 +213,6 @@ export class SqliteAdapter extends DbAdapter {
         PRIMARY KEY (user_id, project_path)
       )
     `;
-        const createState = `
-      CREATE TABLE IF NOT EXISTS workflow_state (
-        user_id TEXT,
-        project_path TEXT DEFAULT '',
-        state_json TEXT NOT NULL,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        PRIMARY KEY (user_id, project_path)
-      )
-    `;
-
         this.db.exec(createHistory);
         if(!this.db.prepare('PRAGMA table_info(workflow_history)').all().some(col=>col.name==='classification')) {
             this.db.exec("ALTER TABLE workflow_history ADD COLUMN classification TEXT NOT NULL DEFAULT 'INTERNAL'");
@@ -132,7 +250,6 @@ export class SqliteAdapter extends DbAdapter {
         }
 
         this.db.exec(createSummary); // Will create if we dropped it or if it didn't exist
-        this.db.exec(createState);
 
         // 4. Create Indexes (Safe now that columns exist)
         const idxHistory = `CREATE INDEX IF NOT EXISTS idx_workflow_history_user_project ON workflow_history(user_id, project_path)`;
@@ -148,6 +265,12 @@ export class SqliteAdapter extends DbAdapter {
         this.db.exec(idxHistory);
         this.db.exec(idxSummary);
         this.db.exec(idxUnique);
+
+        // Skema v1 ada di `db/schema.js` supaya migrasi bisa diuji tanpa
+        // membuka koneksi. Dijalankan SESUDAH migrasi lama di atas, karena
+        // `CREATE TABLE IF NOT EXISTS` tidak akan menambah kolom `classification`
+        // pada tabel yang sudah terlanjur ada - itulah tugas ALTER di atas.
+        ensureSchema(this.db);
     }
 
     async insertHistoryEntry(userId, projectPath, entry) {
@@ -323,34 +446,36 @@ export class SqliteAdapter extends DbAdapter {
             .map((row) => ({ period: row.period, count: row.count }));
     }
 
+    /**
+     * Snapshot state tingkat PROYEK, bukan tingkat sesi.
+     *
+     * Dipertahankan untuk pemanggil lama dan untuk tes adaptor. Nilainya
+     * ditulis ke kunci sesi khusus `compat-project`, supaya ia tidak pernah
+     * bertabrakan dengan state hidup milik sesi sungguhan - dulu baris ini yang
+     * dipakai bergantian oleh semua sesi, dan itu bug yang sedang diperbaiki.
+     */
     async saveState(userId, projectPath, state) {
         await this.connect();
-        const normalizedProjectPath = projectPath || '';
+        const normalizedProjectPath = normalizeProjectPath(projectPath);
 
-        const stmt = this.db.prepare(`
-      INSERT INTO workflow_state (user_id, project_path, state_json, updated_at)
-      VALUES (?, ?, ?, ?)
-      ON CONFLICT(user_id, project_path) DO UPDATE SET
-        state_json=excluded.state_json,
-        updated_at=excluded.updated_at
-    `);
-
-        stmt.run(
-            userId,
-            normalizedProjectPath,
-            JSON.stringify(state),
-            new Date().toISOString()
-        );
+        this.db.prepare(`
+      INSERT INTO workflow_state (user_id, project_path, session_key, state_json, version, updated_at)
+      VALUES (?, ?, ?, ?, 1, datetime('now'))
+      ON CONFLICT(user_id, project_path, session_key) DO UPDATE SET
+        state_json = excluded.state_json,
+        version = workflow_state.version + 1,
+        updated_at = datetime('now')
+    `).run(userId, normalizedProjectPath, COMPAT_SESSION_KEY, JSON.stringify(state));
     }
 
     async getState(userId, projectPath) {
         await this.connect();
-        const normalizedProjectPath = projectPath || '';
+        const normalizedProjectPath = normalizeProjectPath(projectPath);
 
-        const stmt = this.db.prepare(`
-      SELECT state_json FROM workflow_state WHERE user_id = ? AND project_path = ?
-    `);
-        const row = stmt.get(userId, normalizedProjectPath);
+        const row = this.db.prepare(`
+      SELECT state_json FROM workflow_state
+       WHERE user_id = ? AND project_path = ? AND session_key = ?
+    `).get(userId, normalizedProjectPath, COMPAT_SESSION_KEY);
 
         if (!row) return null;
         try {

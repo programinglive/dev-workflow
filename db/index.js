@@ -66,6 +66,28 @@ export async function saveState(userId, projectPath, state) {
   await db.saveState(userId, projectPath, state);
 }
 
+/**
+ * Menyimpan state hidup satu sesi, dengan pemeriksaan versi.
+ *
+ * Berbeda dari `saveState` di atas yang berkunci `(user, proyek)` dan karena itu
+ * dipakai bergantian oleh semua sesi pada proyek yang sama.
+ */
+export async function saveStateVersioned(input) {
+  const db = await getAdapter();
+  return db.saveStateVersioned(input);
+}
+
+/**
+ * Membaca state hidup satu sesi.
+ *
+ * `null` berarti sesi ini belum pernah menyimpan - keadaan normal sesi baru.
+ * Isi rusak melempar `StateUnavailable`, bukan mengembalikan `null`.
+ */
+export async function loadStateVersioned(input) {
+  const db = await getAdapter();
+  return db.loadStateVersioned(input);
+}
+
 export async function getState(userId, projectPath) {
   const db = await getAdapter();
   return await db.getState(userId, projectPath);
