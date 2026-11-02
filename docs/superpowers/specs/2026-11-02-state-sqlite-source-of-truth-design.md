@@ -83,9 +83,9 @@ bisa `start_task`, tidak bisa `commit_and_push`.
 
 ## Non-tujuan
 
-- Dashboard dan `monitor-server/` tidak berubah cara bacanya (tetap Postgres).
-  Yang ditambahkan hanya penanda "replika tertinggal N detik" — satu kolom
-  tampilan, bukan perubahan jalur baca.
+- Dashboard dan `monitor-server/` tidak berubah sama sekali, termasuk cara
+  bacanya (tetap Postgres). Sinyal "replika tertinggal" sudah ada di sana sebagai
+  "terakhir melapor" per mesin, jadi tidak ada metrik baru yang ditambahkan.
 - Retensi data tidak berubah: tetap mati secara bawaan.
 - Tidak ada perubahan pada integrasi Factory.
 - Riwayat antar-mesin (MMCH ↔ Mac ↔ HELLOWORLD) tidak digabung. Tiap mesin punya
@@ -140,11 +140,23 @@ CREATE TABLE sync_queue (
   UNIQUE (kind, dedupe_key)
 );
 
+CREATE TABLE workflow_state_legacy (
+  user_id      TEXT NOT NULL,
+  project_path TEXT NOT NULL,
+  state_json   TEXT NOT NULL,
+  updated_at   DATETIME,
+  archived_at  TEXT NOT NULL
+);
+
 CREATE TABLE schema_version (
   version    INTEGER PRIMARY KEY,
   applied_at TEXT NOT NULL
 );
 ```
+
+`workflow_state_legacy` menerima isi `workflow_state` lama apa adanya. Tidak
+pernah dibaca `load()`; hanya dipakai sebagai cadangan untuk proyek yang berkas
+JSON sesinya sudah hilang (lihat bagian migrasi).
 
 `workflow_history` dan `project_summary` tetap seperti sekarang. Kuncinya sudah
 `(user_id, project_path)` — untuk history itu memang benar, karena history
@@ -251,20 +263,31 @@ sejak `870d495` tetap: **gagal membaca tidak pernah berarti kosong.**
 Sekali jalan, idempoten, berjalan saat `WorkflowState.load()` pertama kali
 menemukan database kosong:
 
-1. Kumpulkan `workflow-state.<sesi>.json` di `<proyek>/users/<user>/`,
+1. **Arsipkan dulu.** Pindahkan seluruh isi `workflow_state` lama ke
+   `workflow_state_legacy`, lalu kosongkan `workflow_state`. Baris lama milik
+   penulis terakhir per proyek, bukan milik sesi mana pun.
+2. Kumpulkan `workflow-state.<sesi>.json` di `<proyek>/users/<user>/`,
    `workflow-state.pid-*.json`, dan history bersama `<proyek>/workflow-state.json`.
-2. Untuk tiap berkas: hitung `session_key` dari nama berkas, `user_id` dari
+3. Untuk tiap berkas: hitung `session_key` dari nama berkas, `user_id` dari
    direktori, baca isinya.
-3. `INSERT OR IGNORE` ke `workflow_state` / `workflow_history`, dengan
+4. `INSERT OR IGNORE` ke `workflow_state` / `workflow_history`, dengan
    `state_writer.key_source = 'legacy-file'`.
-4. Hitung ulang: jumlah baris `workflow_state` harus ≥ jumlah berkas state yang
+5. Untuk proyek yang **tidak punya satu pun** berkas JSON sesi, ambil baris
+   `workflow_state_legacy` terbaru proyek itu dan masukkan dengan
+   `session_key = 'legacy-project'`, `key_source = 'legacy-db'`.
+6. Hitung ulang: jumlah baris `workflow_state` harus ≥ jumlah berkas state yang
    berhasil dibaca. Kalau kurang, migrasi **gagal keras** dan tidak menandai
    `schema_version` — lebih baik menolak jalan daripada kehilangan task.
-5. Pindahkan berkas JSON lama ke `.state/legacy-json/<stamp>/`, jangan dihapus.
-6. Tulis `schema_version = 1`.
+7. Pindahkan berkas JSON lama ke `.state/legacy-json/<stamp>/`, jangan dihapus.
+8. Tulis `schema_version = 1`.
 
 Berkas lama dipindah, bukan dihapus, supaya bisa dibandingkan bila ada yang
 janggal. Setelah migrasi, tidak ada jalur baca yang menyentuhnya.
+
+**Mengapa JSON yang menang, bukan baris DB.** `save()` menulis JSON lalu
+menyalin ke DB. Bila penyalinan DB pernah gagal, baris DB justru lebih tua
+daripada berkasnya. Dan baris DB berkunci per proyek, sehingga isinya bisa milik
+sesi lain. Berkas JSON satu-satunya sumber yang benar per sesi.
 
 ### Yang berubah di kode
 
@@ -273,9 +296,33 @@ janggal. Setelah migrasi, tidak ada jalur baca yang menyentuhnya.
 | `db/index.js` | tambah `getLocalAdapter()` (SQLite wajib) dan `getReplicaAdapter()` (opsional). `getAdapter()` yang lama dipertahankan sebagai alias lokal. |
 | `db/adapters/sqlite.js` | skema baru, `saveStateVersioned`, `readStateVersioned`, `enqueue`, `drain`, `migrateLegacyJson` |
 | `db/replicate.js` (baru) | backoff, drain, pelaporan antrean |
-| `workflow-state.js` | `load`/`save`/`writeHistoryFile`/`syncToDatabase` dialihkan ke SQLite; `reconcileWithDisk`, `detectStaleOverwrite`, `adoptDiskState` dihapus; `resolveSessionKey` berubah |
-| `tools/handler-modules/*` | meneruskan `StateConflict`/`StateUnavailable` sebagai jawaban tool |
+| `workflow-state.js` | `load`/`save`/`writeHistoryFile`/`syncToDatabase` dialihkan ke SQLite; `reconcileWithDisk`, `detectStaleOverwrite`, `adoptDiskState` dihapus; `resolveSessionKey` mengembalikan `proc-<uuid>` sebagai cadangan |
+| `tools/handler-modules/*` | meneruskan `StateConflict`/`StateUnavailable` sebagai jawaban tool; `get_workflow_status` menampilkan kedalaman antrean dan peringatan pertikaian |
 | `tests/*` | stub `db/index.js` di `workflowState.test.js` diganti adapter SQLite sungguhan di tmpdir |
+
+### Antarmuka yang ditambah atau berubah
+
+```js
+// db/index.js
+export async function getLocalAdapter()            // SQLite wajib
+export async function getReplicaAdapter()          // null bila tidak dikonfigurasi
+export async function saveStateVersioned({ userId, projectPath, sessionKey, state, expectedVersion })
+  // -> { version } | melempar StateConflict | melempar StateUnavailable
+export async function loadStateVersioned({ userId, projectPath, sessionKey })
+export async function enqueueSync(kind, dedupeKey, payload)
+export async function drainSync({ limit, budgetMs })
+export async function queueDepth()                 // -> { pending, oldestAgeMs }
+
+// workflow-state.js
+export class StateConflict extends Error {}        // code = 'STATE_CONFLICT'
+export class StateUnavailable extends Error {}     // code = 'STATE_UNAVAILABLE'
+export function resolveSessionKeyWithSource(env, sessionId) // -> { key, source }
+```
+
+`resolveSessionKey(env, sessionId)` yang lama **tetap ada** dan tetap
+mengembalikan string, supaya pemanggil dan tes yang sudah ada tidak pecah.
+`resolveSessionKeyWithSource` adalah tambahan yang dipakai `save()` untuk
+mengisi `state_writer.key_source`.
 
 ### Strategi pengujian
 
@@ -293,12 +340,18 @@ Tes perilaku terhadap SQLite sungguhan (berkas sementara), bukan tiruan:
 5. **SQLite tidak bisa dibuka** → `save()` melempar `StateUnavailable` dengan
    pesan yang menyebut sebabnya; `load()` juga menolak, tidak mengaku kosong.
 6. **`state_json` rusak** → disalin ke `*.corrupt-*` dulu, lalu ditolak.
-7. **Migrasi** → susun pohon `.state` lama (8 berkas sesi + history bersama),
-   migrasi, jumlah baris cocok, berkas lama pindah ke `legacy-json/`, jalan kedua
-   tidak menggandakan apa pun.
-8. **Cadangan identitas** → tanpa metadata, kunci berawalan `proc-`, bukan `pid-`,
+7. **Migrasi** → susun pohon `.state` lama (8 berkas sesi + history bersama +
+   757 baris `workflow_state` lama), migrasi, `workflow_state` berisi hanya baris
+   per sesi, `workflow_state_legacy` berisi 757 baris itu, berkas lama pindah ke
+   `legacy-json/`, jalan kedua tidak menggandakan apa pun.
+8. **Proyek tanpa berkas JSON** → baris `legacy` terbaru dipakai dengan
+   `session_key = 'legacy-project'`; proyek yang punya JSON tidak memakainya.
+9. **Cadangan identitas** → tanpa metadata, kunci berawalan `proc-`, bukan `pid-`,
    dan `key_source = 'process-random'`.
-9. Seluruh suite lama tetap hijau (850 tes).
+10. **Dua proses hidup menulis kunci sama** → `get_workflow_status` menampilkan
+    peringatan pertikaian; satu proses saja yang berulang kali menulis tidak
+    memunculkan peringatan.
+11. Seluruh suite lama tetap hijau (850 tes).
 
 ## Risiko
 
@@ -307,15 +360,61 @@ Tes perilaku terhadap SQLite sungguhan (berkas sementara), bukan tiruan:
 | `workflow-state.js` sudah 2.500+ baris; `save()` jalur terpanas | tes perilaku ditulis lebih dulu, `save()` dipecah jadi `persistState()` + `exportJson()` + `replicate()` |
 | `better-sqlite3` sinkron; COMMIT bisa memblokir | operasi per simpan kecil (satu baris + beberapa entri); diukur sebelum dan sesudah |
 | WAL antar-proses di Windows | `busy_timeout = 5000`, `BEGIN IMMEDIATE`; diuji dengan dua proses sungguhan, bukan dua promise |
-| Dashboard membaca Postgres yang kini bisa tertinggal | dashboard sudah punya "terakhir melapor"; tambah penanda "replika tertinggal N detik" |
+| Dashboard membaca Postgres yang kini bisa tertinggal | dashboard sudah punya "terakhir melapor" per mesin, yang membesar bila replika tertinggal; jumlah antrean ditampilkan di `get_workflow_status`, bukan di dashboard, karena antrean tinggal di mesin klien yang mungkin tidak bisa menjangkau server |
 | Alat lain yang membaca `.state/workflow-state.json` langsung akan melihat data beku | disebut di CHANGELOG sebagai perubahan yang memutus; berkas tetap ditulis sebagai ekspor |
 | Migrasi salah dan kehilangan task | langkah 4 gagal keras; berkas lama tidak pernah dihapus |
 
-## Pertanyaan terbuka
+## Keputusan atas pertanyaan yang tadinya terbuka
 
-1. Kalau dua jendela OpenCode berada dalam satu proses MCP dan metadata tidak
-   dikirim, keduanya tetap berbagi `proc-<uuid>`. Apakah cukup dilaporkan, atau
-   harus menolak tulis? Rekomendasi: laporkan dulu, tolak setelah terlihat
-   frekuensinya.
-2. Perlukah `sync_queue` ikut dilaporkan ke dashboard sebagai metrik? Rekomendasi:
-   ya, satu angka "tertunda N".
+### Identitas sesi cadangan: laporkan, jangan tolak
+
+Bila metadata tidak dikirim, kunci menjadi `proc-<uuid>` dan `key_source`
+tercatat `process-random`. Menolak tulis ditolak sebagai kebijakan, dengan tiga
+alasan:
+
+1. **Klien lain tidak mengirim metadata.** Codex, Antigravity, CLI, dan tes tidak
+   mengirim `ai.opencode/sessionID`. Bagi mereka satu proses = satu sesi, jadi
+   `proc-<uuid>` adalah identitas yang **benar**, bukan tebakan. Menolak tulis
+   berarti mematikan alat ini untuk mereka tanpa menambah keamanan.
+2. **Keamanan tidak bergantung pada pilihan ini.** Kolom `version` sudah membuat
+   tulis bersamaan menjadi `StateConflict` yang berisik. Berbagi kunci tidak
+   bisa lagi merusak diam-diam.
+3. **Peringatan harus berbasis bukti, bukan bentuk kunci.** `state_writer`
+   mencatat `pid` dan `process_token`. Peringatan muncul hanya bila **dua proses
+   hidup berbeda** menulis `(user_id, project_path, session_key)` yang sama dalam
+   jendela 60 detik. Itu pertikaian sungguhan, bukan derau tiap panggilan.
+
+Peringatan itu muncul di jawaban `get_workflow_status`, bukan hanya di log —
+log tidak dibaca siapa pun.
+
+### Jumlah antrean: di `get_workflow_status`, bukan di dashboard
+
+Antrean `sync_queue` tinggal di mesin klien. Bila mesin itu tidak bisa menjangkau
+server, dashboard juga tidak bisa dijangkau untuk menampilkan angkanya. Menaruh
+"tertunda N" di dashboard berarti menampilkannya tepat pada keadaan di mana layar
+itu tidak bisa dibuka.
+
+Karena itu:
+
+- `get_workflow_status` menampilkan `Replika: tertunda N` — lokal, selalu terbaca,
+  dan itulah yang dibaca agen sebelum menyimpulkan sesuatu.
+- Dashboard tidak berubah. Sinyal jujurnya sudah ada: "terakhir melapor" per
+  mesin, yang membesar bila sebuah mesin berhenti melapor.
+
+### Baris `workflow_state` lama: arsipkan, jangan dijadikan state hidup
+
+Tabel `workflow_state` hari ini berisi 757 baris dengan kunci
+`(user_id, project_path)`. Isinya milik **penulis terakhir**, bukan milik sesi
+mana pun. Kalau baris itu dimigrasikan sebagai state hidup, satu sesi bisa
+mewarisi task sesi lain.
+
+Aturan migrasi:
+
+1. State hidup per sesi diambil dari berkas JSON `workflow-state.<sesi>.json`,
+   karena hanya berkas itu yang benar per sesi.
+2. Seluruh isi `workflow_state` lama dipindahkan ke `workflow_state_legacy`
+   (kolom dan isi sama, tanpa `session_key`) dan tidak pernah dibaca `load()`.
+3. Pengecualian sempit: bila sebuah proyek **tidak punya satu pun** berkas JSON
+   sesi, baris `legacy` terbaru proyek itu dipakai sebagai cadangan, dengan
+   `session_key = 'legacy-project'` dan `key_source = 'legacy-db'`. Ini hanya
+   terjadi pada proyek yang state JSON-nya sudah hilang.
