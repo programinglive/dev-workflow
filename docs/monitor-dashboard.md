@@ -5,6 +5,15 @@ langsung, tanpa login, di jaringan Tailscale.
 
 URL: `http://100.107.65.21:3100`
 
+Berkas di `monitor-server/`:
+
+| Berkas | Isi |
+|---|---|
+| `dashboard.cjs` | Server HTTP: `/`, `/health`, `/api/sessions`, `/api/events`, `POST /api/session`, `POST /api/event` |
+| `sessions-query.cjs` | Penyusun SQL daftar sesi (tanpa jaringan, bisa diuji) |
+| `devwf-monitor.service` | Unit systemd; kredensial dibaca dari `EnvironmentFile` |
+| `devwf-monitor.env.example` | Contoh isi `/etc/devwf-monitor.env` |
+
 ## Mengapa proses terpisah
 
 Server MCP di-spawn per sesi OpenCode dan ikut mati bersamanya. Dashboard dan
@@ -461,6 +470,53 @@ meta `ai.opencode/sessionID`) **dan** kunci yang sama ada di `opencode.db`
 mesin masing-masing. Dua sesi lain berawalan `pid-` dan **sengaja dibiarkan**
 `unknown` — tidak ada bukti tool mana yang menjalankannya, dan menebak berarti
 mengarang data.
+
+## Audit: "nilai kosong / gagal dibaca dianggap hapus" (2 November 2026)
+
+Audit seluruh jalur tulis repo — SQL, berkas, dan API — mencari pola di mana
+data lama hilang karena kiriman baru kosong ATAU karena **bacaan gagal
+disamakan dengan "kosong"**. Pola ini berakar dari 29 Oktober 2026: dua
+proses MCP saling menimpa state, dan `agent_tool` menimpa label yang benar.
+Setiap temuan di bawah ini punya bukti (uji nyata), bukan dugaan.
+
+### Temuan, per jalur tulis
+
+| Jalur tulis | Status | Alasan |
+|---|---|---|
+| `sessions` UPSERT (`session-upsert.cjs`) | ✅ aman | identitas dilindungi dari kosong-overwrite; `unknown` memakai CASE eksplisit (bagian di atas). |
+| `events` INSERT (`dashboard.cjs`) | ✅ aman | append-only: tidak ada `UPDATE`/`DELETE` per baris. |
+| Prune `events`/`sessions` (`retention.cjs`) | ✅ aman | DELETE hanya jalan bila `PRUNE_ENABLED=1` — default mati, teruji di `monitor-prune-default-off.test.js`. |
+| history bersama (`workflow-state.js: writeHistoryFile`) | 🔴 → ✅ | Kegagalan baca (EBUSY/EMFILE) diperlakukan sebagai "tidak ada isi", lalu berkas ditulis ulang dari nol — **menghapus riwayat seluruh sesi lain**. Perbaikan: bacaan membedakan `missing/ok/corrupt/unreadable`; `unreadable` menolak penulisan, `corrupt` disalin ke `*.corrupt-*` dulu. |
+| state sesi (`readDiskState` → `save`) | 🔴 → ✅ | Kegagalan baca membuat state memori menimpa state yang lebih baru milik proses lain. Perbaikan: percobaan ulang singkat; kalau tetap tidak terbaca, **gagal keras** — tidak menimpa. |
+| state sesi rusak | 🟡 → ✅ | JSON rusak dulu ditimpa diam-diam. Sekarang disalin ke `*.corrupt-*` lalu `load()` gagal dengan pesan yang menyebut lokasi cadangan: state aktif tidak boleh diganti state kosong diam-diam. |
+| identitas user (`user-id`, `resolveUserId`) | 🟡 → ✅ | Dua proses start bersamaan membuat dua ID berbeda; penulis terakhir menang dan riwayat sesi pertama terlepas dari pemiliknya. Perbaikan: pembuatan berkas memakai flag `wx`, lalu membaca ID pemenang. Berkas yang ada tetapi tidak terbaca TIDAK ditimpa. |
+| pesan commit (`commit-handlers.js`) | 🟡 → ✅ | `getLastCommitMessage()` gagal membaca membuat `lastCommitMessage` terhapus menjadi string kosong. Perbaikan: nilai lama dipertahankan saat nilai baru kosong. |
+| history DB upsert (`db/adapters/*`) | 🟡 tercatat | `commit_message`/`force_reason` ditimpa nilai kiriman saat entri yang sama disinkronkan ulang — tidak terbukti berbahaya karena entri history tidak berubah setelah tercatat; ditolak karena perubahan akan mengacaukan kunci baris. |
+| state DB (`workflow_state`) | 🟡 tercatat | Baris `(user, proyek)` dimiliki bersama dua sesi; sesi yang idle menimpa state sesi aktif. Tidak bahaya nyata: baris ini tidak pernah DIBACA oleh kode apa pun (`getState` tak terpakai). |
+| Factory `update_task` | ✅ aman | Field yang tidak dikirim tidak masuk payload; panjang minimal ditolak. |
+| Factory `move_task`/`work start/finish/heartbeat` | ✅ aman | alasan/step kosong = field tidak dikirim, bukan string kosong. |
+| `pinSessionProject`, proses lock, `release-wrapper`, `install` | ✅ aman | menulis path yang eksplisit dari pemanggil, bukan dari bacaan yang bisa kosong. |
+| skrip `setup-stack.js` | ✅ aman | alat sekali jalan, menulis template config/AGENTS.md baru. |
+
+### Aturan yang sekarang berlaku
+
+1. **Gagal membaca bukan berarti kosong.** Fungsi pembaca selalu mengembalikan
+   status eksplisit (`missing/ok/corrupt/unreadable`); pemanggil dilarang
+   menyamaratakannya.
+2. **Berkas aktif (state) tidak boleh ditimpa dari state basi**: gagal baca →
+   percobaan ulang → gagal keras, tidak diam-diam.
+3. **Berkas bersama (history) tidak boleh dihapus karena terkunci sesaat**:
+   tulis ditolak; hanya `corrupt` yang disalin dulu ke `*.corrupt-*`.
+4. **Identitas tidak pernah diciptakan ulang**: pembuatan memakai `wx` dan
+   membaca pemenang.
+
+### Diuji
+
+- `tests/state-write-safety.test.js` — sembilan tes perilaku pada berkas
+  SUNGGUHAN: history yang EBUSY/RUSAK, state yang EBUSY/RUSAK, identitas
+  yang sudah ada/kosong/tidak terbaca.
+- `tests/handlers-commit.test.js` — "pesan commit lama tidak dihapus saat
+  git tidak bisa membacanya".
 
 ## Diuji
 

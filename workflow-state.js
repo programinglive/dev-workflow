@@ -78,6 +78,56 @@ function parseStateJson(text) {
   return JSON.parse(bersih);
 }
 
+/**
+ * Membaca JSON dengan TIGA hasil yang BERBEDA.
+ *
+ * Audit 2 November 2026: beberapa jalur tulis memakai `try { readFile } catch
+ * { return null }`. Pola itu menyamakan "berkas tidak ada" dengan "berkas gagal
+ * dibaca" (EBUSY/EMFILE - berkas sedang dipegang proses lain, umum di Windows
+ * dan OneDrive) dan dengan "isi berkas rusak". Pemanggil lalu menulis ulang
+ * berkas dari nol dan menghapus data yang sebenarnya masih ada.
+ *
+ * Karena itu hasilnya eksplisit:
+ *   missing    - berkas memang belum ada; aman dianggap kosong
+ *   ok         - isi berhasil dibaca
+ *   corrupt    - berkas ada tapi isinya bukan JSON; isi asli harus DISALIN
+ *                sebelum ditimpa
+ *   unreadable - berkas ada tapi gagal dibaca; JANGAN ditimpa sama sekali
+ */
+export async function readJsonStateFile(filePath, fsImpl = fs) {
+  let raw;
+  try {
+    raw = await fsImpl.readFile(filePath, "utf-8");
+  } catch (error) {
+    if (error?.code === "ENOENT") return { status: "missing" };
+    return { status: "unreadable", error };
+  }
+  try {
+    return { status: "ok", data: parseStateJson(raw), raw };
+  } catch (error) {
+    return { status: "corrupt", error, raw };
+  }
+}
+
+/**
+ * Menyimpan berkas yang rusak ke samping sebelum ditimpa.
+ *
+ * Isi yang tidak bisa di-parse tetap bukti: siapa tahu task apa yang sedang
+ * berjalan saat berkas terpotong. Membuangnya diam-diam berarti kehilangan
+ * satu-satunya jejak.
+ */
+export async function backupDamagedFile(filePath, fsImpl = fs, now = Date.now()) {
+  const stamp = new Date(now).toISOString().replace(/[:.]/g, "-");
+  const target = `${filePath}.corrupt-${stamp}`;
+  try {
+    await fsImpl.rename(filePath, target);
+    return target;
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
 function migrateOwnerMetadata(value) {
   if(value?.owner && !value.owner.processMarker && /^proc-[A-Za-z0-9-]+$/.test(value.owner.token || '')) {
     value.owner.processMarker=value.owner.token;
@@ -90,6 +140,37 @@ function generateUserId() {
   const timestamp = Date.now().toString(16);
   const randomSuffix = Math.random().toString(16).slice(2, 10);
   return `user-${timestamp}-${randomSuffix}`;
+}
+
+/**
+ * Menulis berkas identitas user TANPA pernah menimpa identitas yang sudah ada.
+ *
+ * Dua proses MCP bisa start bersamaan pada instalasi baru: keduanya membuat ID
+ * berbeda, penulis terakhir menang, dan riwayat sesi pertama menempel pada ID
+ * yang tidak pernah tersimpan. Karena itu pembuatan berkas memakai flag `wx`
+ * (gagal bila sudah ada), lalu membaca pemenangnya.
+ *
+ * Berkas yang ADA tetapi tidak terbaca tidak pernah ditimpa: identitas di
+ * dalamnya masih dipakai baris riwayat yang sudah tercatat.
+ */
+export function ensureUserIdFile(userIdFile, candidateId) {
+  try {
+    writeFileSync(userIdFile, candidateId, { encoding: "utf-8", flag: "wx" });
+    return candidateId;
+  } catch (error) {
+    if (error?.code !== "EEXIST") throw error;
+  }
+
+  try {
+    const existing = readFileSync(userIdFile, "utf-8").trim();
+    if (existing) return existing;
+  } catch {
+    return candidateId;
+  }
+
+  // Berkas ada dan terbaca, isinya kosong: tidak ada identitas yang bisa hilang.
+  writeFileSync(userIdFile, candidateId, "utf-8");
+  return candidateId;
 }
 
 function resolveUserId(stateDir) {
@@ -116,7 +197,9 @@ function resolveUserId(stateDir) {
       }
     }
   } catch {
-    // Ignore read errors; we'll generate a new ID below.
+    // Berkas identitas tidak terbaca. JANGAN membuat ID baru menimpanya:
+    // seluruh riwayat pengguna akan terlepas dari dirinya sendiri. Alur di
+    // bawah hanya menulis bila berkasnya benar-benar bisa dibuat baru.
   }
 
   const usersDir = path.join(stateDir, "users");
@@ -128,7 +211,10 @@ function resolveUserId(stateDir) {
       const legacyId = candidateDirs[0];
       try {
         mkdirSync(stateDir, { recursive: true });
-        writeFileSync(userIdFile, legacyId, "utf-8");
+        const id = ensureUserIdFile(userIdFile, legacyId);
+        cachedUserId = id;
+        cachedUserStateDir = stateDir;
+        return id;
       } catch {
         // Persisting the legacy ID is best-effort.
       }
@@ -146,7 +232,10 @@ function resolveUserId(stateDir) {
   if (existsSync(legacyDefaultPath)) {
     try {
       mkdirSync(stateDir, { recursive: true });
-      writeFileSync(userIdFile, "default", "utf-8");
+      const id = ensureUserIdFile(userIdFile, "default");
+      cachedUserId = id;
+      cachedUserStateDir = stateDir;
+      return id;
     } catch {
       // Best-effort persistence; continue with in-memory fallback.
     }
@@ -158,7 +247,10 @@ function resolveUserId(stateDir) {
   const generatedId = generateUserId();
   try {
     mkdirSync(stateDir, { recursive: true });
-    writeFileSync(userIdFile, generatedId, "utf-8");
+    const id = ensureUserIdFile(userIdFile, generatedId);
+    cachedUserId = id;
+    cachedUserStateDir = stateDir;
+    return id;
   } catch {
     // Ignore persistence errors; continue with in-memory ID.
   }
@@ -1055,8 +1147,11 @@ async function reportToMonitorSafe({ state, stateFile, createdAt }) {
 }
 
 export class WorkflowState {
-  constructor(stateFilePath = resolveStateFile()) {
+  constructor(stateFilePath = resolveStateFile(), options = {}) {
     this.stateFile = stateFilePath;
+    // Dipakai tes untuk menyuntikkan kegagalan baca yang nyata (EBUSY/EACCES)
+    // tanpa harus benar-benar mengunci berkas di sistem operasi.
+    this.fs = options.fs || fs;
     // History milik proyek, state milik sesi. Dalam tata letak nyata keduanya
     // berkas berbeda; untuk path eksplisit keduanya menunjuk berkas yang sama.
     this.historyFile = resolveHistoryFile(stateFilePath);
@@ -1196,8 +1291,30 @@ export class WorkflowState {
   async load() {
     await migrateLegacyStateFile(this.stateFile);
     try {
-      const data = await fs.readFile(this.stateFile, "utf-8");
-      const parsed = sanitize(migrateOwnerMetadata(parseStateJson(data)));
+      const hasil = await readJsonStateFile(this.stateFile, this.fs);
+      if (hasil.status === "missing") {
+        // Berkas memang belum ada: bukan kegagalan.
+        await this.ensurePrimaryFile();
+        await this.mergeSharedHistory();
+        return;
+      }
+      if (hasil.status === "corrupt") {
+        const cadangan = await backupDamagedFile(this.stateFile, this.fs);
+        throw new Error(
+          `Berkas state "${this.stateFile}" rusak dan tidak bisa dibaca. ` +
+            `Isi aslinya disimpan di "${cadangan}". Perbaiki atau hapus berkas itu ` +
+            `sebelum melanjutkan - memuat state baru diam-diam akan membuat agen ` +
+            `lupa task yang sedang berjalan.`,
+        );
+      }
+      if (hasil.status === "unreadable") {
+        throw new Error(
+          `Berkas state "${this.stateFile}" tidak bisa dibaca ` +
+            `(${hasil.error?.code || hasil.error?.message}). Penulisan dibatalkan ` +
+            `supaya pekerjaan sesi lain tidak tertimpa.`,
+        );
+      }
+      const parsed = sanitize(migrateOwnerMetadata(hasil.data));
       this.state = {
         ...this.state,
         ...parsed,
@@ -1308,7 +1425,14 @@ export class WorkflowState {
       return 0;
     }
 
-    const shared = await this.readHistoryFile();
+    const hasil = await this.readHistoryFile();
+    if (hasil.status === "unreadable" || hasil.status === "corrupt") {
+      // Membaca untuk MENGGABUNG tidak boleh menghapus apa pun: kalau tidak
+      // terbaca, lewati penggabungan dan biarkan berkasnya utuh. Penulisan
+      // nanti akan menolak dengan alasan yang jelas (lihat writeHistoryFile).
+      return 0;
+    }
+    const shared = hasil.status === "ok" ? hasil.data : null;
     const merged = this.mergeDiskHistory(shared);
     if (merged > 0) {
       await this.writeHistoryFile();
@@ -1316,13 +1440,14 @@ export class WorkflowState {
     return merged;
   }
 
+  /**
+   * Hasil baca history bersama, LENGKAP dengan statusnya.
+   *
+   * Dulu fungsi ini mengembalikan `null` untuk semua kegagalan, sehingga
+   * "gagal membaca" tidak bisa dibedakan dari "belum ada history".
+   */
   async readHistoryFile() {
-    try {
-      const data = await fs.readFile(this.historyFile, "utf-8");
-      return parseStateJson(data);
-    } catch {
-      return null;
-    }
+    return readJsonStateFile(this.historyFile, this.fs);
   }
 
   /** Menulis hanya `history` ke berkas bersama, tanpa task milik sesi ini. */
@@ -1331,7 +1456,36 @@ export class WorkflowState {
       return;
     }
 
-    const shared = (await this.readHistoryFile()) || {};
+    const hasil = await readJsonStateFile(this.historyFile, this.fs);
+
+    // Berkas ada tetapi gagal dibaca (EBUSY/EACCES/EMFILE). Menulis sekarang
+    // berarti menghapus riwayat seluruh sesi lain di proyek ini - hanya karena
+    // berkasnya sedang dipegang proses lain sesaat.
+    if (hasil.status === "unreadable") {
+      throw new Error(
+        `History bersama "${this.historyFile}" tidak bisa dibaca ` +
+          `(${hasil.error?.code || hasil.error?.message}). Penulisan dibatalkan ` +
+          `supaya riwayat sesi lain tidak terhapus.`,
+      );
+    }
+
+    let shared = {};
+    if (hasil.status === "corrupt") {
+      const cadangan = await backupDamagedFile(this.historyFile, this.fs);
+      console.warn(
+        `⚠️ History bersama rusak; isi aslinya disimpan di "${cadangan}" sebelum ditulis ulang.`,
+      );
+    } else if (hasil.status === "ok") {
+      shared = hasil.data && typeof hasil.data === "object" ? hasil.data : {};
+      if (shared.history !== undefined && !Array.isArray(shared.history)) {
+        const cadangan = await backupDamagedFile(this.historyFile, this.fs);
+        console.warn(
+          `⚠️ Kolom history di "${this.historyFile}" bukan daftar; isi aslinya disimpan di "${cadangan}".`,
+        );
+        shared = { ...shared, history: [] };
+      }
+    }
+
     const merged = Array.isArray(shared.history) ? shared.history.slice() : [];
     const seen = new Set(merged.map((entry) => this.historyKey(entry)));
     for (const entry of this.state.history || []) {
@@ -1585,12 +1739,37 @@ export class WorkflowState {
    * Mengembalikan null kalau belum ada / rusak.
    */
   async readDiskState() {
-    try {
-      const data = await fs.readFile(this.stateFile, "utf-8");
-      return sanitize(migrateOwnerMetadata(parseStateJson(data)));
-    } catch {
-      return null;
+    let terakhir = null;
+    // Berkas state bisa terkunci sesaat (OneDrive, antivirus, proses MCP lain).
+    // Percobaan ulang singkat mencegah kegagalan sesaat berubah menjadi
+    // "anggap kosong, lalu timpa" - pola yang menghapus pekerjaan sesi lain.
+    for (let percobaan = 0; percobaan < 3; percobaan += 1) {
+      const hasil = await readJsonStateFile(this.stateFile, this.fs);
+
+      if (hasil.status === "ok") {
+        return sanitize(migrateOwnerMetadata(hasil.data));
+      }
+      if (hasil.status === "missing") {
+        return null;
+      }
+      if (hasil.status === "corrupt") {
+        const cadangan = await backupDamagedFile(this.stateFile, this.fs);
+        throw new Error(
+          `Berkas state "${this.stateFile}" rusak dan tidak bisa dibaca. ` +
+            `Isi aslinya disimpan di "${cadangan}". Perbaiki atau hapus berkas itu ` +
+            `sebelum melanjutkan - menimpanya berarti kehilangan jejak task yang sedang berjalan.`,
+        );
+      }
+
+      terakhir = hasil;
+      if (percobaan < 2) await new Promise((selesai) => setTimeout(selesai, 25));
     }
+
+    throw new Error(
+      `Berkas state "${this.stateFile}" tidak bisa dibaca ` +
+        `(${terakhir?.error?.code || terakhir?.error?.message}). Penulisan dibatalkan ` +
+        `supaya pekerjaan sesi lain tidak tertimpa.`,
+    );
   }
 
   /** True kalau berkas di disk terakhir ditulis proses MCP lain. */
