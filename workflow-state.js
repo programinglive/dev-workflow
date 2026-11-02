@@ -1796,19 +1796,6 @@ export class WorkflowState {
     };
   }
 
-  /** Ambil state dari disk apa adanya, dengan history digabung, tanpa menulis. */
-  async adoptDiskState() {
-    const disk = await this.readDiskState();
-    if (!disk) {
-      return false;
-    }
-    const mergedHistory = this.state.history || [];
-    this.state = { ...disk, history: mergedHistory };
-    this.mergeDiskHistory(disk);
-    this.loadedTask = this.state.taskDescription || "";
-    return true;
-  }
-
   /**
    * Pastikan tulisan kita benar-benar bertahan.
    *
@@ -1922,11 +1909,23 @@ export class WorkflowState {
       foreignToken: null,
       diskTask: "",
       diskPhase: "idle",
-      // Dipakai mergeMonotonicProgress: state disk apa adanya, supaya flag
+      // Dipakai mergeMonotonicProgress: state tersimpan apa adanya, supaya flag
       // langkah yang sudah dicapai proses lain bisa digabung.
       diskState: null,
     };
-    const disk = await this.readDiskState();
+
+    // Sumbernya SQLite, bukan berkas JSON. Berkas JSON kini hanya ekspor, dan
+    // membaca ekspor untuk memutuskan "apakah ada task lain" berarti memutuskan
+    // berdasarkan salinan yang bisa saja sudah tertinggal.
+    const db = await this._db();
+    const { key: sessionKey } = this._sessionKey();
+    const row = await db.loadStateVersioned({
+      userId: getCurrentUserId(this.stateFile),
+      projectPath: this._projectPath(),
+      sessionKey,
+    });
+
+    const disk = row?.state ?? null;
     if (!disk) {
       return result;
     }
