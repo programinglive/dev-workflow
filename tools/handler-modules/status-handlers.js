@@ -106,6 +106,41 @@ export async function handleGetWorkflowStatus(workflowState) {
 
   const planBlock = renderPlanFull(status.plan);
 
+  // Replika dan pertikaian penulis: dua keadaan yang dulu tidak punya suara
+  // sama sekali. Yang pertama membuat dashboard tampak kosong padahal datanya
+  // ada; yang kedua membuat dua proses saling menimpa tanpa ada yang tahu
+  // sebabnya. Keduanya ditampilkan di sini, bukan di dashboard: antrean tinggal
+  // di mesin ini, dan dashboard justru tidak bisa dijangkau saat itulah.
+  let opsNote = "";
+  try {
+    const { queueDepth } = await import("../../db/replicate.js");
+    const adapter = workflowState.dbAdapter ?? (await workflowState._db());
+    const depth = await queueDepth(adapter);
+
+    if (depth.pending > 0) {
+      opsNote = `\nReplika: tertunda ${depth.pending}`;
+      if (depth.oldestAgeMs > 60000) {
+        opsNote += ` (tertua ${Math.round(depth.oldestAgeMs / 1000)} detik)`;
+      }
+    }
+
+    const sessionKey = workflowState._sessionKey().key;
+    const contenders = adapter.db
+      .prepare(
+        `SELECT count(DISTINCT process_token) AS c FROM state_writer_history
+          WHERE session_key = ? AND written_at > datetime('now', '-60 seconds')`,
+      )
+      .get(sessionKey).c;
+
+    if (contenders > 1) {
+      opsNote +=
+        `\n⚠️ Dua proses menulis sesi yang sama dalam 60 detik terakhir. ` +
+        `Pastikan "Task:" di atas benar-benar milik Anda sebelum menutup task.`;
+    }
+  } catch {
+    // Laporan tambahan tidak boleh menghalangi status.
+  }
+
   return textResponse(
     `📊 Current Workflow Status:
 
@@ -124,7 +159,7 @@ ${dodBlock}
 
 ${planBlock}
 
-Next step: ${nextStep}${sharedWarning}${strandedNote}`
+Next step: ${nextStep}${opsNote}${sharedWarning}${strandedNote}`
   );
 }
 

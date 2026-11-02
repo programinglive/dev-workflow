@@ -5,6 +5,7 @@ import { mkdtemp, rm, writeFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { once } from "node:events";
+import Database from "better-sqlite3";
 
 /**
  * Uji end-to-end lewat transport stdio sungguhan.
@@ -117,26 +118,28 @@ test("MCP SDK meneruskan _meta sessionID sampai ke state di disk", async () => {
       },
     });
 
-    // Berkas state harus dibuat per sesi, bukan per pid.
-    const stateDirs = await readdir(projectRoot, { withFileTypes: true }).catch(() => []);
-    const stateDir = stateDirs.find((entry) => entry.name === ".state");
-    assert.ok(stateDir, "direktori .state harus dibuat");
+    // Pemisahan per sesi sekarang hidup di DATABASE, bukan di nama berkas:
+    // satu baris per kunci sesi. Yang dijaga tetap sama - dua sesi tidak boleh
+    // berbagi satu baris, dan tidak boleh jatuh ke kunci berbasis pid.
+    const dbPath = path.join(tmpdir(), `mcp-meta-e2e-${process.pid}.db`);
+    const db = new Database(dbPath, { readonly: true });
+    try {
+      const keys = db
+        .prepare("SELECT session_key FROM workflow_state ORDER BY session_key")
+        .all()
+        .map((row) => row.session_key);
 
-    const usersDir = path.join(projectRoot, ".state", "users");
-    const users = await readdir(usersDir);
-    assert.ok(users.length > 0, "harus ada direktori user");
-
-    const files = await readdir(path.join(usersDir, users[0]));
-    const sessionFiles = files.filter((name) => name.startsWith("workflow-state.") && name.includes("ses_E2E"));
-
-    assert.ok(
-      sessionFiles.length >= 2,
-      `harus ada berkas state per sesi (ses_E2E_AAA dan ses_E2E_BBB), dapat: ${JSON.stringify(files)}`,
-    );
-    assert.ok(
-      !files.some((name) => name.includes(`pid-${server.child.pid}`)),
-      `tidak boleh jatuh ke pid-${server.child.pid}: ${JSON.stringify(files)}`,
-    );
+      assert.ok(
+        keys.includes("ses_E2E_AAA") && keys.includes("ses_E2E_BBB"),
+        `harus ada baris per sesi (ses_E2E_AAA dan ses_E2E_BBB), dapat: ${JSON.stringify(keys)}`,
+      );
+      assert.ok(
+        !keys.some((key) => key.startsWith("pid-")),
+        `tidak boleh jatuh ke kunci pid: ${JSON.stringify(keys)}`,
+      );
+    } finally {
+      db.close();
+    }
   } finally {
     server.stop();
     await once(server.child, "exit").catch(() => {});

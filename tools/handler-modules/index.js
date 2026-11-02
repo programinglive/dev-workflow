@@ -448,6 +448,23 @@ export async function handleToolCall(context) {
     if(['SECRET_CONTENT_DENIED','UNSAFE_COMMAND_DENIED'].includes(error.code)) {
       return {isError:true,content:[{type:'text',text:JSON.stringify({error:error.code,message:error.message,findings:error.findings})}]};
     }
+    // Dua kegagalan penyimpanan state, dibedakan supaya agen tahu apa yang
+    // harus dilakukan. "Internal server error" membuat konflik yang jelas
+    // terlihat seperti bug sementara, dan agen mencoba lagi berkali-kali.
+    if(error?.code==='STATE_CONFLICT') {
+      return {isError:true,content:[{type:'text',text:
+        `⚠️ State sesi "${error.sessionKey}" sudah ditulis proses lain ` +
+        `(tersimpan versi ${error.actualVersion ?? '?'}, kita memegang ${error.expectedVersion ?? '?'}).\n\n` +
+        `Tidak ada yang ditimpa. Jalankan 'get_workflow_status' untuk memuat ulang state, ` +
+        `lalu ulangi langkah terakhir.`}]};
+    }
+    if(error?.code==='STATE_UNAVAILABLE') {
+      return {isError:true,content:[{type:'text',text:
+        `⚠️ Penyimpanan state tidak bisa dipakai: ${error.message}\n\n` +
+        `Workflow TIDAK dilanjutkan, karena menulis ke tempat lain akan membuat pekerjaan ` +
+        `ini tidak bisa ditemukan lagi. Perbaiki penyebabnya (ruang disk, izin, atau berkas ` +
+        `rusak) sebelum mengulang.`}]};
+    }
     safeLog('error','Tool request failed',error);
     return {isError:true,content:[{type:'text',text:'⚠️ Internal server error while processing the tool request.'}]};
   }
