@@ -2,6 +2,46 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.20.0](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.32...v1.20.0) (2026-11-02)
+
+
+### ♻️ Refactors
+
+* **state:** jadikan berkas json ekspor saja ([bb44b94](https://github.com/programinglive/dev-workflow-mcp-server/commit/bb44b94fbaecc5bb127237b61ed277595e878d04))
+
+
+### 📝 Documentation
+
+* **plan:** rencana implementasi state SQLite dalam 10 tugas ([a01be37](https://github.com/programinglive/dev-workflow-mcp-server/commit/a01be37ef04547dccec779a485742080d967cc3c))
+* **spec:** putuskan identitas sesi cadangan, antrean, dan penanganan baris state lama ([e58c1bc](https://github.com/programinglive/dev-workflow-mcp-server/commit/e58c1bcb17034afbd5efc2ee09d1f4375d862c13))
+* **spec:** state hidup pindah ke SQLite sebagai sumber kebenaran, Postgres jadi replika ([204ac2b](https://github.com/programinglive/dev-workflow-mcp-server/commit/204ac2bc1433a82cf9d49e6b6036bc2a202cd4f0))
+* **state:** tandai SHARED-STATE.md tidak berlaku ([7000781](https://github.com/programinglive/dev-workflow-mcp-server/commit/700078170ea67cc17e8ed52dda1c22697af6556b))
+* **state:** tata letak penyimpanan state di sqlite ([5b4e98d](https://github.com/programinglive/dev-workflow-mcp-server/commit/5b4e98db6cf15e5c047821c2c3a2d24a6810f0f4))
+
+
+### 🐛 Bug Fixes
+
+* **state:** perbaiki temuan review penyimpanan sqlite ([ecfda98](https://github.com/programinglive/dev-workflow-mcp-server/commit/ecfda98224cf94c4645ee9dd8965228f9ae8fda8))
+* **state:** riwayat keluar dari state_json dan tes tidak boleh menulis ke state asli ([6712ac5](https://github.com/programinglive/dev-workflow-mcp-server/commit/6712ac5ac547de76027f0b5988e2f32f6625d452))
+
+
+### 🧹 Chores
+
+* abaikan tmp-probe.db ([4c68d0d](https://github.com/programinglive/dev-workflow-mcp-server/commit/4c68d0dc52c1f8de24a8c741e85b9b9d93b3573c))
+
+
+### ✨ Features
+
+* **db:** antrean replika dengan backoff dan klaim baris ([9a67b94](https://github.com/programinglive/dev-workflow-mcp-server/commit/9a67b948156fdf483768b2276ebdb02e361accde))
+* **db:** kelas error state dan normalisasi kunci sesi ([fec2db0](https://github.com/programinglive/dev-workflow-mcp-server/commit/fec2db046341f27ce201ecd5c1fdeaadfc0850c2))
+* **db:** migrasi JSON lama ke SQLite dan arsip baris state proyek ([803dff3](https://github.com/programinglive/dev-workflow-mcp-server/commit/803dff3c5887a5e2cba43b75465505d24c9870c6))
+* **db:** skema v1 dan state berversi per sesi ([b00747b](https://github.com/programinglive/dev-workflow-mcp-server/commit/b00747b17e7a2e35acceaa81029911107f59e554))
+* **handlers:** bedakan konflik state dan penyimpanan tidak tersedia ([82cdba9](https://github.com/programinglive/dev-workflow-mcp-server/commit/82cdba92db53b9fcf2fa5ba7ddf02420beb9963e))
+* **state:** load() dan history membaca dari SQLite ([b16fc4a](https://github.com/programinglive/dev-workflow-mcp-server/commit/b16fc4a96493e78894f9cb56a620c4b20937645f))
+* **state:** save() menulis state hidup ke SQLite berversi ([2392d3e](https://github.com/programinglive/dev-workflow-mcp-server/commit/2392d3e219cb98f163818eb867d0e05ccf4f2f52))
+* **state:** simpan state workflow di sqlite, postgres jadi replika ([d6925bd](https://github.com/programinglive/dev-workflow-mcp-server/commit/d6925bdd24291fdc9c87ebbabe98fc2a54c2e075))
+* **status:** laporkan antrean replika dan pertikaian penulis ([a3b6211](https://github.com/programinglive/dev-workflow-mcp-server/commit/a3b62119c574521e7383a4f83b9ea544e45d3fad))
+
 ### [1.19.32](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.31...v1.19.32) (2026-11-02)
 
 
