@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.20.3](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.20.2...v1.20.3) (2026-11-02)
+
+
+### 🐛 Bug Fixes
+
+* **state:** bereskan enam temuan sisa penyimpanan sqlite ([4ae8b0b](https://github.com/programinglive/dev-workflow-mcp-server/commit/4ae8b0b8e8529ea2d973c04421a43897c8e581d8))
+
+
+### 📝 Documentation
+
+* jelaskan penyimpanan sqlite di readme dan situs developer ([4e42b41](https://github.com/programinglive/dev-workflow-mcp-server/commit/4e42b416b6f48f7fdc7fdb2c73df9ec4b6e9f08f))
+
 ### [1.20.2](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.20.1...v1.20.2) (2026-11-02)
 
 
