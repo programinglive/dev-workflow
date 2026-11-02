@@ -33,6 +33,15 @@ const DDL_BASE = [
      archived_at  TEXT NOT NULL
    )`,
 
+  `CREATE TABLE IF NOT EXISTS state_writer_history (
+     id            INTEGER PRIMARY KEY AUTOINCREMENT,
+     user_id       TEXT NOT NULL,
+     project_path  TEXT NOT NULL,
+     session_key   TEXT NOT NULL,
+     process_token TEXT NOT NULL,
+     written_at    TEXT NOT NULL
+   )`,
+
   `CREATE TABLE IF NOT EXISTS state_writer (
      user_id       TEXT NOT NULL,
      project_path  TEXT NOT NULL,
