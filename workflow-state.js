@@ -1711,6 +1711,16 @@ export class WorkflowState {
              last_write_at = datetime('now')`,
         )
         .run(userId, projectPath, sessionKey, process.pid, PROCESS_TOKEN, keySource);
+
+      // Riwayat penulis: `state_writer` hanya menyimpan SATU baris per sesi,
+      // sehingga dua proses yang bergantian menulis tidak terlihat di sana.
+      // Riwayat inilah yang membuat pertikaian bisa dideteksi dan dilaporkan.
+      db.db
+        .prepare(
+          `INSERT INTO state_writer_history (user_id, project_path, session_key, process_token, written_at)
+           VALUES (?, ?, ?, ?, datetime('now'))`,
+        )
+        .run(userId, projectPath, sessionKey, PROCESS_TOKEN);
     } catch (error) {
       safeLog("warn", `Gagal mencatat penulis state: ${error.message}`);
     }
