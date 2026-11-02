@@ -21,6 +21,8 @@
  * berkas JSON sebuah proyek sudah hilang.
  */
 
+import { normalizeProjectPath } from "./session-key.js";
+
 export const SCHEMA_VERSION = 1;
 
 /** Tabel yang bentuknya tidak berubah oleh migrasi ini. */
@@ -145,19 +147,36 @@ export function archiveLegacyState(db) {
 
   db.exec(DDL_BASE[0]);
 
-  const count = db.prepare("SELECT count(*) AS c FROM workflow_state").get().c;
+  const rows = db
+    .prepare("SELECT user_id, project_path, state_json, updated_at FROM workflow_state")
+    .all();
 
-  if (count > 0) {
-    db.prepare(
+  if (rows.length > 0) {
+    // `project_path` dinormalkan SAAT DIARSIPKAN.
+    //
+    // Baris lama ditulis dengan `D:\Code\Foo` (backslash, huruf drive besar),
+    // sedangkan seluruh kode baru memakai `d:/code/foo`. Menyalin apa adanya
+    // membuat cadangan `legacy-project` tidak pernah menemukan barisnya - dan
+    // cadangan itu justru satu-satunya harapan bagi proyek yang berkas JSON-nya
+    // sudah hilang.
+    const insert = db.prepare(
       `INSERT INTO workflow_state_legacy (user_id, project_path, state_json, updated_at, archived_at)
-       SELECT user_id, project_path, state_json, updated_at, datetime('now') FROM workflow_state`,
-    ).run();
+       VALUES (?, ?, ?, ?, datetime('now'))`,
+    );
+    for (const row of rows) {
+      insert.run(
+        row.user_id,
+        normalizeProjectPath(row.project_path),
+        row.state_json,
+        row.updated_at,
+      );
+    }
   }
 
   db.exec("DROP TABLE workflow_state");
   db.exec(DDL_STATE);
 
-  return { archived: count };
+  return { archived: rows.length };
 }
 
 /**

@@ -5,8 +5,8 @@ import path from "path";
 import { assertSafeKnowledge } from './security/policy.js';
 import { sanitize } from './security/sanitizer.js';
 import { normalizeItems as normalizeDodItems, mergeDefinitionOfDone as mergeDodItems } from './tools/handler-modules/dod.js';
-import { resolveSessionKeyWithSource } from './db/session-key.js';
-import { StateUnavailable } from './db/errors.js';
+import { resolveSessionKeyWithSource, sanitizeSessionKey } from './db/session-key.js';
+import { StateUnavailable, StateConflict } from './db/errors.js';
 import { normalizePlan } from './tools/handler-modules/plan.js';
 import { fileURLToPath } from "url";
 import { pathToFileURL } from "url";
@@ -659,20 +659,16 @@ export function sessionKeyFromRequest(request) {
   return trimmed === "" ? null : trimmed;
 }
 
+/**
+ * Kunci sesi untuk nama berkas ekspor dan untuk baris database.
+ *
+ * Satu implementasi saja, di `db/session-key.js`. Versi lokal yang dulu ada di
+ * sini berbeda dari versi baru di satu hal yang penting - ia masih mengembalikan
+ * `pid-<pid>` - sehingga nama berkas dan kunci baris bisa menunjuk sesi yang
+ * berbeda untuk masukan yang sama.
+ */
 export function resolveSessionKey(env = process.env, explicitSessionId = null) {
-  const fromRequest = typeof explicitSessionId === "string" ? explicitSessionId.trim() : "";
-  if (fromRequest) return sanitizeSessionKey(fromRequest);
-
-  for (const candidate of [env.DEV_WORKFLOW_SESSION_ID, env.OPENCODE_SESSION_ID, env.CLIENT_SESSION_ID]) {
-    const value = typeof candidate === "string" ? candidate.trim() : "";
-    if (value) return sanitizeSessionKey(value);
-  }
-  return `pid-${process.pid}`;
-}
-
-function sanitizeSessionKey(value) {
-  const cleaned = String(value).replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
-  return (cleaned || "session").slice(0, 64);
+  return resolveSessionKeyWithSource(env, explicitSessionId).key;
 }
 
 /** Nama berkas state untuk sesi ini, di direktori user yang sama. */
@@ -1672,25 +1668,74 @@ export class WorkflowState {
         projectPath,
         sessionKey,
         state: this.state,
-        expectedVersion: existing ? existing.version : null,
+        // Versi yang KITA PEGANG, bukan yang barusan dibaca ulang. Memakai
+        // hasil baca ulang membuat pemeriksaan versi tidak pernah menolak
+        // apa pun: celah antara baca dan tulis nyaris nol, sehingga dua proses
+        // pada sesi yang sama sama-sama "berhasil" dan yang kalah menimpa
+        // `currentPhase`, `plan`, dan `documentationFiles` tanpa perlawanan.
+        expectedVersion: this.stateVersion,
       });
     } catch (error) {
       if (error?.code === "STATE_CONFLICT") {
-        // Ada penulis lain yang lebih dulu pada kunci yang sama. Bukan
-        // kerusakan: baris pemenang utuh. Pemanggil diberi tahu, bukan diberi
-        // "berhasil" palsu.
-        const winner = await db.loadStateVersioned({ userId, projectPath, sessionKey });
-        this._adoptState(winner?.state ?? null);
-        this.lastConflict = {
-          diskTask: winner?.state?.taskDescription || "",
-          staleTask: "",
-          diskPhase: winner?.state?.currentPhase || "idle",
-          reason: error.message,
-        };
-        await this._exportJson();
-        return { ...reconciled, conflict: this.lastConflict, verified: false };
+        // Ada penulis lain yang lebih dulu pada kunci yang sama.
+        //
+        // Satu percobaan ulang, dengan baris TERSIMPAN sebagai dasar: kita hanya
+        // menyumbang kemajuan yang bersifat monoton (langkah yang sudah tercapai)
+        // dan bukti DoD. Fase, rencana, dan daftar berkas tetap milik baris
+        // tersimpan, karena penulis basi tidak boleh mengembalikannya.
+        //
+        // Bila percobaan kedua juga bentrok, baru dilaporkan: dua penulis yang
+        // benar-benar bersamaan tidak boleh saling menimpa berkali-kali.
+        const ourFlags = {};
+        for (const field of MONOTONIC_STEP_FIELDS) {
+          if (this.state[field] === true) ourFlags[field] = true;
+        }
+        const ourDod = normalizeDodItems(this.state.definitionOfDone);
+        const ourRevision = Number(this.state.dodRevision) || 0;
+
+        const latest = await db.loadStateVersioned({ userId, projectPath, sessionKey });
+
+        if (latest) {
+          this.state = {
+            ...latest.state,
+            ...ourFlags,
+            definitionOfDone: mergeDodItems(
+              normalizeDodItems(latest.state.definitionOfDone),
+              ourDod,
+            ),
+            dodRevision: Math.max(Number(latest.state.dodRevision) || 0, ourRevision),
+            owner: { processMarker: PROCESS_TOKEN, pid: process.pid, updatedAt: new Date().toISOString() },
+          };
+
+          try {
+            written = await db.saveStateVersioned({
+              userId,
+              projectPath,
+              sessionKey,
+              state: this.state,
+              expectedVersion: latest.version,
+            });
+          } catch (retryError) {
+            if (retryError?.code !== "STATE_CONFLICT") throw retryError;
+            written = null;
+          }
+        }
+
+        if (!written) {
+          const winner = await db.loadStateVersioned({ userId, projectPath, sessionKey });
+          this._adoptState(winner?.state ?? null);
+          this.lastConflict = {
+            diskTask: winner?.state?.taskDescription || "",
+            staleTask: "",
+            diskPhase: winner?.state?.currentPhase || "idle",
+            reason: error.message,
+          };
+          await this._exportJson();
+          return { ...reconciled, conflict: this.lastConflict, verified: false };
+        }
+      } else {
+        throw error;
       }
-      throw error;
     }
 
     this.stateVersion = written.version;
@@ -1826,9 +1871,13 @@ export class WorkflowState {
 
     const actual = row.state?.taskDescription || "";
     if (actual !== (expectedTask || "")) {
-      throw new Error(
+      // StateConflict, bukan Error biasa: lapisan tool sudah punya jawaban yang
+      // menyuruh agen memuat ulang state. Error biasa berakhir sebagai
+      // "Internal server error", dan agen mengira itu bug sementara.
+      throw new StateConflict(
         `State workflow tidak bertahan: yang ditulis "${expectedTask}" tetapi tersimpan "${actual}". ` +
-        `Proses MCP lain menimpanya. Muat ulang state sebelum melanjutkan.`
+        `Proses MCP lain menimpanya. Muat ulang state sebelum melanjutkan.`,
+        { sessionKey, expectedVersion: this.stateVersion, actualVersion: row.version },
       );
     }
     return true;
@@ -1994,7 +2043,9 @@ export class WorkflowState {
   async _db() {
     if (!this.dbAdapter) {
       const mod = await import("./db/index.js");
-      this.dbAdapter = await mod.getAdapter();
+      // `getLocalAdapter`, bukan `getAdapter`: penyimpanan state hidup SELALU
+      // SQLite, apa pun isi DEV_WORKFLOW_DB_TYPE.
+      this.dbAdapter = await mod.getLocalAdapter();
     } else if (typeof this.dbAdapter.connect === "function") {
       // Adapter yang diinjeksi belum tentu sudah tersambung. `connect()`
       // idempoten, jadi memanggilnya di sini aman dan menghilangkan urutan
@@ -2065,9 +2116,15 @@ export class WorkflowState {
    * dengan ratusan berkas itu memperlambat setiap panggilan pertama.
    */
   async _ensureMigrated(db, projectPath) {
+    // Penanda HARUS memuat proyek. Satu database bisa melayani beberapa proyek
+    // (jalur database dicari lewat package.json terdekat), dan penanda global
+    // membuat proyek pertama yang dimuat mematikan migrasi untuk semua proyek
+    // lain - diam-diam, karena barisnya tetap tercatat "selesai".
+    const marker = `legacy-json-v1:${projectPath}`;
+
     const done = db.db
       .prepare("SELECT name FROM migration_log WHERE name = ?")
-      .get("legacy-json-v1");
+      .get(marker);
     if (done) return null;
 
     const baseDir = path.join(projectPath, STATE_DIR);
@@ -2076,12 +2133,13 @@ export class WorkflowState {
 
     safeLog(
       "info",
-      `Migrasi JSON lama: ${result.sessions} sesi masuk, ${result.legacyFallback} cadangan, ${result.skipped} dilewati.`,
+      `Migrasi JSON lama (${projectPath}): ${result.sessions} sesi masuk, ` +
+        `${result.legacyFallback} cadangan, ${result.skipped} dilewati.`,
     );
 
     db.db
       .prepare("INSERT OR IGNORE INTO migration_log (name, applied_at) VALUES (?, datetime('now'))")
-      .run("legacy-json-v1");
+      .run(marker);
 
     return result;
   }

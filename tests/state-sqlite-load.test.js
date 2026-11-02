@@ -117,9 +117,9 @@ test("load memigrasikan berkas JSON lama satu kali saja", async () => {
     assert.equal(migrated, 1, "berkas lama harus masuk ke database");
 
     const logRows = adapter.db
-      .prepare("SELECT count(*) c FROM migration_log WHERE name = 'legacy-json-v1'")
+      .prepare("SELECT count(*) c FROM migration_log WHERE name LIKE 'legacy-json-v1%'")
       .get().c;
-    assert.equal(logRows, 1, "migrasi harus tercatat, bukan diulang tiap load");
+    assert.equal(logRows, 1, "migrasi harus tercatat per proyek, bukan diulang tiap load");
 
     // Menjalankan load lagi tidak menggandakan apa pun.
     const again = new WorkflowState(stateFile, { db: adapter, sessionId: "ses_baru" });
