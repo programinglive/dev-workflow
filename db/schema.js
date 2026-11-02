@@ -61,6 +61,11 @@ const DDL_BASE = [
      applied_at TEXT NOT NULL
    )`,
 
+  `CREATE TABLE IF NOT EXISTS migration_log (
+     name       TEXT PRIMARY KEY,
+     applied_at TEXT NOT NULL
+   )`,
+
   `CREATE TABLE IF NOT EXISTS workflow_history (
      id INTEGER PRIMARY KEY AUTOINCREMENT,
      user_id TEXT NOT NULL,
