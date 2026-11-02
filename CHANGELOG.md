@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.19.32](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.31...v1.19.32) (2026-11-02)
+
+
+### 🐛 Bug Fixes
+
+* **factory:** complete_task/force_complete_task/drop_task sekarang menutup task Factory otomatis ([70e33aa](https://github.com/programinglive/dev-workflow-mcp-server/commit/70e33aab6fc7c95a4b1ffc35c4fbc92d2f0c1661))
+* **state:** gagal membaca tidak lagi dianggap "kosong" ([870d495](https://github.com/programinglive/dev-workflow-mcp-server/commit/870d495a161a75e93cc29716415d8b3812f33a39))
+
+
+### 🧹 Chores
+
+* gitignore project-summary.json, tmp-test-state.json, user-id ([8542933](https://github.com/programinglive/dev-workflow-mcp-server/commit/85429330ae1000e7696145d0da04a608aecd4fd8))
+
 ### [1.19.31](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.30...v1.19.31) (2026-11-02)
 
 
