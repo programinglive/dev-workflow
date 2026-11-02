@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.19.31](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.30...v1.19.31) (2026-11-02)
+
+
+### 🐛 Bug Fixes
+
+* **monitor:** 'unknown' tidak lagi menimpa label tool yang benar ([5e01eaf](https://github.com/programinglive/dev-workflow-mcp-server/commit/5e01eaf5966762dc99d5cc66bf3e8b6b9393e1a9))
+
 ### [1.19.30](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.29...v1.19.30) (2026-11-02)
 
 
