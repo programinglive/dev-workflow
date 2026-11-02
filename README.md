@@ -225,27 +225,76 @@ You can add your own with `nextSteps` (1-5 items, 10-200 characters). Invalid va
 `next_steps` shows the stored list again, at any time — history is per project, so the next session sees it.
 
 ### Where the workflow state lives
-Each session gets its own state file, inside a per-project directory:
+
+**Since 1.20.0 the live state lives in a local SQLite database.** JSON files are
+still written, but only as an export — they are no longer read as the truth.
 
 ```
-<base>/projects/<project>-<hash>/
-    workflow-state.json                      ← shared history and recommendations
-    project-summary.json
-    mcp-process.lock                         ← one writer per project
-    users/<user>/
-        user-id
-        workflow-state.<session>.json        ← this session's task, phase and DoD
+<project>/.state/
+    dev-workflow.db                          ← source of truth (live state, history, summary)
+    projects/<project>-<hash>/               ← exported JSON mirror, for humans and old tools
+        workflow-state.json
+        project-summary.json
+        users/<user>/
+            workflow-state.<session>.json
 ```
+
+Two things make concurrent writes impossible rather than merely detected:
+
+- **The row key includes the session.** `workflow_state` is keyed
+  `(user_id, project_path, session_key)`, so two sessions never share a row.
+- **Every row carries a `version`.** A writer holding a stale version is rejected,
+  and its monotonic progress (completed workflow steps, DoD evidence) is merged
+  into the stored row instead of overwriting phase, plan, or documentation files.
+
+Postgres is **not** on the write path. It receives a best-effort replica through
+a queue, so a database or VPN outage never blocks `start_task`, `mark_dod_item`,
+or `commit_and_push`. `get_workflow_status` reports two things you would
+otherwise not see: `Replika: tertunda N` when copies are waiting to be sent, and
+a warning when two processes write the same session within 60 seconds.
+
+If SQLite itself cannot be opened, **writes are refused** with
+`STATE_UNAVAILABLE`. There is no silent fallback to JSON: that path is untested
+and would reopen the collision this design closes.
+
+Full layout, schema, and failure behaviour: [`docs/state-storage.md`](docs/state-storage.md).
+
+#### Session and project identity
 
 - **State is per session.** Two OpenCode windows on the same repo no longer overwrite each other's Definition of Done. Before 1.17.0 they shared one file: on 1 November 2026 a session lost its entire DoD twice in one hour.
-- **History is per project.** `next_steps` and `view_history` read the same file from every session, so a follow-up written in one window is visible in the next.
-- **The lock is per project**, not per machine. Two unrelated projects no longer block each other.
-- **A non-repository working directory still isolates.** The project directory is derived from the working directory itself, so sessions started from a folder that is not a git repo no longer fall back to one shared file.
+- **History is per project.** `next_steps` and `view_history` read the same rows from every session, so a follow-up written in one window is visible in the next.
+- **`normalizeProjectPath` keeps one project on one row.** `D:\Code\Foo`, `d:/code/foo`, and `D:\Code\Foo\` are the same project on Windows. Case is preserved on POSIX, where `/srv/App` and `/srv/app` really are two directories.
+- **The session key comes from MCP metadata.** OpenCode v2 sends `_meta["ai.opencode/sessionID"]` on every call. Clients that send nothing (Codex, Antigravity, the CLI) get `proc-<uuid>`, one per process — not `pid-<pid>`, which made two windows in one process share a key by accident.
 - **`projectDir` decides the project, not the process's working directory.** When `start_task` pins a `projectDir`, that choice is recorded per session, so a session opened in `Documents\Default Project` but working on `D:\code\belajar` gets its own project directory instead of sharing one with every other session started from the same folder. Deleting or moving that repository makes the pointer stale, and the session falls back to the working directory.
 
 `start_task` refuses to replace a task that is still running in another live MCP process, **even with `force: true`** — starting a new task would clear that task's Definition of Done, and its evidence cannot be recovered from history. The guard stops applying once the owning process has not written state for 10 minutes, so a leftover MCP process cannot block a session forever. If a layout change finds a running task in an old file, it is not copied; `get_workflow_status` reports it instead of letting it disappear.
 
-Existing state files are never deleted. An idle state is copied into the new per-session file; a state with a running task is left where it is, so a new session does not inherit work it did not start.
+#### Upgrading from the JSON layout
+
+Migration runs once per project and is marked in `migration_log` as
+`legacy-json-v1:<project>`. It archives the old `workflow_state` table into
+`workflow_state_legacy` (those rows belong to the *last writer* of a project, not
+to any session), imports each `workflow-state.<session>.json` as its own row, and
+moves the old files to `.state/legacy-json/<stamp>/` — **never deletes them**.
+
+Anything the migration could not reach is still visible: `get_workflow_status`
+lists `legacy-project` and `pid-*` rows that no session can reach, so a task is
+never lost just because its key changed.
+
+#### Running the tests
+
+Tests must not touch your live state. `SqliteAdapter` refuses to open a database
+outside the temp directory when it detects a test process (`NODE_TEST_CONTEXT`
+or `--test`), so run them with the isolation preload:
+
+```bash
+node --no-deprecation --import ./tests/setup-env.js --test tests/*.test.js
+```
+
+Running a single file without that flag fails loudly instead of quietly writing
+test rows into the database that holds your work. On 2 November 2026 that
+happened: 2.544 test rows landed in the production database.
+
 
 ### Watching the work happen
 

@@ -44,6 +44,14 @@ const docSources = {
         markdown: join(projectRoot, "docs", "release-notes", "RELEASE_NOTES.md"),
         html: join(projectRoot, "dist", "docs", "RELEASE_NOTES.html"),
     },
+    "state-storage.md": {
+        markdown: join(projectRoot, "docs", "state-storage.md"),
+        html: join(projectRoot, "dist", "docs", "state-storage.html"),
+    },
+    "factory-integration.md": {
+        markdown: join(projectRoot, "docs", "factory-integration.md"),
+        html: join(projectRoot, "dist", "docs", "factory-integration.html"),
+    },
 };
 
 export async function resolveDocContent(docKey) {

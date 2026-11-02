@@ -208,12 +208,87 @@ waive_dod_item { id: "dod-2", reason: "form ini tidak punya jalur input kosong" 
 
                     <h2 className="text-3xl font-bold mt-12 mb-6 text-gray-900 dark:text-white">Configuration</h2>
                     <p className="text-gray-600 dark:text-gray-400 mb-4">
-                        Workflow state lives on your machine, under <code className="text-indigo-600 dark:text-indigo-400 bg-gray-100 dark:bg-white/5 px-2 py-1 rounded">.state/users/&lt;user&gt;/</code>:
-                        one file per agent session, with the project history shared between them.
-                    </p>
-                    <p className="text-gray-600 dark:text-gray-400 mb-8">
                         Set the <code className="text-indigo-600 dark:text-indigo-400 bg-gray-100 dark:bg-white/5 px-2 py-1 rounded">DEV_WORKFLOW_USER_ID</code> environment variable to isolate workflow state per user,
                         and <code className="text-indigo-600 dark:text-indigo-400 bg-gray-100 dark:bg-white/5 px-2 py-1 rounded">WORKFLOW_PROJECT_DIR</code> to pin the repository a session commits to.
+                    </p>
+
+                    <h2 className="text-3xl font-bold mt-12 mb-6 text-gray-900 dark:text-white">Where state lives</h2>
+                    <p className="text-gray-600 dark:text-gray-400 mb-4">
+                        Since 1.20.0 the live state is a local SQLite database. JSON files are still written, but only as an
+                        export — they are no longer read as the truth.
+                    </p>
+                    <div className="bg-gray-100 dark:bg-[#1a1a24] rounded-lg p-6 border border-gray-300 dark:border-white/10 mb-4">
+                        <pre className="text-sm overflow-x-auto">
+                            <code className="text-gray-700 dark:text-gray-300">{`<project>/.state/
+  dev-workflow.db                    source of truth: live state, history, summary
+  projects/<project>-<hash>/         exported JSON mirror (humans and older tools)
+    workflow-state.json
+    users/<user>/workflow-state.<session>.json`}</code>
+                        </pre>
+                    </div>
+                    <ul className="space-y-2 mb-4">
+                        <li className="flex items-start gap-2 text-gray-600 dark:text-gray-400">
+                            <CheckCircle className="w-4 h-4 mt-1 flex-shrink-0 text-emerald-600 dark:text-emerald-400" />
+                            <span>
+                                <strong>Rows are keyed by session.</strong> Two windows never share a row, so
+                                <code className="text-indigo-600 dark:text-indigo-400 bg-gray-100 dark:bg-white/5 px-1 rounded"> start_task </code>
+                                in one cannot clear another&apos;s definition of done.
+                            </span>
+                        </li>
+                        <li className="flex items-start gap-2 text-gray-600 dark:text-gray-400">
+                            <CheckCircle className="w-4 h-4 mt-1 flex-shrink-0 text-emerald-600 dark:text-emerald-400" />
+                            <span>
+                                <strong>Every row carries a version.</strong> A stale writer is rejected, and its
+                                monotonic progress is merged into the stored row instead of overwriting phase or plan.
+                            </span>
+                        </li>
+                        <li className="flex items-start gap-2 text-gray-600 dark:text-gray-400">
+                            <CheckCircle className="w-4 h-4 mt-1 flex-shrink-0 text-emerald-600 dark:text-emerald-400" />
+                            <span>
+                                <strong>Postgres is never on the write path.</strong> It receives a best-effort replica
+                                through a queue, so a database or VPN outage cannot block a commit.
+                            </span>
+                        </li>
+                        <li className="flex items-start gap-2 text-gray-600 dark:text-gray-400">
+                            <CheckCircle className="w-4 h-4 mt-1 flex-shrink-0 text-emerald-600 dark:text-emerald-400" />
+                            <span>
+                                <strong>If SQLite cannot be opened, writes are refused</strong> with
+                                <code className="text-indigo-600 dark:text-indigo-400 bg-gray-100 dark:bg-white/5 px-1 rounded"> STATE_UNAVAILABLE</code>.
+                                There is no silent fallback to JSON.
+                            </span>
+                        </li>
+                    </ul>
+                    <p className="text-gray-600 dark:text-gray-400 mb-4">
+                        Upgrading from the JSON layout runs once per project: old files are imported, moved to
+                        <code className="text-indigo-600 dark:text-indigo-400 bg-gray-100 dark:bg-white/5 px-1 rounded"> .state/legacy-json/&lt;stamp&gt;/</code>,
+                        and never deleted. Anything the migration could not reach — a <code className="text-indigo-600 dark:text-indigo-400 bg-gray-100 dark:bg-white/5 px-1 rounded">legacy-project</code> backup
+                        or an old <code className="text-indigo-600 dark:text-indigo-400 bg-gray-100 dark:bg-white/5 px-1 rounded">pid-*</code> row — is listed by
+                        <code className="text-indigo-600 dark:text-indigo-400 bg-gray-100 dark:bg-white/5 px-1 rounded"> get_workflow_status</code>, so a task is never lost just because its key changed.
+                    </p>
+                    <p className="text-gray-600 dark:text-gray-400 mb-8">
+                        Full schema, failure behaviour, and the migration steps are in
+                        <a
+                            href="https://github.com/programinglive/dev-workflow-mcp-server/blob/main/docs/state-storage.md"
+                            target="_blank"
+                            className="text-indigo-600 dark:text-indigo-400 hover:underline ml-1"
+                        >
+                            docs/state-storage.md
+                        </a>.
+                    </p>
+
+                    <h2 className="text-3xl font-bold mt-12 mb-6 text-gray-900 dark:text-white">Running the tests</h2>
+                    <p className="text-gray-600 dark:text-gray-400 mb-4">
+                        Tests must not touch your live state. The SQLite adapter refuses to open a database outside the
+                        temp directory when it detects a test process, so always run with the isolation preload:
+                    </p>
+                    <div className="bg-gray-100 dark:bg-[#1a1a24] rounded-lg p-6 border border-gray-300 dark:border-white/10 mb-4">
+                        <pre className="text-sm overflow-x-auto">
+                            <code className="text-gray-700 dark:text-gray-300">{`node --no-deprecation --import ./tests/setup-env.js --test tests/*.test.js`}</code>
+                        </pre>
+                    </div>
+                    <p className="text-gray-600 dark:text-gray-400 mb-8">
+                        Running a single file without that flag fails loudly instead of quietly writing test rows into the
+                        database that holds your work.
                     </p>
 
                     <h2 className="text-3xl font-bold mt-12 mb-6 text-gray-900 dark:text-white">Requirements</h2>
