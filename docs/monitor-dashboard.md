@@ -366,6 +366,53 @@ itu terlihat di tab Aktif lalu tidak ditemukan di Riwayat. Kalau `started_at`
 kosong, durasinya "tidak tercatat" — bukan 0 detik, dan bukan alasan membuang
 barisnya.
 
+## Nama proyek tidak boleh hilang saat task ditutup
+
+Sesi yang **sudah selesai** justru yang kehilangan `project_name` — 5 dari 9
+sesi pada 2 November 2026. Sebabnya satu baris di UPSERT:
+
+```sql
+project_name=EXCLUDED.project_name   -- menimpa dengan '' saat complete_task
+```
+
+`complete_task` tidak mengirim `projectPath`, jadi nama proyek terhapus tepat
+ketika pekerjaan itu selesai — saat catatannya paling berguna. `session_title`
+sudah dijaga sejak awal; nama proyek terlewat.
+
+Aturan yang sekarang dipegang (`monitor-server/session-upsert.cjs`):
+
+| Kolom | Dilindungi dari kiriman kosong? | Alasan |
+|---|---|---|
+| `project_name`, `project_path` | **ya** | identitas, tidak boleh hilang |
+| `session_title`, `agent_tool` | **ya** | datang belakangan, bisa kosong sementara |
+| `started_at` | ya, ambil yang paling awal | lihat catatan `LEAST`/`GREATEST` |
+| `task` | **tidak** | `task=''` adalah cara sah menutup task |
+
+`agent_tool` butuh perhatian khusus: nilai bawaan `'unknown'` **bukan** string
+kosong, jadi kalau dipakai sebagai nilai `EXCLUDED` ia akan menimpa label
+`codex` yang sudah benar. Karena itu `'unknown'` ditempatkan sebagai pilihan
+terakhir: `COALESCE(NULLIF(EXCLUDED.agent_tool,''), sessions.agent_tool, 'unknown')`.
+
+Terbukti di produksi: kirim laporan dengan `projectName`, lalu kirim laporan
+tanpa `projectName` — nama proyek dan `agent_tool` tetap ada.
+
+## Rekap durasi per proyek
+
+Timer per sesi tidak pernah dijumlahkan, jadi pemilik tahu satu sesi memakan 45
+menit tetapi tidak tahu ke mana waktunya pergi. `project-summary.cjs` menutup
+itu; tampil sebagai tab **Rekap** di aplikasi dan bagian "Waktu per proyek" di
+web. Batas hari diatur `SUMMARY_DAYS` (bawaan 7).
+
+Tiga keputusan:
+
+1. **Hanya sesi yang sudah ditutup** (`phase = 'idle'`). Durasi sesi berjalan
+   masih bertambah; memasukkannya membuat rekap berubah tiap 3 detik dan tidak
+   bisa dibandingkan antar hari.
+2. **`(tanpa proyek)` dipisah, tidak ditebak.** Sesi lama kehilangan namanya
+   karena bug di atas. Menebak dari jalur atau judul berarti mengarang data.
+3. **Rekap ini hanya mungkin setelah `project_name` diperbaiki.** Tanpa
+   perbaikan itu, rekap selalu kosong.
+
 ## Diuji
 
 - `tests/monitor-sessions-query.test.js` — filter hanya menyentuh `idle`, limit
@@ -383,3 +430,10 @@ barisnya.
   menampilkannya, dan teksnya tidak pernah mengklaim mesin "mati".
 - `tests/monitor-app-nav.test.js` — empat tab, filter status, dan penamaan sesi.
 - `tests/monitor-app-grid.test.js` — dua kolom dan detail yang ikut data terbaru.
+- `tests/monitor-session-upsert.test.js` — `project_name` tidak boleh terhapus
+  oleh kiriman kosong, `task` tetap boleh, dan `agent_tool` tidak tertimpa
+  `'unknown'`.
+- `tests/monitor-project-summary.test.js` — rekap per proyek, hanya sesi
+  selesai, dan `(tanpa proyek)` tidak ditebak.
+- `tests/monitor-summary-wiring.test.js` — rekap dikirim server dan tampil di
+  kedua layar.
