@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { handleToolCall } from "../tools/handlers.js";
 import { withWorkflowState, testUtils, createRequest, createGitMock } from "./test-helpers.js";
+
 import { foreignDirtyEntries } from "../git-helpers.js";
 
 test("commit_and_push commits changes and pushes", async () => {
@@ -243,6 +244,162 @@ test("pesan commit lama tidak dihapus saat git tidak bisa membacanya", async () 
       workflowState.state.lastCommitMessage,
       "fix: pekerjaan sebelumnya",
       "nilai lama tidak boleh terhapus oleh bacaan kosong"
+    );
+  });
+});
+
+/**
+ * Factory board: `complete_task` menutup task-nya di Factory.
+ *
+ * Sebelum 2 November 2026, setiap `start_task` membuat task baru di Factory
+ * tetapi tidak ada yang pernah menutupnya - 50 task menumpuk di `backlog`.
+ * `complete_task` menutup state lokal saja, tidak menyentuh Factory.
+ */
+test("complete_task memindahkan task Factory ke done", async () => {
+  await withWorkflowState(async (workflowState) => {
+    workflowState.state.currentPhase = "commit";
+    workflowState.state.taskDescription = "tugas dari papan";
+    workflowState.state.dodFactoryTaskId = "rec-123";
+    workflowState.state.definitionOfDone = [
+      { id: "dod-1", text: "build lulus", status: "done", revision: 0, evidence: "npm test → 851 pass" },
+    ];
+    await workflowState.save();
+
+    const calls = [];
+    const response = await handleToolCall({
+      request: createRequest("complete_task", { commitMessage: "fix: selesai" }),
+      normalizeRequestArgs: (args) => ({ args, error: null }),
+      workflowState,
+      exec: async () => ({ stdout: "" }),
+      git: createGitMock({
+        hasWorkingChanges: async () => false,
+        getStatusOutput: async () => "",
+      }),
+      utils: testUtils,
+      factoryCalls: calls,
+      factory: {
+        updateTaskStatus: async (recordId, status, extra = {}) => {
+          calls.push({ kind: "updateTaskStatus", recordId, status, ...extra });
+          return { recordId, status };
+        },
+      },
+    });
+
+    // updateTaskStatus dipanggil dengan status done untuk record yang benar
+    const done = calls.find((c) => c.kind === "updateTaskStatus" && c.status === "done" && c.recordId === "rec-123");
+    assert.ok(done, "updateTaskStatus(done) harus dipanggil untuk task Factory yang di-claim");
+    assert.ok(
+      response.content[0].text.toLowerCase().includes("done"),
+      "respons harus menyebut bahwa task Factory ditutup",
+    );
+  });
+});
+
+test("complete_task tanpa dodFactoryTaskId tidak menyentuh Factory", async () => {
+  await withWorkflowState(async (workflowState) => {
+    workflowState.state.currentPhase = "commit";
+    workflowState.state.taskDescription = "tugas manual";
+    workflowState.state.dodFactoryTaskId = "";
+    workflowState.state.definitionOfDone = [
+      { id: "dod-1", text: "build lulus", status: "done", revision: 0, evidence: "npm test" },
+    ];
+    await workflowState.save();
+
+    const calls = [];
+    await handleToolCall({
+      request: createRequest("complete_task", { commitMessage: "fix: selesai" }),
+      normalizeRequestArgs: (args) => ({ args, error: null }),
+      workflowState,
+      exec: async () => ({ stdout: "" }),
+      git: createGitMock({
+        hasWorkingChanges: async () => false,
+        getStatusOutput: async () => "",
+      }),
+      utils: testUtils,
+      factoryCalls: calls,
+      factory: {
+        updateTaskStatus: async (recordId, status, extra = {}) => {
+          calls.push({ kind: "updateTaskStatus", recordId, status, ...extra });
+          return { recordId, status };
+        },
+      },
+    });
+
+    assert.equal(
+      calls.filter((c) => c.kind === "updateTaskStatus").length,
+      0,
+      "tanpa task Factory, tidak ada panggilan updateTaskStatus"
+    );
+  });
+});
+
+test("drop_task membatalkan task Factory dengan cancelled", async () => {
+  await withWorkflowState(async (workflowState) => {
+    workflowState.state.currentPhase = "commit";
+    workflowState.state.taskDescription = "tugas dari papan";
+    workflowState.state.dodFactoryTaskId = "rec-456";
+    workflowState.state.definitionOfDone = [];
+    await workflowState.save();
+
+    const calls = [];
+    const response = await handleToolCall({
+      request: createRequest("drop_task", { reason: "diganti" }),
+      normalizeRequestArgs: (args) => ({ args, error: null }),
+      workflowState,
+      exec: async () => ({ stdout: "" }),
+      git: createGitMock({
+        hasWorkingChanges: async () => false,
+        getStatusOutput: async () => "",
+      }),
+      utils: testUtils,
+      factoryCalls: calls,
+      factory: {
+        updateTaskStatus: async (recordId, status, extra = {}) => {
+          calls.push({ kind: "updateTaskStatus", recordId, status, ...extra });
+          return { recordId, status };
+        },
+      },
+    });
+
+    const cancelled = calls.find((c) => c.kind === "updateTaskStatus" && c.status === "cancelled" && c.recordId === "rec-456");
+    assert.ok(cancelled, "drop_task harus membatalkan task Factory");
+  });
+});
+
+test("kegagalan menutup Factory tidak menggagalkan complete_task", async () => {
+  await withWorkflowState(async (workflowState) => {
+    workflowState.state.currentPhase = "commit";
+    workflowState.state.taskDescription = "tugas dari papan";
+    workflowState.state.dodFactoryTaskId = "rec-789";
+    workflowState.state.definitionOfDone = [
+      { id: "dod-1", text: "build lulus", status: "done", revision: 0, evidence: "x" },
+    ];
+    await workflowState.save();
+
+    const calls = [];
+    const response = await handleToolCall({
+      request: createRequest("complete_task", { commitMessage: "fix: selesai" }),
+      normalizeRequestArgs: (args) => ({ args, error: null }),
+      workflowState,
+      exec: async () => ({ stdout: "" }),
+      git: createGitMock({
+        hasWorkingChanges: async () => false,
+        getStatusOutput: async () => "",
+      }),
+      utils: testUtils,
+      factoryCalls: calls,
+      factory: {
+        updateTaskStatus: async () => {
+          throw new Error("Factory tidak bisa dihubungi");
+        },
+      },
+    });
+
+    // State lokal tetap tertutup meskipun Factory gagal
+    assert.equal(workflowState.state.currentPhase, "idle", "state lokal tetap reset");
+    assert.ok(
+      response.content[0].text.includes("Factory"),
+      "respons harus menyebut bahwa task Factory tidak tertutup",
     );
   });
 });

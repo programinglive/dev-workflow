@@ -6,6 +6,36 @@ import { reportEventSafe } from "../../monitor.js";
 import { validateAiSuggestions, collectSignals, buildRecommendations, renderRecommendations } from "./next-steps.js";
 import { resolveProjectDir, setActiveProjectDir, getActiveProjectDir } from "../../exec.js";
 import path from "path";
+import { updateTaskStatus, isConfigured } from "../../factory-client.js";
+
+/**
+ * Tutup task Factory yang di-claim saat workflow berakhir, supaya board tidak
+ * menumpuk task gantung.
+ *
+ * `updateTaskStatus` berasal dari factory-client (fungsi nyata), dan dipanggil
+ * di sini alih-alih dipake langsung, supaya panggilan bisa DITEST dari luar
+ * lewat `context.factory`. Kegagalan di sini TIDAK BOLEH menggagalkan state
+ * lokal — task ditutup di Factory, bukan sebaliknya.
+ */
+async function closeFactoryTask(workflowState, targetStatus, reason, context = {}) {
+  const recordId = workflowState.state.dodFactoryTaskId;
+  if (!recordId) return null;
+
+  const callFactory = context.factory?.updateTaskStatus ?? (() => {
+    // Fungsi nyata. Dipakai hanya bila pemanggil tidak menginjeksi mock.
+    if (!isConfigured()) return { recordId, status: targetStatus, skipped: "factory tidak dikonfigurasi" };
+    const config = readFactoryConfig();
+    return updateTaskStatus(config, { recordId, status: targetStatus, reason });
+  });
+
+  try {
+    const result = await callFactory(recordId, targetStatus, { reason });
+    return { recordId, status: targetStatus, result };
+  } catch (error) {
+    return { recordId, status: targetStatus, error: error.message };
+  }
+}
+
 
 /**
  * Label repo yang benar-benar dipakai, untuk ditampilkan di setiap jawaban.
@@ -487,8 +517,27 @@ export async function handleCompleteTask(args, workflowState, context = {}) {
     "task_done",
     entry.commitMessage || "",
   );
+  // `dodFactoryTaskId` harus dibaca SEBELUM reset, karena reset mengosongkannya.
+  const factoryTaskId = workflowState.state.dodFactoryTaskId;
   workflowState.reset();
   await workflowState.save();
+
+  // Tutup task Factory-nya supaya board tidak penuh gantung. Kegagalan tidak
+  // boleh menggagalkan state lokal yang sudah ditutup - cukup diberi tahu.
+  const factoryNote = factoryTaskId
+    ? await closeFactoryTask(
+        { state: { dodFactoryTaskId: factoryTaskId } },
+        "done",
+        entry.commitMessage || "Tugas selesai",
+        context,
+      ).then((hasil) => {
+        if (hasil.error) {
+          return `\n\n⚠️ Task Factory tidak tertutup: ${hasil.error}. ` +
+            `Jalankan 'sync_task_status' { recordId: "${hasil.recordId}", status: "done" } untuk menutupnya nanti.`;
+        }
+        return `\n\n✅ Task Factory ditutup: ${hasil.recordId} → done.`;
+      })
+    : "";
 
   const askForSuggestions = aiSuggestions.length === 0
     ? `\n\n💡 Kirim 'nextSteps' saat 'complete_task' kalau ada yang Anda lihat selama ` +
@@ -497,12 +546,13 @@ export async function handleCompleteTask(args, workflowState, context = {}) {
 
   return textResponse(
     `✅ Task completed!\n\nCommit message: ${args.commitMessage}\n` +
-      `DoD: ${dod.done}/${dod.total} terbukti, ${dod.waived} dikecualikan.\nHistory recorded.\n\n` +
+      `DoD: ${dod.done}/${dod.total} terbukti, ${dod.waived} dikecualikan.\nHistory recorded.` +
+      `${factoryNote}\n\n` +
       `${renderRecommendations(recommendations)}${diffNote}${askForSuggestions}`
   );
 }
 
-export async function handleForceCompleteTask(args, workflowState) {
+export async function handleForceCompleteTask(args, workflowState, context = {}) {
   const commitMessageArg =
     typeof args.commitMessage === "string" ? args.commitMessage.trim() : "";
   const reason = typeof args.reason === "string" ? args.reason.trim() : "";
@@ -522,32 +572,63 @@ export async function handleForceCompleteTask(args, workflowState) {
     ),
   });
 
+  const factoryTaskId = workflowState.state.dodFactoryTaskId;
   workflowState.reset();
   await workflowState.save();
+
+  const factoryNote = factoryTaskId
+    ? await closeFactoryTask(
+        { state: { dodFactoryTaskId: factoryTaskId } },
+        "done",
+        reason ? `force: ${reason}` : "force-completed",
+        context,
+      ).then((hasil) =>
+        hasil?.error
+          ? `\n⚠️ Task Factory tidak tertutup: ${hasil.error}.`
+          : `\n✅ Task Factory ditutup: ${hasil.recordId} → done (forced).`
+      )
+    : "";
 
   const reasonText = reason ? reason : "(none provided)";
 
   return textResponse(
-    `⚠️ Task force-completed.\n\nRecorded commit message: ${commitMessage}\nReason: ${reasonText}\nWorkflow state reset. Start a new task when ready.`
+    `⚠️ Task force-completed.\n\nRecorded commit message: ${commitMessage}\nReason: ${reasonText}\nWorkflow state reset. Start a new task when ready.${factoryNote}`
   );
 }
 
-export async function handleDropTask(args, workflowState) {
+export async function handleDropTask(args, workflowState, context = {}) {
+  const dropReason = typeof args.reason === "string" ? args.reason : "";
+
   workflowState.addToHistory({
     taskDescription: workflowState.state.taskDescription,
     taskType: workflowState.state.taskType,
     commitMessage: workflowState.state.lastCommitMessage,
     dropped: true,
-    dropReason: typeof args.reason === "string" ? args.reason : "",
+    dropReason,
     definitionOfDoneSummary: summarize(
       Array.isArray(workflowState.state.definitionOfDone) ? workflowState.state.definitionOfDone : [],
       workflowState.state.dodRevision,
     ),
   });
+
+  const factoryTaskId = workflowState.state.dodFactoryTaskId;
   workflowState.reset();
   await workflowState.save();
 
-  return textResponse("⚠️ Task dropped. Workflow state reset.");
+  const factoryNote = factoryTaskId
+    ? await closeFactoryTask(
+        { state: { dodFactoryTaskId: factoryTaskId } },
+        "cancelled",
+        dropReason ? `diganti: ${dropReason}` : "Task dibatalkan",
+        context,
+      ).then((hasil) =>
+        hasil?.error
+          ? `\n⚠️ Task Factory tidak dibatalkan: ${hasil.error}.`
+          : `\n✅ Task Factory dibatalkan: ${hasil.recordId} → cancelled.`
+      )
+    : "";
+
+  return textResponse(`⚠️ Task dropped. Workflow state reset.${factoryNote}`);
 }
 
 

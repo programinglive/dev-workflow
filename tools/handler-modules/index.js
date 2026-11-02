@@ -324,6 +324,7 @@ async function dispatchToolCall({
   exec,
   git,
   utils,
+  factory,
 }) {
   try {
     const { name } = request.params;
@@ -385,15 +386,15 @@ async function dispatchToolCall({
       case "skip_release":
         return handleSkipRelease(args, workflowState);
       case "complete_task":
-        return handleCompleteTask(args, workflowState, { git });
+        return handleCompleteTask(args, workflowState, { git, factory });
       case "next_steps":
         return handleNextSteps(args, workflowState);
       case "resume_session":
         return handleResumeSession(args, workflowState);
       case "force_complete_task":
-        return handleForceCompleteTask(args, workflowState);
+        return handleForceCompleteTask(args, workflowState, { factory });
       case "drop_task":
-        return handleDropTask(args, workflowState);
+        return handleDropTask(args, workflowState, { factory });
       case "get_workflow_status":
         return handleGetWorkflowStatus(workflowState);
       case "view_history":
