@@ -6,6 +6,7 @@ import {
   Pressable,
   RefreshControl,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   useWindowDimensions,
@@ -598,12 +599,56 @@ function Kartu({ s, jamServer, onPress }) {
 }
 
 function DetailSesi({ s, jamServer, onClose }) {
+  /**
+   * Hook harus dipanggil SEBELUM `return null` di bawah.
+   *
+   * Kalau tidak, jumlah hook berbeda antara render dengan sesi dan tanpa
+   * sesi, dan React melempar "Rendered fewer hooks than expected" - layar
+   * tablet mati total, bukan sekadar tombolnya.
+   */
+  const [tautan, setTautan] = useState(null);
+  const [galatBagikan, setGalatBagikan] = useState(null);
+  const [sibukBagikan, setSibukBagikan] = useState(false);
+
   if (!s) return null;
   const g = gayaStatus(s.state);
   const rencana = Array.isArray(s.plan_json) ? s.plan_json : [];
   const total = s.plan_total || 0;
   const selesai = s.plan_done || 0;
   const label = s.state === "idle" ? (s.phase || "idle").toUpperCase() : g.label;
+
+  /**
+   * Minta tautan share, lalu buka sheet bagikan Android.
+   *
+   * CATATAN ORIGIN: React Native TIDAK mengirim header `Origin` - ia bukan
+   * browser dan tidak punya konsep origin. Server share karena itu mengizinkan
+   * Origin KOSONG tetapi tetap mewajibkan header `X-Devwf-Share`. Tanpa aturan
+   * itu, tombol ini akan selalu 403 di tablet sementara dashboard browser
+   * tampak normal - kegagalan yang paling sulit dilacak.
+   */
+  async function bagikan() {
+    if (sibukBagikan) return;
+    setSibukBagikan(true);
+    setGalatBagikan(null);
+    try {
+      const r = await fetch(MONITOR_URL + "/api/share", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-devwf-share": "1" },
+        body: JSON.stringify({ sessionKey: s.session_key }),
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || "server menjawab " + r.status);
+      setTautan(body.url);
+      await Share.share({
+        message: body.url + "\n" + (s.task || s.session_title || "Sesi dev workflow"),
+        url: body.url,
+      });
+    } catch (e) {
+      setGalatBagikan(e.message || String(e));
+    } finally {
+      setSibukBagikan(false);
+    }
+  }
 
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onClose}>
@@ -687,9 +732,29 @@ function DetailSesi({ s, jamServer, onClose }) {
             </Text>
           </ScrollView>
 
-          <Pressable onPress={onClose} style={gaya.tombolTutup}>
-            <Text style={gaya.tombolTutupTeks}>Tutup</Text>
-          </Pressable>
+          {galatBagikan ? (
+            <Text style={gaya.galatBagikan}>Gagal membagikan: {galatBagikan}</Text>
+          ) : null}
+          {tautan ? (
+            <Text selectable style={gaya.tautanTeks}>
+              {tautan}
+            </Text>
+          ) : null}
+
+          <View style={gaya.barisTombol}>
+            <Pressable
+              onPress={bagikan}
+              disabled={sibukBagikan}
+              style={[gaya.tombolBagikan, sibukBagikan && gaya.tombolMati]}
+            >
+              <Text style={gaya.tombolBagikanTeks}>
+                {sibukBagikan ? "menyiapkan..." : "Bagikan"}
+              </Text>
+            </Pressable>
+            <Pressable onPress={onClose} style={[gaya.tombolTutup, gaya.tombolTutupKecil]}>
+              <Text style={gaya.tombolTutupTeks}>Tutup</Text>
+            </Pressable>
+          </View>
         </View>
       </View>
     </Modal>
@@ -853,5 +918,18 @@ const gaya = StyleSheet.create({
     alignItems: "center",
   },
   tombolTutupTeks: { color: WARNA.biruMuda, fontWeight: "700", fontSize: 15 },
+  barisTombol: { flexDirection: "row", gap: 10, marginTop: 16 },
+  tombolTutupKecil: { flex: 1, marginTop: 0 },
+  tombolBagikan: {
+    flex: 1,
+    backgroundColor: "#2f81f7",
+    borderRadius: 10,
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  tombolBagikanTeks: { color: "#04121f", fontWeight: "700", fontSize: 15 },
+  tombolMati: { opacity: 0.55 },
+  galatBagikan: { color: WARNA.kuning, fontSize: 13, marginTop: 12 },
+  tautanTeks: { color: WARNA.biruMuda, fontSize: 13, marginTop: 10, lineHeight: 18 },
 });
 

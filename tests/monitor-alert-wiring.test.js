@@ -27,7 +27,7 @@ test("server mengirim peringatan di respons /api/sessions", () => {
   assert.match(dash, /require\('\.\/alerts\.cjs'\)/);
   assert.match(dash, /const alerts = buildAlerts\(\{/);
   // `alerts` harus ikut di JSON respons; tanpa ini fungsinya jadi kode mati.
-  assert.match(dash, /machines: machineRows\.rows, history, alerts, summary, summary_days: SUMMARY_DAYS \}\)/);
+  assert.match(dash, /machines: machineRows\.rows, history, alerts, summary, shares, summary_days: SUMMARY_DAYS \}\)/);
 });
 
 test("peringatan dihitung dari baris yang memang tampil", () => {

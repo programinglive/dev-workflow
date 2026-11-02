@@ -21,7 +21,9 @@ const app = readFileSync(path.join(ROOT, "mobile-app", "App.js"), "utf8");
 test("server mengirim rekap di respons /api/sessions", () => {
   assert.match(dash, /require\('\.\/project-summary\.cjs'\)/);
   assert.match(dash, /const sq = buildProjectSummaryQuery\(\{ days: SUMMARY_DAYS \}\)/);
-  assert.match(dash, /history, alerts, summary, summary_days: SUMMARY_DAYS \}\)/);
+  // `shares` menyusul di antara `summary` dan `summary_days`; yang dijaga di
+  // sini adalah rekapnya tetap ikut terkirim, bukan urutan kata yang persis.
+  assert.match(dash, /history, alerts, summary, shares, summary_days: SUMMARY_DAYS \}\)/);
 });
 
 test("durasi rekap diberi label di server, bukan dihitung ulang di layar", () => {
