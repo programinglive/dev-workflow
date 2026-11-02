@@ -1,4 +1,12 @@
-> **Catatan (1 November 2026):** dokumen ini merekam keadaan saat ditulis. Sejak 1.17.0/1.18.0 state dipisah per SESI di bawah projects/<proyek>/users/<user>/, dan rencana kerja ikut disimpan. Tata letak yang berlaku ada di docs/2026-11-01-state-isolation-design.md dan README.
+> **Catatan (2 November 2026):** dokumen ini merekam keadaan saat ditulis dan
+> **sudah tidak berlaku lagi**. Sejak rilis 1.20.0, sumber kebenaran state
+> adalah SQLite lokal (`.state/dev-workflow.db`), dan berkas JSON hanya menjadi
+> ekspor cadangan. Desainnya ada di
+> `docs/superpowers/specs/2026-11-02-state-sqlite-source-of-truth-design.md`.
+>
+> Catatan sebelumnya (1 November 2026): sejak 1.17.0/1.18.0 state dipisah per
+> SESI di bawah `projects/<proyek>/users/<user>/`, dan rencana kerja ikut
+> disimpan.
 
 # State workflow dipakai bersama antar sesi: apa yang diperbaiki
 
