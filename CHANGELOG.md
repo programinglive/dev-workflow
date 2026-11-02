@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.20.1](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.20.0...v1.20.1) (2026-11-02)
+
+
+### 🐛 Bug Fixes
+
+* **db:** jangkar lokasi database ke .state proyek, bukan akar drive ([f5f6f6d](https://github.com/programinglive/dev-workflow-mcp-server/commit/f5f6f6d9c598914b8d90645d6481f8e2dc2c9d1e))
+* **state:** adapter lokal memakai stateFile sesi sebagai jangkar ([fda2890](https://github.com/programinglive/dev-workflow-mcp-server/commit/fda289023ae69ab20e19a1c9b412eb88af6bbc45))
+
 ## [1.20.0](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.32...v1.20.0) (2026-11-02)
 
 
