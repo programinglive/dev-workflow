@@ -716,15 +716,26 @@ bash scripts/bootstrap-unix.sh
 
 ```bash
 npm test                            # full suite
+npm run test:db                     # tests that need a real PostgreSQL
 node --test tests/setup-stack.test.js
 ```
 
 ```
-ℹ tests 112
-ℹ pass 110
+ℹ tests 1053
+ℹ pass 1051
 ℹ fail 0
 ℹ skipped 2
 ```
+
+`npm run test:db` runs what only a real database can prove — the partial unique
+index behind "one live share link per session", and the rule that `unknown`
+must not overwrite a real agent label — against `TEST_POSTGRES_URL`. Without
+that variable they skip with a visible reason rather than passing silently.
+
+Two sibling test files share one database, so **each file needs its own
+`session_key` prefix.** A cleanup assertion like `LIKE 'ses_uji_%'` in one file
+fails while the other file's rows are still there; that collision was real and
+turned a passing suite red the first time both ran against the same PostgreSQL.
 
 The two skipped tests are the MySQL and PostgreSQL adapters. They run only when a
 database is reachable:

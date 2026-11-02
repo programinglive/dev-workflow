@@ -47,6 +47,9 @@ const PUBLIC_DENY = Object.freeze([
 
 const ESCAPE = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' };
 
+/** Batas jumlah langkah rencana yang ditampilkan; sisanya disebut jumlahnya. */
+const BATAS_LANGKAH = 40;
+
 function escapeHtml(value) {
   if (value === null || value === undefined) return '';
   return String(value).replace(/[&<>"]/g, (c) => ESCAPE[c]);
@@ -121,7 +124,8 @@ function badanSesi({ session, now }) {
         pct +
         '%"></i></div>',
     );
-    const rencana = Array.isArray(s.plan_json) ? s.plan_json.slice(0, 40) : [];
+    const semua = Array.isArray(s.plan_json) ? s.plan_json : [];
+    const rencana = semua.slice(0, BATAS_LANGKAH);
     if (rencana.length) {
       bagian.push(
         '<ul class="daftar">' +
@@ -138,6 +142,14 @@ function badanSesi({ session, now }) {
               );
             })
             .join('') +
+          // Memotong daftar tanpa mengatakannya membuat rencana panjang
+          // tampak selesai padahal tidak - persis ketidakjujuran yang
+          // dihindari di bagian lain halaman ini.
+          (semua.length > rencana.length
+            ? '<li class="sisa">… dan ' +
+              escapeHtml(String(semua.length - rencana.length)) +
+              ' langkah lain</li>'
+            : '') +
           '</ul>',
       );
     }
@@ -164,7 +176,7 @@ function badanSesi({ session, now }) {
     '<h2>Waktu</h2>' +
       '<p>' +
       (s.started_at
-        ? 'Mulai ' + escapeHtml(umur(s.started_at, now) || '') + ' · berjalan ' + escapeHtml(durasi || '') 
+        ? 'Mulai ' + escapeHtml(umur(s.started_at, now) || '') + ' · berjalan ' + escapeHtml(durasi || '')
         : 'Waktu mulai <b>tidak tercatat</b> (sesi ini dibuat sebelum perbaikan pencatatan waktu)') +
       '</p>' +
       '<p>Laporan terakhir ' + escapeHtml(umur(s.updated_at, now) || 'tidak diketahui') + '</p>',
@@ -246,7 +258,7 @@ function renderSharePage({ share, session, now = Date.now(), origin = PUBLIC_ORI
     <p>Halaman ini adalah cuplikan keadaan saat dibuka, bukan siaran langsung.
        Bagikan tautannya: <a href="${url}">${url}</a></p>
     <p>Bila domain utama tidak menjawab, coba <a href="${cadangan}">${cadangan}</a></p>
-    <p>Dibuka ${escapeHtml(String(tampilan))}× · tautan dapat dicabut pemiliknya kapan saja.</p>
+    <p>Dibuka ${escapeHtml(String(tampilan))}× sebelum Anda · tautan dapat dicabut pemiliknya kapan saja.</p>
   </div>
 </div>
 </body></html>`;

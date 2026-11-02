@@ -25,7 +25,16 @@ const { buildSessionUpsert } = require("../monitor-server/session-upsert.cjs");
  * terlihat - bukan lulus diam-diam.
  */
 
+/**
+ * Koneksi diambil dari variabel yang SAMA dengan tes database lain.
+ *
+ * Versi pertama hanya membaca DEVWF_TEST_PG, sementara db-adapters.test.js
+ * membaca TEST_POSTGRES_URL. Akibatnya menyetel variabel yang "benar" menurut
+ * dokumentasi membuat tes ini tetap terlewat - dan tes yang terlewat diam-diam
+ * pada akhirnya sama saja dengan tidak ada.
+ */
 const KONEKSI =
+  process.env.TEST_POSTGRES_URL ||
   process.env.DEVWF_TEST_PG ||
   "postgresql://postgres@127.0.0.1:5599/postgres";
 
