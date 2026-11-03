@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, mkdir, open, rm, symlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdtemp, mkdir, open, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, it } from 'node:test';
@@ -279,20 +279,18 @@ describe('searchProject', () => {
   it('rejects an oversized file reported by the opened handle before reading it', async () => {
     const root = await makeRepo();
     await addTracked(root, { 'race.txt': 'needle safe placeholder\n' });
+    const originalStat = await lstat(path.join(root, 'race.txt'));
     let didRead = false;
 
     const result = await readCandidate(root, 'race.txt', MAX_FILE_BYTES, async (...args) => {
       const handle = await open(...args);
       return {
-        stat: async () => {
-          const snapshot = await handle.stat();
-          return {
-            dev: snapshot.dev,
-            ino: snapshot.ino,
-            size: MAX_FILE_BYTES + 100,
-            isFile: () => snapshot.isFile(),
-          };
-        },
+        stat: async () => ({
+          dev: originalStat.dev,
+          ino: originalStat.ino,
+          size: MAX_FILE_BYTES + 100,
+          isFile: () => true,
+        }),
         read: (...readArgs) => {
           didRead = true;
           return handle.read(...readArgs);
