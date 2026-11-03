@@ -23,9 +23,18 @@ Berkas di `monitor-server/`:
 
 ## Mengapa proses terpisah
 
-Server MCP di-spawn per sesi OpenCode dan ikut mati bersamanya. Dashboard dan
-koneksi Postgres harus hidup lebih lama dari itu, jadi state **didorong** dari
-server (tidak ditunggu) dan **dibaca** oleh proses ini.
+The MCP server is spawned per OpenCode session and exits with it. The dashboard
+and its Postgres connection must outlive those processes, so MCP servers push
+state without waiting and this service reads it. In addition to reports on
+workflow changes, each connected MCP process sends a lightweight snapshot every
+30 seconds. This keeps the client session visible before the agent calls a
+`dev-workflow` tool; active task details still come from workflow state.
+
+Taskless heartbeats contain session, machine, and agent metadata only. They stop
+when the MCP process exits, after which the taskless idle card expires according
+to `EMPTY_IDLE_TTL` (one minute). The default 30-second interval can be adjusted
+with `DEVWF_MONITOR_HEARTBEAT_MS` (100–60000 ms). The server cannot report clients
+that are not connected to the `dev-workflow` MCP.
 
 Berkas di `monitor-server/`:
 
@@ -87,7 +96,7 @@ siapa pun yang punya akses baca ke unit. Kredensial ada di
 DATABASE_URL=postgres://devwf:SANDI@127.0.0.1:5432/devwf_monitor
 DEVWF_MONITOR_TOKEN=<token acak panjang>
 IDLE_TTL=30 minutes
-EMPTY_IDLE_TTL=5 minutes
+EMPTY_IDLE_TTL=1 minute
 ```
 
 ## Menulis butuh token, membaca tidak
@@ -267,7 +276,7 @@ Ada **dua** batas umur, karena dua hal berbeda:
 
 | Jenis sesi | Batas | Alasan |
 |---|---|---|
-| `idle` **tanpa** task | `EMPTY_IDLE_TTL` (5 menit) | Kartunya hanya berbunyi "IDLE (tanpa task)" — tidak memberi informasi, tetapi menempati satu slot penuh di layar tablet |
+| `idle` **tanpa** task | `EMPTY_IDLE_TTL` (1 menit) | Kartunya hanya berbunyi "IDLE (tanpa task)" — cepat disembunyikan agar layar fokus ke task nyata |
 | `idle` **dengan** task | `IDLE_TTL` (30 menit) | Menyimpan riwayat pekerjaan yang baru selesai, masih berguna sesudah commit |
 | `coding` dan fase lain | tanpa batas | Satu tugas panjang yang jarang menyimpan state tetap pekerjaan nyata |
 

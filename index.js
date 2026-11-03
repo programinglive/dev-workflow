@@ -22,7 +22,7 @@ import {
   createCommitMessageParts,
   determineReleaseTypeFromCommit,
 } from "./commit-helpers.js";
-import { WorkflowState, sessionKeyFromRequest } from "./workflow-state.js";
+import { WorkflowState, sessionKeyFromRequest, reportToMonitorSafe } from "./workflow-state.js";
 import { getToolList } from "./tools/definitions.js";
 import { handleToolCall } from "./tools/handlers.js";
 
@@ -242,6 +242,29 @@ export async function main() {
   await server.connect(transport);
   const duration = Date.now() - startTime;
   safeLog('error', `[${new Date().toISOString()}] Dev Workflow MCP Server running on stdio (startup took ${duration}ms)`);
+
+  // A connected agent session must remain visible even while it is working
+  // with its own tools and has not called a dev-workflow tool yet. State saves
+  // still report immediately; this lightweight heartbeat keeps the MCP
+  // connection alive in the monitor between those saves.
+  const configuredHeartbeatMs = Number(process.env.DEVWF_MONITOR_HEARTBEAT_MS);
+  const heartbeatMs = Number.isFinite(configuredHeartbeatMs) && configuredHeartbeatMs >= 100 && configuredHeartbeatMs <= 60_000
+    ? configuredHeartbeatMs
+    : 30_000;
+  const reportHeartbeat = () => {
+    if (!workflowState) return;
+    // Keep completed-task cards on their normal history TTL; only live sessions
+    // without a task and sessions with active work need repeated liveness data.
+    if (workflowState.state?.currentPhase === "idle" && workflowState.state?.taskDescription) return;
+    void reportToMonitorSafe({
+      state: workflowState.state,
+      stateFile: workflowState.stateFile,
+      createdAt: workflowState.sessionStartedAt,
+    }).catch(() => false);
+  };
+  reportHeartbeat();
+  const monitorHeartbeat = setInterval(reportHeartbeat, heartbeatMs);
+  monitorHeartbeat.unref?.();
 }
 
 // --- Lightweight CLI: dev-workflow-mcp call <toolName> [--args '<json>'] ---

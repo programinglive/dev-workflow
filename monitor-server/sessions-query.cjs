@@ -15,7 +15,7 @@
  * DUA BATAS UMUR, BUKAN SATU
  * --------------------------
  * Sesi `idle` TANPA task tidak memberi informasi apa pun - kartunya hanya
- * berbunyi "IDLE (tanpa task)" - jadi dibuang jauh lebih cepat (5 menit).
+ * berbunyi "IDLE (tanpa task)" - jadi dibuang jauh lebih cepat (1 menit).
  * Sesi `idle` yang PUNYA task menyimpan riwayat pekerjaan yang baru selesai,
  * jadi dipertahankan lebih lama (30 menit) agar masih terbaca sesudah commit.
  *
@@ -28,7 +28,7 @@
  * Aktif - hanya muncul di tab Riwayat. Dibuang langsung dari query ini.
  */
 const DEFAULT_IDLE_TTL = '30 minutes';
-const DEFAULT_EMPTY_IDLE_TTL = '5 minutes';
+const DEFAULT_EMPTY_IDLE_TTL = '1 minute';
 
 function buildSessionsQuery({
   limit = 20,
