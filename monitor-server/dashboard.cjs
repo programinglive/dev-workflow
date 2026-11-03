@@ -329,6 +329,7 @@ const PAGE = `<!doctype html>
     <div class="modal-footer">
       <div id="modal-share-slot" style="flex:1"></div>
       <button class="btn" id="modal-tutup-btn">Tutup</button>
+      <button class="btn danger" id="modal-close-session-btn" style="display:none">✕ Tutup Sesi</button>
     </div>
   </div>
 </div>
@@ -457,6 +458,16 @@ function bukaDetail(sessionKey) {
   }
 
   document.getElementById('modal-detail').style.display = 'flex';
+
+  // Tampilkan tombol "Tutup Sesi" hanya untuk sesi yang masih bisa ditutup
+  var closeBtn = document.getElementById('modal-close-session-btn');
+  if (closeBtn) {
+    var isCloseable = st === 'live' || st === 'possibly_stuck' ||
+      (s.phase && s.phase !== 'idle' && s.phase !== 'closed' &&
+       s.phase !== 'done' && s.phase !== 'cancelled');
+    closeBtn.style.display = isCloseable ? '' : 'none';
+    closeBtn.dataset.sessionKey = s.session_key;
+  }
 }
 
 function tutupModal() {
@@ -868,6 +879,40 @@ document.addEventListener('keydown', function (e) {
   if (e.key === 'Escape') tutupModal();
 });
 
+// Handler tombol "Tutup Sesi" (force-close sesi macet dari dashboard)
+document.addEventListener('click', async function(e) {
+  var btn = e.target.closest('#modal-close-session-btn');
+  if (!btn) return;
+  var sessionKey = btn.dataset.sessionKey;
+  if (!sessionKey) return;
+  if (!confirm('Yakin ingin menutup paksa sesi ini?\n' + sessionKey + '\n\nSesi akan diset ke phase "closed".')) return;
+  btn.disabled = true;
+  btn.textContent = 'Menutup…';
+  try {
+    var r = await fetch('/api/session/close', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-devwf-close': '1' },
+      body: JSON.stringify({ sessionKey: sessionKey })
+    });
+    var json = await r.json();
+    if (json.ok) {
+      btn.textContent = '✓ Ditutup';
+      btn.style.background = '#1a7f371a';
+      btn.style.color = '#3fb950';
+      btn.style.borderColor = '#1a7f3755';
+      setTimeout(function() { tutupModal(); tick(); }, 1200);
+    } else {
+      btn.disabled = false;
+      btn.textContent = '✕ Tutup Sesi';
+      alert('Gagal menutup: ' + (json.error || JSON.stringify(json)));
+    }
+  } catch(err) {
+    btn.disabled = false;
+    btn.textContent = '✕ Tutup Sesi';
+    alert('Error: ' + err.message);
+  }
+});
+
 tick(); muatTautan();
 setInterval(tick, ${POLL_MS});
 setInterval(muatTautan, 30000);
@@ -1085,6 +1130,35 @@ const server = http.createServer(async (req, res) => {
       await insertEvent(body);
       res.writeHead(200, { 'content-type': 'application/json' });
       return res.end(JSON.stringify({ ok: true }));
+    }
+    if (url.pathname === '/api/session/close' && req.method === 'POST') {
+      const authOk = writeAllowed(req) || req.headers['x-devwf-share'] === '1' || req.headers['x-devwf-close'] === '1';
+      if (!authOk) {
+        return denyWrite(res);
+      }
+      const body = bacaJson(await readBody(req), res);
+      if (body === null) return undefined;
+      const sessionKey = String(body.sessionKey || body.session_key || '');
+      if (!sessionKey) {
+        res.writeHead(400, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: 'sessionKey diperlukan' }));
+      }
+      const result = await query(
+        `UPDATE sessions SET phase = 'closed', updated_at = NOW()
+          WHERE session_key = $1
+            AND phase NOT IN ('closed','done','cancelled')
+          RETURNING session_key, machine, project_name`,
+        [sessionKey],
+      );
+      if (result.rowCount === 0) {
+        // Sudah closed atau tidak ditemukan — tidak apa-apa
+        res.writeHead(200, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true, closed: false, reason: 'sudah closed atau tidak ditemukan' }));
+      }
+      const row = result.rows[0];
+      console.log(`[session/close] ${row.session_key} (${row.machine}/${row.project_name}) ditutup manual.`);
+      res.writeHead(200, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ ok: true, closed: true, sessionKey: row.session_key }));
     }
     if (url.pathname === '/api/sessions') {
       const limit = Math.min(50, Number(url.searchParams.get('limit') || 20));

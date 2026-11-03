@@ -21,6 +21,11 @@
  *
  * Sesi yang masih bekerja TIDAK pernah disembunyikan, seberapa lama pun ia
  * berjalan tanpa menyimpan state - satu tugas panjang tetap pekerjaan nyata.
+ *
+ * SESI CLOSED/DONE/CANCELLED
+ * --------------------------
+ * Sesi yang sudah ditutup (closed, done, cancelled) tidak perlu tampil di tab
+ * Aktif - hanya muncul di tab Riwayat. Dibuang langsung dari query ini.
  */
 const DEFAULT_IDLE_TTL = '30 minutes';
 const DEFAULT_EMPTY_IDLE_TTL = '5 minutes';
@@ -35,7 +40,8 @@ function buildSessionsQuery({
                  plan_json, plan_done, plan_total, dod_done, dod_total, dod_waived,
                  started_at, session_title, agent_tool, updated_at
             FROM sessions
-           WHERE NOT (
+           WHERE phase NOT IN ('closed', 'done', 'cancelled')
+             AND NOT (
                    phase = 'idle'
                    AND (
                      (task = '' AND updated_at < now() - $3::interval)
