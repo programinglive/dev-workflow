@@ -598,6 +598,41 @@ internet bisa membuat tautan atas nama pemilik".
 | `DELETE` | `/api/share?token=...` | setel `revoked_at`; balas `{ ok, revoked }` |
 | `GET` | `/api/share?sessionKey=...` | tautan hidup sesi itu, atau `{ url: null }` |
 | `GET` | `/api/share?all=1` | **semua** tautan hidup, termasuk yang sesinya sudah hilang; dipakai panel dashboard |
+| `POST` | `/api/share?revoke-orphans=1` | cabut **hanya** tautan yang baris sesinya sudah tidak ada; balas `{ ok, revoked }` |
+
+### Keputusan: TIDAK ada kedaluwarsa otomatis
+
+Pemilik meminta tautan permanen sampai dicabut, jadi pertumbuhan data
+diselesaikan dengan **membereskan**, bukan membunuh tautan diam-diam. Empat
+alasan, dan yang keempat yang paling menentukan:
+
+1. Tautan di grup WhatsApp yang tiba-tiba 404 membuat orang mengira sistemnya
+   rusak, dan mereka akan bertanya kepada Anda - biaya yang lebih besar
+   daripada satu baris database.
+2. Kedaluwarsa memaksa tanggal yang harus ditebak: umur berapa yang benar?
+   Tidak ada jawaban yang tidak sewenang-wenang.
+3. `views` dan `last_view_at` tetap berguna sebagai catatan siapa pernah
+   membaca; tautan mati menghapus gunanya.
+4. **Umur adalah proksi yang salah.** Sesi `idle` hilang dari layar setelah 30
+   menit, tetapi task yang selesai kemarin masih berguna dibagikan lagi besok.
+   Yang benar-benar tidak berguna adalah tautan yang baris sesinya sudah
+   **dihapus** - tidak ada lagi isi untuk ditampilkan.
+
+Karena itu pembersihannya berbahan bakar **kehilangan sesi**, bukan umur:
+
+```sql
+UPDATE share_links l SET revoked_at = now()
+ WHERE l.revoked_at IS NULL
+   AND NOT EXISTS (SELECT 1 FROM sessions s WHERE s.session_key = l.session_key)
+```
+
+Sesi `idle` yang berumur 3 jam **tidak** tersentuh, dan itu diuji dengan
+PostgreSQL sungguhan (`monitor-share-db.test.js`), bukan hanya diperiksa dari
+bentuk SQL-nya. Baris tidak pernah dihapus, hanya dicabut.
+
+Panel menampilkan jumlah tautan hidup dan, bila ada yatim, tombol **Cabut yang
+yatim**. Aksi itu sempit dengan sengaja: ia tidak akan pernah mematikan tautan
+yang masih punya isi.
 
 ### Mengapa ada panel tautan terpisah
 

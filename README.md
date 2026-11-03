@@ -401,6 +401,13 @@ hidup** panel listing every live link, including ones whose session is gone —
 marked `sesinya sudah tidak tampil`. Without it a link pasted into WhatsApp
 could outlive any way of switching it off. `GET /api/share?all=1` backs it.
 
+**Links never expire on their own.** That is deliberate: a WhatsApp link that
+suddenly answers 404 makes people think the system is broken, and they ask you
+why. Growth is handled by clearing out links whose session has been *deleted*
+— they have nothing left to show — never by age. An idle session from three
+hours ago is not an orphan and keeps its link. Press **Cabut yang yatim** in the
+panel to clear those out; `POST /api/share?revoke-orphans=1` backs it.
+
 Codes you will see: `200` the page, `404` unknown token or a session already
 removed by retention, `410` deliberately revoked. `404` and `410` are kept
 apart so a typo is never confused with a link the owner switched off.

@@ -227,6 +227,45 @@ function classifyShareLookup(row) {
   return { status: 200, reason: 'ok' };
 }
 
+/**
+ * Tautan yang sesinya SUDAH HILANG - bahan bakar pembersihan.
+ *
+ * Mengapa bukan "lebih tua dari N hari": sesi `idle` hilang dari layar setelah
+ * 30 menit, tetapi task yang selesai kemarin masih berguna untuk dibagikan
+ * lagi besok. Yang benar-benar tidak berguna adalah tautan yang baris sesinya
+ * sudah tidak ada - tidak ada lagi yang bisa ditampilkan.
+ */
+function buildOrphanSharesQuery() {
+  return {
+    sql: `SELECT l.session_key, l.token, l.created_at, l.views
+            FROM share_links l
+            LEFT JOIN sessions s ON s.session_key = l.session_key
+           WHERE l.revoked_at IS NULL
+             AND s.session_key IS NULL`,
+    params: [],
+  };
+}
+
+/**
+ * Cabut semua tautan yatim sekaligus.
+ *
+ * `NOT EXISTS` dipakai alih-alih `NOT IN` supaya NULL tidak membuat hasilnya
+ * kosong tanpa penjelasan. Baris TIDAK dihapus: jumlah kunjungan dan tanggal
+ * pembuatan tetap tersimpan, dan pencabutan tetap bisa dibedakan dari
+ * "tautan tidak pernah ada".
+ */
+function buildRevokeOrphans() {
+  return {
+    sql: `UPDATE share_links l SET revoked_at = now()
+           WHERE l.revoked_at IS NULL
+             AND NOT EXISTS (
+               SELECT 1 FROM sessions s WHERE s.session_key = l.session_key
+             )
+           RETURNING l.token`,
+    params: [],
+  };
+}
+
 module.exports = {
   PUBLIC_ORIGIN,
   FALLBACK_ORIGIN,
@@ -242,5 +281,7 @@ module.exports = {
   buildTokenLookup,
   buildTouchView,
   buildLiveSharesQuery,
+  buildOrphanSharesQuery,
+  buildRevokeOrphans,
   classifyShareLookup,
 };

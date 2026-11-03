@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const {
   ensureTableSql, generateToken, buildInsertLink, buildLiveLinkQuery,
-  buildRevokeLink, buildTokenLookup, buildTouchView, classifyShareLookup,
+  buildRevokeLink, buildTokenLookup, buildTouchView, buildRevokeOrphans, classifyShareLookup,
 } = require("../monitor-server/share-links.cjs");
 
 /**
@@ -216,6 +216,53 @@ test("kunjungan menambah views dan tidak menyentuh isi sesi", async (t) => {
 
   const sesi = await pool.query("SELECT task, machine FROM sessions WHERE session_key = $1", [KUNCI]);
   assert.deepEqual(sesi.rows[0], sebelum.rows[0], "membaca tautan tidak boleh mengubah sesi");
+});
+
+test("tautan yang sesinya masih ada TIDAK ikut dicabut massal, walau sudah lama idle", async (t) => {
+  if (lewati(t)) return;
+  await bersihkan();
+  await siapkanSesi();
+
+  const ins = buildInsertLink({ token: generateToken(), sessionKey: KUNCI });
+  const a = await pool.query(ins.sql, ins.params);
+  const tokenHidup = a.rows[0].token;
+
+  // Sesi dibuat 3 jam lalu dan `idle` - pada dasarnya invisible di dashboard,
+  // tetapi barisnya MASIH ADA dan tautannya masih punya isi untuk ditampilkan.
+  await siapkanSesi("ses_share_uji_idle");
+  await pool.query(
+    "UPDATE sessions SET phase='idle', updated_at = now() - interval '3 hours' WHERE session_key='ses_share_uji_idle'",
+  );
+  const ins2 = buildInsertLink({ token: generateToken(), sessionKey: "ses_share_uji_idle" });
+  const b = await pool.query(ins2.sql, ins2.params);
+
+  // Satu tautan yatim: sesinya benar-benar tidak ada.
+  const ins3 = buildInsertLink({ token: generateToken(), sessionKey: "ses_share_uji_hantu" });
+  await pool.query(ins3.sql, ins3.params);
+
+  const hapus = buildRevokeOrphans();
+  const hasil = await pool.query(hapus.sql, hapus.params);
+  assert.equal(hasil.rowCount, 1, "hanya tautan yatim yang dicabut");
+
+  const cek = await pool.query(
+    "SELECT session_key, revoked_at FROM share_links WHERE session_key LIKE 'ses_share_uji%'",
+  );
+  const peta = Object.fromEntries(cek.rows.map((r) => [r.session_key, r.revoked_at]));
+  assert.equal(peta[KUNCI], null, "sesi aktif tetap bisa dibagikan");
+  assert.equal(peta["ses_share_uji_idle"], null, "sesi idle 3 jam BUKAN yatim: jangan dicabut");
+  assert.ok(peta["ses_share_uji_hantu"], "hanya yang sesinya hilang yang dicabut");
+
+  // Barisnya tidak dihapus, hanya dicabut.
+  const total = await pool.query("SELECT count(*)::int AS n FROM share_links WHERE session_key LIKE 'ses_share_uji%'");
+  assert.equal(total.rows[0].n, 3, "tidak ada baris yang hilang");
+  assert.ok(tokenHidup && b.rows[0].token);
+});
+
+test("pencabutan massal kedua tidak mengubah apa pun", async (t) => {
+  if (lewati(t)) return;
+  const { sql, params } = buildRevokeOrphans();
+  const kedua = await pool.query(sql, params);
+  assert.equal(kedua.rowCount, 0, "idempoten: tidak ada yatim tersisa");
 });
 
 test("tidak ada baris uji yang tertinggal", async (t) => {
