@@ -61,3 +61,15 @@ test("halaman penjelasan menyebut apa yang TIDAK dibagikan", async () => {
   assert.match(page, /mesin|machine/i);
   assert.match(page, /path/i);
 });
+
+test("skrip verifikasi akhir mencakup guard, jalur tulis publik, dan sisa data uji", async () => {
+  const skrip = await readFile(path.join(ROOT, "scripts", "verify-share-final.sh"), "utf8");
+  // Skrip ini satu-satunya bukti yang bisa dijalankan ulang terhadap server
+  // sungguhan; kalau pemeriksaannya dihapus, "sudah diverifikasi" jadi klaim
+  // kosong.
+  assert.match(skrip, /systemctl is-active/);
+  assert.match(skrip, /revoke-orphans|api\/share/);
+  assert.match(skrip, /405/);
+  assert.match(skrip, /ses_uji/);
+  assert.match(skrip, /SEMUA LULUS/);
+});
