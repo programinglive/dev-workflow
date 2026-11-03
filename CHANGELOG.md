@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.22.0](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.21.1...v1.22.0) (2026-11-03)
+
+
+### ✨ Features
+
+* **share:** add live share panel and drop dead tunnel configs ([ca5fae1](https://github.com/programinglive/dev-workflow-mcp-server/commit/ca5fae140614e9f9b8e7b1f32d361c3f86690f3a))
+
 ### [1.21.1](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.21.0...v1.21.1) (2026-11-02)
 
 
