@@ -6,6 +6,19 @@ export function getToolList() {
       inputSchema:{type:'object',properties:{},additionalProperties:false},
     },
     {
+      name: "search_project",
+      description: "Search bounded local text files in the active workflow project's Git repository. Read-only; no persistent index or network calls. Returns sanitized path:line citations. Lexical matching only; does not accept a filesystem path.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: { type: "string", minLength: 1, maxLength: 500, description: "Plain-text question or phrase to find in the active project (maximum 500 characters)." },
+          limit: { type: "integer", minimum: 1, maximum: 20, description: "Maximum citation count (default 8)." },
+        },
+        required: ["query"],
+        additionalProperties: false,
+      },
+    },
+    {
       name: "start_task",
       description:
         "Start a new coding task. This is the first step - be conscious about what you're coding.",

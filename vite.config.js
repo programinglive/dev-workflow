@@ -7,8 +7,10 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 export default defineConfig({
+  consumer: 'server',
   build: {
     target: 'node18',
+    ssr: true,
     outDir: 'dist',
     minify: false,
     rollupOptions: {

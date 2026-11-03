@@ -30,6 +30,7 @@ Developers need structured guidance to maintain disciplined workflows across pro
 2. As a team lead, I want an auditable history of workflow completion so I can ensure compliance.
 3. As an integrator, I want a simple API (tools/prompts) so I can plug the MCP server into existing agent workflows.
 4. As a devops engineer, I want to configure the server to use my existing database infrastructure (MySQL/PostgreSQL) instead of local files.
+5. As a developer, I want a local read-only search tool that finds relevant lines in my active repository and cites their paths and line numbers.
 
 ## 7. Functional Requirements
 - Provide MCP tools covering the full workflow lifecycle (start task, fix, test, document, commit, release, complete).
@@ -41,6 +42,7 @@ Developers need structured guidance to maintain disciplined workflows across pro
 - Import a Factory task's board checklist as open items on `claim_factory_task`, since a board checkbox records a plan, not local evidence.
 - Record `definitionOfDoneSummary` (total, done, waived, open, waived reasons) on every history entry when a task closes.
 - Support `run_full_workflow` for scripted execution of all steps with validation.
+- Provide search_project for bounded lexical search of the pinned active Git repository. Return sanitized repository-relative path:line citations; honor Git ignore rules and exclude known-sensitive/binary/oversized files; do not persist an index or make network calls.
 - Web dashboard displays version dynamically from `package.json` via `/api/version` endpoint to stay in sync after releases.
 
 ## 8. Visual Workflow
@@ -50,7 +52,8 @@ The complete development workflow is documented visually using Mermaid:
 ```mermaid
 graph TD
     Start([Start Task]) --> FeatureFlow[Describe Feature Flow with Mermaid]
-    FeatureFlow --> Fix[Mark Bug Fixed / Implement Feature]
+    FeatureFlow --> ProjectSearch[Optional search_project discovery]
+    ProjectSearch --> Fix[Mark Bug Fixed / Implement Feature]
     Fix --> CreateTests[Create Tests]
     CreateTests --> RunTests{Run Tests}
     RunTests -- Fail --> Fix

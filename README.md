@@ -55,7 +55,7 @@ An MCP server that enforces development workflow discipline: **tests → documen
 
 ```mermaid
 graph LR
-    A[start_task] --> B[Implement]
+    A[start_task] --> S[Optional search_project discovery] --> B[Implement]
     B --> C[mark_bug_fixed]
     C --> D[create_tests]
     D --> E[run_tests]
@@ -77,7 +77,7 @@ finished.
 
 | Path | Single responsibility |
 |---|---|
-| `index.js` | MCP entry point: registers the 37 tools and their handlers |
+| `index.js` | MCP entry point: registers the 38 tools and their handlers |
 | `workflow-state.js` | The state machine and its persistence (phase, DoD, plan, history) |
 | `db/` | Storage adapters: SQLite (default), PostgreSQL, MySQL, plus migration and replication |
 | `monitor.js` | Fire-and-forget reporting of the current session to the live dashboard; never blocks or throws |
@@ -133,12 +133,13 @@ See [MCP client configuration](#mcp-client-configuration).
 
 ## Available Tools
 
-37 tools.
+38 tools.
 
 | Tool | Purpose |
 |---|---|
 | `start_task` | Begin a task (always the first step); requires `definitionOfDone` and `plan` |
 | `set_plan` | Replace the work plan of the running task |
+| `search_project` | Search bounded local text in the active repo; returns sanitized path:line citations |
 | `mark_plan_step` | Mark one plan step done (or reopen it) |
 | `resume_session` | Reconnect to state left behind by another session in this project |
 | `set_definition_of_done` | Add or replace the checklist of the current task |
@@ -173,6 +174,18 @@ See [MCP client configuration](#mcp-client-configuration).
 | `update_factory_task` | Edit a task, including filling a missing definition of done |
 | `claim_factory_task` | Claim a Factory task and start a local workflow |
 | `sync_task_status` | Report a status change back to Factory |
+
+### Searching the active project
+
+`search_project` searches the Git repository pinned by `start_task.projectDir`. It reads tracked files and untracked, non-ignored files; it skips ignored, known-sensitive, binary, invalid UTF-8, and oversized files. Each call is read-only, keeps no persistent index, and makes no network request. Results are lexical matches, ranked by exact phrase then query-term overlap; this is not semantic/vector search.
+
+Example MCP arguments:
+
+```json
+{"query":"where task workflow starts and completes","limit":8}
+```
+
+Results contain repository-relative `path:line` citations and at most one 300-character excerpt per result. The scan is bounded to 20,000 candidate paths, 256 KiB per file, and 20 MiB total read; the response reports when a cap may have made results incomplete. The tool accepts no path argument and cannot search outside the active project.
 
 ### Definition of Done
 
