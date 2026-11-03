@@ -33,6 +33,7 @@ const {
   classifyShareLookup,
 } = require('./share-links.cjs');
 const { securityHeaders, renderSharePage, renderStatusPage } = require('./share-page.cjs');
+const { clientKey } = require('./client-key.cjs');
 
 const DEFAULT_PORT = 3200;
 const DEFAULT_HOST = '127.0.0.1';
@@ -159,7 +160,15 @@ function createShareServer({
         });
       }
 
-      const ip = (req.socket && req.socket.remoteAddress) || 'unknown';
+      /**
+       * Kunci memakai `clientKey`, bukan `socket.remoteAddress` mentah.
+       *
+       * Di balik Cloudflare Tunnel, remoteAddress SELALU 127.0.0.1 - itu
+       * cloudflared, bukan pembaca. Memakainya berarti semua pembaca berbagi
+       * satu kuota, dan satu orang yang membuka tautan 120 kali memblokir
+       * semua orang lain.
+       */
+      const ip = clientKey({ remoteAddress: req.socket && req.socket.remoteAddress, headers: req.headers });
       if (!izinkan(ip)) {
         return kirim(res, 429, { 'content-type': 'text/plain', 'retry-after': '60', 'cache-control': 'no-store' }, 'too many requests');
       }
