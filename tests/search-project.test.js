@@ -276,30 +276,35 @@ describe('searchProject', () => {
     assert.equal(result.hits[0].line, 1);
     assert.equal(result.truncated, true);
   });
-  it('rechecks file size after opening and never reads an oversized race replacement', async () => {
+  it('rejects an oversized file reported by the opened handle before reading it', async () => {
     const root = await makeRepo();
-    const target = path.join(root, 'race.txt');
     await addTracked(root, { 'race.txt': 'needle safe placeholder\n' });
+    let didRead = false;
 
     const result = await readCandidate(root, 'race.txt', MAX_FILE_BYTES, async (...args) => {
       const handle = await open(...args);
-      let firstStat = true;
       return {
         stat: async () => {
           const snapshot = await handle.stat();
-          if (firstStat) {
-            firstStat = false;
-            await writeFile(target, `needle ${'x'.repeat(MAX_FILE_BYTES + 100)}`);
-          }
-          return snapshot;
+          return new Proxy(snapshot, {
+            get(target, property) {
+              if (property === 'size') return MAX_FILE_BYTES + 100;
+              const value = Reflect.get(target, property, target);
+              return typeof value === 'function' ? value.bind(target) : value;
+            },
+          });
         },
-        read: handle.read.bind(handle),
+        read: (...readArgs) => {
+          didRead = true;
+          return handle.read(...readArgs);
+        },
         close: handle.close.bind(handle),
       };
     });
 
     assert.equal(result.skipped, true);
     assert.equal(result.truncated, true);
+    assert.equal(didRead, false);
     assert.ok((result.bytesRead || 0) <= MAX_FILE_BYTES);
   });
 });
