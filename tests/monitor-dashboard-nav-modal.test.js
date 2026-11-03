@@ -43,3 +43,16 @@ test("delegasi klik mendukung membuka detail dan beralih tab", () => {
   assert.match(dash, /tutupModal/);
   assert.match(dash, /pilihTab/);
 });
+
+test("dashboard memuat endpoint /api/session/close dan tombol Tutup Sesi", () => {
+  assert.match(dash, /\/api\/session\/close/);
+  assert.match(dash, /modal-close-session-btn/);
+  assert.match(dash, /Tutup Sesi/);
+});
+
+test("mobile app memuat tombol Tutup Sesi dan konfirmasi penutupan", () => {
+  const appJs = readFileSync(path.join(ROOT, "mobile-app", "App.js"), "utf8");
+  assert.match(appJs, /konfirmasiTutupSesi/);
+  assert.match(appJs, /\/api\/session\/close/);
+  assert.match(appJs, /Tutup Sesi/);
+});

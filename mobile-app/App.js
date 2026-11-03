@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   AppState,
   Linking,
   Modal,
@@ -618,6 +619,7 @@ function DetailSesi({ s, jamServer, onClose }) {
   const [tautan, setTautan] = useState(null);
   const [galatBagikan, setGalatBagikan] = useState(null);
   const [sibukBagikan, setSibukBagikan] = useState(false);
+  const [sibukTutup, setSibukTutup] = useState(false);
 
   if (!s) return null;
   const g = gayaStatus(s.state);
@@ -625,6 +627,41 @@ function DetailSesi({ s, jamServer, onClose }) {
   const total = s.plan_total || 0;
   const selesai = s.plan_done || 0;
   const label = s.state === "idle" ? (s.phase || "idle").toUpperCase() : g.label;
+  const bisaDitutup = s.phase !== "closed" && s.phase !== "done" && s.phase !== "cancelled";
+
+  function konfirmasiTutupSesi() {
+    Alert.alert(
+      "Tutup Sesi",
+      `Yakin ingin menutup paksa sesi ini?\n${s.session_key}\n\nSesi akan diset ke status "closed".`,
+      [
+        { text: "Batal", style: "cancel" },
+        {
+          text: "Tutup Sesi",
+          style: "destructive",
+          onPress: async () => {
+            setSibukTutup(true);
+            try {
+              const r = await fetch(MONITOR_URL + "/api/session/close", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ sessionKey: s.session_key }),
+              });
+              const body = await r.json().catch(() => ({}));
+              if (r.ok && body.ok) {
+                if (onClose) onClose();
+              } else {
+                Alert.alert("Gagal Menutup", body.error || "Gagal menutup sesi");
+              }
+            } catch (err) {
+              Alert.alert("Galat", err.message || String(err));
+            } finally {
+              setSibukTutup(false);
+            }
+          },
+        },
+      ]
+    );
+  }
 
   /**
    * Minta tautan share, lalu buka sheet bagikan Android.
@@ -760,6 +797,17 @@ function DetailSesi({ s, jamServer, onClose }) {
                 {sibukBagikan ? "menyiapkan..." : "Bagikan"}
               </Text>
             </Pressable>
+            {bisaDitutup ? (
+              <Pressable
+                onPress={konfirmasiTutupSesi}
+                disabled={sibukTutup}
+                style={[gaya.tombolDanger, sibukTutup && gaya.tombolMati]}
+              >
+                <Text style={gaya.tombolDangerTeks}>
+                  {sibukTutup ? "menutup..." : "✕ Tutup Sesi"}
+                </Text>
+              </Pressable>
+            ) : null}
             <Pressable onPress={onClose} style={[gaya.tombolTutup, gaya.tombolTutupKecil]}>
               <Text style={gaya.tombolTutupTeks}>Tutup</Text>
             </Pressable>
@@ -946,6 +994,16 @@ const gaya = StyleSheet.create({
     alignItems: "center",
   },
   tombolBagikanTeks: { color: "#04121f", fontWeight: "700", fontSize: 15 },
+  tombolDanger: {
+    flex: 1,
+    backgroundColor: "#f8514922",
+    borderWidth: 1,
+    borderColor: "#f8514966",
+    borderRadius: 10,
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  tombolDangerTeks: { color: "#ff7b72", fontWeight: "700", fontSize: 15 },
   tombolMati: { opacity: 0.55 },
   galatBagikan: { color: WARNA.kuning, fontSize: 13, marginTop: 12 },
   tautanTeks: { color: WARNA.biruMuda, fontSize: 13, marginTop: 10, lineHeight: 18 },
