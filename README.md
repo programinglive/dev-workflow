@@ -750,6 +750,17 @@ Two sibling test files share one database, so **each file needs its own
 fails while the other file's rows are still there; that collision was real and
 turned a passing suite red the first time both ran against the same PostgreSQL.
 
+### Lint: local `web/` runs need `.netlify/**` ignored
+
+`npm run lint --prefix web` was red locally with 12 `no-this-alias` errors and
+green in CI. The errors were not in source: they were inside the minified Next
+bundles that `netlify deploy --build` leaves in `web/.netlify/static/`. CI does a
+fresh checkout, so it never sees them.
+
+`web/eslint.config.mjs` now ignores `.netlify/**` alongside `.next/**` and
+`out/**`. The ignore is not cosmetic — a lint that is red for a reason unrelated
+to your change gets ignored, and a real error reads as more of the same noise.
+
 ### Windows: close SQLite before deleting the temp directory
 
 `npm run test:security` was red on Windows for months while CI stayed green:

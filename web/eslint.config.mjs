@@ -12,6 +12,12 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Artefak `netlify deploy --build` yang tersimpan di working tree lokal.
+    // Tanpa ini `npm run lint` MERAH di mesin pengembang karena 12 error di
+    // dalam bundel minified Next (`no-this-alias`), sementara CI hijau karena
+    // checkout bersih tidak punya folder ini. Lint yang merah karena artefak
+    // build akan diabaikan orang, dan error sungguhan tenggelam di dalamnya.
+    ".netlify/**",
   ]),
 ]);
 
