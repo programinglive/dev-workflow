@@ -645,6 +645,10 @@ dan ditandai `sesinya sudah tidak tampil`, bukan dibuang.
 Ketiganya wajib header `X-Devwf-Share: 1`. Origin diperiksa **bila ada**:
 `DEVWF_SHARE_ORIGINS` (bawaan `http://100.107.65.21:3100,http://localhost:3100`).
 
+Nilai itu dibaca **sekali saat proses start**, bukan tiap permintaan. Mengubahnya
+berarti `systemctl restart devwf-monitor`; tanpa restart, origin baru tetap
+ditolak 403 dan penyebabnya tidak terlihat dari pesan galat mana pun.
+
 **Mengapa Origin kosong diloloskan:** aplikasi tablet React Native tidak punya
 konsep origin dan tidak mengirim header itu. Menolaknya membuat tombol Bagikan
 di tablet selalu 403 sementara dashboard browser tampak normal - kegagalan yang

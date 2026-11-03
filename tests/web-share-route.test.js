@@ -72,6 +72,14 @@ test("web eslint mengabaikan artefak build Netlify", async () => {
   assert.match(cfg, /"out\/\*\*"/);
 });
 
+test("contoh env menyebut bahwa origin allowlist butuh restart", async () => {
+  // Nilai ini dibaca sekali saat proses start. Tanpa catatan ini, operator
+  // mengubah env, melihat origin baru tetap 403, dan tidak tahu sebabnya.
+  const env = await readFile(path.join(ROOT, "monitor-server", "devwf-monitor.env.example"), "utf8");
+  assert.match(env, /DEVWF_SHARE_ORIGINS/);
+  assert.match(env, /RESTART|restart/);
+});
+
 test("skrip pembersihan hanya menyentuh token yang dicatat eksplisit", async () => {
   // Prinsipnya: pembersihan otomatis TIDAK BOLEH mencabut tautan yang tidak
   // dikenali skrip. Kalau skrip ini suatu saat "mencabut semua yang yatim",
