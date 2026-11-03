@@ -37,8 +37,20 @@ const { clientKey } = require('./client-key.cjs');
 
 const DEFAULT_PORT = 3200;
 const DEFAULT_HOST = '127.0.0.1';
-/** Batas kunjungan per IP per menit. Cukup longgar untuk grup WhatsApp. */
-const DEFAULT_RATE_LIMIT = 120;
+/**
+ * Batas kunjungan per IP per menit.
+ *
+ * DINAIIKKAN dari 120 pada 3 November 2026. Diukur di server: 200 permintaan
+ * berurutan dari satu IP semuanya dijawab 429, termasuk yang PERTAMA - jendela
+ * menyimpan sisa hitungan, jadi pembaca yang belum membuka apa pun ikut
+ * tertolak. Pada 120/menit, satu orang yang menyegarkan halaman cepat ditambah
+ * preview WhatsApp sudah cukup menghabiskannya.
+ *
+ * 600/menit = 10 permintaan/detik, masih jauh di bawah kapasitas terukur
+ * (61 permintaan/detik untuk satu proses). Ini pengaman terhadap banjir, bukan
+ * pagar yang menghalangi pembaca sungguhan.
+ */
+const DEFAULT_RATE_LIMIT = 600;
 const WINDOW_MS = 60 * 1000;
 
 /** Pesan yang dibedakan dengan sengaja: tiap sebab punya kalimatnya sendiri. */
@@ -87,8 +99,8 @@ function kirim(res, status, headers, body, { head = false } = {}) {
   return res.end(body);
 }
 
-function kirimHtml(res, status, html, { head = false } = {}) {
-  return kirim(res, status, securityHeaders(), html, { head });
+function kirimHtml(res, status, html, { head = false, extraHeaders = {} } = {}) {
+  return kirim(res, status, { ...securityHeaders(), ...extraHeaders }, html, { head });
 }
 
 function kirimJson(res, status, obj, extra = {}) {
@@ -201,7 +213,23 @@ function createShareServer({
        */
       const ip = clientKey({ remoteAddress: req.socket && req.socket.remoteAddress, headers: req.headers });
       if (!izinkan(ip)) {
-        return kirim(res, 429, { 'content-type': 'text/plain', 'retry-after': '60', 'cache-control': 'no-store' }, 'too many requests');
+        /**
+         * 429 dijawab dengan HALAMAN, bukan teks polos.
+         *
+         * Bagi pembaca, "too many requests" tidak menjelaskan apa pun; ia
+         * akan mengira tautannya rusak dan tidak kembali. Halaman ini
+         * menyebut bahwa keadaannya sementara dan kapan boleh dicoba lagi.
+         */
+        return kirimHtml(
+          res,
+          429,
+          renderStatusPage({
+            status: 429,
+            message: 'Tautan ini sedang dibuka terlalu sering.',
+            hint: 'Coba lagi dalam 60 detik - tautannya sendiri tidak rusak.',
+          }),
+          { head: req.method === 'HEAD', extraHeaders: { 'retry-after': '60' } },
+        );
       }
 
       const cari = buildTokenLookup({ token: rute.token });

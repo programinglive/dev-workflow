@@ -750,7 +750,7 @@ Two sibling test files share one database, so **each file needs its own
 fails while the other file's rows are still there; that collision was real and
 turned a passing suite red the first time both ran against the same PostgreSQL.
 
-### Rate limit: keyed per reader, not per proxy
+### Rate limit: keyed per reader, not per proxy, and loose enough to not turn readers away
 
 Behind Cloudflare Tunnel every request arrives from `127.0.0.1` — that is
 `cloudflared`, not the reader. Keying the limiter on `socket.remoteAddress`
@@ -765,15 +765,24 @@ because anyone able to reach port 3200 directly could otherwise mint unlimited
 quota by inventing a value. The header is validated as an IP first, so a junk
 value cannot become a rate-limit key.
 
-Measured after the fix, straight to `127.0.0.1:3200` (not through Cloudflare —
-see below): one reader gets 120 served then `429`; twelve *different* readers
-immediately afterwards are all served.
+**The threshold was also wrong, and that part was worse than the keying.**
+Measured before the fix: 200 requests from one IP produced **80 failures**, and
+`views` recorded **120 of 200** — four out of ten readers silently lost. At
+120/minute, one person refreshing plus a link preview could exhaust the quota.
+
+Now `DEFAULT_RATE_LIMIT = 600`/minute (10 req/s, well under the measured
+61 req/s capacity of one process), and `429` answers with a **page that says
+the situation is temporary**: "Coba lagi dalam 60 detik - tautannya sendiri
+tidak rusak". A bare `too many requests` leads a reader to conclude the link is
+broken, and they do not come back.
+
+Measured after: 200 requests → **0 failures, `views` exactly 200**.
 
 > **Measure the limiter directly, not through the tunnel.** Cloudflare
 > overwrites or rejects a spoofed `CF-Connecting-IP` (it answered `403`), so a
 > probe through the public hostname reports a pass that the server never
-> produced. Both probe scripts (`scripts/probe-rate-limit.sh`) hit
-> `127.0.0.1:3200` for this reason.
+> produced. `scripts/probe-rate-limit.sh`, `probe-views.sh`, and
+> `probe-capacity.sh` all hit `127.0.0.1:3200` for this reason.
 
 ### Lint: local `web/` runs need `.netlify/**` ignored
 
