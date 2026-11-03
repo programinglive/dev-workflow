@@ -55,6 +55,7 @@ const {
   buildLiveLinkQuery,
   buildRevokeLink,
   buildLiveSharesQuery,
+  buildOrphanCountQuery,
   buildRevokeOrphans,
 } = require('./share-links.cjs');
 
@@ -280,7 +281,22 @@ function labelSesi(r) {
 /** Semua tautan hidup, dipakai panel dashboard. */
 async function handleListAllShares({ query } = {}) {
   const shares = await listLiveShares({ query });
-  const orphanCount = shares.filter((s) => s.sessionGone).length;
+  /**
+   * Jumlah yatim diambil dari COUNT, bukan dari `shares`.
+   *
+   * `listLiveShares` dibatasi 200 baris; menghitung yatim di dalamnya
+   * melaporkan angka yang salah begitu tautan hidup melewati batas itu, dan
+   * angka itu yang menentukan apakah tombol "Cabut yang yatim" muncul.
+   */
+  let orphanCount = 0;
+  try {
+    const { sql, params } = buildOrphanCountQuery();
+    const hasil = await query(sql, params);
+    orphanCount = Number((hasil && hasil.rows && hasil.rows[0] && hasil.rows[0].n) || 0);
+  } catch {
+    // Panel tetap berguna tanpa angka; jangan jatuhkan seluruh daftar.
+    orphanCount = shares.filter((s) => s.sessionGone).length;
+  }
   return { status: 200, body: { ok: true, shares, orphanCount, total: shares.length } };
 }
 
