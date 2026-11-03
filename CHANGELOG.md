@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.23.3](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.23.2...v1.23.3) (2026-11-03)
+
+
+### 🐛 Bug Fixes
+
+* **web:** ignore netlify build artifacts in eslint ([56abe4e](https://github.com/programinglive/dev-workflow-mcp-server/commit/56abe4e8704a76bb218c72982bbb4689baa0e968))
+
 ### [1.23.2](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.23.1...v1.23.2) (2026-11-03)
 
 
