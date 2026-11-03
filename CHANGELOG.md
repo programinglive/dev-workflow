@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.23.0](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.22.0...v1.23.0) (2026-11-03)
+
+
+### ✨ Features
+
+* **share:** revoke orphaned links instead of expiring them ([773c38a](https://github.com/programinglive/dev-workflow-mcp-server/commit/773c38a4a13aba783ae3825ce999d9e2cca93946))
+
 ## [1.22.0](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.21.1...v1.22.0) (2026-11-03)
 
 
