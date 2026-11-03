@@ -55,6 +55,7 @@ const {
   buildLiveLinkQuery,
   buildRevokeLink,
   buildLiveSharesQuery,
+  buildRevokeOrphans,
 } = require('./share-links.cjs');
 
 /** Header penanda protokol. Nilainya harus persis "1". */
@@ -279,7 +280,27 @@ function labelSesi(r) {
 /** Semua tautan hidup, dipakai panel dashboard. */
 async function handleListAllShares({ query } = {}) {
   const shares = await listLiveShares({ query });
-  return { status: 200, body: { ok: true, shares } };
+  const orphanCount = shares.filter((s) => s.sessionGone).length;
+  return { status: 200, body: { ok: true, shares, orphanCount, total: shares.length } };
+}
+
+/**
+ * Cabut semua tautan yang sesinya sudah hilang, sekaligus.
+ *
+ * MENGAPA AMAN DIJALANKAN TANPA BERTANYA: syaratnya "baris sesinya tidak ada",
+ * bukan "sudah lama". Tautan yang masih punya sesi - termasuk sesi `idle` yang
+ * baru hilang dari layar - TIDAK tersentuh, karena masih bisa menampilkan
+ * sesuatu. Yang dicabut hanya tautan yang halamannya tidak punya isi lagi.
+ */
+async function revokeOrphanShares({ query } = {}) {
+  try {
+    const { sql, params } = buildRevokeOrphans();
+    const hasil = await query(sql, params);
+    const revoked = (hasil && (hasil.rowCount || (hasil.rows && hasil.rows.length))) || 0;
+    return { status: 200, body: { ok: true, revoked } };
+  } catch (error) {
+    return gagal(error);
+  }
 }
 
 module.exports = {
@@ -291,6 +312,7 @@ module.exports = {
   handleRevokeShare,
   handleListShares,
   handleListAllShares,
+  revokeOrphanShares,
   labelSesi,
   listLiveShares,
 };

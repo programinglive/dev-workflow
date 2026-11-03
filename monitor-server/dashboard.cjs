@@ -40,6 +40,7 @@ const {
   handleRevokeShare,
   handleListShares,
   handleListAllShares,
+  revokeOrphanShares,
   listLiveShares,
 } = require('./share-route.cjs');
 const { ensureTableSql } = require('./share-links.cjs');
@@ -493,7 +494,14 @@ async function muatTautan() {
       box.innerHTML = '<div>tidak ada tautan yang hidup</div>';
       return;
     }
-    box.innerHTML = daftar.map(function (s) {
+    var yatim = data.orphanCount || 0;
+    var kepala = '<div style="margin-bottom:8px">' + daftar.length + ' tautan hidup' +
+      (yatim
+        ? ' · <b style="color:#d29922">' + yatim + ' tautannya tidak punya sesi lagi</b> ' +
+          '<button class="btn danger" data-revoke-orphans="1">Cabut yang yatim</button>'
+        : '') +
+      '</div>';
+    box.innerHTML = kepala + daftar.map(function (s) {
       var catatan = s.sessionGone
         ? '<span class="meta" style="color:#d29922">sesinya sudah tidak tampil</span>'
         : '<span class="meta">' + esc(s.phase || '') + '</span>';
@@ -507,6 +515,31 @@ async function muatTautan() {
     }).join('');
   } catch (e) {
     box.innerHTML = '<div style="color:#ff7b72">gagal memuat tautan: ' + esc(e.message) + '</div>';
+  }
+}
+
+/**
+ * Cabut semua tautan yatim sekaligus.
+ *
+ * Tanpa konfirmasi karena aksinya sempit: hanya tautan yang baris sesinya
+ * sudah tidak ada. Tautan yang masih punya sesi - termasuk yang baru hilang
+ * dari layar karena idle - tidak tersentuh.
+ */
+async function cabutYatim(tombol) {
+  tombol.disabled = true;
+  tombol.textContent = 'mencabut...';
+  try {
+    var r = await fetch('/api/share?revoke-orphans=1', {
+      method: 'POST',
+      headers: { 'x-devwf-share': '1' }
+    });
+    var body = await r.json().catch(function () { return {}; });
+    if (!r.ok) throw new Error(body.error || ('server menjawab ' + r.status));
+    await muatTautan();
+  } catch (e) {
+    tombol.disabled = false;
+    tombol.textContent = 'Cabut yang yatim';
+    alert('Gagal mencabut: ' + e.message);
   }
 }
 
@@ -526,9 +559,10 @@ document.getElementById('list').addEventListener('click', function (e) {
 });
 // Panel tautan memakai listener yang sama; tombolnya hidup di luar #list.
 document.getElementById('tautan').addEventListener('click', function (e) {
-  var t = e.target.closest('[data-copy],[data-revoke]');
+  var t = e.target.closest('[data-copy],[data-revoke],[data-revoke-orphans]');
   if (!t) return;
-  if (t.dataset.copy) { void tombolSalin(t.dataset.copy, t); }
+  if (t.dataset.revokeOrphans) { void cabutYatim(t); }
+  else if (t.dataset.copy) { void tombolSalin(t.dataset.copy, t); }
   else if (t.dataset.revoke) { void tombolCabut(t.dataset.revoke, t); }
 });
 /**
@@ -677,6 +711,11 @@ const server = http.createServer(async (req, res) => {
         return res.end();
       }
 
+      if (req.method === 'POST' && url.searchParams.get('revoke-orphans')) {
+        const hasil = await revokeOrphanShares({ query });
+        res.writeHead(hasil.status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+        return res.end(JSON.stringify(hasil.body));
+      }
       if (req.method === 'POST') {
         /**
          * Body yang bukan JSON dijawab 400, bukan 500.
