@@ -44,6 +44,15 @@ export function monitorUrl(env = process.env) {
   return typeof env.DEVWF_MONITOR_URL === "string" ? env.DEVWF_MONITOR_URL.trim() : "";
 }
 
+/**
+ * URL lokal monitor server yang bisa dibuka di browser dari mesin ini.
+ * Dibaca dari DEVWF_LOCAL_URL. Bila tidak dikonfigurasi, dikosongkan (tidak
+ * ditampilkan) agar tidak menyajikan URL yang salah.
+ */
+export function localMonitorUrl(env = process.env) {
+  return typeof env.DEVWF_LOCAL_URL === "string" ? env.DEVWF_LOCAL_URL.trim() : "";
+}
+
 export function machineName(env = process.env) {
   const explicit = typeof env.DEVWF_MACHINE === "string" ? env.DEVWF_MACHINE.trim() : "";
   if (explicit) return explicit;

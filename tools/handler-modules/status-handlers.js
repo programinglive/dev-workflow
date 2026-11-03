@@ -6,7 +6,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { STRANDED_TASK_FILENAME } from "../../workflow-state.js";
 import { renderPlanFull } from "./plan.js";
-import { fetchActiveSessions } from "../../monitor.js";
+import { fetchActiveSessions, monitorUrl, localMonitorUrl } from "../../monitor.js";
 
 /**
  * Bahan gerbang dokumentasi untuk pesan penolakan.
@@ -373,15 +373,26 @@ export async function handleListActiveSessions(args = {}, context = {}) {
     });
   }
 
+  const base = monitorUrl(env);
+  const local = localMonitorUrl(env);
+
   if (sessions.length === 0) {
+    const urlLine = base ? `\n🔗 Dashboard: ${base}` : "";
+    const localLine = local && local !== base ? `\n🖥️  Buka di browser: ${local}` : "";
     const hint = showAll ? "" : " (Gunakan 'all: true' untuk melihat seluruh sesi termasuk yang idle/berakhir)";
-    return textResponse(`📋 Tidak ada sesi aktif yang ditemukan di dashboard monitor.${hint}`);
+    return textResponse(`📋 Tidak ada sesi aktif yang ditemukan di dashboard monitor.${urlLine}${localLine}${hint}`);
   }
 
   const lines = [
     `📊 Sesi Monitor Dev Workflow (${sessions.length} sesi${showAll ? "" : " aktif"}):`,
-    "",
   ];
+  if (base) {
+    lines.push(`🔗 Dashboard: ${base}`);
+  }
+  if (local && local !== base) {
+    lines.push(`🖥️  Buka di browser: ${local}`);
+  }
+  lines.push("");
 
   for (let i = 0; i < sessions.length; i++) {
     const s = sessions[i];

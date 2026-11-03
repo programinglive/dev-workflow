@@ -83,7 +83,7 @@ finished.
 | `monitor.js` | Fire-and-forget reporting of the current session to the live dashboard; never blocks or throws |
 | `monitor-server/` | The dashboard process (`dashboard.cjs`), the public share process (`share-server.cjs`), their SQL builders, and their systemd units |
 | `web/` | The public marketing site: Next.js static export published to `devworkflow.programinglive.com` |
-| `mobile-app/` | The tablet client (Expo/React Native) that shows the same sessions on a wall screen |
+| `mobile-app/` | The tablet client (Expo/React Native) that shows the same sessions on a wall screen. Includes a **"Buka di Browser"** button (Info tab) and a tappable header URL that open the dashboard in the device browser via `Linking.openURL`. |
 | `security/` | Secret references, output scanning, and the audit |
 | `factory-*.js`, `db/` | Software Factory integration: claiming board tasks, pushing results |
 | `scripts/` | Release, build, verification, and server setup helpers |
@@ -167,7 +167,7 @@ See [MCP client configuration](#mcp-client-configuration).
 | `project_summary` | Aggregate activity for the project |
 | `project_summary_data` | Read the persisted `project-summary.json` |
 | `project_summary_db` | Read the per-user summary from SQLite |
-| `list_active_sessions` | List active workflow sessions across all machines from the central monitor (`DEVWF_MONITOR_URL`) |
+| `list_active_sessions` | List active workflow sessions across all machines from the central monitor (`DEVWF_MONITOR_URL`). Output includes a 🔗 clickable dashboard URL. |
 | `list_factory_tasks` | List your Factory task queue (requires config) |
 | `create_factory_task` | Record a new task with a required definition of done |
 | `update_factory_task` | Edit a task, including filling a missing definition of done |
@@ -662,6 +662,9 @@ DEV_WORKFLOW_DB_URL=postgresql://USER:[REDACTED]@HOST:5432/database
 | `FACTORY_PASSWORD` | - | Password for that account |
 | `FACTORY_PB_URL` | `https://pocketbase.programinglive.com` | Where the token is obtained |
 | `FACTORY_MACHINE_ID` | hostname | Device name shown on the Factory board |
+| `DEVWF_MONITOR_URL` | — | Central monitor server URL (e.g. Tailscale IP) for `list_active_sessions` |
+| `DEVWF_LOCAL_URL` | — | Local browser-accessible URL of the monitor (e.g. `http://localhost:3100`). When set and different from `DEVWF_MONITOR_URL`, `list_active_sessions` shows an extra **🖥️ Buka di browser** line so you can open the dashboard directly. |
+| `DEVWF_MONITOR_TOKEN` | — | Bearer token for write endpoints on the monitor server |
 | `FACTORY_DEVICE_ID` | derived from the name | Stable device UUID |
 
 ### Project-specific state
