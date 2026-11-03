@@ -60,12 +60,13 @@ test("kode halaman dashboard tidak memakai template literal di dalam template li
 });
 
 test("skrip halaman dashboard benar-benar bisa di-parse", () => {
-  // Tes sebelumnya menjaga interpolasi; tes ini menjaga SISANYA. Skrip yang
-  // rusak tidak terlihat dari Node - server tetap 200 dan halaman kosong -
-  // jadi satu-satunya cara mengetahuinya adalah mem-parse hasil akhirnya.
+  // Parse HTML SETELAH template literal dievaluasi seperti yang dilakukan
+  // server. Escape `\\n` menjadi newline pada output HTML dan bisa merusak JS
+  // walau sumber dashboard.cjs sendiri lolos parse Node.
   const mulai = src.indexOf("const PAGE = `");
   const akhir = src.indexOf("</html>`", mulai);
-  const halaman = src.slice(mulai + "const PAGE = `".length, akhir).replace(/\$\{POLL_MS\}/g, "3000");
+  const template = src.slice(mulai + "const PAGE = `".length, akhir);
+  const halaman = new Function("POLL_MS", `return \`${template}\`;`)(3000);
   const skrip = halaman.slice(halaman.indexOf("<script>") + 8, halaman.lastIndexOf("</script>"));
   assert.ok(skrip.length > 500, "skrip halaman tidak boleh kosong");
   assert.doesNotThrow(() => new Function(skrip), "skrip halaman harus valid JavaScript");

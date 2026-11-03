@@ -1085,7 +1085,7 @@ function migrateLegacyProjectState(legacyPath, targetPath, projectRoot) {
  * `PACKAGE_ROOT` (lihat exec.js) atau direktori berkas ini sendiri, dan bila
  * tidak ditemukan laporan cukup dilewati.
  */
-async function reportToMonitorSafe({ state, stateFile, createdAt }) {
+export async function reportToMonitorSafe({ state, stateFile, createdAt }) {
   try {
     // In-flight guard: `startup-resilience.test.js` menuntut MCP hidup di bawah
     // 2 detik. Laporan yang ditunggu menambah latensi jaringan ke jalur boot.
