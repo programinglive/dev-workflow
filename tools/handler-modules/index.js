@@ -10,7 +10,7 @@ import { handleStartTask, handleMarkBugFixed, handleCreateTests, handleSkipTests
 import { handleSkipRelease, handlePerformRelease } from "./release-handlers.js";
 import { handleCommitAndPush, handleCompleteTask, handleForceCompleteTask, handleDropTask } from "./commit-handlers.js";
 import { handleProjectSummary, handleProjectSummaryData, handleProjectSummaryDb, handleViewHistory } from "./summary-handlers.js";
-import { handleGetWorkflowStatus, handleReadyCheck, handleContinueWorkflow, handleRerunWorkflow } from "./status-handlers.js";
+import { handleGetWorkflowStatus, handleReadyCheck, handleContinueWorkflow, handleRerunWorkflow, handleListActiveSessions } from "./status-handlers.js";
 import { handleSetDefinitionOfDone, handleMarkDodItem, handleWaiveDodItem } from "./dod-handlers.js";
 import { handleNextSteps } from "./next-steps-handlers.js";
 import { handleResumeSession } from "./resume-handlers.js";
@@ -405,6 +405,8 @@ async function dispatchToolCall({
         return handleProjectSummaryData(workflowState);
       case "project_summary_db":
         return handleProjectSummaryDb(workflowState);
+      case "list_active_sessions":
+        return await handleListActiveSessions(args, { workflowState });
       case "continue_workflow":
         return handleContinueWorkflow(workflowState, { workflowState, exec, git, utils });
       case "rerun_workflow":

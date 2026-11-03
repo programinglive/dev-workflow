@@ -186,6 +186,68 @@ export async function reportEventSafe(state, kind, detail = "") {
   }
 }
 
+/**
+ * Ambil daftar sesi aktif dari monitor server.
+ * Tidak pernah melempar: kegagalan jaringan dikembalikan sebagai { ok: false, error: ... }.
+ */
+export async function fetchActiveSessions({
+  env = process.env,
+  limit = 20,
+  fetchImpl = fetch,
+  timeoutMs = 3000,
+} = {}) {
+  const base = monitorUrl(env);
+  if (!base) {
+    return {
+      ok: false,
+      error: "DEVWF_MONITOR_URL tidak dikonfigurasi.",
+      sessions: [],
+    };
+  }
+
+  const controller = typeof AbortController === "function" ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+
+  const headers = { "content-type": "application/json" };
+  const token = monitorToken(env);
+  if (token) headers.authorization = `Bearer ${token}`;
+
+  try {
+    const lim = Math.max(1, Math.min(100, Number(limit) || 20));
+    const url = `${base.replace(/\/+$/, "")}/api/sessions?limit=${lim}`;
+    const response = await fetchImpl(url, {
+      method: "GET",
+      headers,
+      signal: controller ? controller.signal : undefined,
+    });
+    if (!response || !response.ok) {
+      return {
+        ok: false,
+        error: `HTTP ${response ? response.status : "no response"} dari monitor server`,
+        sessions: [],
+      };
+    }
+    const data = await response.json();
+    return {
+      ok: true,
+      sessions: Array.isArray(data.sessions) ? data.sessions : [],
+      health: data.health || null,
+      machines: Array.isArray(data.machines) ? data.machines : [],
+      summary: Array.isArray(data.summary) ? data.summary : [],
+      raw: data,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      error: String(err && err.message ? err.message : err),
+      sessions: [],
+    };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+
 
 
 

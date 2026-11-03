@@ -659,6 +659,28 @@ export function getToolList() {
       },
     },
     {
+      name: "list_active_sessions",
+      description:
+        "List active workflow sessions across all machines from the central dev-workflow monitor dashboard (DEVWF_MONITOR_URL). Shows machine, project, task, current phase, DoD progress, and plan progress.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          limit: {
+            type: "number",
+            description: "Maximum number of sessions to return (1-100, default: 20).",
+          },
+          all: {
+            type: "boolean",
+            description: "When true, include idle and ended sessions. Defaults to false (active sessions only).",
+          },
+          machine: {
+            type: "string",
+            description: "Optional filter by machine name (case-insensitive substring, e.g. 'HELLOWORLD', 'Mac').",
+          },
+        },
+      },
+    },
+    {
       name: "list_factory_tasks",
       description:
         "List tasks from the Factory board (factory.programinglive.com), newest activity first. Defaults to work that still needs attention: running, queued, backlog, review and blocked. Requires FACTORY_URL plus FACTORY_TOKEN, or FACTORY_EMAIL and FACTORY_PASSWORD.",
