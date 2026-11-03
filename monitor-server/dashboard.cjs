@@ -141,7 +141,7 @@ const PAGE = `<!doctype html>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
   body { margin:0; font:15px/1.45 -apple-system,Segoe UI,Roboto,sans-serif;
-         background:#0b0f14; color:#e6edf3; padding:16px; }
+         background:#0b0f14; color:#e6edf3; padding:16px 16px 76px; }
   h1 { font-size:18px; margin:0 0 4px; }
   .sub { color:#7d8590; font-size:12px; margin-bottom:16px; }
   .card { border:1px solid #21262d; border-radius:10px; padding:14px; margin-bottom:12px;
@@ -149,6 +149,8 @@ const PAGE = `<!doctype html>
   .card.live { border-color:#2f81f7; box-shadow:0 0 0 1px #2f81f755; }
   .card.stuck { border-color:#d2992255; box-shadow:0 0 0 1px #d2992233; }
   .card.ended { opacity:.62; }
+  .clickable-card { cursor:pointer; transition:border-color .15s, background-color .15s; }
+  .clickable-card:hover { border-color:#58a6ff88; background:#131a24; }
   .phase.stuck { background:#d2992222; color:#e3b341; border-color:#d2992255; }
   .phase.ended { background:#6e768122; color:#8b949e; border-color:#6e768155; }
   .row { display:flex; gap:8px; align-items:baseline; flex-wrap:wrap; }
@@ -179,22 +181,158 @@ const PAGE = `<!doctype html>
   .salin { width:100%; background:#0b0f14; color:#e6edf3; border:1px solid #2f81f7;
            border-radius:8px; padding:7px 9px; font:12px/1.4 ui-monospace,monospace;
            margin-top:8px; }
+  .detail-hint { margin-top:8px; font-size:11px; color:#58a6ff; text-align:right; }
+
+  /* Tab Navigation */
+  .tabbar {
+    position: fixed; bottom: 0; left: 0; right: 0; height: 56px;
+    background: #0d1117; border-top: 1px solid #21262d;
+    display: flex; z-index: 100;
+  }
+  .tab-btn {
+    flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    background: transparent; border: none; color: #7d8590; font-size: 11px;
+    cursor: pointer; padding: 6px 0; font-family: inherit; transition: color .15s;
+  }
+  .tab-btn:hover { color: #c9d1d9; }
+  .tab-btn.active { color: #58a6ff; font-weight: 600; }
+  .tab-icon { font-size: 18px; line-height: 1.2; margin-bottom: 2px; }
+  .tab-pane { display: none; }
+  .tab-pane.active { display: block; }
+
+  /* Filter chips */
+  .filter-row { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+  .filter-chip {
+    background: #161b22; border: 1px solid #30363d; border-radius: 999px;
+    color: #7d8590; padding: 4px 12px; font-size: 12px; cursor: pointer; font-family: inherit;
+  }
+  .filter-chip.active { background: #1f6feb22; color: #58a6ff; border-color: #1f6feb; font-weight: 600; }
+
+  /* Modal Detail */
+  .modal {
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    z-index: 200; display: flex; align-items: center; justify-content: center; padding: 16px;
+  }
+  .modal-backdrop {
+    position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0, 0, 0, 0.75);
+  }
+  .modal-box {
+    position: relative; z-index: 1; background: #0f151c; border: 1px solid #30363d;
+    border-radius: 12px; max-width: 600px; width: 100%; max-height: 85vh;
+    display: flex; flex-direction: column; box-shadow: 0 12px 36px rgba(0,0,0,0.6);
+  }
+  .modal-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 14px 16px; border-bottom: 1px solid #21262d;
+  }
+  .modal-close {
+    background: transparent; border: none; color: #7d8590; font-size: 20px;
+    cursor: pointer; padding: 2px 8px; line-height: 1;
+  }
+  .modal-close:hover { color: #e6edf3; }
+  .modal-body { padding: 16px; overflow-y: auto; }
+  .modal-footer {
+    padding: 12px 16px; border-top: 1px solid #21262d;
+    display: flex; gap: 8px; justify-content: flex-end; align-items: center;
+  }
+  .modal-task { font-size: 16px; font-weight: 700; color: #e6edf3; margin-bottom: 4px; }
+  .modal-session-title { color: #79c0ff; font-size: 13px; margin-bottom: 4px; }
+  .modal-project { color: #2f81f7; font-weight: 600; font-size: 14px; margin-bottom: 4px; }
+  .modal-sec-title { font-weight: 600; font-size: 13px; color: #d2a8ff; margin: 14px 0 6px; }
+  .timer-badge { display: inline-block; background: #1f6feb22; color: #79c0ff; padding: 2px 8px; border-radius: 6px; font-size: 12px; margin-top: 6px; }
 </style></head><body>
 <h1>Dev Workflow Monitor</h1>
 <div class="sub" id="sub">menyambung…</div>
-<div id="warn"></div>
-<div id="alerts"></div>
-<div id="list"><div class="empty">memuat…</div></div>
-<h1 style="font-size:14px;margin-top:24px" id="summaryTitle">Waktu per proyek</h1>
-<div id="summary" class="events"></div>
-<h1 style="font-size:14px;margin-top:24px">Mesin terhubung</h1>
-<div id="machines" class="events"></div>
-<h1 style="font-size:14px;margin-top:24px">Selesai (7 hari)</h1>
-<div id="history" class="events"></div>
-<h1 style="font-size:14px;margin-top:24px">Aktivitas terakhir</h1>
-<div id="events" class="events"></div>
-<h1 style="font-size:14px;margin-top:24px">Tautan berbagi yang hidup</h1>
-<div id="tautan" class="events">memuat...</div>
+
+<!-- TAB 1: AKTIF -->
+<div id="tab-aktif" class="tab-pane active">
+  <div id="warn"></div>
+  <div id="alerts"></div>
+  <div id="list"><div class="empty">memuat…</div></div>
+  <h1 style="font-size:14px;margin-top:24px">Aktivitas terakhir</h1>
+  <div id="events" class="events"></div>
+</div>
+
+<!-- TAB 2: RIWAYAT -->
+<div id="tab-riwayat" class="tab-pane">
+  <h1 style="font-size:14px;margin-bottom:12px">Selesai (7 hari)</h1>
+  <div class="filter-row" id="history-filters">
+    <button class="filter-chip active" data-filter="semua">Semua</button>
+    <button class="filter-chip" data-filter="selesai">Selesai</button>
+    <button class="filter-chip" data-filter="live">Live</button>
+    <button class="filter-chip" data-filter="stuck">Macet</button>
+  </div>
+  <div id="history" class="events"></div>
+</div>
+
+<!-- TAB 3: REKAP -->
+<div id="tab-rekap" class="tab-pane">
+  <h1 style="font-size:14px;margin-bottom:12px" id="summaryTitle">Waktu per proyek</h1>
+  <div id="summary" class="events"></div>
+</div>
+
+<!-- TAB 4: MESIN -->
+<div id="tab-mesin" class="tab-pane">
+  <h1 style="font-size:14px;margin-bottom:12px">Mesin terhubung</h1>
+  <div id="machines" class="events"></div>
+</div>
+
+<!-- TAB 5: INFO -->
+<div id="tab-info" class="tab-pane">
+  <div class="card">
+    <div style="font-weight:600;margin-bottom:6px">Tentang</div>
+    <div class="meta" style="line-height:1.6">
+      Dashboard sesi dev-workflow dari semua mesin.<br>
+      Membaca tanpa login; penulisan wajib token.<br>
+      Data tidak pernah dihapus otomatis.
+    </div>
+  </div>
+  <div class="card">
+    <div style="font-weight:600;margin-bottom:6px">Server</div>
+    <div class="meta" id="serverInfo" style="line-height:1.6">
+      Diperbarui otomatis tiap beberapa detik
+    </div>
+  </div>
+  <h1 style="font-size:14px;margin-top:24px">Tautan berbagi yang hidup</h1>
+  <div id="tautan" class="events">memuat...</div>
+</div>
+
+<!-- BOTTOM NAVIGATION BAR -->
+<nav class="tabbar">
+  <button class="tab-btn active" data-tab="aktif"><span class="tab-icon">▦</span><span class="tab-lbl">Aktif</span></button>
+  <button class="tab-btn" data-tab="riwayat"><span class="tab-icon">☰</span><span class="tab-lbl">Riwayat</span></button>
+  <button class="tab-btn" data-tab="rekap"><span class="tab-icon">Σ</span><span class="tab-lbl">Rekap</span></button>
+  <button class="tab-btn" data-tab="mesin"><span class="tab-icon">▣</span><span class="tab-lbl">Mesin</span></button>
+  <button class="tab-btn" data-tab="info"><span class="tab-icon">ⓘ</span><span class="tab-lbl">Info</span></button>
+</nav>
+
+<!-- MODAL DETAIL SESI -->
+<div id="modal-detail" class="modal" style="display:none">
+  <div class="modal-backdrop"></div>
+  <div class="modal-box">
+    <div class="modal-header">
+      <div class="row" id="modal-chips"></div>
+      <button class="modal-close" id="modal-close-btn">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-task" id="modal-task"></div>
+      <div class="modal-session-title" id="modal-session-title"></div>
+      <div class="modal-project" id="modal-project"></div>
+      <div class="meta" id="modal-meta"></div>
+      <div class="meta" id="modal-path" style="word-break:break-all;margin-top:4px"></div>
+      <div id="modal-timer"></div>
+      <div id="modal-plan"></div>
+      <div id="modal-dod"></div>
+      <div id="modal-tech" class="events" style="margin-top:16px"></div>
+    </div>
+    <div class="modal-footer">
+      <div id="modal-share-slot" style="flex:1"></div>
+      <button class="btn" id="modal-tutup-btn">Tutup</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 function ago(iso, nowMs) {
@@ -206,35 +344,141 @@ function ago(iso, nowMs) {
   if (d < 86400) return Math.round(d/3600) + 'j lalu';
   return Math.round(d/86400) + 'h lalu';
 }
+function durasi(isoMulai, msSekarang) {
+  if (!isoMulai) return '';
+  const d = ((msSekarang || Date.now()) - new Date(isoMulai).getTime()) / 1000;
+  if (!isFinite(d) || d < 0) return '';
+  const m = Math.floor(d / 60);
+  const j = Math.floor(m / 60);
+  const sisaM = m % 60;
+  if (j > 0) return j + 'j ' + (sisaM < 10 ? '0' : '') + sisaM + 'm';
+  return m + 'm';
+}
+
+let lastData = null;
+let currentTab = 'aktif';
+let currentFilter = 'semua';
+let activeDetailKey = null;
+
+function pilihTab(tabId) {
+  currentTab = tabId;
+  document.querySelectorAll('.tab-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.tab === tabId);
+  });
+  document.querySelectorAll('.tab-pane').forEach(p => {
+    p.classList.toggle('active', p.id === 'tab-' + tabId);
+  });
+}
+
+function pilihFilter(filterId) {
+  currentFilter = filterId;
+  document.querySelectorAll('.filter-chip').forEach(c => {
+    c.classList.toggle('active', c.dataset.filter === filterId);
+  });
+  if (lastData) renderHistory(lastData);
+}
+
+function bukaDetail(sessionKey) {
+  if (!lastData) return;
+  const s = (lastData.sessions || []).find(x => x.session_key === sessionKey) ||
+            (lastData.history || []).find(x => x.session_key === sessionKey);
+  if (!s) return;
+  activeDetailKey = sessionKey;
+
+  const jNow = lastData.now ? new Date(lastData.now).getTime() : Date.now();
+  const st = s.state || (s.phase === 'idle' ? 'idle' : 'live');
+  const chipCls = st === 'possibly_stuck' ? 'phase stuck' : (st === 'ended' ? 'phase ended' : 'phase');
+  const chipText = st === 'idle' ? esc(s.phase) : esc(s.state_label || st);
+  const agentText = esc(String(s.agent_tool || 'unknown').toUpperCase());
+
+  document.getElementById('modal-chips').innerHTML =
+    '<span class="' + chipCls + '">' + chipText + '</span>' +
+    '<span class="phase" style="background:#a371f71a;color:#d2a8ff;border-color:#a371f755">' + agentText + '</span>';
+
+  document.getElementById('modal-task').textContent = s.task || '(tanpa task)';
+  document.getElementById('modal-session-title').textContent = s.session_title ? '💬 ' + s.session_title : '';
+  document.getElementById('modal-project').textContent = s.project_name || '';
+  document.getElementById('modal-meta').textContent =
+    esc(s.machine) + (s.task_type ? ' · ' + s.task_type : '') + ' · ' + ago(s.updated_at, jNow);
+  document.getElementById('modal-path').textContent = s.project_path || '';
+
+  const t = durasi(s.started_at, jNow);
+  const timerEl = document.getElementById('modal-timer');
+  if (t) {
+    timerEl.innerHTML = '<span class="timer-badge">⏱ berjalan ' + esc(t) + '</span>';
+  } else {
+    timerEl.innerHTML = '';
+  }
+
+  // Plan
+  const planEl = document.getElementById('modal-plan');
+  const total = s.plan_total || 0, done = s.plan_done || 0;
+  const pct = total ? Math.round(done/total*100) : 0;
+  const rencana = Array.isArray(s.plan_json) ? s.plan_json : [];
+  if (total > 0 || rencana.length > 0) {
+    const planItems = rencana.map(p =>
+      '<li class="' + (p.status === 'done' ? 'done' : '') + '">' +
+      (p.status === 'done' ? '✓ ' : '• ') + esc(p.text) + '</li>').join('');
+    planEl.innerHTML =
+      '<div class="modal-sec-title">Rencana ' + done + '/' + total + ' (' + pct + '%)</div>' +
+      '<div class="bar"><i style="width:' + pct + '%"></i></div>' +
+      '<ul>' + planItems + '</ul>';
+  } else {
+    planEl.innerHTML = '<div class="modal-sec-title">Rencana</div><div class="meta">(belum ada rencana)</div>';
+  }
+
+  // DoD
+  const dodEl = document.getElementById('modal-dod');
+  const dodTotal = s.dod_total || 0, dodDone = s.dod_done || 0;
+  const dodWaived = s.dod_waived ? ' (' + s.dod_waived + ' dilewati)' : '';
+  dodEl.innerHTML =
+    '<div class="modal-sec-title">Definition of Done ' + dodDone + '/' + dodTotal + dodWaived + '</div>' +
+    (dodTotal === 0 ? '<div class="meta">(belum ada item DoD)</div>' : '');
+
+  // Tech details
+  document.getElementById('modal-tech').innerHTML =
+    '<div style="margin-top:10px;padding-top:10px;border-top:1px solid #21262d">' +
+    '<div><b>kunci:</b> ' + esc(s.session_key) + '</div>' +
+    '<div><b>fase:</b> ' + esc(s.phase || 'idle') + '</div>' +
+    '<div><b>status:</b> ' + esc(s.state_label || s.state || '-') + '</div>' +
+    '<div><b>alat:</b> ' + agentText + '</div>' +
+    '<div><b>terakhir melapor:</b> ' + ago(s.updated_at, jNow) + '</div>' +
+    '</div>';
+
+  // Share slot
+  const tautan = (lastData.shares || []).find(x => x.sessionKey === s.session_key);
+  const shareSlot = document.getElementById('modal-share-slot');
+  if (tautan) {
+    shareSlot.innerHTML =
+      '<div class="btnrow"><button class="btn" data-copy="' + esc(tautan.url) + '">Salin tautan</button>' +
+      '<button class="btn danger" data-revoke="' + esc(tautan.token) + '">Cabut</button></div>';
+  } else {
+    shareSlot.innerHTML = '<button class="btn" data-share="' + esc(s.session_key) + '">Bagikan</button>';
+  }
+
+  document.getElementById('modal-detail').style.display = 'flex';
+}
+
+function tutupModal() {
+  document.getElementById('modal-detail').style.display = 'none';
+  activeDetailKey = null;
+}
 
 /**
  * Salin teks dengan empat lapis percobaan.
- *
- * MENGAPA EMPAT, BUKAN SATU
- * -------------------------
- * Dashboard ini dibuka lewat http://100.107.65.21:3100 - BUKAN secure
- * context. Di sana navigator.share tidak ada sama sekali, dan
- * navigator.clipboard.writeText ada tetapi DITOLAK. Tombol Bagikan yang
- * hanya memakai keduanya akan tampak berfungsi lalu gagal tanpa pesan.
- * Urutan di bawah menuruni lapisan sampai ada yang berhasil; bila semuanya
- * gagal, pemanggil menampilkan kotak teks tersorot.
- *
- * @returns {Promise<'share'|'clipboard'|'exec'|'manual'>}
  */
 async function salinTeks(teks) {
   if (navigator.share) {
     try {
       await navigator.share({ url: teks, title: 'Status pekerjaan' });
       return 'share';
-    } catch (e) {
-      // Sheet ditutup pengguna, atau API ada tetapi menolak. Turun lapisan.
-    }
+    } catch (e) {}
   }
   if (navigator.clipboard && navigator.clipboard.writeText) {
     try {
       await navigator.clipboard.writeText(teks);
       return 'clipboard';
-    } catch (e) { /* bukan secure context, atau izin ditolak */ }
+    } catch (e) {}
   }
   try {
     var ta = document.createElement('textarea');
@@ -247,11 +491,10 @@ async function salinTeks(teks) {
     var ok = document.execCommand('copy');
     document.body.removeChild(ta);
     if (ok) return 'exec';
-  } catch (e) { /* execCommand dihapus di sebagian browser */ }
+  } catch (e) {}
   return 'manual';
 }
 
-/** Kotak teks tersorot untuk disalin tangan - jalan terakhir, bukan gagal diam. */
 function kotakSalinManual(url) {
   var id = 'salin-' + Math.random().toString(36).slice(2);
   setTimeout(function () {
@@ -259,7 +502,8 @@ function kotakSalinManual(url) {
     if (el) { el.focus(); el.select(); }
   }, 0);
   return '<textarea class="salin" id="' + id + '" readonly>' + esc(url) + '</textarea>';
-}/** Panggil /api/share. Header penanda wajib; server menolak tanpa itu. */
+}
+
 async function mintaTautan(sessionKey) {
   var r = await fetch('/api/share', {
     method: 'POST',
@@ -281,14 +525,8 @@ async function cabutTautan(token) {
   return body;
 }
 
-/**
- * Pesan sementara di dalam kartu, bukan alert().
- *
- * alert() memblokir seluruh halaman - termasuk polling 3 detik yang membuat
- * layar tablet tetap hidup dan jam "x lalu" tetap benar.
- */
 function pesanKartu(tombol, teks) {
-  var kartu = tombol.closest('.card');
+  var kartu = tombol.closest('.card, .modal-box');
   if (!kartu) return null;
   var lama = kartu.querySelector('.pesan-share');
   if (lama) lama.remove();
@@ -309,11 +547,7 @@ async function tombolBagikan(sessionKey, tombol) {
     var cara = await salinTeks(hasil.url);
     if (cara === 'manual') {
       pesanKartu(tombol, 'Tautan siap - salin manual:');
-      // Kotak ditaruh di KARTU, bukan setelah tombol: .btnrow adalah flex row,
-      // jadi textarea di dalamnya ikut aturan flex dan tampak janggal. Dan
-      // hapus yang lama lebih dulu supaya klik ganda sebelum repaint tidak
-      // menumpuk dua kotak.
-      var kartu = tombol.closest('.card');
+      var kartu = tombol.closest('.card, .modal-box');
       if (kartu) {
         var lama = kartu.querySelector('textarea.salin');
         if (lama) lama.remove();
@@ -353,14 +587,45 @@ async function tombolCabut(token, tombol) {
     tick();
   }
 }
+
+function renderHistory(data) {
+  const jNow = data.now ? new Date(data.now).getTime() : Date.now();
+  let list = data.history || [];
+  if (currentFilter === 'selesai') {
+    list = list.filter(h => h.phase === 'idle' || h.state === 'ended');
+  } else if (currentFilter === 'live') {
+    list = list.filter(h => h.state === 'live');
+  } else if (currentFilter === 'stuck') {
+    list = list.filter(h => h.state === 'possibly_stuck');
+  }
+
+  const el = document.getElementById('history');
+  if (!list.length) {
+    el.innerHTML = '<div class="empty">tidak ada sesi dalam filter ini</div>';
+    return;
+  }
+
+  el.innerHTML = list.map(h => {
+    return '<div class="card clickable-card" data-session-key="' + esc(h.session_key) + '">' +
+      '<div class="row">' +
+      '<span class="phase" style="background:#a371f71a;color:#d2a8ff;border-color:#a371f755">' +
+      esc(String(h.agent_tool || 'unknown').toUpperCase()) + '</span>' +
+      '<span class="task">' + esc(h.task || h.session_title || '(tanpa task)') + '</span></div>' +
+      '<div class="meta" style="margin-top:4px">' + esc(h.machine) +
+      (h.project_name ? ' · ' + esc(h.project_name) : '') +
+      (h.duration_label ? ' · ⏱ ' + esc(h.duration_label) : ' · durasi tidak tercatat') +
+      ' · ' + ago(h.updated_at, jNow) + '</div>' +
+      '<div class="detail-hint">ketuk untuk detail ›</div>' +
+      '</div>';
+  }).join('');
+}
+
 function render(data) {
-  // Jam SERVER: label umur tidak boleh bergantung pada jam perangkat.
+  lastData = data;
   const jNow = data.now ? new Date(data.now).getTime() : Date.now();
   document.getElementById('sub').textContent =
     data.sessions.length + ' sesi · ' + new Date(jNow).toLocaleTimeString('id-ID');
-  // Penanda "data masih hidup". Tanpa ini, monitor yang mati tampak persis
-  // seperti monitor yang memang tidak ada pekerjaan - dan pemiliknya tidak
-  // punya cara membedakannya.
+
   const h = data.health || {};
   const warn = document.getElementById('warn');
   if (h.stale) {
@@ -373,11 +638,7 @@ function render(data) {
   } else {
     warn.innerHTML = '';
   }
-  // Peringatan: bagian yang berbicara lebih dulu, bukan menunggu dilihat.
-  //
-  // Dihitung server dari baris yang SAMA dengan yang tampil, jadi angkanya
-  // tidak bisa berbeda dengan isi layar. Kalau kosong, tidak ada yang
-  // ditampilkan - peringatan yang selalu ada akan diabaikan.
+
   const al = data.alerts || [];
   const alBox = document.getElementById('alerts');
   if (al.length) {
@@ -391,7 +652,7 @@ function render(data) {
   } else {
     alBox.innerHTML = '';
   }
-  const live = data.sessions.filter(s => s.state === 'live').length;
+
   const list = document.getElementById('list');
   if (!data.sessions.length) {
     list.innerHTML = '<div class="empty">belum ada sesi melapor</div>';
@@ -399,11 +660,10 @@ function render(data) {
     list.innerHTML = data.sessions.map(s => {
       const total = s.plan_total || 0, done = s.plan_done || 0;
       const pct = total ? Math.round(done/total*100) : 0;
-      const plan = (s.plan_json || []).map(p =>
+      const rencana = Array.isArray(s.plan_json) ? s.plan_json : [];
+      const plan = rencana.slice(0, 2).map(p =>
         '<li class="' + (p.status === 'done' ? 'done' : '') + '">' +
         (p.status === 'done' ? '✓ ' : '• ') + esc(p.text) + '</li>').join('');
-      // Kelas kartu mengikuti STATUS, bukan phase: task yang selesai tanpa
-      // menutup state-nya tidak boleh terus tampil sebagai pekerjaan hidup.
       const st = s.state || (s.phase === 'idle' ? 'idle' : 'live');
       const cardCls = st === 'live' ? 'live' : (st === 'possibly_stuck' ? 'stuck' : (st === 'ended' ? 'ended' : ''));
       const chipCls = st === 'possibly_stuck' ? 'phase stuck' : (st === 'ended' ? 'phase ended' : 'phase');
@@ -413,24 +673,22 @@ function render(data) {
         : (st === 'ended'
           ? '<div class="meta">berakhir ' + ago(s.updated_at, jNow) + ' — kemungkinan sudah selesai tanpa penutupan</div>'
           : '');
-      /**
-       * Tombol share per kartu.
-       *
-       * Diputuskan dari data SERVER (data.shares), bukan dari state lokal:
-       * dua perangkat yang membuka dashboard yang sama harus melihat hal yang
-       * sama, dan setelah menekan Share kartu digambar ulang dari tick().
-       */
-      const tautan = (data.shares || []).find(function (x) { return x.sessionKey === s.session_key; });
+
+      const tautan = (data.shares || []).find(x => x.sessionKey === s.session_key);
       const tombolShare = tautan
         ? '<div class="btnrow"><button class="btn" data-copy="' + esc(tautan.url) + '">Salin tautan</button>' +
           '<button class="btn danger" data-revoke="' + esc(tautan.token) + '">Cabut</button>' +
           '<span class="meta">dibuka ' + (tautan.views || 0) + '×</span></div>'
         : '<div class="btnrow"><button class="btn" data-share="' + esc(s.session_key) + '">Bagikan</button></div>';
-      return '<div class="card ' + cardCls + '">' +
+
+      const sisaPlan = Math.max(0, rencana.length - 2);
+
+      return '<div class="card clickable-card ' + cardCls + '" data-session-key="' + esc(s.session_key) + '">' +
         '<div class="row"><span class="' + chipCls + '">' + chipText + '</span>' +
         '<span class="phase" style="background:#a371f71a;color:#d2a8ff;border-color:#a371f755">' +
         esc(String(s.agent_tool || 'unknown').toUpperCase()) + '</span>' +
         '<span class="task">' + esc(s.task || '(tanpa task)') + '</span></div>' +
+        (s.session_title ? '<div class="meta" style="color:#79c0ff;margin-top:2px">💬 ' + esc(s.session_title) + '</div>' : '') +
         note +
         '<div class="meta">' + esc(s.machine) + ' · ' + esc(s.project_name) +
         ' · ' + esc(s.task_type) + ' · ' + ago(s.updated_at, jNow) + '</div>' +
@@ -438,34 +696,55 @@ function render(data) {
           '<div class="meta">rencana ' + done + '/' + total + ' · DoD ' + s.dod_done + '/' + s.dod_total +
           (s.dod_waived ? ' (' + s.dod_waived + ' dilewati)' : '') + '</div>' : '') +
         (plan ? '<ul>' + plan + '</ul>' : '') +
+        (sisaPlan > 0 ? '<div class="meta" style="margin-top:4px;color:#7d8590">+' + sisaPlan + ' langkah lagi</div>' : '') +
+        '<div class="detail-hint">ketuk untuk detail ›</div>' +
         tombolShare +
         '</div>';
     }).join('');
   }
+
+  // Riwayat
+  renderHistory(data);
+
+  // Rekap
   document.getElementById('summaryTitle').textContent =
     'Waktu per proyek · ' + (data.summary_days || 7) + ' hari (hanya yang sudah selesai)';
   document.getElementById('summary').innerHTML = (data.summary || []).map(r =>
-    '<div><b style="color:#79c0ff">' + esc(r.total_label || '-') + '</b> ' + esc(r.project) +
-    '<span class="meta"> · ' + r.sessions + ' sesi selesai · terakhir ' + ago(r.last_at, jNow) + '</span></div>'
-  ).join('') || '<div>—</div>';
+    '<div class="card"><div class="row"><b style="color:#79c0ff;font-size:15px">' + esc(r.project) + '</b>' +
+    '<span style="margin-left:auto;font-weight:700;color:#3fb950">' + esc(r.total_label || '-') + '</span></div>' +
+    '<div class="meta" style="margin-top:4px">' + r.sessions + ' sesi selesai · terakhir ' + ago(r.last_at, jNow) + '</div></div>'
+  ).join('') || '<div class="empty">belum ada sesi selesai</div>';
+
+  // Mesin
   document.getElementById('machines').innerHTML = (data.machines || []).map(m =>
-    '<div><b style="color:' + (m.stale ? '#d29922' : '#3fb950') + '">' + (m.stale ? '⚠' : '●') + '</b> ' +
-    esc(m.machine) + '<span class="meta"> · terakhir melapor ' + ago(m.last_seen, jNow) +
+    '<div class="card"><div class="row"><b style="color:' + (m.stale ? '#d29922' : '#3fb950') + '">' + (m.stale ? '⚠ ' : '● ') + '</b> ' +
+    '<b>' + esc(m.machine) + '</b><span class="meta" style="margin-left:auto">terakhir melapor ' + ago(m.last_seen, jNow) + '</span></div>' +
+    '<div class="meta" style="margin-top:4px">' + m.sessions + ' sesi · fase terakhir ' + esc(m.last_phase || '-') +
     (m.last_project ? ' · ' + esc(m.last_project) : '') +
-    (m.stale ? ' · sudah lama tidak melapor' : '') + '</span></div>'
-  ).join('') || '<div>—</div>';
-  document.getElementById('history').innerHTML = (data.history || []).map(h =>
-    '<div><b style="color:#c9d1d9">' + esc(h.task || h.session_title || h.project_name || '(tanpa nama)') + '</b>' +
-    '<span class="meta"> · ' + esc(String(h.agent_tool || '').toUpperCase()) + ' · ' + esc(h.machine) +
-    (h.project_name ? ' · ' + esc(h.project_name) : '') +
-    (h.duration_label ? ' · ⏱ ' + esc(h.duration_label) : ' · durasi tidak tercatat') +
-    ' · ' + ago(h.updated_at, jNow) + '</span></div>'
-  ).join('') || '<div>—</div>';
+    (m.stale ? ' · sudah lama tidak melapor' : '') + '</div></div>'
+  ).join('') || '<div class="empty">belum ada mesin terhubung</div>';
+
+  // Events
   document.getElementById('events').innerHTML = (data.events || []).map(e =>
-    '<div><b>' + esc(e.kind) + '</b> ' + esc(e.detail) +
+    '<div style="padding:4px 0"><b>' + esc(e.kind) + '</b> ' + esc(e.detail) +
     '<span class="meta"> · ' + esc(e.project_name) + ' · ' + ago(e.at, jNow) + '</span></div>').join('')
     || '<div>—</div>';
+
+  // Info
+  const serverEl = document.getElementById('serverInfo');
+  if (serverEl) {
+    serverEl.innerHTML =
+      '<b>URL:</b> ' + esc(window.location.origin) + '<br>' +
+      '<b>Status:</b> ' + data.sessions.length + ' sesi aktif · ' + (data.history || []).length + ' riwayat · ' + (data.machines || []).length + ' mesin<br>' +
+      '<b>Pembaruan:</b> tiap ' + Math.round(POLL_MS / 1000) + ' detik';
+  }
+
+  // Update modal jika sedang terbuka
+  if (activeDetailKey) {
+    bukaDetail(activeDetailKey);
+  }
 }
+
 async function tick() {
   try {
     const r = await fetch('/api/sessions', { cache: 'no-store' });
@@ -474,15 +753,7 @@ async function tick() {
     document.getElementById('sub').textContent = 'terputus: ' + e.message;
   }
 }
-/**
- * Panel "Tautan berbagi": SEMUA tautan hidup, termasuk yang sesinya sudah
- * hilang dari daftar kartu.
- *
- * MENGAPA PANEL INI ADA: tautan hidup sampai dicabut, sementara kartu sesi
- * hilang setelah 30 menit idle. Tanpa panel ini, tautan yang sudah tersebar
- * ke WhatsApp tidak punya jalan mencabutnya - celah yang justru berbahaya
- * karena tidak terlihat.
- */
+
 async function muatTautan() {
   var box = document.getElementById('tautan');
   try {
@@ -491,7 +762,7 @@ async function muatTautan() {
     if (!r.ok) throw new Error(data.error || ('server menjawab ' + r.status));
     var daftar = data.shares || [];
     if (!daftar.length) {
-      box.innerHTML = '<div>tidak ada tautan yang hidup</div>';
+      box.innerHTML = '<div class="empty">tidak ada tautan yang hidup</div>';
       return;
     }
     var yatim = data.orphanCount || 0;
@@ -505,9 +776,9 @@ async function muatTautan() {
       var catatan = s.sessionGone
         ? '<span class="meta" style="color:#d29922">sesinya sudah tidak tampil</span>'
         : '<span class="meta">' + esc(s.phase || '') + '</span>';
-      return '<div style="margin:4px 0"><b style="color:#c9d1d9">' + esc(s.label) + '</b> ' +
+      return '<div class="card" style="margin:6px 0"><div class="row"><b style="color:#c9d1d9">' + esc(s.label) + '</b> ' +
         catatan +
-        '<span class="meta"> · dibuka ' + (s.views || 0) + 'x · ' + ago(s.createdAt, Date.now()) + '</span>' +
+        '<span class="meta" style="margin-left:auto">dibuka ' + (s.views || 0) + 'x · ' + ago(s.createdAt, Date.now()) + '</span></div>' +
         '<div class="btnrow">' +
         '<button class="btn" data-copy="' + esc(s.url) + '">Salin</button>' +
         '<button class="btn danger" data-revoke="' + esc(s.token) + '">Cabut</button>' +
@@ -518,13 +789,6 @@ async function muatTautan() {
   }
 }
 
-/**
- * Cabut semua tautan yatim sekaligus.
- *
- * Tanpa konfirmasi karena aksinya sempit: hanya tautan yang baris sesinya
- * sudah tidak ada. Tautan yang masih punya sesi - termasuk yang baru hilang
- * dari layar karena idle - tidak tersentuh.
- */
 async function cabutYatim(tombol) {
   tombol.disabled = true;
   tombol.textContent = 'mencabut...';
@@ -543,21 +807,55 @@ async function cabutYatim(tombol) {
   }
 }
 
-/**
- * Satu listener untuk seluruh daftar kartu.
- *
- * Delegasi, bukan listener per tombol: kartu digambar ulang setiap 3 detik,
- * jadi listener yang dipasang saat render akan hilang bersama elemennya dan
- * tombolnya berhenti bekerja tanpa ada yang menyadarinya.
- */
+// Delegasi klik pada elemen
 document.getElementById('list').addEventListener('click', function (e) {
-  var t = e.target.closest('[data-share],[data-copy],[data-revoke]');
-  if (!t) return;
-  if (t.dataset.share) { void tombolBagikan(t.dataset.share, t); }
-  else if (t.dataset.copy) { void tombolSalin(t.dataset.copy, t); }
-  else if (t.dataset.revoke) { void tombolCabut(t.dataset.revoke, t); }
+  var btn = e.target.closest('[data-share],[data-copy],[data-revoke]');
+  if (btn) {
+    if (btn.dataset.share) { void tombolBagikan(btn.dataset.share, btn); }
+    else if (btn.dataset.copy) { void tombolSalin(btn.dataset.copy, btn); }
+    else if (btn.dataset.revoke) { void tombolCabut(btn.dataset.revoke, btn); }
+    return;
+  }
+  var card = e.target.closest('[data-session-key]');
+  if (card) {
+    bukaDetail(card.dataset.sessionKey);
+  }
 });
-// Panel tautan memakai listener yang sama; tombolnya hidup di luar #list.
+
+document.getElementById('history').addEventListener('click', function (e) {
+  var card = e.target.closest('[data-session-key]');
+  if (card) {
+    bukaDetail(card.dataset.sessionKey);
+  }
+});
+
+document.getElementById('history-filters').addEventListener('click', function (e) {
+  var fChip = e.target.closest('.filter-chip');
+  if (fChip && fChip.dataset.filter) {
+    pilihFilter(fChip.dataset.filter);
+  }
+});
+
+document.querySelector('.tabbar').addEventListener('click', function (e) {
+  var tabBtn = e.target.closest('.tab-btn');
+  if (tabBtn && tabBtn.dataset.tab) {
+    pilihTab(tabBtn.dataset.tab);
+  }
+});
+
+document.getElementById('modal-detail').addEventListener('click', function (e) {
+  var btn = e.target.closest('[data-share],[data-copy],[data-revoke]');
+  if (btn) {
+    if (btn.dataset.share) { void tombolBagikan(btn.dataset.share, btn); }
+    else if (btn.dataset.copy) { void tombolSalin(btn.dataset.copy, btn); }
+    else if (btn.dataset.revoke) { void tombolCabut(btn.dataset.revoke, btn); }
+    return;
+  }
+  if (e.target.matches('.modal-backdrop') || e.target.closest('.modal-close') || e.target.closest('#modal-tutup-btn')) {
+    tutupModal();
+  }
+});
+
 document.getElementById('tautan').addEventListener('click', function (e) {
   var t = e.target.closest('[data-copy],[data-revoke],[data-revoke-orphans]');
   if (!t) return;
@@ -565,14 +863,11 @@ document.getElementById('tautan').addEventListener('click', function (e) {
   else if (t.dataset.copy) { void tombolSalin(t.dataset.copy, t); }
   else if (t.dataset.revoke) { void tombolCabut(t.dataset.revoke, t); }
 });
-/**
- * Panel tautan disegarkan lebih jarang daripada kartu.
- *
- * Kartu perlu 3 detik karena menampilkan pekerjaan yang sedang berjalan;
- * daftar tautan berubah hanya saat seseorang menekan Bagikan atau Cabut.
- * Menyegarkannya tiap 3 detik berarti satu query tambahan setiap 3 detik
- * untuk data yang hampir tidak pernah berubah.
- */
+
+document.addEventListener('keydown', function (e) {
+  if (e.key === 'Escape') tutupModal();
+});
+
 tick(); muatTautan();
 setInterval(tick, ${POLL_MS});
 setInterval(muatTautan, 30000);

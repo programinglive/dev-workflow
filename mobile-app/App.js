@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   AppState,
+  Linking,
   Modal,
   Pressable,
   RefreshControl,
@@ -201,9 +202,11 @@ export default function App() {
     <View style={gaya.layar}>
       <View style={gaya.header}>
         <Text style={gaya.judul}>Dev Workflow Monitor</Text>
-        <Text style={gaya.sub}>
-          {sesi.length} sesi · {MONITOR_URL.replace(/^https?:\/\//, "")}
-        </Text>
+        <Pressable onPress={() => Linking.openURL(MONITOR_URL)}>
+          <Text style={[gaya.sub, { textDecorationLine: "underline" }]}>
+            {sesi.length} sesi · {MONITOR_URL.replace(/^https?:\/\//, "")}
+          </Text>
+        </Pressable>
       </View>
 
       {galat ? (
@@ -452,6 +455,12 @@ export default function App() {
                 <Text style={[gaya.kotakTeks, { marginTop: 6 }]}>
                   diperbarui tiap {Math.round(POLL_MS / 1000)} detik
                 </Text>
+                <Pressable
+                  onPress={() => Linking.openURL(MONITOR_URL)}
+                  style={gaya.tombolBrowser}
+                >
+                  <Text style={gaya.tombolBrowserTeks}>🌐 Buka di Browser</Text>
+                </Pressable>
               </View>
             </>
           )}
@@ -772,6 +781,15 @@ const gaya = StyleSheet.create({
   kotakGalat: { borderColor: "#f8514955", backgroundColor: "#f851491a" },
   kotakJudul: { color: WARNA.kuning, fontWeight: "700", fontSize: 15, marginBottom: 4 },
   kotakTeks: { color: WARNA.teks, fontSize: 14, lineHeight: 20 },
+  tombolBrowser: {
+    marginTop: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    backgroundColor: "#1a7fd4",
+    borderRadius: 8,
+    alignSelf: "flex-start",
+  },
+  tombolBrowserTeks: { color: "#fff", fontWeight: "700", fontSize: 14 },
 
   daftar: { paddingBottom: 40 },
   kosong: { color: WARNA.redup, textAlign: "center", marginTop: 60, fontSize: 16 },
