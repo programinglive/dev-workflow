@@ -254,10 +254,32 @@ async function listLiveShares({ query, limit = BATAS_TAUTAN_HIDUP } = {}) {
       views: Number(r.views) || 0,
       createdAt: r.created_at || null,
       lastViewAt: r.last_view_at || null,
+      // Nama yang bisa dibaca manusia. Kosong berarti sesinya sudah dibersihkan
+      // retensi - tautannya tetap hidup dan tetap harus bisa dicabut.
+      label: labelSesi(r),
+      sessionGone: !r.live_session_key,
+      phase: r.phase || null,
     }));
   } catch {
     return [];
   }
+}
+
+/** Nama yang ditampilkan untuk satu tautan; tidak pernah kosong. */
+function labelSesi(r) {
+  const task = teks(r && r.task).trim();
+  if (task) return task;
+  const judul = teks(r && r.session_title).trim();
+  if (judul) return judul;
+  const kunci = teks(r && r.session_key);
+  if (kunci) return kunci.slice(0, 24);
+  return '(tanpa nama)';
+}
+
+/** Semua tautan hidup, dipakai panel dashboard. */
+async function handleListAllShares({ query } = {}) {
+  const shares = await listLiveShares({ query });
+  return { status: 200, body: { ok: true, shares } };
 }
 
 module.exports = {
@@ -268,5 +290,7 @@ module.exports = {
   handleCreateShare,
   handleRevokeShare,
   handleListShares,
+  handleListAllShares,
+  labelSesi,
   listLiveShares,
 };

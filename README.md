@@ -395,6 +395,12 @@ unlisted document, and revoke it when the work is done.
 | Copy again | Press **Salin tautan** | No new token, no new row |
 | Revoke | Press **Cabut** | The URL answers `410 Gone` on the next request |
 
+A session card disappears once it has been idle for 30 minutes, but its link
+stays live until revoked. The dashboard therefore has a **Tautan berbagi yang
+hidup** panel listing every live link, including ones whose session is gone —
+marked `sesinya sudah tidak tampil`. Without it a link pasted into WhatsApp
+could outlive any way of switching it off. `GET /api/share?all=1` backs it.
+
 Codes you will see: `200` the page, `404` unknown token or a session already
 removed by retention, `410` deliberately revoked. `404` and `410` are kept
 apart so a typo is never confused with a link the owner switched off.

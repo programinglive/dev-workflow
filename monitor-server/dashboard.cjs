@@ -39,6 +39,7 @@ const {
   handleCreateShare,
   handleRevokeShare,
   handleListShares,
+  handleListAllShares,
   listLiveShares,
 } = require('./share-route.cjs');
 const { ensureTableSql } = require('./share-links.cjs');
@@ -191,6 +192,8 @@ const PAGE = `<!doctype html>
 <div id="history" class="events"></div>
 <h1 style="font-size:14px;margin-top:24px">Aktivitas terakhir</h1>
 <div id="events" class="events"></div>
+<h1 style="font-size:14px;margin-top:24px">Tautan berbagi yang hidup</h1>
+<div id="tautan" class="events">memuat...</div>
 <script>
 const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 function ago(iso, nowMs) {
@@ -471,6 +474,43 @@ async function tick() {
   }
 }
 /**
+ * Panel "Tautan berbagi": SEMUA tautan hidup, termasuk yang sesinya sudah
+ * hilang dari daftar kartu.
+ *
+ * MENGAPA PANEL INI ADA: tautan hidup sampai dicabut, sementara kartu sesi
+ * hilang setelah 30 menit idle. Tanpa panel ini, tautan yang sudah tersebar
+ * ke WhatsApp tidak punya jalan mencabutnya - celah yang justru berbahaya
+ * karena tidak terlihat.
+ */
+async function muatTautan() {
+  var box = document.getElementById('tautan');
+  try {
+    var r = await fetch('/api/share?all=1', { headers: { 'x-devwf-share': '1' } });
+    var data = await r.json();
+    if (!r.ok) throw new Error(data.error || ('server menjawab ' + r.status));
+    var daftar = data.shares || [];
+    if (!daftar.length) {
+      box.innerHTML = '<div>tidak ada tautan yang hidup</div>';
+      return;
+    }
+    box.innerHTML = daftar.map(function (s) {
+      var catatan = s.sessionGone
+        ? '<span class="meta" style="color:#d29922">sesinya sudah tidak tampil</span>'
+        : '<span class="meta">' + esc(s.phase || '') + '</span>';
+      return '<div style="margin:4px 0"><b style="color:#c9d1d9">' + esc(s.label) + '</b> ' +
+        catatan +
+        '<span class="meta"> · dibuka ' + (s.views || 0) + 'x · ' + ago(s.createdAt, Date.now()) + '</span>' +
+        '<div class="btnrow">' +
+        '<button class="btn" data-copy="' + esc(s.url) + '">Salin</button>' +
+        '<button class="btn danger" data-revoke="' + esc(s.token) + '">Cabut</button>' +
+        '</div></div>';
+    }).join('');
+  } catch (e) {
+    box.innerHTML = '<div style="color:#ff7b72">gagal memuat tautan: ' + esc(e.message) + '</div>';
+  }
+}
+
+/**
  * Satu listener untuk seluruh daftar kartu.
  *
  * Delegasi, bukan listener per tombol: kartu digambar ulang setiap 3 detik,
@@ -484,7 +524,24 @@ document.getElementById('list').addEventListener('click', function (e) {
   else if (t.dataset.copy) { void tombolSalin(t.dataset.copy, t); }
   else if (t.dataset.revoke) { void tombolCabut(t.dataset.revoke, t); }
 });
-tick(); setInterval(tick, ${POLL_MS});
+// Panel tautan memakai listener yang sama; tombolnya hidup di luar #list.
+document.getElementById('tautan').addEventListener('click', function (e) {
+  var t = e.target.closest('[data-copy],[data-revoke]');
+  if (!t) return;
+  if (t.dataset.copy) { void tombolSalin(t.dataset.copy, t); }
+  else if (t.dataset.revoke) { void tombolCabut(t.dataset.revoke, t); }
+});
+/**
+ * Panel tautan disegarkan lebih jarang daripada kartu.
+ *
+ * Kartu perlu 3 detik karena menampilkan pekerjaan yang sedang berjalan;
+ * daftar tautan berubah hanya saat seseorang menekan Bagikan atau Cabut.
+ * Menyegarkannya tiap 3 detik berarti satu query tambahan setiap 3 detik
+ * untuk data yang hampir tidak pernah berubah.
+ */
+tick(); muatTautan();
+setInterval(tick, ${POLL_MS});
+setInterval(muatTautan, 30000);
 </script></body></html>`;
 
 async function query(sql, params) {
@@ -645,6 +702,16 @@ const server = http.createServer(async (req, res) => {
         return res.end(JSON.stringify(hasil.body));
       }
       if (req.method === 'GET') {
+        /**
+         * `?all=1` = panel "Tautan berbagi": SEMUA tautan hidup, termasuk
+         * yang sesinya sudah hilang dari layar. Tanpa ini tautan bisa hidup
+         * selamanya tanpa jalan mencabutnya.
+         */
+        if (url.searchParams.get('all')) {
+          const hasil = await handleListAllShares({ query });
+          res.writeHead(hasil.status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+          return res.end(JSON.stringify(hasil.body));
+        }
         const hasil = await handleListShares({ query, sessionKey: url.searchParams.get('sessionKey') });
         res.writeHead(hasil.status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
         return res.end(JSON.stringify(hasil.body));

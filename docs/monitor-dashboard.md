@@ -597,6 +597,15 @@ internet bisa membuat tautan atas nama pemilik".
 | `POST` | `/api/share` | body `{ sessionKey }` -> `{ token, url, fallbackUrl, views }`. Idempoten: menekan Bagikan dua kali mengembalikan token yang sama. |
 | `DELETE` | `/api/share?token=...` | setel `revoked_at`; balas `{ ok, revoked }` |
 | `GET` | `/api/share?sessionKey=...` | tautan hidup sesi itu, atau `{ url: null }` |
+| `GET` | `/api/share?all=1` | **semua** tautan hidup, termasuk yang sesinya sudah hilang; dipakai panel dashboard |
+
+### Mengapa ada panel tautan terpisah
+
+Kartu sesi hilang setelah 30 menit `idle`, sedangkan tautan **tidak** ikut
+hilang - ia hidup sampai dicabut. Tanpa panel, tautan yang sudah tersebar ke
+WhatsApp bisa bertahan tanpa jalan mencabutnya, dan itu tidak terlihat oleh
+siapa pun. Panel memakai `LEFT JOIN sessions`, jadi tautan yatim tetap muncul
+dan ditandai `sesinya sudah tidak tampil`, bukan dibuang.
 
 Ketiganya wajib header `X-Devwf-Share: 1`. Origin diperiksa **bila ada**:
 `DEVWF_SHARE_ORIGINS` (bawaan `http://100.107.65.21:3100,http://localhost:3100`).
@@ -685,8 +694,49 @@ yang dibagikan tetap domain utama.
   `DO NOTHING`, pencabutan, dan sesi yang dibersihkan.
 - `tests/monitor-share-race.test.js` - balapan tiga tab tidak pernah menjadi
   500; `OPTIONS` dari origin asing ditolak, dari origin sah dijawab 204.
+- `tests/monitor-share-orphans.test.js` - tautan yang sesinya sudah hilang
+  tetap masuk daftar (`LEFT JOIN`), karena itulah yang paling perlu dicabut.
+- `tests/monitor-share-panel.test.js` - nama sesi untuk panel, dua tautan tanpa
+  task tetap bisa dibedakan, dan panel tetap 200 saat tabel belum ada.
 - `tests/monitor-share-parse.test.js` - `node --check` untuk seluruh modul
   monitor.
 - `tests/monitor-share-mobile.test.js` - header penanda, `Share.share`, dan
   hook sebelum `return null`.
 - `tests/web-share-route.test.js` - rewrite `/s/*` berada di ATAS catch-all 404.
+
+## Tablet: build yang terpasang harus lebih baru dari App.js
+
+Aplikasi tablet tidak memuat ulang dirinya dari jaringan - tombol baru hanya
+ada di APK yang dibangun sesudah `App.js` berubah. Diperiksa 3 November 2026:
+APK terpasang dibangun 2 Nov 10:48, sedangkan `App.js` diubah 2 Nov 21:03,
+jadi **tombol Bagikan belum ada di tablet** meskipun seluruh tes hijau.
+
+Selalu bandingkan kedua waktu sebelum menyimpulkan tombolnya rusak:
+
+```powershell
+Get-Item mobile-app\App.js | Select LastWriteTime
+Get-Item mobile-app\android\app\build\outputs\apk\release\app-release.apk | Select LastWriteTime
+```
+
+Membangun dan memasang:
+
+```powershell
+cd mobile-app\android
+.\gradlew.bat assembleRelease
+adb -s <ip-tablet>:5555 install -r app\build\outputs\apk\release\app-release.apk
+```
+
+Verifikasi tanpa menyentuh layar:
+
+```powershell
+adb -s <ip-tablet>:5555 shell am start -n com.programinglive.devwfmonitor/.MainActivity
+adb -s <ip-tablet>:5555 shell uiautomator dump /sdcard/ui.xml
+adb -s <ip-tablet>:5555 shell cat /sdcard/ui.xml
+```
+
+Sheet bagikan Android memuat tautan di baris pertama, jadi `uiautomator dump`
+cukup untuk membuktikan tombolnya bekerja tanpa membuka WhatsApp.
+
+**Xiaomi Pad 6 bisa terkunci pola** dan menampilkan "Draw pattern" di atas
+aplikasi. Itu kunci perangkat, bukan kerusakan aplikasi - jangan coba
+menembusnya; verifikasi di tablet lain atau minta pemilik membukanya.

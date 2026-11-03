@@ -82,6 +82,9 @@ test("menekan Share dua kali memakai ulang token yang sudah ada", async () => {
     if (/FROM\s+share_links[\s\S]*WHERE\s+session_key/.test(sql)) {
       return { rows: [{ token: TOKEN, created_at: "2026-11-02T09:00:00.000Z", views: 7 }], rowCount: 1 };
     }
+    if (/FROM\s+share_links\s+l[\s\S]*WHERE\s+l\.revoked_at IS NULL/.test(sql)) {
+      return { rows: [], rowCount: 0 };
+    }
     return { rows: [], rowCount: 0 };
   });
   const hasil = await handleCreateShare({ query, sessionKey: "ses_1" });
