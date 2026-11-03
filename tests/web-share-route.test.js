@@ -72,6 +72,17 @@ test("web eslint mengabaikan artefak build Netlify", async () => {
   assert.match(cfg, /"out\/\*\*"/);
 });
 
+test("skrip pembersihan hanya menyentuh token yang dicatat eksplisit", async () => {
+  // Prinsipnya: pembersihan otomatis TIDAK BOLEH mencabut tautan yang tidak
+  // dikenali skrip. Kalau skrip ini suatu saat "mencabut semua yang yatim",
+  // tautan pemilik yang sesinya kebetulan sudah dibersihkan ikut mati.
+  const skrip = await readFile(path.join(ROOT, "scripts", "cleanup-probe-shares.sh"), "utf8");
+  assert.match(skrip, /TOKENS=\(/);
+  assert.match(skrip, /revoked_at=now\(\)/);
+  assert.ok(!/DELETE FROM share_links/.test(skrip), "baris tidak boleh dihapus");
+  assert.ok(!/revoke-orphans/.test(skrip), "jangan menyapu semua yatim dari skrip bersih-bersih");
+});
+
 test("skrip verifikasi akhir mencakup guard, jalur tulis publik, dan sisa data uji", async () => {  const skrip = await readFile(path.join(ROOT, "scripts", "verify-share-final.sh"), "utf8");
   // Skrip ini satu-satunya bukti yang bisa dijalankan ulang terhadap server
   // sungguhan; kalau pemeriksaannya dihapus, "sudah diverifikasi" jadi klaim
