@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.23.12](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.23.11...v1.23.12) (2026-11-03)
+
+
+### ✅ Tests
+
+* update README.md, monitor.js, tests/monitor-active-sessions.test.js +1 more ([47cbb0f](https://github.com/programinglive/dev-workflow-mcp-server/commit/47cbb0fa20e566c0cf4884ca62267e328afc1e89))
+
 ### [1.23.11](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.23.10...v1.23.11) (2026-11-03)
 
 ### [1.23.10](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.23.9...v1.23.10) (2026-11-03)
