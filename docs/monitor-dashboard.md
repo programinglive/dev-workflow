@@ -735,6 +735,12 @@ yang dibagikan tetap domain utama.
   task tetap bisa dibedakan, dan panel tetap 200 saat tabel belum ada.
 - `tests/monitor-share-ratelimit.test.js` - kunci batas laju per pembaca:
   `CF-Connecting-IP` hanya dipercaya dari loopback, dan nilainya harus IP sah.
+- `scripts/list-live-shares.sh` - daftar tautan hidup beserta sesinya, untuk
+  memeriksa keadaan kapan saja tanpa menebak.
+- `scripts/cleanup-probe-shares.sh` - mencabut tautan sisa pengujian.
+  **Hanya token yang dicatat eksplisit** di dalamnya; token lain tidak pernah
+  cocok, jadi tautan pemilik tidak bisa ikut tercabut oleh pembersihan
+  otomatis. Baris tidak dihapus, hanya `revoked_at` diisi.
 - `scripts/probe-rate-limit.sh` - mengukur batas laju langsung ke
   `127.0.0.1:3200`; lewat Cloudflare header karangan ditimpa sehingga
   hasilnya menyesatkan.
