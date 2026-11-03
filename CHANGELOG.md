@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.23.9](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.23.8...v1.23.9) (2026-11-03)
+
+
+### 🐛 Bug Fixes
+
+* **share:** raise rate limit and explain 429 to readers ([dc0bd66](https://github.com/programinglive/dev-workflow-mcp-server/commit/dc0bd669bba15e3ea8d3fe43e1cfed827a8d7781))
+
 ### [1.23.8](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.23.7...v1.23.8) (2026-11-03)
 
 
