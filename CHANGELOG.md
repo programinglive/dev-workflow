@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.23.7](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.23.6...v1.23.7) (2026-11-03)
+
+
+### 🧹 Chores
+
+* **share:** add scripts to audit and clear probe links ([d9425b2](https://github.com/programinglive/dev-workflow-mcp-server/commit/d9425b2155307c12c9066e1490dbedb68abcbe09))
+
 ### [1.23.6](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.23.5...v1.23.6) (2026-11-03)
 
 
