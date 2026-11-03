@@ -196,6 +196,17 @@ function createShareServer({
       // tidak ia butuhkan, dan kegagalan tulis itu menjadi kegagalan halaman.
       kirimHtml(res, 200, html, { head: req.method === 'HEAD' });
 
+      /**
+       * HANYA `GET` yang dihitung sebagai kunjungan.
+       *
+       * `HEAD` dipakai crawler pratinjau WhatsApp dan uptime monitor: mereka
+       * tidak membuka halaman, mereka hanya memeriksa. Diukur 3 November 2026:
+       * 3 GET menaikkan views 0 → 3 (benar), lalu satu HEAD menaikkannya → 4.
+       * Angka "dibuka N×" yang dibaca pemilik jadi bukan jumlah manusia, dan
+       * tidak ada cara mempercayainya.
+       */
+      if (req.method !== 'GET') return undefined;
+
       const sentuh = buildTouchView({ token: rute.token });
       Promise.resolve()
         .then(() => query(sentuh.sql, sentuh.params))

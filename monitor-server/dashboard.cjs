@@ -583,8 +583,7 @@ async function query(sql, params) {
   return pool.query(sql, params);
 }
 
-function readBody(req, limit = 256 * 1024) {
-  return new Promise((resolve, reject) => {
+function readBody(req, limit = 256 * 1024) {  return new Promise((resolve, reject) => {
     let size = 0;
     const chunks = [];
     req.on('data', (c) => {
@@ -598,6 +597,24 @@ function readBody(req, limit = 256 * 1024) {
 }
 
 const str = (v, max = 4000) => String(v == null ? '' : v).slice(0, max);
+
+/**
+ * Parse JSON dengan jawaban 400, bukan 500.
+ *
+ * `JSON.parse` yang melempar akan jatuh ke catch teratas dan mengirim
+ * `error.message` dari V8 ke pengirim. Pesan itu tidak membantu siapa pun dan
+ * sedikit membocorkan bentuk internal. Mengembalikan `null` menandakan
+ * "sudah dijawab" supaya pemanggil berhenti.
+ */
+function bacaJson(mentah, res) {
+  try {
+    return JSON.parse(mentah || '{}');
+  } catch {
+    res.writeHead(400, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ ok: false, error: 'body bukan JSON yang sah' }));
+    return null;
+  }
+}
 
 /**
  * Tolak penulisan tanpa token yang benar.
@@ -724,14 +741,8 @@ const server = http.createServer(async (req, res) => {
          * `error.message` dari V8 ke pemanggil - pesan parser yang tidak
          * berguna bagi pemilik dan sedikit membocorkan bentuk internal.
          */
-        let body;
-        try {
-          body = JSON.parse((await readBody(req)) || '{}');
-        } catch {
-          res.writeHead(400, { 'content-type': 'application/json' });
-          return res.end(JSON.stringify({ ok: false, error: 'body bukan JSON yang sah' }));
-        }
-        const hasil = await handleCreateShare({ query, sessionKey: body && body.sessionKey });
+        const body = bacaJson(await readBody(req), res);
+        if (body === null) return undefined;        const hasil = await handleCreateShare({ query, sessionKey: body && body.sessionKey });
         res.writeHead(hasil.status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
         return res.end(JSON.stringify(hasil.body));
       }
@@ -762,7 +773,10 @@ const server = http.createServer(async (req, res) => {
       if (!writeAllowed(req)) {
         return denyWrite(res);
       }
-      const body = JSON.parse(await readBody(req) || '{}');
+      // Body bukan JSON dijawab 400, bukan 500: pesan parser V8 tidak berguna
+      // bagi pengirim, dan menyebutkannya membocorkan bentuk internal.
+      const body = bacaJson(await readBody(req), res);
+      if (body === null) return undefined;
       const key = await upsertSession(body);
       res.writeHead(200, { 'content-type': 'application/json' });
       return res.end(JSON.stringify({ ok: true, sessionKey: key }));
@@ -771,7 +785,8 @@ const server = http.createServer(async (req, res) => {
       if (!writeAllowed(req)) {
         return denyWrite(res);
       }
-      const body = JSON.parse(await readBody(req) || '{}');
+      const body = bacaJson(await readBody(req), res);
+      if (body === null) return undefined;
       await insertEvent(body);
       res.writeHead(200, { 'content-type': 'application/json' });
       return res.end(JSON.stringify({ ok: true }));

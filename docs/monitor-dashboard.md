@@ -735,9 +735,13 @@ yang dibagikan tetap domain utama.
   task tetap bisa dibedakan, dan panel tetap 200 saat tabel belum ada.
 - `tests/monitor-share-ratelimit.test.js` - kunci batas laju per pembaca:
   `CF-Connecting-IP` hanya dipercaya dari loopback, dan nilainya harus IP sah.
-- `tests/probe-rate-limit.sh` - mengukur langsung ke `127.0.0.1:3200`; lewat
-  Cloudflare header karangan ditimpa sehingga hasilnya menyesatkan.
-- `tests/monitor-share-parse.test.js` - `node --check` untuk seluruh modul
+- `scripts/probe-rate-limit.sh` - mengukur batas laju langsung ke
+  `127.0.0.1:3200`; lewat Cloudflare header karangan ditimpa sehingga
+  hasilnya menyesatkan.
+- `tests/monitor-share-views.test.js` - `HEAD` tidak menambah `views`, dan
+  jumlah yatim dihitung database (bukan dari daftar yang dibatasi 200).
+- `scripts/probe-views.sh` - membuktikan `views` benar-benar bertambah lewat
+  jalur publik, dan `HEAD` tidak ikut dihitung.- `tests/monitor-share-parse.test.js` - `node --check` untuk seluruh modul
   monitor.
 - `tests/monitor-share-mobile.test.js` - header penanda, `Share.share`, dan
   hook sebelum `return null`.

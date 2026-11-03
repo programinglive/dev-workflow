@@ -247,6 +247,26 @@ function buildOrphanSharesQuery() {
 }
 
 /**
+ * Jumlah tautan yatim, DIHITUNG DATABASE.
+ *
+ * MENGAPA BUKAN dari daftar `buildLiveSharesQuery`: daftar itu dibatasi
+ * LIMIT 200. Begitu tautan hidup melewati 200, menghitung yatim dari daftar
+ * melaporkan angka yang lebih kecil daripada kenyataan - dan angka itulah
+ * yang ditampilkan tombol "Cabut yang yatim".
+ */
+function buildOrphanCountQuery() {
+  return {
+    sql: `SELECT count(*)::int AS n
+            FROM share_links l
+           WHERE l.revoked_at IS NULL
+             AND NOT EXISTS (
+               SELECT 1 FROM sessions s WHERE s.session_key = l.session_key
+             )`,
+    params: [],
+  };
+}
+
+/**
  * Cabut semua tautan yatim sekaligus.
  *
  * `NOT EXISTS` dipakai alih-alih `NOT IN` supaya NULL tidak membuat hasilnya
@@ -282,6 +302,7 @@ module.exports = {
   buildTouchView,
   buildLiveSharesQuery,
   buildOrphanSharesQuery,
+  buildOrphanCountQuery,
   buildRevokeOrphans,
   classifyShareLookup,
 };
