@@ -100,26 +100,57 @@ function kirimJson(res, status, obj, extra = {}) {
  *
  * Tanpa ini satu tautan yang bocor ke grup besar bisa menghantam Postgres
  * tanpa batas. Nilainya sengaja longgar - ini pengaman, bukan pagar.
+ *
+ * BATAS KERAS UKURAN PETA
+ * -----------------------
+ * Versi pertama hanya membersihkan entri kedaluwarsa saat kunci baru masuk.
+ * Itu tidak cukup: penyerang yang memutar IP membuat SEMUA entri masih segar,
+ * jadi tidak satu pun dibuang dan peta tumbuh mengikuti jumlah permintaan.
+ * Pada proses yang hidup berhari-hari itu kebocoran memori.
+ *
+ * Karena itu ada dua lapis: buang entri kedaluwarsa, DAN bila masih melewati
+ * BATAS_KUNCI, buang yang paling tua sampai di bawah batas. Yang dibuang
+ * hanya riwayat hitungan, bukan izin - pembaca yang dibuang catatannya
+ * memulai jendela baru, dan itu jauh lebih baik daripada server kehabisan
+ * memori.
  */
 function buatPembatas({ perMenit = DEFAULT_RATE_LIMIT, sekarang = Date.now } = {}) {
   const hitungan = new Map();
-  return function izinkan(ip) {
+  /** Di atas ini, entri tertua dibuang - berapa pun umurnya. */
+  const BATAS_KUNCI = 5000;
+
+  function bersihkan(now) {
+    for (const [k, v] of hitungan) {
+      if (now - v.mulai >= WINDOW_MS) hitungan.delete(k);
+    }
+    if (hitungan.size <= BATAS_KUNCI) return;
+    // Map menjaga urutan sisip, jadi yang paling awal adalah yang paling tua.
+    for (const k of hitungan.keys()) {
+      if (hitungan.size <= BATAS_KUNCI) break;
+      hitungan.delete(k);
+    }
+  }
+
+  function izinkan(ip) {
     const now = sekarang();
     const kunci = String(ip || 'unknown');
     const catatan = hitungan.get(kunci);
     if (!catatan || now - catatan.mulai >= WINDOW_MS) {
       hitungan.set(kunci, { mulai: now, n: 1 });
       // Jaga peta tidak tumbuh selamanya pada proses yang hidup berhari-hari.
-      if (hitungan.size > 1000) {
-        for (const [k, v] of hitungan) {
-          if (now - v.mulai >= WINDOW_MS) hitungan.delete(k);
-        }
-      }
+      if (hitungan.size > BATAS_KUNCI) bersihkan(now);
       return true;
     }
     catatan.n += 1;
     return catatan.n <= perMenit;
+  }
+
+  /** Jumlah kunci aktif; dipakai tes dan pemantauan. */
+  izinkan.ukuran = function ukuran() {
+    return hitungan.size;
   };
+
+  return izinkan;
 }
 
 /**
@@ -285,6 +316,7 @@ module.exports = {
   DEFAULT_PORT,
   DEFAULT_HOST,
   DEFAULT_RATE_LIMIT,
+  buatPembatas,
   createShareServer,
   routeShare,
 };

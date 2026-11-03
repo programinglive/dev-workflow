@@ -180,6 +180,43 @@ test("token yang gagal validasi tidak pernah sampai ke database", async () => {
   }
 });
 
+test("halaman dari SERVER (bukan hanya renderer) tidak membocorkan apa pun", async () => {
+  // Rekomendasi review: tes kebocoran lama memanggil renderSharePage langsung.
+  // Kalau share-server suatu saat meneruskan baris utuh ke renderer, tes lama
+  // tetap hijau sementara halaman publik membocorkan nama mesin. Tes ini
+  // menempuh jalur yang SAMA dengan pembaca sungguhan.
+  const penuh = {
+    ...SESI,
+    machine: "MESIN_RAHASIA",
+    project_path: "D:\\RAHASIA\\proyek",
+    project_name: "PROYEK_RAHASIA",
+    session_key: "ses_RAHASIA_123",
+    agent_tool: "ALAT_RAHASIA",
+    owner_pid: 4242,
+    token: TOKEN,
+    revoked_at: null,
+    views: 3,
+  };
+  const query = async (sql) => {
+    const teks = String(sql);
+    if (/FROM share_links l/.test(teks)) return { rows: [penuh], rowCount: 1 };
+    return { rows: [], rowCount: 0 };
+  };
+  const s = createShareServer({ query, enableRateLimit: false });
+  await new Promise((r) => s.listen(0, "127.0.0.1", r));
+  try {
+    const r = await fetch("http://127.0.0.1:" + s.address().port + "/s/" + TOKEN);
+    assert.equal(r.status, 200);
+    const html = await r.text();
+    for (const nilai of ["MESIN_RAHASIA", "RAHASIA\\proyek", "PROYEK_RAHASIA", "ses_RAHASIA_123", "ALAT_RAHASIA", "4242"]) {
+      assert.ok(!html.includes(nilai), "bocor dari jalur server: " + nilai);
+    }
+    assert.ok(html.includes("Kerjakan"), "isi yang sah tetap tampil");
+  } finally {
+    await new Promise((r) => s.close(r));
+  }
+});
+
 test("20 pembaca berbeda TIDAK saling memblokir lewat satu koneksi proxy", async () => {
   // Meniru keadaan produksi: semua permintaan datang dari 127.0.0.1 karena
   // cloudflared, tetapi setiap pembaca punya CF-Connecting-IP sendiri.
