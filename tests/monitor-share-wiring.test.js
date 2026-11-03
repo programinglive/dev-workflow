@@ -71,6 +71,14 @@ test("skrip halaman dashboard benar-benar bisa di-parse", () => {
   assert.doesNotThrow(() => new Function(skrip), "skrip halaman harus valid JavaScript");
 });
 
+test("skrip browser menerima interval polling sebagai literal, bukan variabel server", () => {
+  const mulai = src.indexOf("const PAGE = `");
+  const akhir = src.indexOf("</html>`", mulai);
+  const halaman = src.slice(mulai + "const PAGE = `".length, akhir).replace(/\$\{POLL_MS\}/g, "3000");
+  const skrip = halaman.slice(halaman.indexOf("<script>") + 8, halaman.lastIndexOf("</script>"));
+  assert.doesNotMatch(skrip, /\bPOLL_MS\b/, "POLL_MS hanya tersedia di proses Node, bukan pada browser");
+});
+
 test("tombol share memakai delegasi, bukan listener per kartu", () => {
   // Kartu digambar ulang tiap 3 detik. Listener yang dipasang saat render
   // hilang bersama elemennya, dan tombolnya berhenti bekerja tanpa pesan.
