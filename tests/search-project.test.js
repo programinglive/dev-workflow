@@ -286,13 +286,12 @@ describe('searchProject', () => {
       return {
         stat: async () => {
           const snapshot = await handle.stat();
-          return new Proxy(snapshot, {
-            get(target, property) {
-              if (property === 'size') return MAX_FILE_BYTES + 100;
-              const value = Reflect.get(target, property, target);
-              return typeof value === 'function' ? value.bind(target) : value;
-            },
-          });
+          return {
+            dev: snapshot.dev,
+            ino: snapshot.ino,
+            size: MAX_FILE_BYTES + 100,
+            isFile: () => snapshot.isFile(),
+          };
         },
         read: (...readArgs) => {
           didRead = true;
