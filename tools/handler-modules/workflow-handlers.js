@@ -369,6 +369,9 @@ export async function handleStartTask(args, workflowState, git) {
           `   Urutannya belum tentu urutan kerja yang benar. Kirim 'plan' pada 'start_task',\n` +
           `   atau susun ulang sekarang dengan 'set_plan' { steps: [...] }.\n\n`
         : `${renderPlanFull(workflowState.state.plan)}\n\n`) +
+      `🌐 Project language conventions (follow an existing project policy when one is documented):\n` +
+      `- Use English by default for the README, developer-facing documentation and code (including identifiers and comments), and commit messages.\n` +
+      `- When the app needs a non-English user-facing language, implement multilingual localization (i18n) that includes English and the requested locale; avoid hard-coding a single translated interface.\n\n` +
       `🎯 Be conscious about what you're coding!\n\nWorkflow Steps:\n1. ✓ Start task (current)\n2. ⏳ Describe feature flow with Mermaid\n3. ⏳ Fix/implement the feature\n4. ⏳ Prove each definition-of-done item\n5. ⏳ Create tests\n6. ⏳ Run tests (must pass!)\n7. ⏳ Create documentation\n8. ⏳ Run 'check_ready_to_commit'\n9. ⏳ Run 'commit_and_push' (commits and pushes)\n10. ⏳ Run 'perform_release' or 'skip_release' (when no release is needed)\n11. ⏳ Complete task\n12. ✓ Workflow closed\n\nReminder: Focus on writing clean, maintainable code!`
   );
 }

@@ -1,5 +1,14 @@
 # Workflow Best Practices
 
+## Project Language Conventions
+
+At `start_task`, use English by default for the README, developer-facing
+documentation and code (including identifiers and comments), and commit
+messages. Follow an existing documented project language policy when there is
+one. When an app needs a non-English user-facing language, implement
+multilingual localization (i18n) that includes English and the requested
+locale rather than hard-coding a single translated interface.
+
 ## Correct Release Workflow Order
 
 To avoid needing `--force` flag for releases, follow this exact order:

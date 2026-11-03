@@ -127,6 +127,31 @@ test("start_task mencatat berkas yang sudah kotor sebagai baseline", async () =>
   });
 });
 
+test("start_task suggests English project conventions and multilingual app localization", async () => {
+  await withWorkflowState(async (workflowState) => {
+    const response = await handleToolCall({
+      request: createRequest("start_task", {
+        description: "Add language conventions",
+        type: "feature",
+        definitionOfDone: ["guidance returned"],
+      }),
+      normalizeRequestArgs: (args) => ({ args, error: null }),
+      workflowState,
+      exec: async () => ({ stdout: "" }),
+      git: createGitMock(),
+      utils: testUtils,
+    });
+
+    const text = response.content[0].text;
+    assert.match(text, /English.*README/i);
+    assert.match(text, /developer-facing.*code/i);
+    assert.match(text, /commit messages/i);
+    assert.match(text, /non-English.*user-facing/i);
+    assert.match(text, /multilingual.*localization/i);
+    assert.match(text, /existing.*project policy/i);
+  });
+});
+
 test("start_task tetap jalan walau git gagal membaca status", async () => {
   // Baseline hanya untuk memperingatkan saat commit. Kegagalan git di sini
   // tidak boleh menggagalkan task yang sah.

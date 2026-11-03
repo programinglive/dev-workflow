@@ -94,6 +94,15 @@ finished.
 
 ## Quick Start
 
+### Project language conventions
+
+When a task starts, the MCP suggests English by default for the project README,
+developer-facing documentation and code (including identifiers and comments),
+and commit messages. Follow an existing project language policy when it is
+documented. If the app needs a non-English user-facing language, implement
+multilingual localization (i18n) with English and the requested locale instead
+of hard-coding a single translated interface.
+
 ### 1. Clone and install
 
 ```bash
