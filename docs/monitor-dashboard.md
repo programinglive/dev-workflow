@@ -297,6 +297,11 @@ halaman (`${POLL_MS}`) agar browser menerima angka literal. Jika dibiarkan
 sebagai `POLL_MS`, pembaruan halaman gagal dengan `terputus: POLL_MS is not
 defined` setelah data pertama diterima.
 
+Validasi juga JavaScript hasil render template, bukan hanya `dashboard.cjs`.
+Escape seperti `\n` di template dapat berubah menjadi newline di dalam string
+JavaScript browser; akibatnya server tetap menjawab HTTP 200 sementara polling
+dashboard tidak pernah berjalan.
+
 ```bash
 scp monitor-server/dashboard.cjs        root@100.107.65.21:/tmp/monitor.cjs
 scp monitor-server/sessions-query.cjs   root@100.107.65.21:/tmp/sessions-query.cjs

@@ -885,7 +885,7 @@ document.addEventListener('click', async function(e) {
   if (!btn) return;
   var sessionKey = btn.dataset.sessionKey;
   if (!sessionKey) return;
-  if (!confirm('Yakin ingin menutup paksa sesi ini?\n' + sessionKey + '\n\nSesi akan diset ke phase "closed".')) return;
+  if (!confirm('Yakin ingin menutup paksa sesi ini?\\n' + sessionKey + '\\n\\nSesi akan diset ke phase "closed".')) return;
   btn.disabled = true;
   btn.textContent = 'Menutup…';
   try {
