@@ -6,6 +6,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { STRANDED_TASK_FILENAME } from "../../workflow-state.js";
 import { renderPlanFull } from "./plan.js";
+import { fetchActiveSessions } from "../../monitor.js";
 
 /**
  * Bahan gerbang dokumentasi untuk pesan penolakan.
@@ -345,4 +346,60 @@ export async function handleRerunWorkflow(workflowState) {
   return textResponse(
     `🔄 Rerunning workflow from the start!\n\nTask: ${currentDescription}\nType: ${currentType}${dodNote}\n\nWorkflow Steps:\n1. ✓ Start task (current)\n2. ⏳ Describe feature flow with Mermaid\n3. ⏳ Fix/implement the feature\n4. ⏳ Prove each definition-of-done item\n5. ⏳ Create tests\n6. ⏳ Run tests (must pass!)\n7. ⏳ Create documentation\n8. ⏳ Run 'check_ready_to_commit'\n9. ⏳ Run 'commit_and_push' (commits and pushes)\n10. ⏳ Run 'perform_release' (handles versioning and tags)\n11. ⏳ Complete task\n\n🎯 Be conscious about what you're coding!`
   );
+}
+
+export async function handleListActiveSessions(args = {}, context = {}) {
+  const env = context.env || process.env;
+  const fetchImpl = context.fetchImpl || fetch;
+  const limit = args.limit || 20;
+  const showAll = Boolean(args.all);
+  const filterMachine = typeof args.machine === "string" ? args.machine.trim().toLowerCase() : "";
+
+  const result = await fetchActiveSessions({ env, limit, fetchImpl });
+  if (!result.ok) {
+    return textResponse(`⚠️ Gagal mengambil daftar sesi dari monitor:\n${result.error}`);
+  }
+
+  let sessions = result.sessions || [];
+  if (filterMachine) {
+    sessions = sessions.filter((s) => String(s.machine || "").toLowerCase().includes(filterMachine));
+  }
+  if (!showAll) {
+    // Default: hanya sesi yang aktif (live, possibly_stuck, atau sedang coding/ready/testing)
+    sessions = sessions.filter((s) => {
+      const state = String(s.state || "").toLowerCase();
+      const phase = String(s.phase || "").toLowerCase();
+      return state === "live" || state === "possibly_stuck" || (phase !== "idle" && state !== "ended");
+    });
+  }
+
+  if (sessions.length === 0) {
+    const hint = showAll ? "" : " (Gunakan 'all: true' untuk melihat seluruh sesi termasuk yang idle/berakhir)";
+    return textResponse(`📋 Tidak ada sesi aktif yang ditemukan di dashboard monitor.${hint}`);
+  }
+
+  const lines = [
+    `📊 Sesi Monitor Dev Workflow (${sessions.length} sesi${showAll ? "" : " aktif"}):`,
+    "",
+  ];
+
+  for (let i = 0; i < sessions.length; i++) {
+    const s = sessions[i];
+    const machine = s.machine || "unknown";
+    const proj = s.project_name || "(tanpa proyek)";
+    const task = s.task ? `"${s.task}"` : "(tanpa task)";
+    const phase = s.phase || "idle";
+    const stateLabel = s.state_label || s.state || "unknown";
+    const planText = s.plan_total ? ` · Rencana: ${s.plan_done}/${s.plan_total}` : "";
+    const dodText = s.dod_total ? ` · DoD: ${s.dod_done}/${s.dod_total}` : "";
+    const agent = s.agent_tool && s.agent_tool !== "unknown" ? ` [${s.agent_tool}]` : "";
+
+    lines.push(
+      `${i + 1}. [${machine}] ${proj}${agent}\n` +
+      `   Task: ${task}\n` +
+      `   Fase: ${phase} (${stateLabel})${planText}${dodText}`
+    );
+  }
+
+  return textResponse(lines.join("\n"));
 }

@@ -167,6 +167,7 @@ See [MCP client configuration](#mcp-client-configuration).
 | `project_summary` | Aggregate activity for the project |
 | `project_summary_data` | Read the persisted `project-summary.json` |
 | `project_summary_db` | Read the per-user summary from SQLite |
+| `list_active_sessions` | List active workflow sessions across all machines from the central monitor (`DEVWF_MONITOR_URL`) |
 | `list_factory_tasks` | List your Factory task queue (requires config) |
 | `create_factory_task` | Record a new task with a required definition of done |
 | `update_factory_task` | Edit a task, including filling a missing definition of done |
