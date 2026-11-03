@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.23.2](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.23.1...v1.23.2) (2026-11-03)
+
+
+### 🐛 Bug Fixes
+
+* **test:** close SQLite adapters before deleting temp dirs ([95d3c7b](https://github.com/programinglive/dev-workflow-mcp-server/commit/95d3c7b736378be7cd3ed5a8eaae121dc27490b7))
+
 ### [1.23.1](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.23.0...v1.23.1) (2026-11-03)
 
 
