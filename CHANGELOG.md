@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.23.8](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.23.7...v1.23.8) (2026-11-03)
+
+
+### 📝 Documentation
+
+* **share:** note that share origins need a restart ([b0a2c22](https://github.com/programinglive/dev-workflow-mcp-server/commit/b0a2c228d05d7b4bec0115e1b1ec6a1a246df7ae))
+
 ### [1.23.7](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.23.6...v1.23.7) (2026-11-03)
 
 
