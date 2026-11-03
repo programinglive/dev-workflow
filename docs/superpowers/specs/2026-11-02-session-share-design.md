@@ -4,6 +4,18 @@ Tanggal: 2 November 2026
 Status: disetujui pemilik, menunggu review spec
 Pemilik permintaan: pemilik repo (`programinglive`)
 
+> **KOREKSI SAAT IMPLEMENTASI (2–3 November 2026).** Satu keputusan di bawah
+> berubah setelah diuji di lapangan, dan dokumen ini sengaja TIDAK ditulis ulang
+> supaya jejak alasannya tetap ada. Hostname fallback jadi
+> `devwfshare.programinglive.com`, bukan `share.devworkflow.programinglive.com`,
+> karena sertifikat Universal SSL zona ini hanya mencakup
+> `programinglive.com` + `*.programinglive.com` (satu label); subdomain dua
+> label gagal handshake TLS (`sslv3 alert handshake failure`). Tautan yang
+> dibagikan tetap `https://devworkflow.programinglive.com/s/<token>` — hostname
+> itu internal. Selain itu ada dua tambahan yang tidak ada di desain awal:
+> `POST /api/share?revoke-orphans=1` (membereskan tautan yang sesinya sudah
+> dihapus, tanpa kedaluwarsa otomatis) dan panel "Tautan berbagi yang hidup".
+
 ## Masalah
 
 Dashboard sesi (`http://100.107.65.21:3100`) hanya bisa dibuka dari dalam
