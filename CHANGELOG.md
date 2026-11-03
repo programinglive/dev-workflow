@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.23.6](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.23.5...v1.23.6) (2026-11-03)
+
+
+### 🐛 Bug Fixes
+
+* **share:** cap the rate-limit map and leak-test the HTTP path ([98f3695](https://github.com/programinglive/dev-workflow-mcp-server/commit/98f3695f998ee5aaf878aa91bb39738e4fd598cc))
+
 ### [1.23.5](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.23.4...v1.23.5) (2026-11-03)
 
 
