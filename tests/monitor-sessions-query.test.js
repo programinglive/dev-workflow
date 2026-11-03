@@ -45,6 +45,7 @@ test("idleTtl bisa diatur dan punya nilai bawaan", () => {
  */
 test("idle tanpa task dibuang lebih cepat daripada idle bertask", () => {
   const { sql, params } = buildSessionsQuery({});
+  assert.equal(DEFAULT_EMPTY_IDLE_TTL, "1 minute");
   assert.match(sql, /task = ''/);
   assert.match(sql, /updated_at < now\(\) - \$3::interval/);
   assert.equal(params[2], DEFAULT_EMPTY_IDLE_TTL);

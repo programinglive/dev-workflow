@@ -129,7 +129,7 @@ const SUMMARY_DAYS = Number(process.env.SUMMARY_DAYS || DEFAULT_SUMMARY_DAYS);
  * menyimpan riwayat pekerjaan yang baru selesai.
  */
 const IDLE_TTL = process.env.IDLE_TTL || '30 minutes';
-const EMPTY_IDLE_TTL = process.env.EMPTY_IDLE_TTL || '5 minutes';
+const EMPTY_IDLE_TTL = process.env.EMPTY_IDLE_TTL || '1 minute';
 
 const pool = DB_URL ? new pg.Pool({ connectionString: DB_URL, max: 4 }) : null;
 
@@ -885,7 +885,7 @@ document.addEventListener('click', async function(e) {
   if (!btn) return;
   var sessionKey = btn.dataset.sessionKey;
   if (!sessionKey) return;
-  if (!confirm('Yakin ingin menutup paksa sesi ini?\n' + sessionKey + '\n\nSesi akan diset ke phase "closed".')) return;
+  if (!confirm('Yakin ingin menutup paksa sesi ini?\\n' + sessionKey + '\\n\\nSesi akan diset ke phase "closed".')) return;
   btn.disabled = true;
   btn.textContent = 'Menutup…';
   try {
