@@ -17,6 +17,7 @@ import { handleResumeSession } from "./resume-handlers.js";
 import { handleSetPlan, handleMarkPlanStep } from "./workflow-handlers.js";
 import { renderPlanShort } from "./plan.js";
 import { openItems, MIN_EVIDENCE } from "./dod.js";
+import { handleSearchProject } from "./search-handlers.js";
 import { handleListFactoryTasks, handleClaimFactoryTask, handleSyncTaskStatus, handleListFactoryProjects, handleCreateFactoryTask, handleUpdateFactoryTask } from "./factory-handlers.js";
 
 function summarizeResponse(label, response) {
@@ -343,6 +344,8 @@ async function dispatchToolCall({
     }
 
     switch (name) {
+      case 'search_project':
+        return handleSearchProject(args, workflowState);
       case 'security_audit': {
         const file=workflowState?.stateFile;
         const marker=file?.replaceAll('\\','/').lastIndexOf('/.state/');

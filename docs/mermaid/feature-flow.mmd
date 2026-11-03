@@ -1,6 +1,7 @@
 graph TD
     Start([Start Task]) --> FeatureFlow[Describe Feature Flow with Mermaid]
-    FeatureFlow --> Fix[Mark Bug Fixed / Implement Feature]
+    FeatureFlow --> ProjectSearch[Optional search_project discovery]
+    ProjectSearch --> Fix[Mark Bug Fixed / Implement Feature]
     Fix --> CreateTests[Create Tests]
     CreateTests --> RunTests{Run Tests}
     RunTests -- Fail --> Fix
@@ -13,6 +14,7 @@ graph TD
 
     subgraph "Core Workflow"
         FeatureFlow
+        ProjectSearch
         Fix
         CreateTests
         RunTests

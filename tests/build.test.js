@@ -31,6 +31,8 @@ test('build generates dist/index.mjs file', async () => {
   const content = await readFile(distPath, 'utf-8');
   assert(content.includes('main'), 'Bundle should contain main function');
   assert(content.length > 1000, 'Bundle should be substantial');
+  const { stdout: verifyOutput, stderr: verifyError } = await exec('node scripts/verify-bundle.mjs dist/index.mjs');
+  assert.match(verifyOutput + verifyError, /listed search_project/u);
 });
 
 test('build script exists in package.json', async () => {
