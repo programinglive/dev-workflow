@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.23.10](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.23.9...v1.23.10) (2026-11-03)
+
+
+### ✨ Features
+
+* tambahkan tool list_active_sessions untuk membaca monitor dashboard ([225bb45](https://github.com/programinglive/dev-workflow-mcp-server/commit/225bb4524bc05e2873b6f529afb77c428ab069b8))
+
 ### [1.23.9](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.23.8...v1.23.9) (2026-11-03)
 
 
