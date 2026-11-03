@@ -87,3 +87,17 @@ test("tombol share tidak bergantung pada navigator.share saja", () => {
   assert.match(src, /'manual'/);
   assert.match(src, /kotakSalinManual/);
 });
+
+test("panel tautan memakai endpoint sendiri, bukan hanya data kartu", () => {
+  // Kartu sesi hilang setelah 30 menit idle, sedangkan tautan hidup sampai
+  // dicabut. Tanpa endpoint ?all=1, tautan itu tidak punya jalan dicabut.
+  assert.match(src, /api\/share\?all=1/);
+  assert.match(src, /id="tautan"/);
+  assert.match(src, /muatTautan/);
+  assert.match(src, /handleListAllShares/);
+});
+
+test("panel menandai tautan yang sesinya sudah hilang", () => {
+  assert.match(src, /sessionGone/);
+  assert.match(src, /sesinya sudah tidak tampil/);
+});

@@ -186,14 +186,28 @@ function buildTouchView({ token } = {}) {
   };
 }
 
-/** Semua tautan hidup, untuk ditampilkan di kartu dashboard. */
+/**
+ * Semua tautan hidup, untuk panel "Tautan berbagi".
+ *
+ * MENGAPA LEFT JOIN, DAN MENGAPA INI PENTING
+ * ------------------------------------------
+ * Tautan hidup sampai dicabut, tetapi tombol Cabut dulu hanya ada di kartu
+ * sesi. Sesi `idle` hilang dari layar setelah 30 menit, jadi tautan yang
+ * sudah tersebar ke WhatsApp bisa tetap hidup tanpa jalan mencabutnya.
+ *
+ * INNER JOIN akan membuang baris itu justru ketika ia paling perlu terlihat.
+ * LEFT JOIN mempertahankannya, dan kolom sesi yang kosong adalah tanda
+ * "sesinya sudah tidak ada" yang jujur bagi pembaca.
+ */
 function buildLiveSharesQuery({ limit = 200 } = {}) {
   const batas = Number(limit) > 0 ? Math.min(1000, Math.trunc(Number(limit))) : 200;
   return {
-    sql: `SELECT session_key, token, created_at, views, last_view_at
-            FROM share_links
-           WHERE revoked_at IS NULL
-           ORDER BY created_at DESC
+    sql: `SELECT l.session_key, l.token, l.created_at, l.views, l.last_view_at,
+                 s.session_key AS live_session_key, s.task, s.session_title, s.phase
+            FROM share_links l
+            LEFT JOIN sessions s ON s.session_key = l.session_key
+           WHERE l.revoked_at IS NULL
+           ORDER BY l.created_at DESC
            LIMIT $1`,
     params: [batas],
   };
