@@ -736,7 +736,7 @@ function render(data) {
     serverEl.innerHTML =
       '<b>URL:</b> ' + esc(window.location.origin) + '<br>' +
       '<b>Status:</b> ' + data.sessions.length + ' sesi aktif · ' + (data.history || []).length + ' riwayat · ' + (data.machines || []).length + ' mesin<br>' +
-      '<b>Pembaruan:</b> tiap ' + Math.round(POLL_MS / 1000) + ' detik';
+      '<b>Pembaruan:</b> tiap ' + Math.round(${POLL_MS} / 1000) + ' detik';
   }
 
   // Update modal jika sedang terbuka

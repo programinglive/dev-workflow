@@ -291,6 +291,12 @@ interval Postgres, mis. `2 hours`).
 
 ## Deploy
 
+JavaScript dashboard berjalan di browser, terpisah dari konstanta Node pada
+server. Referensi interval seperti `POLL_MS` harus diinterpolasi ke template
+halaman (`${POLL_MS}`) agar browser menerima angka literal. Jika dibiarkan
+sebagai `POLL_MS`, pembaruan halaman gagal dengan `terputus: POLL_MS is not
+defined` setelah data pertama diterima.
+
 ```bash
 scp monitor-server/dashboard.cjs        root@100.107.65.21:/tmp/monitor.cjs
 scp monitor-server/sessions-query.cjs   root@100.107.65.21:/tmp/sessions-query.cjs
