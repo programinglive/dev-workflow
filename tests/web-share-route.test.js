@@ -62,8 +62,17 @@ test("halaman penjelasan menyebut apa yang TIDAK dibagikan", async () => {
   assert.match(page, /path/i);
 });
 
-test("skrip verifikasi akhir mencakup guard, jalur tulis publik, dan sisa data uji", async () => {
-  const skrip = await readFile(path.join(ROOT, "scripts", "verify-share-final.sh"), "utf8");
+test("web eslint mengabaikan artefak build Netlify", async () => {
+  // Tanpa ini `npm run lint --prefix web` merah lokal di 12 error
+  // no-this-alias dari bundel minified, sementara CI hijau karena checkout
+  // bersih. Lint yang merah karena artefak build akan diabaikan orang.
+  const cfg = await readFile(path.join(ROOT, "web", "eslint.config.mjs"), "utf8");
+  assert.match(cfg, /"\.netlify\/\*\*"/);
+  assert.match(cfg, /"\.next\/\*\*"/, "ignore bawaan tidak boleh hilang");
+  assert.match(cfg, /"out\/\*\*"/);
+});
+
+test("skrip verifikasi akhir mencakup guard, jalur tulis publik, dan sisa data uji", async () => {  const skrip = await readFile(path.join(ROOT, "scripts", "verify-share-final.sh"), "utf8");
   // Skrip ini satu-satunya bukti yang bisa dijalankan ulang terhadap server
   // sungguhan; kalau pemeriksaannya dihapus, "sudah diverifikasi" jadi klaim
   // kosong.
