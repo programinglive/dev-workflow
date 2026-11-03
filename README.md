@@ -750,6 +750,29 @@ Two sibling test files share one database, so **each file needs its own
 fails while the other file's rows are still there; that collision was real and
 turned a passing suite red the first time both ran against the same PostgreSQL.
 
+### Windows: close SQLite before deleting the temp directory
+
+`npm run test:security` was red on Windows for months while CI stayed green:
+
+```
+EBUSY: resource busy or locked, unlink '...\dev-workflow.db-shm'
+```
+
+The cause was not the security checks. `temporary()` deleted its temp directory
+while the `WorkflowState` it created still held an open SQLite handle — **the
+test process was holding its own file.** Retrying cannot fix that; only closing
+the connection can.
+
+So `temporary(fn)` passes a `daftar` callback and every test hands it the
+`WorkflowState` it creates. On the way out, the adapter is closed, then
+`tests/helpers/hapus-sementara.js` retries the delete — retrying *only* on
+`EBUSY`/`EPERM`/`ENOTEMPTY`, because swallowing `EACCES` would mean the cleanup
+failed while the test reported success.
+
+This matters beyond tidiness: a suite that is red for an unrelated reason gets
+ignored, and a real security regression disappears into the noise. Proved by
+mutation — removing the close loop reproduces exactly six failures.
+
 The two skipped tests are the MySQL and PostgreSQL adapters. They run only when a
 database is reachable:
 

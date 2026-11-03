@@ -5,6 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
+import { hapusSementara } from "./helpers/hapus-sementara.js";
 import { WorkflowState } from '../workflow-state.js';
 import { SqliteAdapter } from '../db/adapters/sqlite.js';
 import { MysqlAdapter } from '../db/adapters/mysql.js';
@@ -20,14 +21,27 @@ const key='gh'+'p_'+'Z1y2X3w4'.repeat(5);
 const run=promisify(execFile);
 async function temporary(fn) {
   const dir=await fs.mkdtemp(path.join(os.tmpdir(),'knowledge-security-'));
-  try {await fn(dir);} finally {await fs.rm(dir,{recursive:true,force:true});}
+  const terbuka=[];
+  try {
+    // `closeState` mendaftarkan WorkflowState yang membuka koneksi SQLite.
+    // Tanpa menutupnya, handle tetap dipegang proses dan menghapus direktori
+    // sementara SELALU gagal di Windows dengan EBUSY - mencoba ulang tidak
+    // menolong, karena yang menahan adalah proses ini sendiri.
+    await fn(dir,(s)=>terbuka.push(s));
+  } finally {
+    for(const s of terbuka){
+      try { if(s && s.dbAdapter && typeof s.dbAdapter.close==='function') await s.dbAdapter.close(); } catch {}
+      try { if(s && s.dbAdapter && s.dbAdapter.db && typeof s.dbAdapter.db.close==='function') s.dbAdapter.db.close(); } catch {}
+    }
+    await hapusSementara(dir);
+  }
 }
 function call(name,args,state,extra={}) {
   return handleToolCall({request:{params:{name,arguments:args}},normalizeRequestArgs,workflowState:state,...extra});
 }
 
-test('tool input rejected before any JSON/DB persistence with safe finding details',async()=>temporary(async dir=>{
-  const state=new WorkflowState(path.join(dir,'state.json')); await state.load();
+test('tool input rejected before any JSON/DB persistence with safe finding details',async()=>temporary(async (dir,daftar)=>{
+  const state=new WorkflowState(path.join(dir,'state.json'));daftar(state); await state.load();
   const before=await fs.readFile(state.stateFile,'utf8');
   const response=await call('start_task',{description:`deploy with ${key}`,type:'feature'},state);
   assert.equal(response.isError,true);
@@ -78,8 +92,8 @@ test('SQLite stores references and never unsafe history or derived summaries',as
   }finally{adapter.db.close();}
 });
 
-test('JSON persistence rejects secrets before writing state or generated knowledge',async()=>temporary(async dir=>{
-  const state=new WorkflowState(path.join(dir,'state.json')); await state.load();
+test('JSON persistence rejects secrets before writing state or generated knowledge',async()=>temporary(async (dir,daftar)=>{
+  const state=new WorkflowState(path.join(dir,'state.json'));daftar(state); await state.load();
   state.state.taskDescription=key;
   await assert.rejects(state.save(),{code:'SECRET_CONTENT_DENIED'});
   assert.ok(!(await fs.readFile(state.stateFile,'utf8')).includes(key));
@@ -89,8 +103,8 @@ test('JSON persistence rejects secrets before writing state or generated knowled
   assert.ok(!summary.includes(key));
 }));
 
-test('legacy knowledge and async handler failures are filtered before MCP output',async()=>temporary(async dir=>{
-  const state=new WorkflowState(path.join(dir,'state.json')); await state.load();
+test('legacy knowledge and async handler failures are filtered before MCP output',async()=>temporary(async (dir,daftar)=>{
+  const state=new WorkflowState(path.join(dir,'state.json'));daftar(state); await state.load();
   state.state.history=[{taskDescription:key,taskType:'feature',timestamp:new Date().toISOString()}];
   assert.ok(!JSON.stringify(await call('project_summary',{},state)).includes(key));
   state.state.history=[{classification:'SECRET',taskDescription:'opaque-classified-content',taskType:'feature'}];
@@ -113,7 +127,7 @@ test('shell-free runtime execution preserves multiline commit arguments literall
   assert.equal(result.stdout.trim(),value);
 });
 
-test('CLI stdout and stderr do not contain synthetic credentials',async()=>temporary(async dir=>{
+test('CLI stdout and stderr do not contain synthetic credentials',async()=>temporary(async (dir,daftar)=>{
   const script=path.resolve('index.js');
   const result=await run(process.execPath,[script,'call','start_task','--args',JSON.stringify({description:key,type:'feature'})],{cwd:dir,env:{...process.env,DEV_WORKFLOW_USER_ID:'security-test',DEV_WORKFLOW_SECURITY_MODE:'strict'}}).catch(err=>err);
   const {stdout,stderr}=result;
@@ -121,12 +135,12 @@ test('CLI stdout and stderr do not contain synthetic credentials',async()=>tempo
   assert.ok(!String(stdout).includes(key)); assert.ok(!String(stderr).includes(key));
 }));
 
-test('legacy owner markers migrate before knowledge validation',async()=>temporary(async dir=>{
+test('legacy owner markers migrate before knowledge validation',async()=>temporary(async (dir,daftar)=>{
   await fs.writeFile(path.join(dir,'.workflow-state.json'),JSON.stringify({
     currentPhase:'coding',taskDescription:'Preserve ongoing work',taskType:'feature',history:[],
     owner:{token:'proc-1234-abcd',pid:1234},
   }));
-  const state=new WorkflowState(path.join(dir,'.state','workflow-state.json'));
+  const state=new WorkflowState(path.join(dir,'.state','workflow-state.json'));daftar(state);
   await state.load();
   const saved=JSON.parse(await fs.readFile(state.stateFile,'utf8'));
   assert.equal(saved.taskDescription,'Preserve ongoing work');
@@ -134,10 +148,10 @@ test('legacy owner markers migrate before knowledge validation',async()=>tempora
   assert.equal(saved.owner.token,undefined);
 }));
 
-test('shared project history rejects unsafe direct writes after session integration',async()=>temporary(async dir=>{
+test('shared project history rejects unsafe direct writes after session integration',async()=>temporary(async (dir,daftar)=>{
   const userDir=path.join(dir,'.state','users','fixture-user');
   await fs.mkdir(userDir,{recursive:true});
-  const state=new WorkflowState(path.join(userDir,'workflow-state.ses_fixture.json'));
+  const state=new WorkflowState(path.join(userDir,'workflow-state.ses_fixture.json'));daftar(state);
   await state.load();
   state.state.history=[{taskDescription:key,taskType:'feature',timestamp:new Date().toISOString()}];
   await assert.rejects(state.writeHistoryFile(),{code:'SECRET_CONTENT_DENIED'});
@@ -145,7 +159,7 @@ test('shared project history rejects unsafe direct writes after session integrat
   assert.ok(!persisted.includes(key));
 }));
 
-test('actual stdio MCP response and stderr exclude rejected secret material',async()=>temporary(async dir=>{
+test('actual stdio MCP response and stderr exclude rejected secret material',async()=>temporary(async (dir,daftar)=>{
   const transport=new StdioClientTransport({command:process.execPath,args:[path.resolve('index.js')],cwd:dir,stderr:'pipe',env:{...process.env,DEV_WORKFLOW_USER_ID:'wire-security-test'}});
   const client=new Client({name:'security-regression',version:'1.0.0'});
   let diagnostics='';transport.stderr?.on('data',chunk=>{diagnostics+=chunk.toString();});
@@ -158,8 +172,8 @@ test('actual stdio MCP response and stderr exclude rejected secret material',asy
   } finally {await client.close();}
 }));
 
-test('release tool rejects arbitrary shell commands and protected file reads before exec',async()=>temporary(async dir=>{
-  const state=new WorkflowState(path.join(dir,'state.json'));await state.load();
+test('release tool rejects arbitrary shell commands and protected file reads before exec',async()=>temporary(async (dir,daftar)=>{
+  const state=new WorkflowState(path.join(dir,'state.json'));daftar(state);await state.load();
   Object.assign(state.state,{currentPhase:'release',readyToCommit:true,readyCheckCompleted:true,commitAndPushCompleted:true});
   let executed=false;
   const response=await call('perform_release',{command:'cat .env'},state,{exec:async()=>{executed=true;return {stdout:''};},git:createGitMock(),utils:testUtils});
