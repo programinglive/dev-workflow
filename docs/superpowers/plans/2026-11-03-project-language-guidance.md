@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make `start_task` suggest English for developer-facing project work and multilingual localization for non-English app interfaces.
+**Goal:** Make `start_task` suggest English for developer-facing project work, multilingual localization for non-English app interfaces, and isolated worktrees for concurrent sessions.
 
-**Architecture:** Add a short language policy to the existing `start_task` response. Pin the response and the public guidance in tests and project docs; do not add configuration or enforcement that blocks an existing documented project policy.
+**Architecture:** Add concise language and session-isolation reminders to the existing `start_task` response. Pin the response and public guidance in tests and project docs; do not add configuration or enforcement that blocks an existing documented project policy.
 
 **Tech Stack:** Node.js, MCP handler tests, Markdown.
 
@@ -15,12 +15,14 @@
 - Preserve existing workflow gates and project language policies.
 - Keep the instruction concise and advisory.
 - Include English and the requested locale in suggested app localization.
+- Clarify that a branch alone does not isolate concurrent edits in one working directory.
 
 ## Review Focus
 
 - Existing project language policy: wording must explicitly defer when one is documented.
 - User-facing translation: guidance must require multilingual localization rather than a single hard-coded locale.
 - Commit conventions: task-start reminder must mention commit messages.
+- Concurrent sessions: task-start reminder must recommend a separate worktree per session.
 
 ---
 
@@ -36,4 +38,6 @@
 - [x] Write a failing test that checks the English defaults, multilingual app localization, and existing-policy exception.
 - [x] Run the test and confirm it fails because task-start guidance is missing.
 - [x] Add the language guidance to the start-task response.
-- [x] Document the convention and run focused and full verification.
+- [x] Document the language convention and run focused and full verification.
+- [x] Add a task-start reminder that concurrent sessions need separate worktrees.
+- [ ] Re-run regression and full verification, then update the open PR.

@@ -369,6 +369,7 @@ export async function handleStartTask(args, workflowState, git) {
           `   Urutannya belum tentu urutan kerja yang benar. Kirim 'plan' pada 'start_task',\n` +
           `   atau susun ulang sekarang dengan 'set_plan' { steps: [...] }.\n\n`
         : `${renderPlanFull(workflowState.state.plan)}\n\n`) +
+      `🌿 Session isolation: create a task-specific branch before editing. If sessions may work on this repository at the same time, use a separate git worktree for each session; branches in one shared working directory do not isolate file changes.\n\n` +
       `🌐 Project language conventions (follow an existing project policy when one is documented):\n` +
       `- Use English by default for the README, developer-facing documentation and code (including identifiers and comments), and commit messages.\n` +
       `- When the app needs a non-English user-facing language, implement multilingual localization (i18n) that includes English and the requested locale; avoid hard-coding a single translated interface.\n\n` +

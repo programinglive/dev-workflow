@@ -9,6 +9,10 @@ one. When an app needs a non-English user-facing language, implement
 multilingual localization (i18n) that includes English and the requested
 locale rather than hard-coding a single translated interface.
 
+Use a task-specific branch for each task. If multiple sessions may work on the
+same repository concurrently, use a separate Git worktree per session; a
+branch alone does not isolate edits made in one shared working directory.
+
 ## Correct Release Workflow Order
 
 To avoid needing `--force` flag for releases, follow this exact order:

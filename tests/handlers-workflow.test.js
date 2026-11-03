@@ -149,6 +149,9 @@ test("start_task suggests English project conventions and multilingual app local
     assert.match(text, /non-English.*user-facing/i);
     assert.match(text, /multilingual.*localization/i);
     assert.match(text, /existing.*project policy/i);
+    assert.match(text, /task-specific branch/i);
+    assert.match(text, /separate.*worktree/i);
+    assert.match(text, /sessions may work on this repository at the same time/i);
   });
 });
 

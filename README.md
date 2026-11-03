@@ -103,6 +103,10 @@ documented. If the app needs a non-English user-facing language, implement
 multilingual localization (i18n) with English and the requested locale instead
 of hard-coding a single translated interface.
 
+Task-start guidance also recommends a task-specific Git branch. When multiple
+sessions may work on the same repository concurrently, give each session a
+separate Git worktree so they do not edit the same working directory.
+
 ### 1. Clone and install
 
 ```bash
