@@ -9,6 +9,7 @@ import { registerRuntimeSecret } from '../security/runtime-secrets.js';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { hapusSementara } from './helpers/hapus-sementara.js';
 
 // Synthetic, deliberately assembled fixtures; these are never live credentials.
 export const fixtures = [
@@ -125,5 +126,5 @@ test('protected file reads return metadata and reject protected aliases', async 
     }
     const ordinary=path.join(dir,'notes.md'); await fs.writeFile(ordinary,'PASSWORD=ordinary-file-fixture');
     await assert.rejects(readKnowledgeFile(ordinary), {code:'SECRET_CONTENT_DENIED'});
-  } finally {await fs.rm(dir,{recursive:true,force:true});}
+  } finally {await hapusSementara(dir);}
 });

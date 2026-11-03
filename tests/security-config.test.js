@@ -7,6 +7,7 @@ import { databaseConnectionUrl,requireSigningSecret } from '../security/config.j
 import { securityJsonMiddleware,knowledgeInputMiddleware,authenticationToken,authCookieOptions } from '../security/http.js';
 import { securityAudit } from '../security/audit.js';
 import { getToolList } from '../tools/definitions.js';
+import { hapusSementara } from './helpers/hapus-sementara.js';
 
 test('database indirection is runtime-only and invalid names fail closed',()=>{
   const env={DEV_WORKFLOW_DB_URL_ENV:'PROJECT_DATABASE_URL',PROJECT_DATABASE_URL:'postgres://user:runtime-only-fixture@host/db',DEV_WORKFLOW_DB_URL:'ignored'};
@@ -48,5 +49,5 @@ test('security audit reports sanitized metadata and registers a discoverable MCP
     assert.ok(report.protected_files.length>0); assert.ok(report.potential_exposures.length>0);
     assert.equal(report.mode,'strict');
     assert.ok(getToolList().some(t=>t.name==='security_audit'));
-  }finally{await fs.rm(dir,{recursive:true,force:true});}
+  }finally{await hapusSementara(dir);}
 });
