@@ -741,7 +741,13 @@ yang dibagikan tetap domain utama.
 - `tests/monitor-share-views.test.js` - `HEAD` tidak menambah `views`, dan
   jumlah yatim dihitung database (bukan dari daftar yang dibatasi 200).
 - `scripts/probe-views.sh` - membuktikan `views` benar-benar bertambah lewat
-  jalur publik, dan `HEAD` tidak ikut dihitung.- `tests/monitor-share-parse.test.js` - `node --check` untuk seluruh modul
+  jalur publik, dan `HEAD` tidak ikut dihitung.
+- `tests/monitor-share-ratemap.test.js` - peta pembatas laju punya batas keras:
+  20.000 IP berbeda tetap menyisakan <= 5000 kunci, dan pembaca sah tidak
+  ikut terblokir. Tanpa batas ini, memutar IP adalah kebocoran memori.
+- `tests/monitor-share-server.test.js` juga menempuh **HTTP sungguhan** dengan
+  baris sesi yang semua field-nya terisi. Tes kebocoran yang hanya memanggil
+  renderer tidak akan menangkap `share-server` yang meneruskan baris utuh.- `tests/monitor-share-parse.test.js` - `node --check` untuk seluruh modul
   monitor.
 - `tests/monitor-share-mobile.test.js` - header penanda, `Share.share`, dan
   hook sebelum `return null`.
