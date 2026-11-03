@@ -180,8 +180,55 @@ test("token yang gagal validasi tidak pernah sampai ke database", async () => {
   }
 });
 
-test("rate limit memberi 429 setelah batas, dan bisa dimatikan", async () => {
+test("20 pembaca berbeda TIDAK saling memblokir lewat satu koneksi proxy", async () => {
+  // Meniru keadaan produksi: semua permintaan datang dari 127.0.0.1 karena
+  // cloudflared, tetapi setiap pembaca punya CF-Connecting-IP sendiri.
+  // Sebelum perbaikan, ini berakhir 429 - satu pembaca memblokir semua.
   const query = async (sql) => {
+    const teks = String(sql);
+    if (/FROM share_links l/.test(teks)) {
+      return { rows: [{ token: TOKEN, revoked_at: null, live_session_key: "s", task: "x", views: 1, updated_at: new Date().toISOString() }], rowCount: 1 };
+    }
+    return { rows: [], rowCount: 0 };
+  };
+  const s = createShareServer({ query, rateLimitPerMinute: 2 });
+  await new Promise((r) => s.listen(0, "127.0.0.1", r));
+  try {
+    const base = "http://127.0.0.1:" + s.address().port;
+    const status = [];
+    for (let i = 1; i <= 10; i += 1) {
+      const r = await fetch(base + "/s/" + TOKEN, { headers: { "cf-connecting-ip": "10.1.0." + i } });
+      status.push(r.status);
+    }
+    assert.ok(!status.includes(429), "pembaca berbeda tidak boleh saling memblokir: " + status.join(","));
+  } finally {
+    await new Promise((r) => s.close(r));
+  }
+});
+
+test("satu pembaca yang sama TETAP dibatasi 429", async () => {
+  // Tanpa ini, memperbaiki bug di atas bisa berubah menjadi "tanpa batas".
+  const query = async (sql) => {
+    const teks = String(sql);
+    if (/FROM share_links l/.test(teks)) {
+      return { rows: [{ token: TOKEN, revoked_at: null, live_session_key: "s", task: "x", views: 1, updated_at: new Date().toISOString() }], rowCount: 1 };
+    }
+    return { rows: [], rowCount: 0 };
+  };
+  const s = createShareServer({ query, rateLimitPerMinute: 2 });
+  await new Promise((r) => s.listen(0, "127.0.0.1", r));
+  try {
+    const base = "http://127.0.0.1:" + s.address().port;
+    const h = { headers: { "cf-connecting-ip": "10.9.9.9" } };
+    assert.equal((await fetch(base + "/s/" + TOKEN, h)).status, 200);
+    assert.equal((await fetch(base + "/s/" + TOKEN, h)).status, 200);
+    assert.equal((await fetch(base + "/s/" + TOKEN, h)).status, 429);
+  } finally {
+    await new Promise((r) => s.close(r));
+  }
+});
+
+test("rate limit memberi 429 setelah batas, dan bisa dimatikan", async () => {  const query = async (sql) => {
     const teks = String(sql);
     if (/FROM share_links l/.test(teks)) {
       return { rows: [{ token: TOKEN, revoked_at: null, live_session_key: "s", task: "x", updated_at: new Date().toISOString() }], rowCount: 1 };

@@ -750,6 +750,31 @@ Two sibling test files share one database, so **each file needs its own
 fails while the other file's rows are still there; that collision was real and
 turned a passing suite red the first time both ran against the same PostgreSQL.
 
+### Rate limit: keyed per reader, not per proxy
+
+Behind Cloudflare Tunnel every request arrives from `127.0.0.1` — that is
+`cloudflared`, not the reader. Keying the limiter on `socket.remoteAddress`
+therefore gave **all readers one shared quota**. Measured on 3 November 2026:
+130 requests produced 11 × `429`, and one person opening a link 120 times in a
+minute locked out everyone else, including the owner. A single WhatsApp preview
+fetch would be enough.
+
+`monitor-server/client-key.cjs` returns `CF-Connecting-IP`, but **only when the
+connection came from loopback**. From any other address the header is ignored,
+because anyone able to reach port 3200 directly could otherwise mint unlimited
+quota by inventing a value. The header is validated as an IP first, so a junk
+value cannot become a rate-limit key.
+
+Measured after the fix, straight to `127.0.0.1:3200` (not through Cloudflare —
+see below): one reader gets 120 served then `429`; twelve *different* readers
+immediately afterwards are all served.
+
+> **Measure the limiter directly, not through the tunnel.** Cloudflare
+> overwrites or rejects a spoofed `CF-Connecting-IP` (it answered `403`), so a
+> probe through the public hostname reports a pass that the server never
+> produced. Both probe scripts (`scripts/probe-rate-limit.sh`) hit
+> `127.0.0.1:3200` for this reason.
+
 ### Lint: local `web/` runs need `.netlify/**` ignored
 
 `npm run lint --prefix web` was red locally with 12 `no-this-alias` errors and
