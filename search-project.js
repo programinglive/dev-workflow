@@ -176,7 +176,7 @@ function safeRelativePath(relativePath) {
   return !segments.some((segment) => segment === '..' || segment === '.');
 }
 
-export async function readCandidate(root, relativePath, byteBudget, openFile = open) {
+export async function readCandidate(root, relativePath, byteBudget, openFile = open, realpathFile = realpath) {
   if (!safeRelativePath(relativePath) || isSensitivePath(relativePath)) {
     return { skipped: true };
   }
@@ -189,7 +189,7 @@ export async function readCandidate(root, relativePath, byteBudget, openFile = o
   try {
     originalStat = await lstat(absolutePath);
     if (!originalStat.isFile() || originalStat.isSymbolicLink()) return { skipped: true };
-    resolvedPath = await realpath(absolutePath);
+    resolvedPath = await realpathFile(absolutePath);
   } catch {
     return { skipped: true };
   }
@@ -206,7 +206,7 @@ export async function readCandidate(root, relativePath, byteBudget, openFile = o
     const noFollow = constants.O_NOFOLLOW || 0;
     handle = await openFile(absolutePath, constants.O_RDONLY | noFollow);
     const openedStat = await handle.stat();
-    const openedPath = await realpath(absolutePath);
+    const openedPath = await realpathFile(absolutePath);
     if (!openedStat.isFile()
       || openedStat.dev !== originalStat.dev
       || openedStat.ino !== originalStat.ino

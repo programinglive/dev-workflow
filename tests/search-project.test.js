@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { lstat, mkdtemp, mkdir, open, rm, symlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, it } from 'node:test';
@@ -282,22 +282,26 @@ describe('searchProject', () => {
     const originalStat = await lstat(path.join(root, 'race.txt'));
     let didRead = false;
 
-    const result = await readCandidate(root, 'race.txt', MAX_FILE_BYTES, async (...args) => {
-      const handle = await open(...args);
-      return {
-        stat: async () => ({
-          dev: originalStat.dev,
-          ino: originalStat.ino,
-          size: MAX_FILE_BYTES + 100,
-          isFile: () => true,
-        }),
-        read: (...readArgs) => {
+    const oversizedStat = {
+      dev: originalStat.dev,
+      ino: originalStat.ino,
+      size: MAX_FILE_BYTES + 100,
+      isFile: () => true,
+    };
+    const result = await readCandidate(
+      root,
+      'race.txt',
+      MAX_FILE_BYTES,
+      async () => ({
+        stat: async () => oversizedStat,
+        read: async () => {
           didRead = true;
-          return handle.read(...readArgs);
+          return { bytesRead: 0 };
         },
-        close: handle.close.bind(handle),
-      };
-    });
+        close: async () => {},
+      }),
+      async (candidatePath) => candidatePath,
+    );
 
     assert.equal(result.skipped, true);
     assert.equal(result.truncated, true);
