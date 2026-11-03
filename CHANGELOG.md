@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.23.14](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.23.13...v1.23.14) (2026-11-03)
+
+
+### ✅ Tests
+
+* update README.md, mobile-app/App.js, monitor-server/dashboard.cjs +1 more ([df21d2c](https://github.com/programinglive/dev-workflow-mcp-server/commit/df21d2c404beabcf671b124f6bda113ffbd6d32f))
+
 ### [1.23.13](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.23.12...v1.23.13) (2026-11-03)
 
 ### [1.23.12](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.23.11...v1.23.12) (2026-11-03)
