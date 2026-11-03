@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.24.0](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.23.14...v1.24.0) (2026-11-03)
+
+
+### ✨ Features
+
+* add bounded local project search ([161eaf1](https://github.com/programinglive/dev-workflow-mcp-server/commit/161eaf1179744ab7f4e6b210c39c8c99e8c9c6ad))
+
+
+### 📝 Documentation
+
+* **release:** record 1.24.0 release scope ([d741a6e](https://github.com/programinglive/dev-workflow-mcp-server/commit/d741a6e0944191ceb5130659c947213ead2ff682))
+
 ### [1.23.14](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.23.13...v1.23.14) (2026-11-03)
 
 
