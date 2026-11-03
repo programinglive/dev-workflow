@@ -81,7 +81,7 @@ finished.
 | `workflow-state.js` | The state machine and its persistence (phase, DoD, plan, history) |
 | `db/` | Storage adapters: SQLite (default), PostgreSQL, MySQL, plus migration and replication |
 | `monitor.js` | Fire-and-forget reporting of the current session to the live dashboard; never blocks or throws |
-| `monitor-server/` | The dashboard process (`dashboard.cjs`), the public share process (`share-server.cjs`), their SQL builders, and their systemd units |
+| `monitor-server/` | The dashboard process (`dashboard.cjs`), the public share process (`share-server.cjs`), their SQL builders, and their systemd units. Includes responsive bottom navigation bar (Aktif, Riwayat, Rekap, Mesin, Info) and interactive session detail modals. |
 | `web/` | The public marketing site: Next.js static export published to `devworkflow.programinglive.com` |
 | `mobile-app/` | The tablet client (Expo/React Native) that shows the same sessions on a wall screen. Includes a **"Buka di Browser"** button (Info tab) and a tappable header URL that open the dashboard in the device browser via `Linking.openURL`. |
 | `security/` | Secret references, output scanning, and the audit |
