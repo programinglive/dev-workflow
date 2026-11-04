@@ -21,6 +21,7 @@ import { activeForeignLock, projectLockDir, currentIsAlive, DEFAULT_LOCK_STALE_M
 import { reportEventSafe } from "../../monitor.js";
 import { resolveProjectDir, setActiveProjectDir } from "../../exec.js";
 import { pinSessionProject, resolveHistoryFile } from "../../workflow-state.js";
+import { assignWorkflowIdentity, validateZettlyTaskArguments } from '../../zettly-workflow.js';
 
 /**
  * Catat repo proyek untuk sesi ini.
@@ -107,6 +108,8 @@ async function captureDirtyAtStart(git) {
 }
 
 export async function handleStartTask(args, workflowState, git) {
+  const zettlyArgumentError=validateZettlyTaskArguments(args);
+  if(zettlyArgumentError)return textResponse(`⚠️ ${zettlyArgumentError} The existing task was not changed.`);
   // Satu penulis per repo.
   //
   // 31 Oktober 2026 dua sesi OpenCode menulis satu working tree yang sama. Satu
@@ -234,6 +237,7 @@ export async function handleStartTask(args, workflowState, git) {
   //   1. Proses MCP LAIN menulis berkas state setelah kita memuatnya.
   //   2. Task kita sendiri yang belum selesai lalu diganti task baru.
   const preservedBeforeSave = await workflowState.reconcileWithDisk();
+  const previousTaskIdentity = {taskDescription:workflowState.state.taskDescription,projectDir:workflowState.state.projectDir,workflowTaskId:workflowState.state.workflowTaskId,zettly:workflowState.state.zettly};
   const { archivedTask } = workflowState.reset({ archive: true });
 
   workflowState.state.currentPhase = "coding";
@@ -248,7 +252,7 @@ export async function handleStartTask(args, workflowState, git) {
   workflowState.state.taskDescription = args.description;
   workflowState.state.taskType = args.type;
   workflowState.state.plan = planDerived
-    ? createPlan(dodCheck.items.map((text) => `Selesaikan: ${text}`))
+    ? createPlan(dodCheck.items.map((text) => `Complete: ${text}`))
     : createPlan(planCheck.items);
   workflowState.state.definitionOfDone = dodCheck.items.map((text, index) => ({
     id: `dod-${index + 1}`,
@@ -301,6 +305,7 @@ export async function handleStartTask(args, workflowState, git) {
   // Kejadian nyata 31 Okt 2026: dua baris `billing.yaml` milik sesi lain masuk
   // commit sesi ini, dan tidak ada yang bisa membedakannya dari luar.
   workflowState.state.dirtyAtStart = await captureDirtyAtStart(git);
+  assignWorkflowIdentity(workflowState.state,previousTaskIdentity,args);
 
   // start_task memang bermaksud MENGGANTI task, jadi ia boleh menang atas
   // task berjalan. Task yang diganti tetap diarsipkan oleh reconcileWithDisk,

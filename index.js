@@ -24,6 +24,7 @@ import {
 } from "./commit-helpers.js";
 import { WorkflowState, sessionKeyFromRequest, reportToMonitorSafe } from "./workflow-state.js";
 import { getToolList } from "./tools/definitions.js";
+import { WORKFLOW_INSTRUCTIONS, ENGLISH_IMPLEMENTATION_RULE } from './workflow-guidance.js';
 import { handleToolCall } from "./tools/handlers.js";
 
 export { createCommitMessageParts, determineReleaseTypeFromCommit } from "./commit-helpers.js";
@@ -46,7 +47,7 @@ export const server = new Server(
       tools: {},
       prompts: {},
     },
-    instructions: 'Before development, call start_task with the actual user task description, projectDir, definitionOfDone and plan. Keep task progress current with mark_plan_step and evidence. A connected idle MCP process is device liveness, not an active task. Preserve other sessions and never replace their task metadata.',
+    instructions: WORKFLOW_INSTRUCTIONS,
   }
 );
 
@@ -122,7 +123,7 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
           role: "user",
           content: {
             type: "text",
-            text: `Development Workflow Discipline:
+            text: `${ENGLISH_IMPLEMENTATION_RULE}\n\nDevelopment Workflow Discipline:
 
 1. 🎯 START CONSCIOUS
    - Use 'start_task' to declare what you're coding

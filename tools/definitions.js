@@ -21,7 +21,7 @@ export function getToolList() {
     {
       name: "start_task",
       description:
-        "Start a new coding task. This is the first step - be conscious about what you're coding.",
+        "Start a task before coding. Use English for new implementation artifacts. Automatically create or link the canonical Zettly Todo and track its progress.",
       inputSchema: {
         type: "object",
         properties: {
@@ -46,6 +46,8 @@ export function getToolList() {
               "Pass it whenever the session directory is not itself a git repository, " +
               "otherwise the server may fall back to WORKFLOW_PROJECT_DIR and commit to the wrong repo.",
           },
+          taskId: {type:'string',minLength:3,maxLength:128,pattern:'^[A-Za-z0-9][A-Za-z0-9._:-]+$',description:'Optional canonical workflow task ID for a continuation. Reuse the existing Todo ID when continuing work on another device.'},
+          zettlyTodoId: {type:'integer',minimum:1,description:'Link an existing Zettly Todo instead of creating another task. Its existing owner content is preserved.'},
           definitionOfDone: {
             type: "array",
             items: { type: "string" },
@@ -855,6 +857,11 @@ export function getToolList() {
         },
         required: ["recordId", "status"],
       },
+    },
+    {
+      name:'sync_zettly_task',
+      description:'Retry pending Zettly task and outcome synchronization without blindly creating duplicates. Optionally link an existing Todo. No code execution or task deletion.',
+      inputSchema:{type:'object',properties:{todoId:{type:'integer',minimum:1,description:'Existing Zettly Todo ID to link to the current workflow task.'}},additionalProperties:false},
     },
   ];
 }

@@ -2,6 +2,8 @@ import { textResponse, isReleaseSatisfied, isErrorResponse, loadDocGateInputs } 
 import { evaluateDocGate, isGateSatisfied, formatRelativeAge, renderDocGateFailure, MIN_WAIVER_REASON } from "./docs.js";
 import { assertSafeKnowledge } from '../../security/policy.js';
 import { safeLog, securityOutputFilter } from '../../security/sanitizer.js';
+import { withEnglishGuidance } from '../../workflow-guidance.js';
+import { syncZettlyTask, flushZettlyOutbox } from '../../zettly-workflow.js';
 import { securityAudit } from '../../security/audit.js';
 import path from 'node:path';
 import { assertSafeToolCommand } from '../../security/commands.js';
@@ -326,6 +328,7 @@ async function dispatchToolCall({
   git,
   utils,
   factory,
+  zettlyOptions,
 }) {
   try {
     const { name } = request.params;
@@ -344,6 +347,12 @@ async function dispatchToolCall({
     }
 
     switch (name) {
+      case 'sync_zettly_task': {
+        const pending = await flushZettlyOutbox(workflowState,{...zettlyOptions,force:true});
+        const active = await syncZettlyTask(workflowState,{...zettlyOptions,force:true,todoId:args.todoId});
+        const note=[pending.note,active.note].filter(Boolean).join('\n')||'No active Zettly task or pending outcome.';
+        return textResponse(`${pending.ok&&active.ok?'✅':'⚠️'} ${note}`);
+      }
       case 'search_project':
         return handleSearchProject(args, workflowState);
       case 'security_audit': {
@@ -389,15 +398,15 @@ async function dispatchToolCall({
       case "skip_release":
         return handleSkipRelease(args, workflowState);
       case "complete_task":
-        return handleCompleteTask(args, workflowState, { git, factory });
+        return handleCompleteTask(args, workflowState, { git, factory, zettlyOptions });
       case "next_steps":
         return handleNextSteps(args, workflowState);
       case "resume_session":
         return handleResumeSession(args, workflowState);
       case "force_complete_task":
-        return handleForceCompleteTask(args, workflowState, { factory });
+        return handleForceCompleteTask(args, workflowState, { factory, zettlyOptions });
       case "drop_task":
-        return handleDropTask(args, workflowState, { factory });
+        return handleDropTask(args, workflowState, { factory, zettlyOptions });
       case "get_workflow_status":
         return handleGetWorkflowStatus(workflowState);
       case "view_history":
@@ -447,8 +456,16 @@ export async function handleToolCall(context) {
     assertSafeKnowledge({tool:context.request.params.name,args});
     assertSafeToolCommand(context.request.params.name,args);
     if (context.workflowState) context.workflowState.lastConflict = null;
-    const response=await dispatchToolCall({...context,request:{...context.request,params:{...context.request.params,arguments:args}}});
-    return securityOutputFilter(withPlanProgress(withConflictNotice(response, context.workflowState), context.workflowState));
+    let response=await dispatchToolCall({...context,request:{...context.request,params:{...context.request.params,arguments:args}}});
+    const name=context.request.params.name;
+    const syncTools=new Set(['start_task','set_plan','mark_plan_step','set_definition_of_done','mark_dod_item','waive_dod_item','mark_bug_fixed','create_tests','skip_tests','run_tests','create_documentation','waive_documentation','check_ready_to_commit','commit_and_push','perform_release','skip_release','get_workflow_status','continue_workflow','resume_session','claim_factory_task']);
+    if(context.workflowState&&!response?.isError&&!isErrorResponse(response)&&!context.workflowState.lastConflict&&syncTools.has(name)){
+      const notes=[];
+      if(name==='get_workflow_status'&&context.workflowState.state.zettlyOutbox?.length){const result=await flushZettlyOutbox(context.workflowState,context.zettlyOptions);if(result.note)notes.push(result.note);}
+      const result=await syncZettlyTask(context.workflowState,context.zettlyOptions);if(result.note)notes.push(result.note);
+      if(notes.length&&typeof response?.content?.[0]?.text==='string')response={...response,content:[{...response.content[0],text:response.content[0].text+'\n\n'+notes.join('\n')},...response.content.slice(1)]};
+    }
+    return securityOutputFilter(withEnglishGuidance(withPlanProgress(withConflictNotice(response, context.workflowState), context.workflowState),name));
   } catch(error) {
     if(['SECRET_CONTENT_DENIED','UNSAFE_COMMAND_DENIED'].includes(error.code)) {
       return {isError:true,content:[{type:'text',text:JSON.stringify({error:error.code,message:error.message,findings:error.findings})}]};

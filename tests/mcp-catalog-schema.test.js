@@ -17,6 +17,9 @@ test('real MCP client accepts tool catalog with classification JSON schemas',{ti
   await client.connect(transport);
   transport.stderr?.resume();
   const result=await client.listTools();
+  assert.match(client.getInstructions(),/English implementation rule/);
+  assert.match(client.getInstructions(),/Zettly/);
+  assert.ok(result.tools.some(tool=>tool.name==='sync_zettly_task'));
   const start=result.tools.find(tool=>tool.name==='start_task');
   assert.ok(start);
   assert.equal(start.inputSchema.properties.classification.type,'string');

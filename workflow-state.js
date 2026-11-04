@@ -1243,6 +1243,9 @@ export class WorkflowState {
       plan: [],
       history: [],
       taskType: "",
+      workflowTaskId: "",
+      zettly: null,
+      zettlyOutbox: [],
     };
   }
 
@@ -2564,6 +2567,9 @@ export class WorkflowState {
       plan: [],
       history,
       taskType: "",
+      workflowTaskId: "",
+      zettly: null,
+      zettlyOutbox: Array.isArray(previous.zettlyOutbox) ? previous.zettlyOutbox : [],
     };
 
     return { archivedTask };
@@ -2572,6 +2578,7 @@ export class WorkflowState {
   addToHistory(entry) {
     this.state.history.push({
       classification: this.state.classification || "INTERNAL",
+      ...(this.state.workflowTaskId ? {workflowTaskId:this.state.workflowTaskId,zettlyTodoId:this.state.zettly?.todoId||null} : {}),
       ...entry,
       timestamp: new Date().toISOString(),
     });

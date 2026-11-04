@@ -79,8 +79,11 @@ finished.
 
 | Path | Single responsibility |
 |---|---|
-| `index.js` | MCP entry point: registers the 38 tools and their handlers |
+| `index.js` | MCP entry point: registers the 40 tools, English implementation instructions and handlers |
 | `workflow-state.js` | The state machine and its persistence (phase, DoD, plan, history) |
+| `workflow-guidance.js` | English implementation instructions delivered at connection and workflow checkpoints |
+| `zettly-client.js` | Device-local owner credentials, account checks and bounded authenticated Zettly requests |
+| `zettly-workflow.js` | Canonical Todo links, progress synchronization and durable linked-outcome retries |
 | `db/` | Storage adapters: SQLite (default), PostgreSQL, MySQL, plus migration and replication |
 | `monitor.js` | Best-effort reporting of workflow changes to the live dashboard; the MCP process also sends a small heartbeat while its client session stays connected |
 | `monitor-server/` | The dashboard process (`dashboard.cjs`), the public share process (`share-server.cjs`), their SQL builders, and their systemd units. Includes responsive bottom navigation bar (Aktif, Riwayat, Rekap, Mesin, Info) and interactive session detail modals. |
@@ -135,11 +138,12 @@ See [MCP client configuration](#mcp-client-configuration).
 
 ## Available Tools
 
-38 tools.
+40 tools.
 
 | Tool | Purpose |
 |---|---|
-| `start_task` | Begin a task (always the first step); requires `definitionOfDone` and `plan` |
+| `start_task` | Begin a task; requires `definitionOfDone` and `plan`; automatically creates or links its Zettly Todo |
+| `sync_zettly_task` | Retry pending Zettly task/outcome synchronization or link an existing Todo |
 | `set_plan` | Replace the work plan of the running task |
 | `search_project` | Search bounded local text in the active repo; returns sanitized path:line citations |
 | `mark_plan_step` | Mark one plan step done (or reopen it) |
@@ -178,6 +182,10 @@ See [MCP client configuration](#mcp-client-configuration).
 | `sync_task_status` | Report a status change back to Factory |
 
 ### Searching the active project
+
+New implementation artifacts use English: identifiers, comments, docstrings, test descriptions, developer documentation and commit messages. MCP initialization, the workflow prompt and key tool responses deliver this rule to the AI. User conversation and explicitly localized product text can retain the requested language.
+
+Zettly task tracking is automatic at task start, progress and successful completion. Use the existing owner account, not an unverified retired journal service credential. See [Zettly workflow tracking](docs/zettly-workflow.md) for protected credentials, deduplication, retry behavior and linked completion outcomes.
 
 `search_project` searches the Git repository pinned by `start_task.projectDir`. It reads tracked files and untracked, non-ignored files; it skips ignored, known-sensitive, binary, invalid UTF-8, and oversized files. Each call is read-only, keeps no persistent index, and makes no network request. Results are lexical matches, ranked by exact phrase then query-term overlap; this is not semantic/vector search.
 

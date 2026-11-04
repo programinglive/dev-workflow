@@ -66,6 +66,15 @@ test("resume_session tanpa argumen mendaftar state yang tertinggal", async () =>
   });
 });
 
+test('resuming another task preserves pending Zettly outcomes from the target session',async()=>{
+ await withProject(async({state})=>{
+  state.state.zettlyOutbox=[{status:'completed',snapshot:{workflowTaskId:'pending-target-task',zettly:{todoId:42}}}];
+  await handleResumeSession({adopt:'ses_OTHER'},state);
+  assert.equal(state.state.zettlyOutbox.length,1);
+  assert.equal(state.state.zettlyOutbox[0].snapshot.workflowTaskId,'pending-target-task');
+ });
+});
+
 test("resume_session menolak mengambil task milik proses yang masih menulis", async () => {
   await withProject(async ({ state, otherFile }) => {
     await writeFile(
