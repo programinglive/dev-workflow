@@ -863,5 +863,34 @@ export function getToolList() {
       description:'Retry pending Zettly task and outcome synchronization without blindly creating duplicates. Optionally link an existing Todo. No code execution or task deletion.',
       inputSchema:{type:'object',properties:{todoId:{type:'integer',minimum:1,description:'Existing Zettly Todo ID to link to the current workflow task.'}},additionalProperties:false},
     },
+    {
+      name: "recommend_mcp_tools",
+      description:
+        "Act as the central discovery index and smart recommender for all MCP servers and tools in our ecosystem (central-gateway, pocketbase, infra-knowledge, notify, factory, zettly, clinic-helper, playwright, gcp, cloudflare, netlify, mermaid). Pass a 'query' or 'projectDir' (or omit to use the active task context) to get ranked MCP server and tool recommendations, or pass 'includeAll: true' to browse the complete ecosystem catalog.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description:
+              "Optional topic, task description, or question to match against the MCP ecosystem index (e.g. 'send Pusher notification and query PocketBase', 'deploy systemd service via SSH', 'run Clinic Paratest'). Defaults to the active task context when omitted.",
+          },
+          projectDir: {
+            type: "string",
+            description:
+              "Optional project directory path to boost project-specific MCP tools (e.g. 'D:/code/clinic'). Defaults to the active session projectDir.",
+          },
+          limit: {
+            type: "number",
+            description: "Maximum number of recommended MCP servers to return (1-12, default: 4).",
+          },
+          includeAll: {
+            type: "boolean",
+            description: "When true, render the complete catalog of all MCP servers and tools in the ecosystem.",
+          },
+        },
+        additionalProperties: false,
+      },
+    },
   ];
 }
