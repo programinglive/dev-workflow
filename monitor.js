@@ -99,6 +99,7 @@ export function buildSnapshot({ state, sessionKey = "", projectPath = "", sessio
     // Alat AI pemanggil: codex, antigravity, opencode, atau unknown bila tidak
     // ada petunjuk. Tidak pernah menebak.
     agentTool: detectTool({ env, commandLine: String(process.argv.slice(0, 2).join(' ')) }),
+    activeBuild: s.activeBuild && typeof s.activeBuild === "object" ? s.activeBuild : null,
   };
 }
 
