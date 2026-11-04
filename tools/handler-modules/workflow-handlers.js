@@ -23,6 +23,7 @@ import { resolveProjectDir, setActiveProjectDir } from "../../exec.js";
 import { pinSessionProject, resolveHistoryFile } from "../../workflow-state.js";
 import { assignWorkflowIdentity, validateZettlyTaskArguments } from '../../zettly-workflow.js';
 import { recommendMcpTools, formatMcpRecommendations, formatFullMcpCatalog } from "../../mcp-index.js";
+import { normalizeBuildState, formatBuildStatusBlock } from "../../build-monitor.js";
 
 /**
  * Catat repo proyek untuk sesi ini.
@@ -550,6 +551,17 @@ export async function handleRunTests(args, workflowState) {
   workflowState.state.testsPassed = args.passed;
   workflowState.state.testCommand = args.testCommand;
   workflowState.state.testDetails = typeof args.details === "string" ? args.details : "";
+  workflowState.state.activeBuild = normalizeBuildState(
+    {
+      status: args.passed ? "succeeded" : "failed",
+      target: workflowState.state.activeBuild?.target || "Test Suite Execution",
+      command: args.testCommand,
+      stage: args.passed ? "All tests passed" : "Tests failed",
+      progress: args.passed ? 100 : workflowState.state.activeBuild?.progress ?? null,
+      output: typeof args.details === "string" ? args.details : "",
+    },
+    workflowState.state.activeBuild,
+  );
   workflowState.state.testsSkipped = false;
   workflowState.state.testsSkippedReason = "";
   workflowState.state.readyCheckCompleted = false;
@@ -833,6 +845,42 @@ export async function handleRecommendMcpTools(args = {}, workflowState) {
   }
 
   return textResponse(formatMcpRecommendations(result));
+}
+
+export async function handleReportBuildStatus(args = {}, workflowState) {
+  if (!args || typeof args.target !== "string" || args.target.trim() === "") {
+    return textResponse("⚠️ Please provide a non-empty 'target' describing what is being built.");
+  }
+
+  const prev = workflowState.state.activeBuild || null;
+  const next = normalizeBuildState(args, prev);
+  workflowState.state.activeBuild = next;
+
+  if (!Array.isArray(workflowState.state.buildHistory)) {
+    workflowState.state.buildHistory = [];
+  }
+  if (next.status === "succeeded" || next.status === "failed") {
+    workflowState.state.buildHistory = [
+      ...workflowState.state.buildHistory.slice(-9),
+      next,
+    ];
+  }
+
+  await workflowState.save();
+
+  const eventKind =
+    next.status === "succeeded"
+      ? "build_succeeded"
+      : next.status === "failed"
+        ? "build_failed"
+        : prev && prev.status === next.status
+          ? "build_progress"
+          : "build_started";
+
+  await reportEventSafe(workflowState.state, eventKind, JSON.stringify(next));
+
+  const block = formatBuildStatusBlock(next, workflowState.state.buildHistory);
+  return textResponse(`✅ Build status recorded!\n\n${block}`);
 }
 
 

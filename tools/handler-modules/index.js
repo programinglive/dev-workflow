@@ -8,7 +8,7 @@ import { securityAudit } from '../../security/audit.js';
 import path from 'node:path';
 import { assertSafeToolCommand } from '../../security/commands.js';
 import { sessionKeyFromRequest } from "../../workflow-state.js";
-import { handleStartTask, handleMarkBugFixed, handleCreateTests, handleSkipTests, handleRunTests, handleCreateDocumentation, handleCreateFeatureFlow, handleWaiveDocumentation, handleRecommendMcpTools } from "./workflow-handlers.js";
+import { handleStartTask, handleMarkBugFixed, handleCreateTests, handleSkipTests, handleRunTests, handleCreateDocumentation, handleCreateFeatureFlow, handleWaiveDocumentation, handleRecommendMcpTools, handleReportBuildStatus } from "./workflow-handlers.js";
 import { handleSkipRelease, handlePerformRelease } from "./release-handlers.js";
 import { handleCommitAndPush, handleCompleteTask, handleForceCompleteTask, handleDropTask } from "./commit-handlers.js";
 import { handleProjectSummary, handleProjectSummaryData, handleProjectSummaryDb, handleViewHistory } from "./summary-handlers.js";
@@ -439,6 +439,8 @@ async function dispatchToolCall({
         return handleSyncTaskStatus(args);
       case "recommend_mcp_tools":
         return handleRecommendMcpTools(args, workflowState);
+      case "report_build_status":
+        return handleReportBuildStatus(args, workflowState);
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
@@ -460,7 +462,7 @@ export async function handleToolCall(context) {
     if (context.workflowState) context.workflowState.lastConflict = null;
     let response=await dispatchToolCall({...context,request:{...context.request,params:{...context.request.params,arguments:args}}});
     const name=context.request.params.name;
-    const syncTools=new Set(['start_task','set_plan','mark_plan_step','set_definition_of_done','mark_dod_item','waive_dod_item','mark_bug_fixed','create_tests','skip_tests','run_tests','create_documentation','waive_documentation','check_ready_to_commit','commit_and_push','perform_release','skip_release','get_workflow_status','continue_workflow','resume_session','claim_factory_task']);
+    const syncTools=new Set(['start_task','set_plan','mark_plan_step','set_definition_of_done','mark_dod_item','waive_dod_item','mark_bug_fixed','create_tests','skip_tests','run_tests','create_documentation','waive_documentation','check_ready_to_commit','commit_and_push','perform_release','skip_release','get_workflow_status','continue_workflow','resume_session','claim_factory_task','report_build_status']);
     if(context.workflowState&&!response?.isError&&!isErrorResponse(response)&&!context.workflowState.lastConflict&&syncTools.has(name)){
       const notes=[];
       if(name==='get_workflow_status'&&context.workflowState.state.zettlyOutbox?.length){const result=await flushZettlyOutbox(context.workflowState,context.zettlyOptions);if(result.note)notes.push(result.note);}

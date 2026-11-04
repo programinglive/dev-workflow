@@ -892,5 +892,45 @@ export function getToolList() {
         additionalProperties: false,
       },
     },
+    {
+      name: "report_build_status",
+      description:
+        "Report live build, test, security scan, or deployment progress so the Dev Workflow Monitor dashboard and get_workflow_status display real-time visibility into what is currently being built.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          status: {
+            type: "string",
+            enum: ["building", "testing", "scanning", "deploying", "succeeded", "failed", "idle"],
+            description: "Current build or execution status.",
+          },
+          target: {
+            type: "string",
+            description:
+              "What is being built or executed (e.g. 'Clinic Docker Image v0.2.11 + Trivy Scan', 'Frontend Vite Bundle', 'Paratest Suite').",
+          },
+          command: {
+            type: "string",
+            description: "Optional command line being executed (e.g. 'npm run build', 'docker build -t app:latest .').",
+          },
+          stage: {
+            type: "string",
+            description: "Current build step or stage description (e.g. 'Step 2/4: Compiling assets').",
+          },
+          progress: {
+            type: "number",
+            minimum: 0,
+            maximum: 100,
+            description: "Optional completion percentage (0-100).",
+          },
+          output: {
+            type: "string",
+            description: "Optional sanitized log snippet or build output summary.",
+          },
+        },
+        required: ["status", "target"],
+        additionalProperties: false,
+      },
+    },
   ];
 }
