@@ -79,7 +79,8 @@ finished.
 
 | Path | Single responsibility |
 |---|---|
-| `index.js` | MCP entry point: registers the 40 tools, English implementation instructions and handlers |
+| `index.js` | MCP entry point: registers the 41 tools, English implementation instructions and handlers |
+| `mcp-index.js` | Central MCP ecosystem index & context-aware recommender for all 12 ecosystem MCP servers |
 | `workflow-state.js` | The state machine and its persistence (phase, DoD, plan, history) |
 | `workflow-guidance.js` | English implementation instructions delivered at connection and workflow checkpoints |
 | `zettly-client.js` | Device-local owner credentials, account checks and bounded authenticated Zettly requests |
@@ -138,11 +139,12 @@ See [MCP client configuration](#mcp-client-configuration).
 
 ## Available Tools
 
-40 tools.
+41 tools.
 
 | Tool | Purpose |
 |---|---|
-| `start_task` | Begin a task; requires `definitionOfDone` and `plan`; automatically creates or links its Zettly Todo |
+| `start_task` | Begin a task; requires `definitionOfDone` and `plan`; automatically creates or links its Zettly Todo and recommends relevant MCP tools |
+| `recommend_mcp_tools` | Central discovery index and context-aware recommender for all MCP servers and tools (`central-gateway`, `pocketbase`, `infra-knowledge`, `notify`, `factory`, `zettly`, `clinic-helper`, `playwright`, `gcp`, `cloudflare`, `netlify`, `mermaid`) |
 | `sync_zettly_task` | Retry pending Zettly task/outcome synchronization or link an existing Todo |
 | `set_plan` | Replace the work plan of the running task |
 | `search_project` | Search bounded local text in the active repo; returns sanitized path:line citations |
@@ -180,6 +182,13 @@ See [MCP client configuration](#mcp-client-configuration).
 | `update_factory_task` | Edit a task, including filling a missing definition of done |
 | `claim_factory_task` | Claim a Factory task and start a local workflow |
 | `sync_task_status` | Report a status change back to Factory |
+
+### Central MCP Ecosystem Index (`recommend_mcp_tools`)
+
+Because `dev-workflow` is always the first MCP server invoked in every coding session, it acts as the discovery index and smart recommender for all MCP servers in our ecosystem (`central-gateway`, `pocketbase`, `infra-knowledge`, `notify`, `factory`, `zettly`, `clinic-helper`, `playwright`, `gcp`, `cloudflare`, `netlify`, `mermaid`).
+
+- **Automatic Recommendations**: `start_task`, `get_workflow_status`, and `continue_workflow` score the active task description, `projectDir`, `definitionOfDone`, and `plan` steps against `MCP_ECOSYSTEM_INDEX` (`mcp-index.js`) and append a `🧭 Recommended MCP Tools` block showing the best-matching MCP servers, key tools, and why they matched.
+- **On-Demand Search & Full Catalog**: Call `recommend_mcp_tools` with `{ "query": "send Pusher alert and inspect PocketBase", "projectDir": "D:/code/notification-hub" }` to get targeted recommendations, or `{ "includeAll": true }` to view the complete ecosystem catalog.
 
 ### Searching the active project
 

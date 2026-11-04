@@ -7,6 +7,7 @@ import path from "node:path";
 import { STRANDED_TASK_FILENAME } from "../../workflow-state.js";
 import { renderPlanFull } from "./plan.js";
 import { fetchActiveSessions, monitorUrl, localMonitorUrl } from "../../monitor.js";
+import { formatMcpRecommendations } from "../../mcp-index.js";
 
 /**
  * Bahan gerbang dokumentasi untuk pesan penolakan.
@@ -106,6 +107,12 @@ export async function handleGetWorkflowStatus(workflowState) {
         renderChecklist(dodItems, status.dodRevision);
 
   const planBlock = renderPlanFull(status.plan);
+  const mcpBlock = formatMcpRecommendations({
+    description: status.taskDescription,
+    projectDir: status.projectDir,
+    definitionOfDone: status.definitionOfDone,
+    plan: status.plan,
+  });
 
   // Replika dan pertikaian penulis: dua keadaan yang dulu tidak punya suara
   // sama sekali. Yang pertama membuat dashboard tampak kosong padahal datanya
@@ -165,7 +172,7 @@ Released: ${status.released ? "✅" : "❌"}
 
 ${dodBlock}
 
-${planBlock}
+${planBlock}${mcpBlock ? `\n\n${mcpBlock}` : ""}
 
 Next step: ${nextStep}${opsNote}${sharedWarning}${strandedNote}`
   );
@@ -304,6 +311,16 @@ export async function handleContinueWorkflow(workflowState, context) {
   }
 
   sections.push(`➡️ ${getContinueGuidance(status)}`);
+
+  const mcpRecs = formatMcpRecommendations({
+    description: status.taskDescription,
+    projectDir: status.projectDir,
+    definitionOfDone: status.definitionOfDone,
+    plan: status.plan,
+  });
+  if (mcpRecs) {
+    sections.push(mcpRecs);
+  }
 
   return textResponse(sections.join("\n\n"));
 }

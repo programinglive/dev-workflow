@@ -8,7 +8,7 @@ import { securityAudit } from '../../security/audit.js';
 import path from 'node:path';
 import { assertSafeToolCommand } from '../../security/commands.js';
 import { sessionKeyFromRequest } from "../../workflow-state.js";
-import { handleStartTask, handleMarkBugFixed, handleCreateTests, handleSkipTests, handleRunTests, handleCreateDocumentation, handleCreateFeatureFlow, handleWaiveDocumentation } from "./workflow-handlers.js";
+import { handleStartTask, handleMarkBugFixed, handleCreateTests, handleSkipTests, handleRunTests, handleCreateDocumentation, handleCreateFeatureFlow, handleWaiveDocumentation, handleRecommendMcpTools } from "./workflow-handlers.js";
 import { handleSkipRelease, handlePerformRelease } from "./release-handlers.js";
 import { handleCommitAndPush, handleCompleteTask, handleForceCompleteTask, handleDropTask } from "./commit-handlers.js";
 import { handleProjectSummary, handleProjectSummaryData, handleProjectSummaryDb, handleViewHistory } from "./summary-handlers.js";
@@ -437,6 +437,8 @@ async function dispatchToolCall({
         return handleClaimFactoryTask(args, { workflowState });
       case "sync_task_status":
         return handleSyncTaskStatus(args);
+      case "recommend_mcp_tools":
+        return handleRecommendMcpTools(args, workflowState);
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
