@@ -237,7 +237,7 @@ export async function handleStartTask(args, workflowState, git) {
   //   1. Proses MCP LAIN menulis berkas state setelah kita memuatnya.
   //   2. Task kita sendiri yang belum selesai lalu diganti task baru.
   const preservedBeforeSave = await workflowState.reconcileWithDisk();
-  const previousTaskIdentity = {taskDescription:workflowState.state.taskDescription,projectDir:workflowState.state.projectDir,workflowTaskId:workflowState.state.workflowTaskId,zettly:workflowState.state.zettly};
+  const previousTaskIdentity = {taskDescription:workflowState.state.taskDescription,projectDir:workflowState.state.projectDir,workflowTaskId:workflowState.state.workflowTaskId,zettly:workflowState.state.zettly,taskOrigin:workflowState.state.taskOrigin};
   const { archivedTask } = workflowState.reset({ archive: true });
 
   workflowState.state.currentPhase = "coding";

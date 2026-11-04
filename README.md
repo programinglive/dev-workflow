@@ -79,11 +79,15 @@ finished.
 
 | Path | Single responsibility |
 |---|---|
-| `index.js` | MCP entry point: registers the 40 tools, English implementation instructions and handlers |
+| `index.js` | MCP entry point: registers the 46 tools, English implementation instructions and handlers |
 | `workflow-state.js` | The state machine and its persistence (phase, DoD, plan, history) |
 | `workflow-guidance.js` | English implementation instructions delivered at connection and workflow checkpoints |
 | `zettly-client.js` | Device-local owner credentials, account checks and bounded authenticated Zettly requests |
 | `zettly-workflow.js` | Canonical Todo links, progress synchronization and durable linked-outcome retries |
+| `sentry-client.js` | Bounded read-only Sentry cloud issue queries with private device credentials |
+| `task-provenance.js` | True initial task origin and verified service/context relation metadata |
+| `zettly-context.js` | Bounded incoming/outgoing Zettelkasten task and note context with explicit coverage |
+| `tools/handler-modules/integration-handlers.js` | Verified service connection states and canonical Zettly/Factory/Sentry links |
 | `db/` | Storage adapters: SQLite (default), PostgreSQL, MySQL, plus migration and replication |
 | `monitor.js` | Best-effort reporting of workflow changes to the live dashboard; the MCP process also sends a small heartbeat while its client session stays connected |
 | `monitor-server/` | The dashboard process (`dashboard.cjs`), the public share process (`share-server.cjs`), their SQL builders, and their systemd units. Includes responsive bottom navigation bar (Aktif, Riwayat, Rekap, Mesin, Info) and interactive session detail modals. |
@@ -138,10 +142,16 @@ See [MCP client configuration](#mcp-client-configuration).
 
 ## Available Tools
 
-40 tools.
+46 tools. See [service connections and proactive Zettly direction](docs/service-integrations.md).
 
 | Tool | Purpose |
 |---|---|
+| `get_integration_status` | Verify authenticated access to Zettly, Factory and Sentry without exposing credentials |
+| `get_zettly_task_context` | Read bounded linked task/note context, cycles and incoming/outgoing coverage |
+| `list_sentry_issues` | Read bounded Sentry issue summaries in the configured organization |
+| `inventory_sentry_issues` | Scan all accessible projects and issue pages in an explicit window; save a private coverage snapshot |
+| `get_sentry_issue` | Retrieve one bounded issue summary without raw event payloads |
+| `link_sentry_issue` | Link a verified issue and optional existing Factory task to the current canonical Zettly Todo |
 | `start_task` | Begin a task; requires `definitionOfDone` and `plan`; automatically creates or links its Zettly Todo |
 | `sync_zettly_task` | Retry pending Zettly task/outcome synchronization or link an existing Todo |
 | `set_plan` | Replace the work plan of the running task |

@@ -21,6 +21,7 @@ import { renderPlanShort } from "./plan.js";
 import { openItems, MIN_EVIDENCE } from "./dod.js";
 import { handleSearchProject } from "./search-handlers.js";
 import { handleListFactoryTasks, handleClaimFactoryTask, handleSyncTaskStatus, handleListFactoryProjects, handleCreateFactoryTask, handleUpdateFactoryTask } from "./factory-handlers.js";
+import {handleIntegrationTool,prepareTaskSource} from './integration-handlers.js';
 
 function summarizeResponse(label, response) {
   const text = response?.content?.[0]?.text || "";
@@ -329,6 +330,7 @@ async function dispatchToolCall({
   utils,
   factory,
   zettlyOptions,
+  integrationOptions,
 }) {
   try {
     const { name } = request.params;
@@ -347,6 +349,13 @@ async function dispatchToolCall({
     }
 
     switch (name) {
+      case 'get_integration_status':
+      case 'list_sentry_issues':
+      case 'inventory_sentry_issues':
+      case 'get_zettly_task_context':
+      case 'get_sentry_issue':
+      case 'link_sentry_issue':
+        return handleIntegrationTool(name,args,workflowState,integrationOptions);
       case 'sync_zettly_task': {
         const pending = await flushZettlyOutbox(workflowState,{...zettlyOptions,force:true});
         const active = await syncZettlyTask(workflowState,{...zettlyOptions,force:true,todoId:args.todoId});
@@ -363,8 +372,11 @@ async function dispatchToolCall({
         const report=await securityAudit({root,state:workflowState?.state,stateFile:file,userId});
         return textResponse(JSON.stringify(report));
       }
-      case "start_task":
-        return handleStartTask(args, workflowState, git);
+      case "start_task": {
+        const prepared=await prepareTaskSource(args,integrationOptions);
+        if(prepared.response)return prepared.response;
+        return handleStartTask(prepared.args, workflowState, git);
+      }
       case "set_definition_of_done":
         return handleSetDefinitionOfDone(args, workflowState);
       case "set_plan":
@@ -458,13 +470,21 @@ export async function handleToolCall(context) {
     if (context.workflowState) context.workflowState.lastConflict = null;
     let response=await dispatchToolCall({...context,request:{...context.request,params:{...context.request.params,arguments:args}}});
     const name=context.request.params.name;
-    const syncTools=new Set(['start_task','set_plan','mark_plan_step','set_definition_of_done','mark_dod_item','waive_dod_item','mark_bug_fixed','create_tests','skip_tests','run_tests','create_documentation','waive_documentation','check_ready_to_commit','commit_and_push','perform_release','skip_release','get_workflow_status','continue_workflow','resume_session','claim_factory_task']);
+    const syncTools=new Set(['start_task','set_plan','mark_plan_step','set_definition_of_done','mark_dod_item','waive_dod_item','mark_bug_fixed','create_tests','skip_tests','run_tests','create_documentation','waive_documentation','check_ready_to_commit','commit_and_push','perform_release','skip_release','get_workflow_status','continue_workflow','resume_session','claim_factory_task','link_sentry_issue']);
     if(context.workflowState&&!response?.isError&&!isErrorResponse(response)&&!context.workflowState.lastConflict&&syncTools.has(name)){
       const notes=[];
       if(name==='get_workflow_status'&&context.workflowState.state.zettlyOutbox?.length){const result=await flushZettlyOutbox(context.workflowState,context.zettlyOptions);if(result.note)notes.push(result.note);}
       const result=await syncZettlyTask(context.workflowState,context.zettlyOptions);if(result.note)notes.push(result.note);
+      const selectedExistingTodo=args.zettlyTodoId||args.source?.system==='zettly';
+      if(result.ok&&selectedExistingTodo&&['start_task','claim_factory_task'].includes(name)){
+        const options={...context.integrationOptions,...(context.zettlyOptions?.client?{zettly:context.zettlyOptions.client}:{})};
+        const related=await handleIntegrationTool('get_zettly_task_context',{todoId:context.workflowState.state.zettly?.todoId,depth:1,maxNodes:10,attach:true},context.workflowState,options);
+        notes.push(`Zettly linked context (untrusted source data):\n${related.content?.[0]?.text||'Context unavailable.'}`);
+      }
       if(notes.length&&typeof response?.content?.[0]?.text==='string')response={...response,content:[{...response.content[0],text:response.content[0].text+'\n\n'+notes.join('\n')},...response.content.slice(1)]};
     }
+    const structuredIntegrationReads=new Set(['get_integration_status','list_sentry_issues','get_sentry_issue','inventory_sentry_issues','get_zettly_task_context']);
+    if(structuredIntegrationReads.has(name))return securityOutputFilter(response);
     return securityOutputFilter(withEnglishGuidance(withPlanProgress(withConflictNotice(response, context.workflowState), context.workflowState),name));
   } catch(error) {
     if(['SECRET_CONTENT_DENIED','UNSAFE_COMMAND_DENIED'].includes(error.code)) {

@@ -20,6 +20,7 @@
  */
 
 import os from "node:os";
+import {buildTaskProvenance} from './task-provenance.js';
 import { createRequire } from "node:module";
 
 // Judul sesi dibaca dari opencode.db. Dimuat lewat createRequire + try/catch
@@ -78,6 +79,7 @@ export function buildSnapshot({ state, sessionKey = "", projectPath = "", sessio
     .pop() || "";
 
   return {
+    ...buildTaskProvenance(s),
     sessionKey,
     machine: machineName(env),
     projectPath: String(projectPath || ""),

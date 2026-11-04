@@ -35,6 +35,7 @@ const {
 } = require('./project-summary.cjs');
 const { classifySession, LABELS, DEFAULT_LIVE_MS, DEFAULT_STUCK_MS } = require('./status.cjs');
 const { buildSessionUpsert } = require('./session-upsert.cjs');
+const { normalizeTaskMetadata, renderTaskMetadata } = require('./task-metadata.cjs');
 const {
   shareGuard,
   handleCreateShare,
@@ -157,6 +158,8 @@ const PAGE = `<!doctype html>
   .row { display:flex; gap:8px; align-items:baseline; flex-wrap:wrap; }
   .task { font-weight:600; }
   .meta { color:#7d8590; font-size:12px; }
+  .task-metadata { margin-top:6px; overflow-wrap:anywhere; }
+  .task-metadata a { color:#79c0ff; }
   .phase { background:#1f6feb22; color:#79c0ff; border:1px solid #1f6feb55;
            border-radius:999px; padding:1px 9px; font-size:11px; text-transform:uppercase;
            letter-spacing:.4px; }
@@ -318,6 +321,7 @@ const PAGE = `<!doctype html>
     </div>
     <div class="modal-body">
       <div class="modal-task" id="modal-task"></div>
+      <div id="modal-task-metadata"></div>
       <div class="modal-session-title" id="modal-session-title"></div>
       <div class="modal-project" id="modal-project"></div>
       <div class="meta" id="modal-meta"></div>
@@ -337,6 +341,8 @@ const PAGE = `<!doctype html>
 
 <script>
 const visibleTaskSessions = ${visibleTaskSessions.toString()};
+const normalizeTaskMetadata = ${normalizeTaskMetadata.toString()};
+const renderTaskMetadata = ${renderTaskMetadata.toString()};
 const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 function ago(iso, nowMs) {
   if (!iso) return '';
@@ -399,6 +405,7 @@ function bukaDetail(sessionKey) {
     '<span class="phase" style="background:#a371f71a;color:#d2a8ff;border-color:#a371f755">' + agentText + '</span>';
 
   document.getElementById('modal-task').textContent = s.task || s.session_title || '(tanpa task)';
+  document.getElementById('modal-task-metadata').innerHTML = renderTaskMetadata(s);
   document.getElementById('modal-session-title').textContent = s.session_title ? '💬 ' + s.session_title : '';
   document.getElementById('modal-project').textContent = s.project_name || '';
   document.getElementById('modal-meta').textContent =
@@ -624,6 +631,7 @@ function renderHistory(data) {
       '<span class="phase" style="background:#a371f71a;color:#d2a8ff;border-color:#a371f755">' +
       esc(String(h.agent_tool || 'unknown').toUpperCase()) + '</span>' +
       '<span class="task">' + esc(h.task || h.session_title || '(tanpa task)') + '</span></div>' +
+      renderTaskMetadata(h) +
       '<div class="meta" style="margin-top:4px">' + esc(h.machine) +
       (h.project_name ? ' · ' + esc(h.project_name) : '') +
       (h.duration_label ? ' · ⏱ ' + esc(h.duration_label) : ' · durasi tidak tercatat') +
@@ -702,6 +710,7 @@ function render(data) {
         '<span class="phase" style="background:#a371f71a;color:#d2a8ff;border-color:#a371f755">' +
         esc(String(s.agent_tool || 'unknown').toUpperCase()) + '</span>' +
         '<span class="task">' + esc(s.task || s.session_title || '(tanpa task)') + '</span></div>' +
+        renderTaskMetadata(s) +
         (s.session_title ? '<div class="meta" style="color:#79c0ff;margin-top:2px">💬 ' + esc(s.session_title) + '</div>' : '') +
         note +
         '<div class="meta">' + esc(s.machine) + ' · ' + esc(s.project_name) +
@@ -823,6 +832,7 @@ async function cabutYatim(tombol) {
 
 // Delegasi klik pada elemen
 document.getElementById('list').addEventListener('click', function (e) {
+  if (e.target.closest('a[href]')) return;
   var btn = e.target.closest('[data-share],[data-copy],[data-revoke]');
   if (btn) {
     if (btn.dataset.share) { void tombolBagikan(btn.dataset.share, btn); }
@@ -837,6 +847,7 @@ document.getElementById('list').addEventListener('click', function (e) {
 });
 
 document.getElementById('history').addEventListener('click', function (e) {
+  if (e.target.closest('a[href]')) return;
   var card = e.target.closest('[data-session-key]');
   if (card) {
     bukaDetail(card.dataset.sessionKey);

@@ -7,6 +7,7 @@ import { sanitize } from './security/sanitizer.js';
 import { normalizeItems as normalizeDodItems, mergeDefinitionOfDone as mergeDodItems } from './tools/handler-modules/dod.js';
 import { resolveSessionKeyWithSource, sanitizeSessionKey, normalizeProjectPath } from './db/session-key.js';
 import { StateUnavailable, StateConflict } from './db/errors.js';
+import {buildTaskProvenance} from './task-provenance.js';
 import { normalizePlan } from './tools/handler-modules/plan.js';
 import { fileURLToPath } from "url";
 import { pathToFileURL } from "url";
@@ -1246,6 +1247,8 @@ export class WorkflowState {
       workflowTaskId: "",
       zettly: null,
       zettlyOutbox: [],
+      taskOrigin: null,
+      zettlyContext: null,
     };
   }
 
@@ -2507,6 +2510,7 @@ export class WorkflowState {
       archivedTask = previous.taskDescription;
       history.push({
         classification: previous.classification || "INTERNAL",
+        ...buildTaskProvenance(previous),
         taskDescription: previous.taskDescription,
         taskType: previous.taskType || "other",
         commitMessage: previous.lastCommitMessage || "",
@@ -2570,6 +2574,8 @@ export class WorkflowState {
       workflowTaskId: "",
       zettly: null,
       zettlyOutbox: Array.isArray(previous.zettlyOutbox) ? previous.zettlyOutbox : [],
+      taskOrigin: null,
+      zettlyContext: null,
     };
 
     return { archivedTask };
@@ -2579,6 +2585,7 @@ export class WorkflowState {
     this.state.history.push({
       classification: this.state.classification || "INTERNAL",
       ...(this.state.workflowTaskId ? {workflowTaskId:this.state.workflowTaskId,zettlyTodoId:this.state.zettly?.todoId||null} : {}),
+      ...buildTaskProvenance(this.state),
       ...entry,
       timestamp: new Date().toISOString(),
     });

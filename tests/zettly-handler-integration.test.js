@@ -7,6 +7,7 @@ function mockApi() {
  const tasks=new Map(),journals=[];
  return {tasks,journals,async request(method,route,body){
   if(method==='GET'&&route==='/todos')return {data:[...tasks.values()]};
+  if(method==='GET'&&route.startsWith('/todos?type='))return {data:[...tasks.values()].filter(task=>task.type===route.split('=').pop())};
   if(method==='POST'&&route==='/todos'){const item={id:tasks.size+1,is_completed:false,...body};tasks.set(item.id,item);return {data:structuredClone(item)};}
   if(route.startsWith('/todos/')){const item=tasks.get(Number(route.split('/').pop()));if(method==='PATCH')Object.assign(item,body);return {data:structuredClone(item)};}
   if(method==='GET'&&route.startsWith('/journal/entries'))return {data:journals};
@@ -68,5 +69,28 @@ test('invalid canonical IDs are rejected before replacing an existing task',asyn
   const response=await handleToolCall({...ctx,request:createRequest('start_task',{...startArgs,description:'Different request',taskId:'<invalid marker>'})});
   assert.match(response.content[0].text,/invalid|Invalid/);
   assert.equal(state.state.workflowTaskId,identity);assert.equal(client.tasks.size,1);
+ });
+});
+test('starting from an existing Zettly task reads its linked note context and retains the source',async()=>{
+ await withWorkflowState(async state=>{
+  const client=mockApi(),ctx=context(state,client);
+  client.tasks.set(42,{id:42,type:'todo',title:'Source task',is_completed:false,description:'Owner decision',related_todos:[{id:43}]});
+  client.tasks.set(43,{id:43,type:'note',title:'Prior architecture decision',is_completed:false,description:'Keep connector credentials device-local.',related_todos:[]});
+  const result=await handleToolCall({...ctx,request:createRequest('start_task',{...startArgs,zettlyTodoId:42})});
+  assert.equal(state.state.taskOrigin.system,'zettly');assert.equal(state.state.taskOrigin.id,'42');assert.equal(state.state.zettly.todoId,42);assert.equal(client.tasks.size,2);
+  assert.match(result.content[0].text,/Prior architecture decision/);assert.equal(state.state.zettlyContext.nodes.length,2);
+  await state.load();assert.equal(state.state.zettlyContext.nodes.length,2);assert.equal(state.state.taskOrigin.system,'zettly');
+ });
+});
+test('a verified Sentry source survives automatic Zettly tracking and a failed source read preserves the task',async()=>{
+ await withWorkflowState(async state=>{
+  const client=mockApi(),ctx=context(state,client);
+  ctx.integrationOptions={env:{},zettly:null,factory:null,sentry:{organization:'example',async getIssue(){return {id:'123',shortId:'APP-1',permalink:'https://example.sentry.io/issues/123/'};}}};
+  const result=await handleToolCall({...ctx,request:createRequest('start_task',{...startArgs,source:{system:'sentry',id:'123'}})});
+  assert.ok(!result.isError);assert.equal(state.state.taskOrigin.system,'sentry');assert.equal(state.state.taskOrigin.id,'123');assert.equal(state.state.zettly.todoId,1);assert.equal(state.state.zettly.externalLinks.sentry.issueId,'123');
+  const before=structuredClone(state.state);
+  ctx.integrationOptions.sentry.getIssue=async()=>{throw Object.assign(Error('private-provider-body'),{status:403});};
+  const rejected=await handleToolCall({...ctx,request:createRequest('start_task',{...startArgs,source:{system:'sentry',id:'999'}})});
+  assert.equal(rejected.isError,true);assert.deepEqual(state.state,before);assert.equal(client.tasks.size,1);
  });
 });

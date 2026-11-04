@@ -64,6 +64,7 @@ test("resolveStateFile prefers current working directory when multiple project m
 
   const sourceModulePath = fileURLToPath(new URL("../workflow-state.js", import.meta.url));
   await copyFile(sourceModulePath, path.join(moduleDir, "workflow-state.js"));
+  await cp(new URL("../task-provenance.js", import.meta.url), path.join(moduleDir, "task-provenance.js"));
   await cp(new URL("../security/", import.meta.url), path.join(moduleDir,"security"), {recursive:true});
   // workflow-state.js mengimpor aturan DoD dari sini, jadi salinan modul di
   // direktori sementara harus ikut membawanya.
@@ -126,6 +127,7 @@ test("WorkflowState mirrors state file to compatibility locations", async () => 
   await mkdir(path.join(tempRoot, "dist"), { recursive: true });
   await mkdir(stateDir, { recursive: true });
   await copyFile(sourceModulePath, path.join(moduleDir, "workflow-state.js"));
+  await cp(new URL("../task-provenance.js", import.meta.url), path.join(moduleDir, "task-provenance.js"));
   await cp(new URL("../security/", import.meta.url), path.join(moduleDir,"security"), {recursive:true});
   // workflow-state.js mengimpor aturan DoD dari sini, jadi salinan modul di
   // direktori sementara harus ikut membawanya.
@@ -170,6 +172,7 @@ test("WorkflowState avoids filesystem root when no project markers found", async
 
   const sourceModulePath = fileURLToPath(new URL("../workflow-state.js", import.meta.url));
   await copyFile(sourceModulePath, path.join(moduleDir, "workflow-state.js"));
+  await cp(new URL("../task-provenance.js", import.meta.url), path.join(moduleDir, "task-provenance.js"));
   await cp(new URL("../security/", import.meta.url), path.join(moduleDir,"security"), {recursive:true});
   // workflow-state.js mengimpor aturan DoD dari sini, jadi salinan modul di
   // direktori sementara harus ikut membawanya.

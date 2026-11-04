@@ -4,6 +4,14 @@ import {mkdtemp,writeFile,rm,mkdir} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {readZettlyConfig,resolveZettlyConfig,createZettlyClient} from '../zettly-client.js';
+import {sanitize} from '../security/sanitizer.js';
+
+test('device-local owner credentials are registered for egress redaction without entering workflow data',()=>{
+ const value='opaque-device-fixture-credential-for-redaction';
+ const config=readZettlyConfig({ZETTLY_API_BASE:'https://zettly.example',ZETTLY_API_TOKEN:value});
+ assert.equal(config.token,value);
+ assert.ok(!JSON.stringify(sanitize({message:'Provider echoed '+value})).includes(value));
+});
 
 test('Zettly credentials use existing local config with environment overrides',async()=>{
  const dir=await mkdtemp(path.join(os.tmpdir(),'zettly-config-test-'));

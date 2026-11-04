@@ -1,6 +1,7 @@
 import { textResponse } from "./shared.js";
 import { parseFactoryChecklist } from "./dod.js";
 import { startKeeping, stopKeeping } from "../../session-keeper.js";
+import {assignWorkflowIdentity} from '../../zettly-workflow.js';
 import {
   readFactoryConfig,
   listTasks,
@@ -111,6 +112,7 @@ export async function handleClaimFactoryTask(args = {}, { workflowState } = {}) 
   if (!config) return response;
 
   const recordId = typeof args.recordId === "string" ? args.recordId.trim() : "";
+  if(args.zettlyTodoId!==undefined&&(!Number.isSafeInteger(args.zettlyTodoId)||args.zettlyTodoId<1))return textResponse('Provide a positive zettlyTodoId to reuse an existing canonical Todo.');
   if (!recordId) {
     return textResponse("Provide the 'recordId' of the task to claim (see list_factory_tasks).");
   }
@@ -142,11 +144,14 @@ export async function handleClaimFactoryTask(args = {}, { workflowState } = {}) 
     // ada entri history, tidak ada peringatan, tidak disebut di jawaban.
     // `start_task` sudah mengarsipkan sejak awal; claim tidak.
     let archivedTask = null;
+    let continuingTask = false;
     // Checklist papan diimpor sebagai RENCANA, bukan bukti: setiap item masuk
     // sebagai `open` walau di papan sudah dicentang. Centang di papan berarti
     // seseorang pernah menyatakannya, bukan bahwa kode di mesin ini terbukti.
     const importedDod = parseFactoryChecklist(task.definitionOfDone);
     if (workflowState) {
+      continuingTask=workflowState.state.zettly?.externalLinks?.factory?.id===recordId&&Boolean(workflowState.state.taskDescription);
+      if(!continuingTask){
       const archived = workflowState.reset({
         archive: true,
         reason: "Diganti claim_factory_task sebelum task selesai",
@@ -168,6 +173,9 @@ export async function handleClaimFactoryTask(args = {}, { workflowState } = {}) 
       workflowState.state.dodSource = importedDod.items.length > 0 ? "factory" : "";
       workflowState.state.dodFactoryTaskId = importedDod.items.length > 0 ? recordId : "";
       workflowState.state.dodRevision = 0;
+      assignWorkflowIdentity(workflowState.state,null,{zettlyTodoId:args.zettlyTodoId,source:{system:'factory',id:recordId}});
+      }else if(args.zettlyTodoId){if(workflowState.state.zettly.todoId!==args.zettlyTodoId)workflowState.state.zettlyContext=null;workflowState.state.zettly.todoId=args.zettlyTodoId;}
+      workflowState.state.zettly.externalLinks={...workflowState.state.zettly.externalLinks,factory:{id:recordId,taskKey:task.taskKey||''}};
       await workflowState.save();
     }
 
@@ -183,7 +191,7 @@ export async function handleClaimFactoryTask(args = {}, { workflowState } = {}) 
           : "",
         `Factory status is now running (work session ${session.id}).`,
         task.projectName ? `Project: ${task.projectName}` : "",
-        importedDod.items.length > 0
+        continuingTask ? 'Existing canonical workflow, progress and Zettly link were retained.' : importedDod.items.length > 0
           ? `Imported ${importedDod.items.length} definition-of-done item(s) from the board, all OPEN:\n` +
             importedDod.items.map((text, index) => `   dod-${index + 1}: ${text}`).join("\n") +
             (importedDod.truncated
@@ -193,7 +201,7 @@ export async function handleClaimFactoryTask(args = {}, { workflowState } = {}) 
           : "This board task has no definition of done. Add one with 'set_definition_of_done' { items: [...] } - " +
             "a task cannot be committed or closed without it.",
         "",
-        "Local workflow started for this task.",
+        continuingTask ? 'Local workflow continued for this task.' : 'Local workflow started for this task.',
         "Use 'sync_task_status' with review, blocked or paused to close the session, or done to approve the task once it is in review.",
       ]
         .filter(Boolean)

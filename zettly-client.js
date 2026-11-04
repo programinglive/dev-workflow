@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
+import {registerRuntimeSecret} from './security/runtime-secrets.js';
 const execFileAsync=promisify(execFile);
 
 export function zettlySyncEnabled(env=process.env) {
@@ -27,6 +28,7 @@ export function readZettlyConfig(env=process.env) {
   let url;
   try {url=new URL(base);} catch {return null;}
   if(!['https:','http:'].includes(url.protocol)||url.username||url.password||url.search||url.hash) return null;
+  registerRuntimeSecret(token);
   return {base,token};
 }
 
