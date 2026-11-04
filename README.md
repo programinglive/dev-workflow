@@ -71,6 +71,8 @@ graph LR
 
 ## What lives where
 
+For one approved release shared by HELLOWORLD, MMCH and Mac, see [central managed MCP deployment](docs/central-managed-mcp.md). Device launchers update the local executor automatically from the private release service; existing connections pin their version until reconnect.
+
 The README is the map: you should be able to find any behaviour from this table
 without opening a file. If a change makes a row here wrong, the change is not
 finished.
