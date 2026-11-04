@@ -396,7 +396,7 @@ function bukaDetail(sessionKey) {
     '<span class="' + chipCls + '">' + chipText + '</span>' +
     '<span class="phase" style="background:#a371f71a;color:#d2a8ff;border-color:#a371f755">' + agentText + '</span>';
 
-  document.getElementById('modal-task').textContent = s.task || '(tanpa task)';
+  document.getElementById('modal-task').textContent = s.task || s.session_title || '(tanpa task)';
   document.getElementById('modal-session-title').textContent = s.session_title ? '💬 ' + s.session_title : '';
   document.getElementById('modal-project').textContent = s.project_name || '';
   document.getElementById('modal-meta').textContent =
@@ -698,7 +698,7 @@ function render(data) {
         '<div class="row"><span class="' + chipCls + '">' + chipText + '</span>' +
         '<span class="phase" style="background:#a371f71a;color:#d2a8ff;border-color:#a371f755">' +
         esc(String(s.agent_tool || 'unknown').toUpperCase()) + '</span>' +
-        '<span class="task">' + esc(s.task || '(tanpa task)') + '</span></div>' +
+        '<span class="task">' + esc(s.task || s.session_title || '(tanpa task)') + '</span></div>' +
         (s.session_title ? '<div class="meta" style="color:#79c0ff;margin-top:2px">💬 ' + esc(s.session_title) + '</div>' : '') +
         note +
         '<div class="meta">' + esc(s.machine) + ' · ' + esc(s.project_name) +

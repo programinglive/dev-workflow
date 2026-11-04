@@ -46,6 +46,7 @@ export const server = new Server(
       tools: {},
       prompts: {},
     },
+    instructions: 'Before development, call start_task with the actual user task description, projectDir, definitionOfDone and plan. Keep task progress current with mark_plan_step and evidence. A connected idle MCP process is device liveness, not an active task. Preserve other sessions and never replace their task metadata.',
   }
 );
 

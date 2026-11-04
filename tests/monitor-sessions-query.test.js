@@ -68,3 +68,10 @@ test("limit diteruskan sebagai parameter, bukan disisipkan ke SQL", () => {
   assert.match(sql, /LIMIT \$1/);
   assert.ok(!sql.includes("7"), "angka limit tidak boleh masuk teks SQL");
 });
+
+test('anonymous connections never appear as active tasks, real session titles remain useful',()=>{
+  const {sql}=buildSessionsQuery();
+  assert.match(sql,/NULLIF\(BTRIM\(task\), ''\)/);
+  assert.match(sql,/NULLIF\(BTRIM\(session_title\), ''\)/);
+  assert.match(sql,/phase NOT IN \('closed', 'done', 'cancelled'\)/);
+});

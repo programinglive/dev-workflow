@@ -41,6 +41,7 @@ function buildSessionsQuery({
                  started_at, session_title, agent_tool, updated_at
             FROM sessions
            WHERE phase NOT IN ('closed', 'done', 'cancelled')
+             AND (NULLIF(BTRIM(task), '') IS NOT NULL OR NULLIF(BTRIM(session_title), '') IS NOT NULL)
              AND NOT (
                    phase = 'idle'
                    AND (
