@@ -74,6 +74,14 @@ def toml_environment(text):
         except (SyntaxError,ValueError):pass
     return result
 
+def node_from_toml(text):
+    section=re.search(r'(?ms)^\[mcp_servers\.(?:dev-workflow|"dev-workflow")\]\s*\n(.*?)(?=^\[|\Z)',text)
+    if not section:return None
+    match=re.search(r'''(?m)^command[ \t]*=[ \t]*("(?:\\.|[^"\\])*"|'[^']*')''',section.group(1))
+    if not match:return None
+    value=match.group(1)
+    return value[1:-1] if value.startswith("'") else json.loads(value)
+
 def backup_write(file,text):
     stamp=datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
     backup=file.with_name(file.name+'.before-managed-'+stamp)
@@ -101,10 +109,7 @@ def install(home,source,node=None,verify=True):
     codex=home/'.codex/config.toml'
     codex_text=codex.read_text(encoding='utf-8') if codex.exists() else ''
     if not node:
-        match=re.search(r'(?ms)^\[mcp_servers\.(?:dev-workflow|"dev-workflow")\]\s*\n.*?^command\s*=\s*("(?:\\.|[^"\\])*")',codex_text)
-        if match:
-            try:node=json.loads(match.group(1))
-            except ValueError:pass
+        node=node_from_toml(codex_text)
     if not node:
         for _,_,record in configurations:
             cmd=record.get('command')

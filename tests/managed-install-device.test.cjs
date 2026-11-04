@@ -39,3 +39,14 @@ assert record['command']==['node','new/entry.cjs','opencode'] and 'args' not in 
  const result=spawnSync(process.platform==='win32'?'python':'python3',['-c',code],{encoding:'utf8'});
  assert.equal(result.status,0,result.stderr);
 });
+
+test('Node detection is confined to workflow section and accepts TOML literal paths',()=>{
+ const script=path.resolve(__dirname,'../managed/install-device.py');
+ const text="[mcp_servers.dev-workflow]\ncommand = 'C:\\Program Files\\nodejs\\node.exe'\nargs = ['old.js']\n[hooks.other]\ncommand = \"unrelated-hook\"\n";
+ const code=`import importlib.util
+s=importlib.util.spec_from_file_location('install_device',${JSON.stringify(script)});m=importlib.util.module_from_spec(s);s.loader.exec_module(m)
+assert m.node_from_toml(${JSON.stringify(text)})==${JSON.stringify('C:\\Program Files\\nodejs\\node.exe')}
+`;
+ const result=spawnSync(process.platform==='win32'?'python':'python3',['-c',code],{encoding:'utf8'});
+ assert.equal(result.status,0,result.stderr);
+});

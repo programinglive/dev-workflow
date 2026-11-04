@@ -51,6 +51,8 @@ export const server = new Server(
 );
 
 // Define tools
+const trustedToolCatalog = { tools: getToolList() };
+const trustedToolCatalogJson = JSON.stringify(trustedToolCatalog);
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: getToolList(),
 }));
@@ -238,7 +240,15 @@ export async function main() {
   const transport = new StdioServerTransport();
   // Cover SDK-generated protocol errors as well as tool-handler responses.
   const send = transport.send.bind(transport);
-  transport.send = message => send(securityOutputFilter(message));
+  transport.send = message => {
+    // These are static protocol schemas, not classified records. In particular,
+    // properties.classification is itself a JSON schema object. Treating it as
+    // a record label replaces the schema with a redacted record and breaks
+    // tools/list validation. Only the exact built-in catalog bypasses filtering;
+    // all dynamic tool results and protocol errors retain the output scanner.
+    const isTrustedCatalog = message.result && JSON.stringify(message.result) === trustedToolCatalogJson;
+    return send(isTrustedCatalog ? message : securityOutputFilter(message));
+  };
   safeLog('error', `[${new Date().toISOString()}] Connecting transport...`);
   await server.connect(transport);
   const duration = Date.now() - startTime;
