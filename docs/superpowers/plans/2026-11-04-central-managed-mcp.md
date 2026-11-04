@@ -8,13 +8,13 @@
 
 ## Tasks
 
-- [ ] Test and implement `managed/release-server.cjs`: bounded manifest, authenticated immutable downloads, health endpoint; reject unauthenticated/traversal paths.
-- [ ] Test and implement `managed/launcher.cjs`: verify manifest/archive, serialize installation, preserve last-good on errors, start pinned local runtime with clean MCP stdout and safe diagnostics.
-- [ ] Test active-task query and dashboard title fallback: anonymous connected MCPs belong to device liveness, not active task cards.
-- [ ] Run focused tests, then full suite. Document publish/install/rollback and startup/reconnect semantics.
-- [ ] Publish tracked source archive to n8n-instance under dedicated service account; verify health/auth/hashes.
-- [ ] Install stable launcher on three devices, retain credential loaders, verify real managed runtime versions and task metadata. Do not kill unrelated active sessions.
-- [ ] Review actual diff and operational evidence; record checkpoint, workflow completion and journal/pending entry.
+- [x] Test and implement `managed/release-server.cjs`: bounded manifest, authenticated immutable downloads, health endpoint; reject unauthenticated/traversal paths.
+- [x] Test and implement `managed/launcher.cjs`: verify manifest/archive, serialize installation, preserve last-good on errors, start pinned local runtime with clean MCP stdout and safe diagnostics.
+- [x] Test active-task query and dashboard title fallback: anonymous connected MCPs belong to device liveness, not active task cards.
+- [x] Run focused tests, then full suite. Document publish/install/rollback and startup/reconnect semantics.
+- [x] Publish tracked source archive to n8n-instance under dedicated service account; verify health/auth/hashes.
+- [x] Install stable launcher on three devices, retain credential loaders, verify real managed runtime versions and task metadata. Do not kill unrelated active sessions.
+- [x] Review actual diff and operational evidence; record checkpoint. Workflow closure and verified Zettly outcome follow the final documentation commit.
 
 ## Verification focus
 
