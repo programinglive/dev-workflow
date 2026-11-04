@@ -519,6 +519,8 @@ export async function handleCompleteTask(args, workflowState, context = {}) {
   );
   // `dodFactoryTaskId` harus dibaca SEBELUM reset, karena reset mengosongkannya.
   const factoryTaskId = workflowState.state.dodFactoryTaskId;
+  const zettlyResult = await closeZettlyTask(workflowState,'completed',args,context.zettlyOptions);
+  const zettlyNote = zettlyResult.note ? `\n\n${zettlyResult.ok?'✅':'⚠️'} ${zettlyResult.note}` : '';
   workflowState.reset();
   await workflowState.save();
 
@@ -547,7 +549,7 @@ export async function handleCompleteTask(args, workflowState, context = {}) {
   return textResponse(
     `✅ Task completed!\n\nCommit message: ${args.commitMessage}\n` +
       `DoD: ${dod.done}/${dod.total} terbukti, ${dod.waived} dikecualikan.\nHistory recorded.` +
-      `${factoryNote}\n\n` +
+      `${factoryNote}${zettlyNote}\n\n` +
       `${renderRecommendations(recommendations)}${diffNote}${askForSuggestions}`
   );
 }
@@ -572,6 +574,8 @@ export async function handleForceCompleteTask(args, workflowState, context = {})
     ),
   });
 
+  const zettlyResult = await closeZettlyTask(workflowState,'closed_with_exceptions',args,context.zettlyOptions);
+  const zettlyNote = zettlyResult.note ? `\n${zettlyResult.ok?'✅':'⚠️'} ${zettlyResult.note}` : '';
   const factoryTaskId = workflowState.state.dodFactoryTaskId;
   workflowState.reset();
   await workflowState.save();
@@ -592,7 +596,7 @@ export async function handleForceCompleteTask(args, workflowState, context = {})
   const reasonText = reason ? reason : "(none provided)";
 
   return textResponse(
-    `⚠️ Task force-completed.\n\nRecorded commit message: ${commitMessage}\nReason: ${reasonText}\nWorkflow state reset. Start a new task when ready.${factoryNote}`
+    `⚠️ Task force-completed.\n\nRecorded commit message: ${commitMessage}\nReason: ${reasonText}\nWorkflow state reset. Start a new task when ready.${factoryNote}${zettlyNote}`
   );
 }
 
@@ -611,6 +615,8 @@ export async function handleDropTask(args, workflowState, context = {}) {
     ),
   });
 
+  const zettlyResult = await closeZettlyTask(workflowState,'cancelled',args,context.zettlyOptions);
+  const zettlyNote = zettlyResult.note ? `\n${zettlyResult.ok?'✅':'⚠️'} ${zettlyResult.note}` : '';
   const factoryTaskId = workflowState.state.dodFactoryTaskId;
   workflowState.reset();
   await workflowState.save();
@@ -628,7 +634,8 @@ export async function handleDropTask(args, workflowState, context = {}) {
       )
     : "";
 
-  return textResponse(`⚠️ Task dropped. Workflow state reset.${factoryNote}`);
+  return textResponse(`⚠️ Task dropped. Workflow state reset.${factoryNote}${zettlyNote}`);
 }
 
 
+import { closeZettlyTask } from '../../zettly-workflow.js';

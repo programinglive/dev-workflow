@@ -53,6 +53,7 @@ process.env.DEV_WORKFLOW_TEST_STATE_DIR = stateDir;
 // sebagai "mati", dan tes yang sengaja menguji pelaporan mengisi variabel ini
 // sendiri (tests/monitor-*.test.js).
 process.env.DEVWF_MONITOR_URL = "";
+process.env.DEVWF_ZETTLY_SYNC = '0';
 
 function cleanup() {
   try {
