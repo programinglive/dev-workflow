@@ -22,6 +22,8 @@ Set `DEVWF_RELEASE_URL=http://100.78.134.44:3101`. Existing `DEVWF_MONITOR_TOKEN
 
 The cache is `%LOCALAPPDATA%/ProgramingLive/ManagedMCP` on Windows and `~/.local/share/ProgramingLive/ManagedMCP` elsewhere. It is separated by OS, architecture and Node ABI. `DEVWF_MANAGED_CACHE` can override its location. Concurrent startup of the same release is serialized.
 
+The installation mutex is owned by the OS: a Windows named pipe or Unix loopback listener, released automatically if its process dies. Windows does not depend on a dynamically reserved TCP port. The installer understands both OpenCode array commands and Antigravity string commands, and preserves Codex literal paths and multiline arguments.
+
 ## Failure and rollback
 
 Network unavailability may use the previously verified cache, with an explicit stderr warning. Invalid authentication, manifests, archive paths, hashes or dependency installs fail closed and do not promote a release. MCP stdout is reserved for protocol traffic.
@@ -33,3 +35,5 @@ The service runs as `devwf-releases` under `devwf-managed.service`, with a 128 M
 ## Meaningful monitoring
 
 Connection heartbeats update device last-seen information. Active task cards require a real task description or a known session title. Anonymous idle connections are excluded; they cannot prove any work is in progress. MCP instructions require `start_task` with project, DoD and plan before development. This does not automatically infer an unregistered task from a running process.
+
+The built-in `tools/list` catalog is static protocol metadata. Its exact static response is preserved at the transport boundary so JSON schema properties named `classification` are not mistaken for classified records. Dynamic tool results and protocol errors continue through the output scanner. A real SDK client regression test validates the catalog, including `start_task`.

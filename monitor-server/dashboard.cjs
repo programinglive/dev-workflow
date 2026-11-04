@@ -11,6 +11,7 @@
 const http = require('node:http');
 const pg = require('pg');
 const { buildSessionsQuery } = require('./sessions-query.cjs');
+const { visibleTaskSessions } = require('./visible-task-sessions.cjs');
 const {
   buildPruneEventsQuery,
   buildPruneSessionsQuery,
@@ -335,6 +336,7 @@ const PAGE = `<!doctype html>
 </div>
 
 <script>
+const visibleTaskSessions = ${visibleTaskSessions.toString()};
 const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 function ago(iso, nowMs) {
   if (!iso) return '';
@@ -633,9 +635,10 @@ function renderHistory(data) {
 
 function render(data) {
   lastData = data;
+  const activeSessions = visibleTaskSessions(data.sessions);
   const jNow = data.now ? new Date(data.now).getTime() : Date.now();
   document.getElementById('sub').textContent =
-    data.sessions.length + ' sesi · ' + new Date(jNow).toLocaleTimeString('id-ID');
+    activeSessions.length + ' task · ' + new Date(jNow).toLocaleTimeString('id-ID');
 
   const h = data.health || {};
   const warn = document.getElementById('warn');
@@ -665,10 +668,10 @@ function render(data) {
   }
 
   const list = document.getElementById('list');
-  if (!data.sessions.length) {
-    list.innerHTML = '<div class="empty">belum ada sesi melapor</div>';
+  if (!activeSessions.length) {
+    list.innerHTML = '<div class="empty">belum ada task aktif; koneksi device tercatat di tab Mesin</div>';
   } else {
-    list.innerHTML = data.sessions.map(s => {
+    list.innerHTML = activeSessions.map(s => {
       const total = s.plan_total || 0, done = s.plan_done || 0;
       const pct = total ? Math.round(done/total*100) : 0;
       const rencana = Array.isArray(s.plan_json) ? s.plan_json : [];
@@ -746,7 +749,7 @@ function render(data) {
   if (serverEl) {
     serverEl.innerHTML =
       '<b>URL:</b> ' + esc(window.location.origin) + '<br>' +
-      '<b>Status:</b> ' + data.sessions.length + ' sesi aktif · ' + (data.history || []).length + ' riwayat · ' + (data.machines || []).length + ' mesin<br>' +
+      '<b>Status:</b> ' + activeSessions.length + ' task aktif · ' + (data.history || []).length + ' riwayat · ' + (data.machines || []).length + ' mesin<br>' +
       '<b>Pembaruan:</b> tiap ' + Math.round(${POLL_MS} / 1000) + ' detik';
   }
 

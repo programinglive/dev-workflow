@@ -43,16 +43,21 @@ async function installed(root,manifest) {
 }
 function releaseRoot(cacheRoot,manifest) {return path.join(cacheRoot,'releases',manifest.sha256+'-'+runtimeKey());}
 async function acquireInstallLock(key,{timeoutMs=360_000}={}) {
-  // A kernel-owned loopback listener is an installation mutex, not an API.
+  // A kernel-owned listener is an installation mutex, not an API.
   // Unlike lock directories it is released on process death, has no partial
   // owner-file state, and cannot be stolen by concurrent stale-lock cleaners.
   const canonical=process.platform==='win32'?path.resolve(key).toLowerCase():path.resolve(key);
-  const port=30000+(createHash('sha256').update(canonical).digest().readUInt32BE(0)%30000);
+  const digest=createHash('sha256').update(canonical).digest();
+  // Windows reserves TCP port ranges dynamically (Hyper-V/WSL). Named pipes
+  // avoid those reservations and still disappear when the owner process dies.
+  const endpoint=process.platform==='win32'
+    ? {path:'\\\\.\\pipe\\devwf-install-'+digest.toString('hex'),exclusive:true}
+    : {host:'127.0.0.1',port:30000+(digest.readUInt32BE(0)%30000),exclusive:true};
   const until=Date.now()+timeoutMs;
   for(;;) {
     const server=net.createServer(socket=>socket.destroy());
     try {
-      await new Promise((resolve,reject)=>{server.once('error',reject);server.listen({host:'127.0.0.1',port,exclusive:true},resolve);});
+      await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(endpoint,resolve);});
       return ()=>new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));
     } catch(error) {
       server.close();
