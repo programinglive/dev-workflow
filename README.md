@@ -550,14 +550,18 @@ the endpoint that actually supports it:
 | Requested status | Endpoint used | Result |
 |---|---|---|
 | `review`, `blocked`, `paused` | `POST /api/work {action:finish}` | Session closes, task changes accordingly |
-| `backlog`, `queued`, `cancelled` | `POST /api/factory {action:move_task}` | Board column changes |
+| `backlog`, `queued`, `cancelled`, `done` | `POST /api/factory {action:move_task}` | Board column changes; `done` requires the task to be in review with its checklist satisfied |
 | `running` | — rejected | Point the caller at `claim_factory_task` |
-| `done` | — rejected | A human approves the work in Factory |
 
 `review` requires an active work session. Asking for it without one fails with
 "no active work session" instead of silently doing nothing - the task must be
 claimed first. Full behaviour, limits (summary 2000 chars, step 240 chars) and
 troubleshooting live in [docs/factory-integration.md](docs/factory-integration.md).
+
+For a linked development task, claim the Factory task, report it for review, and
+then call `complete_task` after the workflow checks pass. `complete_task` moves
+the matching Factory task to `done` through the configured Factory client and
+reports an actionable warning if Factory rejects that transition.
 
 #### Review is reported once, not twice
 
