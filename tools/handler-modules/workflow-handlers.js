@@ -584,7 +584,7 @@ export async function handleRunTests(args, workflowState) {
   workflowState.state.currentPhase = "documentation";
   await workflowState.save();
 
-  await reportEventSafe(workflowState.state, "tests_passed", args.testCommand);
+  await reportEventSafe(workflowState.state, "tests_passed", args.testCommand, workflowState._sessionKey().key);
 
   return textResponse(
     `✅ All tests passed! 🎉\n\nTest command: ${args.testCommand}\n\n📝 Now create or update documentation using 'create_documentation' with:\n- documentationType: "PRD", "README", "RELEASE_NOTES", "inline-comments", "API-docs", "changelog", or "other"\n- summary: Brief description of what was documented\n\nNext Steps:\n1. ✓ Fix/implement feature\n2. ✓ Create tests\n3. ✓ Run tests (GREEN!)\n4. ⏳ Create/update documentation\n5. ⏳ Run 'check_ready_to_commit'\n6. ⏳ Run 'commit_and_push'\n7. ⏳ Run 'perform_release' (or use 'skip_release' if no release is needed)\n8. ⏳ Complete task`
@@ -877,7 +877,7 @@ export async function handleReportBuildStatus(args = {}, workflowState) {
           ? "build_progress"
           : "build_started";
 
-  await reportEventSafe(workflowState.state, eventKind, JSON.stringify(next));
+  await reportEventSafe(workflowState.state, eventKind, JSON.stringify(next), workflowState._sessionKey().key);
 
   const block = formatBuildStatusBlock(next, workflowState.state.buildHistory);
   return textResponse(`✅ Build status recorded!\n\n${block}`);

@@ -9,6 +9,8 @@ URL: `http://100.107.65.21:3100`
 
 `report_build_status` accepts `buildHost` for the machine that actually executes a build, test, scan, or deployment command. Set this field when the command runs on a remote builder. It is retained through progress and terminal updates for the same build and cleared when a new target begins. The reporting device (`machine`) remains separate from the executor. When `buildHost` is absent, the web and Android views say that the host was not reported and identify the reporting device instead of guessing where the command ran.
 
+Build and test events include the same session key as the monitor snapshot, so recent event history can be attached to the correct session. Build event JSON is kept intact within a bounded payload instead of being cut mid-document; this preserves the reported host after a monitor restart.
+
 The web monitor displays the location in its build summary and session detail. The Android app has a Build tab and a shortcut on the Active tab. Running builds appear first, followed by recent builds visible in the monitor session and event response. The mobile card shows status, target, location, stage, progress, project, and time; tapping it opens session detail. Android APKs must be rebuilt and reinstalled for native UI changes to appear on a device.
 
 Berkas di `monitor-server/`:

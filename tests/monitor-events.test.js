@@ -28,14 +28,17 @@ async function withState(fn) {
   const pinLama = process.env.DEV_WORKFLOW_STATE_FILE;
   const urlLama = process.env.DEVWF_MONITOR_URL;
   process.env.DEV_WORKFLOW_STATE_FILE = path.join(dir, "state.json");
+  let ws;
   try {
-    const ws = new WorkflowState();
+    ws = new WorkflowState();
     await ws.load();
     ws.state.currentPhase = "idle";
     ws.state.taskDescription = "";
     await ws.save();
     return await fn(ws);
   } finally {
+    if (ws?.dbAdapter && typeof ws.dbAdapter.close === "function") await ws.dbAdapter.close();
+    else if (ws?.dbAdapter?.db && typeof ws.dbAdapter.db.close === "function") ws.dbAdapter.db.close();
     if (pinLama === undefined) delete process.env.DEV_WORKFLOW_STATE_FILE;
     else process.env.DEV_WORKFLOW_STATE_FILE = pinLama;
     if (urlLama === undefined) delete process.env.DEVWF_MONITOR_URL;
@@ -51,6 +54,15 @@ test("eventFor membawa kind, proyek, dan task", async () => {
   assert.equal(e.projectName, "clinic");
   assert.equal(e.task, "Perbaiki x");
   assert.equal(e.detail, "detail");
+});
+
+test("build events retain the full host payload and exact session key", async () => {
+  const { eventFor } = await import("../monitor.js");
+  const detail = JSON.stringify({ status: "succeeded", target: "Android APK", buildHost: "builder-vm", output: "x".repeat(1200) });
+  const event = eventFor({ projectDir: "D:\\code\\clinic" }, "build_succeeded", detail, "session-42");
+  assert.equal(event.sessionKey, "session-42");
+  assert.equal(JSON.parse(event.detail).buildHost, "builder-vm");
+  assert.equal(JSON.parse(event.detail).output.length, 1200);
 });
 
 test("reportEventSafe tidak melempar walau jaringan gagal", async () => {

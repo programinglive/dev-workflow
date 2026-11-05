@@ -165,13 +165,13 @@ export async function reportEvent({ env = process.env, event, fetchImpl = fetch,
  * Tanpa ini setiap pemanggil harus mengoper lima field yang sama, dan satu
  * pemanggil yang lupa akan menghasilkan baris tanpa nama proyek di dashboard.
  */
-export function eventFor(state, kind, detail = "") {
+export function eventFor(state, kind, detail = "", sessionKey = "") {
   const s = state || {};
   const projectPath = String(s.projectDir || "");
   return {
-    sessionKey: "",
+    sessionKey,
     kind,
-    detail: String(detail || "").slice(0, 1000),
+    detail: String(detail || "").slice(0, String(kind).startsWith("build_") ? 12000 : 1000),
     projectName: projectPath.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || "",
     task: String(s.taskDescription || ""),
   };
@@ -189,9 +189,9 @@ export function eventFor(state, kind, detail = "") {
  * Batas waktunya ada di dalam `reportEvent` (1,2 detik); kegagalan apa pun
  * dikembalikan sebagai false dan tidak pernah dilempar ke pemanggil.
  */
-export async function reportEventSafe(state, kind, detail = "") {
+export async function reportEventSafe(state, kind, detail = "", sessionKey = "") {
   try {
-    const payload = eventFor(state, kind, detail);
+    const payload = eventFor(state, kind, detail, sessionKey);
     return await reportEvent({ event: payload }).catch(() => false);
   } catch {
     return false;
