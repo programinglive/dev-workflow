@@ -1276,11 +1276,17 @@ async function insertEvent(body) {
   const kind = str(body.kind, 80);
   if (!kind) throw new Error('kind wajib');
   const sessionKey = str(body.sessionKey, 200);
+  let storedDetail = str(body.detail, 1000);
   if (kind.startsWith('build_') && body.detail) {
     try {
       const parsed = JSON.parse(String(body.detail));
-      if (parsed && typeof parsed === 'object' && sessionKey) {
-        liveBuildsBySession.set(sessionKey, normalizeBuildState(parsed));
+      if (parsed && typeof parsed === 'object') {
+        const normalized = normalizeBuildState(parsed);
+        const completeDetail = JSON.stringify(normalized);
+        if (completeDetail.length <= 12000) {
+          storedDetail = completeDetail;
+          if (sessionKey) liveBuildsBySession.set(sessionKey, normalized);
+        }
       }
     } catch {}
   }
@@ -1288,7 +1294,7 @@ async function insertEvent(body) {
     `INSERT INTO events (session_key, machine, project_name, kind, detail)
      VALUES ($1,$2,$3,$4,$5)`,
     [sessionKey, str(body.machine, 120), str(body.projectName, 160),
-     kind, str(body.detail, 1000)]);
+     kind, storedDetail]);
   return true;
 }
 
@@ -1466,6 +1472,15 @@ const server = http.createServer(async (req, res) => {
       // Waktu acuan untuk menurunkan status, dipakai kartu aktif DAN riwayat.
       const nowMs = Date.now();
       const historyRows = await query(hq.sql, hq.params);
+      const historyKeys = historyRows.rows.map((r) => r.session_key).filter(Boolean);
+      const historyBuildRows = historyKeys.length ? await query(
+        `SELECT DISTINCT ON (session_key) at, session_key, kind, detail, project_name, machine
+           FROM events
+          WHERE session_key = ANY($1::text[]) AND kind LIKE 'build_%'
+          ORDER BY session_key, at DESC`,
+        [historyKeys],
+      ) : { rows: [] };
+      const historyBuilds = extractActiveBuildFromEvents(historyBuildRows.rows);
       const history = historyRows.rows.map((r) => {
         // Status memakai fungsi yang SAMA dengan kartu aktif, supaya riwayat
         // dan kartu tidak pernah berbeda pendapat soal sesi yang sama.
@@ -1481,7 +1496,7 @@ const server = http.createServer(async (req, res) => {
           duration_label: formatDuration(r.duration_seconds),
           state: st.status,
           state_label: LABELS[st.status] || st.status,
-          active_build: eventBuilds.get(r.session_key) || null,
+          active_build: historyBuilds.get(r.session_key) || null,
         };
       });
       // Waktu acuan SERVER, dikirim ke klien.

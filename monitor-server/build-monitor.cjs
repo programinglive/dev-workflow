@@ -44,7 +44,9 @@ function normalizeBuildState(input = {}, existing = null) {
     input.target !== undefined ? input.target : prev.target || input.command || 'project build',
     200,
   );
-  const sameRunningBuild = prev.target === target && !['succeeded', 'failed', 'idle'].includes(prev.status);
+  const sameRunningBuild = prev.target === target &&
+    !['succeeded', 'failed', 'idle'].includes(prev.status) &&
+    (prev.status === status || ['succeeded', 'failed', 'idle'].includes(status));
   const buildHost = cleanStr(
     input.buildHost !== undefined ? input.buildHost : sameRunningBuild ? prev.buildHost : '',
     120,

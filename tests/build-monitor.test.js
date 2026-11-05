@@ -79,6 +79,7 @@ test("build host is preserved within a build and cleared for a new target", () =
   assert.equal(started.buildHost, "builder-vm");
   assert.equal(finished.buildHost, "builder-vm");
   assert.equal(next.buildHost, "");
+  assert.equal(normalizeBuildState({status: "testing", target: "Android APK"}, started).buildHost, "");
   assert.match(formatBuildStatusBlock(started), /\*\*Build host\*\*: builder-vm/);
   assert.ok(getToolList().find((tool) => tool.name === "report_build_status").inputSchema.properties.buildHost);
 });

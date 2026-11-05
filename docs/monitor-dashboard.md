@@ -319,11 +319,12 @@ dashboard tidak pernah berjalan.
 
 ```bash
 scp monitor-server/dashboard.cjs        root@100.107.65.21:/tmp/monitor.cjs
+scp monitor-server/build-monitor.cjs    root@100.107.65.21:/tmp/build-monitor.cjs
 scp monitor-server/sessions-query.cjs   root@100.107.65.21:/tmp/sessions-query.cjs
 scp monitor-server/devwf-monitor.service root@100.107.65.21:/tmp/devwf-monitor.service
 ssh root@100.107.65.21
 install -d -m 755 /opt/devwf-monitor
-install -m 644 /tmp/monitor.cjs /tmp/sessions-query.cjs /opt/devwf-monitor/
+install -m 644 /tmp/monitor.cjs /tmp/build-monitor.cjs /tmp/sessions-query.cjs /opt/devwf-monitor/
 install -m 644 /tmp/devwf-monitor.service /etc/systemd/system/devwf-monitor.service
 install -m 600 /dev/null /etc/devwf-monitor.env   # isi DATABASE_URL
 systemctl daemon-reload && systemctl restart devwf-monitor
