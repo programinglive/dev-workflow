@@ -5,8 +5,61 @@ import { fileURLToPath } from "url";
 import { promisify } from "util";
 import { sanitize } from './security/sanitizer.js';
 
-const execPromise = promisify(execCallback);
-const execFilePromise = promisify(execFileCallback);
+const DEFAULT_MAX_BUFFER = 50 * 1024 * 1024;
+const POST_EXIT_PIPE_GRACE_MS = 150;
+
+function runChildWithPipeCleanup(launcher) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let exitCleanupTimer = null;
+
+    const finish = (err, stdout, stderr) => {
+      if (settled) return;
+      settled = true;
+      if (exitCleanupTimer) {
+        clearTimeout(exitCleanupTimer);
+        exitCleanupTimer = null;
+      }
+      if (err) {
+        err.stdout = err.stdout ?? stdout ?? "";
+        err.stderr = err.stderr ?? stderr ?? "";
+        reject(err);
+      } else {
+        resolve({ stdout: stdout ?? "", stderr: stderr ?? "" });
+      }
+    };
+
+    const child = launcher(finish);
+
+    // Close stdin immediately so non-interactive tool runs never block on prompts
+    try {
+      child.stdin?.end?.();
+    } catch {
+      // Ignore stdin close errors
+    }
+
+    // On Windows, grandchild processes spawned with stdio:'inherit' can hold
+    // stdout/stderr pipe handles open indefinitely after the direct child exits,
+    // preventing child_process.exec from ever emitting 'close'.
+    child.once("exit", () => {
+      if (settled) return;
+      exitCleanupTimer = setTimeout(() => {
+        if (settled) return;
+        try {
+          child.stdout?.destroy?.();
+        } catch {
+          // Ignore stream destroy error
+        }
+        try {
+          child.stderr?.destroy?.();
+        } catch {
+          // Ignore stream destroy error
+        }
+      }, POST_EXIT_PIPE_GRACE_MS);
+      exitCleanupTimer.unref?.();
+    });
+  });
+}
 
 /**
  * Direktori paket server MCP ini.
@@ -192,14 +245,27 @@ function getDefaultCwd(command) {
 }
 
 export async function exec(command, options = {}) {
-  const {executable,arguments:args,...runtimeOptions}=options;
-  const execOptions = runtimeOptions.cwd ? runtimeOptions : { ...runtimeOptions, cwd: getDefaultCwd(executable || command) };
-  try { return sanitize(await (executable ? execFilePromise(executable,args,{...execOptions,shell:false}) : execPromise(command, execOptions))); }
-  catch(error) {
-    const safe=new Error(sanitize(error.message));
-    safe.code=error.code;
-    safe.stdout=sanitize(error.stdout || '');
-    safe.stderr=sanitize(error.stderr || '');
+  const { executable, arguments: args, ...runtimeOptions } = options;
+  const baseOptions = {
+    windowsHide: true,
+    maxBuffer: DEFAULT_MAX_BUFFER,
+    ...runtimeOptions,
+  };
+  const execOptions = baseOptions.cwd
+    ? baseOptions
+    : { ...baseOptions, cwd: getDefaultCwd(executable || command) };
+  try {
+    const rawResult = await runChildWithPipeCleanup((cb) =>
+      executable
+        ? execFileCallback(executable, args, { ...execOptions, shell: false }, cb)
+        : execCallback(command, execOptions, cb)
+    );
+    return sanitize(rawResult);
+  } catch (error) {
+    const safe = new Error(sanitize(error.message));
+    safe.code = error.code;
+    safe.stdout = sanitize(error.stdout || "");
+    safe.stderr = sanitize(error.stderr || "");
     throw safe;
   }
 }

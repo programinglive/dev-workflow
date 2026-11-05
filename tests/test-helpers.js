@@ -14,7 +14,13 @@ export async function withWorkflowState(callback) {
   try {
     await callback(state);
   } finally {
-    await rm(tempDir, { recursive: true, force: true });
+    try {
+      state.db?.close?.();
+      state.store?.db?.close?.();
+      await rm(tempDir, { recursive: true, force: true });
+    } catch {
+      // Ignore Windows SQLite WAL handle lock during temp directory cleanup
+    }
   }
 }
 
@@ -75,6 +81,10 @@ export function createGitMock(overrides = {}) {
     getStatusOutput: async () => "",
     containsTestFilesInStatus: (statusOutput) => statusOutput.includes("tests/"),
     workingTreeSummary: () => ({ hasChanges: false, lines: [] }),
+    getTagsAtHead: async () => [],
+    isCommitOnRemoteBranch: async () => false,
+    getCommittedFilesSince: async () => [],
+    getHeadChangedFiles: async () => [],
     ...overrides,
   };
 }
