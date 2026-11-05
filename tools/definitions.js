@@ -969,6 +969,11 @@ export function getToolList() {
             description:
               "What is being built or executed (e.g. 'Clinic Docker Image v0.2.11 + Trivy Scan', 'Frontend Vite Bundle', 'Paratest Suite').",
           },
+          buildHost: {
+            type: "string",
+            maxLength: 120,
+            description: "Actual machine or server executing the build. Set explicitly for remote builds; do not use the deploy destination unless it also executes the build.",
+          },
           command: {
             type: "string",
             description: "Optional command line being executed (e.g. 'npm run build', 'docker build -t app:latest .').",

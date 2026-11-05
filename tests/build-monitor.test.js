@@ -72,6 +72,17 @@ test("normalizeBuildState tracks target, command, stage, progress, and timestamp
   assert.ok(finished.finishedAt);
 });
 
+test("build host is preserved within a build and cleared for a new target", () => {
+  const started = normalizeBuildState({status: "building", target: "Android APK", buildHost: "builder-vm"});
+  const finished = normalizeBuildState({status: "succeeded", target: "Android APK"}, started);
+  const next = normalizeBuildState({status: "building", target: "Web bundle"}, finished);
+  assert.equal(started.buildHost, "builder-vm");
+  assert.equal(finished.buildHost, "builder-vm");
+  assert.equal(next.buildHost, "");
+  assert.match(formatBuildStatusBlock(started), /\*\*Build host\*\*: builder-vm/);
+  assert.ok(getToolList().find((tool) => tool.name === "report_build_status").inputSchema.properties.buildHost);
+});
+
 test("formatBuildStatusBlock renders active build progress bar, target, command, and stage", () => {
   const active = normalizeBuildState({
     status: "building",

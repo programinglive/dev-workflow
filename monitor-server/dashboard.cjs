@@ -170,9 +170,9 @@ const PAGE = `<!doctype html>
   .build-hero { margin-bottom:18px; border-radius:12px; padding:14px 16px;
                 background:linear-gradient(135deg,#121d2f 0%,#0d131d 100%);
                 border:1px solid #2f81f766; box-shadow:0 8px 24px rgba(0,0,0,.35); }
-  .build-hero-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:12px; }
+  .build-hero-head { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; margin-bottom:12px; }
   .build-hero-title { font-size:14px; font-weight:700; color:#79c0ff; display:flex; align-items:center; gap:8px; }
-  .build-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:12px; }
+  .build-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr)); gap:12px; }
   .build-card { background:#090d13; border:1px solid #263345; border-radius:10px; padding:12px 14px;
                 cursor:pointer; transition:border-color .15s, transform .15s; }
   .build-card:hover { border-color:#58a6ff; transform:translateY(-1px); }
@@ -189,6 +189,7 @@ const PAGE = `<!doctype html>
   .build-badge.succeeded { background:#2ea04326; color:#3fb950; border:1px solid #2ea04366; }
   .build-badge.failed { background:#f8514926; color:#ff7b72; border:1px solid #f8514966; }
   .build-target { font-weight:700; font-size:14px; color:#f0f6fc; margin-top:6px; }
+  .build-location { color:#a5d6ff; font-size:12px; font-weight:600; margin-top:7px; overflow-wrap:anywhere; }
   .build-stage { font-size:12px; color:#a5d6ff; margin-top:3px; }
   .build-cmd { margin-top:8px; padding:7px 9px; background:#05080c; border:1px solid #1b222c;
                border-radius:7px; font:11px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace;
@@ -480,7 +481,12 @@ function renderPipeline(s) {
     return '<span class="' + cls + '">' + (idx < curIdx ? '✓ ' : '') + esc(step.lbl) + '</span>';
   }).join('') + '</div>';
 }
-function renderBuildBox(ab, jNow) {
+function renderBuildLocation(ab, machine) {
+  return '<div class="build-location">' + (ab.buildHost
+    ? 'Build di <strong>' + esc(ab.buildHost) + '</strong>'
+    : 'Host build belum dilaporkan' + (machine ? ' · Pelapor ' + esc(machine) : '')) + '</div>';
+}
+function renderBuildBox(ab, jNow, machine) {
   if (!ab || !ab.target) return '';
   const st = String(ab.status || 'building').toLowerCase();
   const isRunning = st === 'building' || st === 'testing' || st === 'scanning' || st === 'deploying';
@@ -495,6 +501,7 @@ function renderBuildBox(ab, jNow) {
       (elapsed ? '<span class="meta"' + liveAttr + '>⏱ ' + esc(elapsed) + '</span>' : '') +
     '</div>' +
     '<div class="build-target">🏗️ ' + esc(ab.target) + '</div>' +
+    renderBuildLocation(ab, machine) +
     (ab.stage ? '<div class="build-stage">▸ ' + esc(ab.stage) + (hasPct ? ' (' + pct + '%)' : '') + '</div>' : '') +
     '<div class="' + barCls + '"><i style="width:' + pct + '%"></i></div>' +
     (ab.command ? '<div class="build-cmd">$ ' + esc(ab.command) + (ab.output ? '\\n' + esc(ab.output) : '') + '</div>' :
@@ -537,6 +544,7 @@ function renderBuildMonitor(activeSessions, jNow) {
             '<span class="proj-pill">' + esc(s.machine) + ' · ' + esc(s.project_name || 'proyek') + '</span>' +
           '</div>' +
           '<div class="build-target">' + esc(ab.target) + '</div>' +
+          renderBuildLocation(ab, s.machine) +
           (ab.stage ? '<div class="build-stage">▸ ' + esc(ab.stage) + (hasPct ? ' (' + pct + '%)' : '') + '</div>' : '') +
           '<div class="' + barCls + '"><i style="width:' + pct + '%"></i></div>' +
           (ab.command || ab.output
@@ -612,7 +620,7 @@ function bukaDetail(sessionKey) {
   const buildModalEl = document.getElementById('modal-build');
   if (buildModalEl) {
     buildModalEl.innerHTML = s.active_build
-      ? '<div class="modal-sec-title">Status Build &amp; Eksekusi</div>' + renderBuildBox(s.active_build, jNow)
+      ? '<div class="modal-sec-title">Status Build &amp; Eksekusi</div>' + renderBuildBox(s.active_build, jNow, s.machine)
       : '';
   }
 
@@ -932,7 +940,7 @@ function render(data) {
         '<div class="meta" style="margin-top:3px">' + esc(s.machine) + ' · ' + esc(s.project_name) +
         ' · ' + esc(s.task_type) + ' · ' + ago(s.updated_at, jNow) + '</div>' +
         renderPipeline(s) +
-        renderBuildBox(s.active_build, jNow) +
+        renderBuildBox(s.active_build, jNow, s.machine) +
         (total ? '<div class="bar"><i style="width:' + pct + '%"></i></div>' +
           '<div class="meta">rencana ' + done + '/' + total + ' · DoD ' + s.dod_done + '/' + s.dod_total +
           (s.dod_waived ? ' (' + s.dod_waived + ' dilewati)' : '') + '</div>' : '') +
@@ -1473,6 +1481,7 @@ const server = http.createServer(async (req, res) => {
           duration_label: formatDuration(r.duration_seconds),
           state: st.status,
           state_label: LABELS[st.status] || st.status,
+          active_build: eventBuilds.get(r.session_key) || null,
         };
       });
       // Waktu acuan SERVER, dikirim ke klien.

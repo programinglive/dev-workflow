@@ -44,6 +44,11 @@ function normalizeBuildState(input = {}, existing = null) {
     input.target !== undefined ? input.target : prev.target || input.command || 'project build',
     200,
   );
+  const sameRunningBuild = prev.target === target && !['succeeded', 'failed', 'idle'].includes(prev.status);
+  const buildHost = cleanStr(
+    input.buildHost !== undefined ? input.buildHost : sameRunningBuild ? prev.buildHost : '',
+    120,
+  );
   const command = cleanStr(
     input.command !== undefined ? input.command : prev.command || '',
     300,
@@ -79,6 +84,7 @@ function normalizeBuildState(input = {}, existing = null) {
   return {
     status,
     target,
+    buildHost,
     command,
     stage,
     progress,
@@ -145,6 +151,7 @@ function formatBuildStatusBlock(activeBuild, buildHistory = []) {
     `- **Status**: ${statusBadge(activeBuild.status)}${elapsed ? ` (⏱ ${elapsed})` : ''}`,
     `- **Target**: \`${activeBuild.target}\``,
   ];
+  if (activeBuild.buildHost) lines.push(`- **Build host**: ${activeBuild.buildHost}`);
 
   if (activeBuild.stage) {
     lines.push(`- **Current Stage**: ${activeBuild.stage}`);
