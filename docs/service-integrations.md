@@ -56,6 +56,8 @@ The [workspace design](superpowers/specs/2026-11-04-zettly-proactive-workspace-d
 
 ## True task origin and visible relations
 
+Before remediation, follow the [evidence-first Sentry triage process](sentry-evidence-triage.md). An unresolved issue may already have a deployed fix; inventory status alone must never trigger a new patch or resolution.
+
 The initial source and associated services are different facts. A task imported from Sentry keeps its Sentry origin when Zettly creates its tracking Todo and Factory executes it. `start_task` accepts an explicit `source` with `system` (`manual`, `zettly` or `sentry`) and source `id`. Sentry IDs are read and verified before the existing workflow is replaced. Selecting `zettlyTodoId` also identifies a Zettly source. Direct requests are manual; legacy records without evidence remain unknown.
 
 Factory sources use `claim_factory_task`, which verifies the task and starts a real work session. Supply its known `zettlyTodoId` to reuse the canonical Todo. Repeated claims of the same linked Factory task retain workflow identity, progress and tracking Todo. Linking additional services never changes the original source.
