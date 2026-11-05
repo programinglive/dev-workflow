@@ -1249,6 +1249,8 @@ export class WorkflowState {
       zettlyOutbox: [],
       taskOrigin: null,
       zettlyContext: null,
+      activeBuild: null,
+      buildHistory: [],
     };
   }
 
@@ -2576,6 +2578,8 @@ export class WorkflowState {
       zettlyOutbox: Array.isArray(previous.zettlyOutbox) ? previous.zettlyOutbox : [],
       taskOrigin: null,
       zettlyContext: null,
+      activeBuild: null,
+      buildHistory: [],
     };
 
     return { archivedTask };

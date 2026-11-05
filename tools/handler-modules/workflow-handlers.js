@@ -22,6 +22,8 @@ import { reportEventSafe } from "../../monitor.js";
 import { resolveProjectDir, setActiveProjectDir } from "../../exec.js";
 import { pinSessionProject, resolveHistoryFile } from "../../workflow-state.js";
 import { assignWorkflowIdentity, validateZettlyTaskArguments } from '../../zettly-workflow.js';
+import { recommendMcpTools, formatMcpRecommendations, formatFullMcpCatalog } from "../../mcp-index.js";
+import { normalizeBuildState, formatBuildStatusBlock } from "../../build-monitor.js";
 
 /**
  * Catat repo proyek untuk sesi ini.
@@ -364,6 +366,14 @@ export async function handleStartTask(args, workflowState, git) {
     .map((item) => `   ${item.id}: ${item.text}`)
     .join("\n");
 
+  const mcpRecommendations = formatMcpRecommendations({
+    description: workflowState.state.taskDescription,
+    projectDir: workflowState.state.projectDir,
+    definitionOfDone: workflowState.state.definitionOfDone,
+    plan: workflowState.state.plan,
+  });
+  const mcpBlock = mcpRecommendations ? `${mcpRecommendations}\n\n` : "";
+
   return textResponse(
     `✅ Task Started: ${args.description}\n\n${project.message}${warningBlock}${factoryNote}\n\n` +
       `📋 Definition of Done (${workflowState.state.definitionOfDone.length} item, semua masih terbuka):\n${dodLines}\n` +
@@ -374,6 +384,7 @@ export async function handleStartTask(args, workflowState, git) {
           `   Urutannya belum tentu urutan kerja yang benar. Kirim 'plan' pada 'start_task',\n` +
           `   atau susun ulang sekarang dengan 'set_plan' { steps: [...] }.\n\n`
         : `${renderPlanFull(workflowState.state.plan)}\n\n`) +
+      mcpBlock +
       `🎯 Be conscious about what you're coding!\n\nWorkflow Steps:\n1. ✓ Start task (current)\n2. ⏳ Describe feature flow with Mermaid\n3. ⏳ Fix/implement the feature\n4. ⏳ Prove each definition-of-done item\n5. ⏳ Create tests\n6. ⏳ Run tests (must pass!)\n7. ⏳ Create documentation\n8. ⏳ Run 'check_ready_to_commit'\n9. ⏳ Run 'commit_and_push' (commits and pushes)\n10. ⏳ Run 'perform_release' or 'skip_release' (when no release is needed)\n11. ⏳ Complete task\n12. ✓ Workflow closed\n\nReminder: Focus on writing clean, maintainable code!`
   );
 }
@@ -540,6 +551,17 @@ export async function handleRunTests(args, workflowState) {
   workflowState.state.testsPassed = args.passed;
   workflowState.state.testCommand = args.testCommand;
   workflowState.state.testDetails = typeof args.details === "string" ? args.details : "";
+  workflowState.state.activeBuild = normalizeBuildState(
+    {
+      status: args.passed ? "succeeded" : "failed",
+      target: workflowState.state.activeBuild?.target || "Test Suite Execution",
+      command: args.testCommand,
+      stage: args.passed ? "All tests passed" : "Tests failed",
+      progress: args.passed ? 100 : workflowState.state.activeBuild?.progress ?? null,
+      output: typeof args.details === "string" ? args.details : "",
+    },
+    workflowState.state.activeBuild,
+  );
   workflowState.state.testsSkipped = false;
   workflowState.state.testsSkippedReason = "";
   workflowState.state.readyCheckCompleted = false;
@@ -798,6 +820,67 @@ export async function handleWaiveDocumentation(args, workflowState) {
       `Alasan ini dicatat di history, disebut di laporan commit, dan muncul di rekomendasi ` +
       `sesi berikutnya. Lanjutkan dengan 'check_ready_to_commit'.`
   );
+}
+
+export async function handleRecommendMcpTools(args = {}, workflowState) {
+  const state = workflowState?.state || {};
+  const query = typeof args.query === "string" ? args.query.trim() : "";
+  const projectDir =
+    typeof args.projectDir === "string" && args.projectDir.trim() !== ""
+      ? args.projectDir.trim()
+      : state.projectDir || "";
+  const limit = Number(args.limit) > 0 ? Number(args.limit) : 4;
+
+  const result = recommendMcpTools({
+    query,
+    description: state.taskDescription || "",
+    projectDir,
+    definitionOfDone: state.definitionOfDone || [],
+    plan: state.plan || [],
+    limit,
+  });
+
+  if (args.includeAll) {
+    return textResponse(formatFullMcpCatalog(query ? result : null));
+  }
+
+  return textResponse(formatMcpRecommendations(result));
+}
+
+export async function handleReportBuildStatus(args = {}, workflowState) {
+  if (!args || typeof args.target !== "string" || args.target.trim() === "") {
+    return textResponse("⚠️ Please provide a non-empty 'target' describing what is being built.");
+  }
+
+  const prev = workflowState.state.activeBuild || null;
+  const next = normalizeBuildState(args, prev);
+  workflowState.state.activeBuild = next;
+
+  if (!Array.isArray(workflowState.state.buildHistory)) {
+    workflowState.state.buildHistory = [];
+  }
+  if (next.status === "succeeded" || next.status === "failed") {
+    workflowState.state.buildHistory = [
+      ...workflowState.state.buildHistory.slice(-9),
+      next,
+    ];
+  }
+
+  await workflowState.save();
+
+  const eventKind =
+    next.status === "succeeded"
+      ? "build_succeeded"
+      : next.status === "failed"
+        ? "build_failed"
+        : prev && prev.status === next.status
+          ? "build_progress"
+          : "build_started";
+
+  await reportEventSafe(workflowState.state, eventKind, JSON.stringify(next));
+
+  const block = formatBuildStatusBlock(next, workflowState.state.buildHistory);
+  return textResponse(`✅ Build status recorded!\n\n${block}`);
 }
 
 

@@ -46,6 +46,9 @@ const {
   listLiveShares,
 } = require('./share-route.cjs');
 const { ensureTableSql } = require('./share-links.cjs');
+const { normalizeBuildState, extractActiveBuildFromEvents } = require('./build-monitor.cjs');
+
+const liveBuildsBySession = new Map();
 
 const PORT = Number(process.env.PORT || 3100);
 const HOST = process.env.HOST || '0.0.0.0';
@@ -142,39 +145,103 @@ const PAGE = `<!doctype html>
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
-  body { margin:0; font:15px/1.45 -apple-system,Segoe UI,Roboto,sans-serif;
-         background:#0b0f14; color:#e6edf3; padding:16px 16px 76px; }
-  h1 { font-size:18px; margin:0 0 4px; }
-  .sub { color:#7d8590; font-size:12px; margin-bottom:16px; }
-  .card { border:1px solid #21262d; border-radius:10px; padding:14px; margin-bottom:12px;
-          background:#0f151c; }
-  .card.live { border-color:#2f81f7; box-shadow:0 0 0 1px #2f81f755; }
+  body { margin:0; font:15px/1.45 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;
+         background:#070a0f; color:#e6edf3; padding:16px 18px 84px; max-width:1440px; margin-inline:auto; }
+  .topbar { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;
+            padding:12px 16px; margin-bottom:16px; border-radius:12px;
+            background:linear-gradient(135deg,#0f1722 0%,#0b1017 100%); border:1px solid #1f2937; }
+  .brand { display:flex; align-items:center; gap:10px; }
+  .live-dot { width:10px; height:10px; border-radius:50%; background:#3fb950;
+              box-shadow:0 0 0 4px #3fb95022; animation:pulseDot 2s infinite; }
+  @keyframes pulseDot { 0%,100%{opacity:1;transform:scale(1);} 50%{opacity:.55;transform:scale(1.15);} }
+  h1 { font-size:18px; margin:0; letter-spacing:-.2px; }
+  .sub { color:#8b949e; font-size:12px; margin:2px 0 0; }
+
+  /* KPI Strip */
+  .kpi-strip { display:grid; grid-template-columns:repeat(auto-fit,minmax(155px,1fr)); gap:10px; margin-bottom:16px; }
+  .kpi-card { background:#0d131c; border:1px solid #1e2631; border-radius:10px; padding:10px 14px;
+              display:flex; flex-direction:column; gap:2px; }
+  .kpi-card.building-active { border-color:#d2992288; background:linear-gradient(135deg,#1c160c 0%,#0d131c 100%); }
+  .kpi-lbl { font-size:11px; color:#8b949e; text-transform:uppercase; letter-spacing:.5px; }
+  .kpi-val { font-size:22px; font-weight:700; color:#f0f6fc; line-height:1.2; }
+  .kpi-sub { font-size:11px; color:#7d8590; }
+
+  /* Live Build Monitor Hero Section */
+  .build-hero { margin-bottom:18px; border-radius:12px; padding:14px 16px;
+                background:linear-gradient(135deg,#121d2f 0%,#0d131d 100%);
+                border:1px solid #2f81f766; box-shadow:0 8px 24px rgba(0,0,0,.35); }
+  .build-hero-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:12px; }
+  .build-hero-title { font-size:14px; font-weight:700; color:#79c0ff; display:flex; align-items:center; gap:8px; }
+  .build-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:12px; }
+  .build-card { background:#090d13; border:1px solid #263345; border-radius:10px; padding:12px 14px;
+                cursor:pointer; transition:border-color .15s, transform .15s; }
+  .build-card:hover { border-color:#58a6ff; transform:translateY(-1px); }
+  .build-card.building, .build-card.testing, .build-card.scanning, .build-card.deploying {
+    border-color:#d2992288; box-shadow:0 0 0 1px #d2992222;
+  }
+  .build-card.succeeded { border-color:#23863688; }
+  .build-card.failed { border-color:#f8514988; }
+  .build-badge { display:inline-flex; align-items:center; gap:5px; font-size:11px; font-weight:700;
+                 padding:2px 9px; border-radius:999px; text-transform:uppercase; letter-spacing:.4px; }
+  .build-badge.building, .build-badge.testing, .build-badge.scanning, .build-badge.deploying {
+    background:#d2992226; color:#f0c674; border:1px solid #d2992266;
+  }
+  .build-badge.succeeded { background:#2ea04326; color:#3fb950; border:1px solid #2ea04366; }
+  .build-badge.failed { background:#f8514926; color:#ff7b72; border:1px solid #f8514966; }
+  .build-target { font-weight:700; font-size:14px; color:#f0f6fc; margin-top:6px; }
+  .build-stage { font-size:12px; color:#a5d6ff; margin-top:3px; }
+  .build-cmd { margin-top:8px; padding:7px 9px; background:#05080c; border:1px solid #1b222c;
+               border-radius:7px; font:11px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace;
+               color:#9da7b3; overflow-x:auto; white-space:pre-wrap; word-break:break-all; }
+  .build-bar { height:7px; background:#1b222c; border-radius:999px; overflow:hidden; margin:9px 0 4px; position:relative; }
+  .build-bar > i { display:block; height:100%; border-radius:999px; background:linear-gradient(90deg,#2f81f7,#58a6ff); transition:width .3s ease; }
+  .build-bar.indeterminate > i { width:45% !important; background:linear-gradient(90deg,#d29922,#f0c674,#d29922);
+                                 animation:shimmerBar 1.6s infinite ease-in-out; }
+  @keyframes shimmerBar { 0%{transform:translateX(-80%);} 100%{transform:translateX(220%);} }
+
+  /* Workflow Pipeline Stepper */
+  .pipeline { display:flex; align-items:center; gap:4px; margin:10px 0 8px; flex-wrap:wrap; }
+  .pipe-step { font-size:10px; padding:2px 7px; border-radius:6px; background:#141b23;
+               color:#6e7681; border:1px solid #21262d; font-weight:600; }
+  .pipe-step.done { background:#12261e; color:#3fb950; border-color:#23863666; }
+  .pipe-step.current { background:#1f6feb33; color:#79c0ff; border-color:#2f81f7; box-shadow:0 0 8px #2f81f733; }
+
+  /* Session Grid & Cards */
+  #list { display:grid; grid-template-columns:repeat(auto-fit,minmax(350px,1fr)); gap:12px; }
+  .card { border:1px solid #21262d; border-radius:12px; padding:14px; margin-bottom:12px;
+          background:#0f151c; display:flex; flex-direction:column; }
+  #list .card { margin-bottom:0; }
+  .card.live { border-color:#2f81f7; box-shadow:0 0 0 1px #2f81f744; }
   .card.stuck { border-color:#d2992255; box-shadow:0 0 0 1px #d2992233; }
   .card.ended { opacity:.62; }
-  .clickable-card { cursor:pointer; transition:border-color .15s, background-color .15s; }
-  .clickable-card:hover { border-color:#58a6ff88; background:#131a24; }
+  .clickable-card { cursor:pointer; transition:border-color .15s, background-color .15s, transform .15s; }
+  .clickable-card:hover { border-color:#58a6ff88; background:#131a24; transform:translateY(-1px); }
   .phase.stuck { background:#d2992222; color:#e3b341; border-color:#d2992255; }
   .phase.ended { background:#6e768122; color:#8b949e; border-color:#6e768155; }
   .row { display:flex; gap:8px; align-items:baseline; flex-wrap:wrap; }
-  .task { font-weight:600; }
+  .task { font-weight:600; color:#f0f6fc; }
   .meta { color:#7d8590; font-size:12px; }
   .task-metadata { margin-top:6px; overflow-wrap:anywhere; }
   .task-metadata a { color:#79c0ff; }
+  .proj-pill { display:inline-block; background:#1f6feb1a; color:#58a6ff; border:1px solid #1f6feb44;
+               padding:1px 8px; border-radius:6px; font-weight:600; font-size:11px; }
   .phase { background:#1f6feb22; color:#79c0ff; border:1px solid #1f6feb55;
            border-radius:999px; padding:1px 9px; font-size:11px; text-transform:uppercase;
            letter-spacing:.4px; }
   .bar { height:6px; background:#21262d; border-radius:999px; overflow:hidden; margin:10px 0 4px; }
-  .bar > i { display:block; height:100%; background:#2f81f7; }
+  .bar > i { display:block; height:100%; background:linear-gradient(90deg,#2f81f7,#3fb950); }
   ul { list-style:none; margin:8px 0 0; padding:0; font-size:13px; }
   li { padding:2px 0; color:#9da7b3; }
   li.done { color:#3fb950; text-decoration:line-through; }
-  .empty { color:#7d8590; text-align:center; padding:40px 0; }
+  .empty { color:#7d8590; text-align:center; padding:40px 0; grid-column:1 / -1; }
   .events { font-size:12px; color:#7d8590; }
   .events b { color:#c9d1d9; font-weight:500; }
+  .event-row { padding:7px 10px; border-bottom:1px solid #161b22; display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; }
+  .event-row:last-child { border-bottom:none; }
   .warn { border:1px solid #d2992255; background:#d299221a; color:#e3b341;
           border-radius:10px; padding:10px 12px; margin-bottom:12px; font-size:13px; }
   .warn b { color:#f0c674; }
-  .btnrow { display:flex; gap:8px; align-items:center; margin-top:10px; flex-wrap:wrap; }
+  .btnrow { display:flex; gap:8px; align-items:center; margin-top:auto; padding-top:10px; flex-wrap:wrap; }
   .btn { background:#1f6feb22; color:#79c0ff; border:1px solid #1f6feb55; border-radius:8px;
          padding:5px 11px; font-size:12px; cursor:pointer; font-family:inherit; }
   .btn:hover { background:#1f6feb33; }
@@ -189,8 +256,8 @@ const PAGE = `<!doctype html>
 
   /* Tab Navigation */
   .tabbar {
-    position: fixed; bottom: 0; left: 0; right: 0; height: 56px;
-    background: #0d1117; border-top: 1px solid #21262d;
+    position: fixed; bottom: 0; left: 0; right: 0; height: 58px;
+    background: rgba(13, 17, 23, 0.94); backdrop-filter: blur(10px); border-top: 1px solid #21262d;
     display: flex; z-index: 100;
   }
   .tab-btn {
@@ -223,7 +290,7 @@ const PAGE = `<!doctype html>
   }
   .modal-box {
     position: relative; z-index: 1; background: #0f151c; border: 1px solid #30363d;
-    border-radius: 12px; max-width: 600px; width: 100%; max-height: 85vh;
+    border-radius: 12px; max-width: 640px; width: 100%; max-height: 88vh;
     display: flex; flex-direction: column; box-shadow: 0 12px 36px rgba(0,0,0,0.6);
   }
   .modal-header {
@@ -246,16 +313,26 @@ const PAGE = `<!doctype html>
   .modal-sec-title { font-weight: 600; font-size: 13px; color: #d2a8ff; margin: 14px 0 6px; }
   .timer-badge { display: inline-block; background: #1f6feb22; color: #79c0ff; padding: 2px 8px; border-radius: 6px; font-size: 12px; margin-top: 6px; }
 </style></head><body>
-<h1>Dev Workflow Monitor</h1>
-<div class="sub" id="sub">menyambung…</div>
+<header class="topbar">
+  <div class="brand">
+    <span class="live-dot"></span>
+    <div>
+      <h1>Dev Workflow Monitor</h1>
+      <div class="sub" id="sub">menyambung…</div>
+    </div>
+  </div>
+</header>
+
+<div id="kpi-strip" class="kpi-strip"></div>
 
 <!-- TAB 1: AKTIF -->
 <div id="tab-aktif" class="tab-pane active">
   <div id="warn"></div>
   <div id="alerts"></div>
+  <div id="build-monitor"></div>
   <div id="list"><div class="empty">memuat…</div></div>
-  <h1 style="font-size:14px;margin-top:24px">Aktivitas terakhir</h1>
-  <div id="events" class="events"></div>
+  <h1 style="font-size:14px;margin:24px 0 10px">Aktivitas &amp; Build Log Terakhir</h1>
+  <div id="events" class="card events" style="padding:8px 12px"></div>
 </div>
 
 <!-- TAB 2: RIWAYAT -->
@@ -327,6 +404,7 @@ const PAGE = `<!doctype html>
       <div class="meta" id="modal-meta"></div>
       <div class="meta" id="modal-path" style="word-break:break-all;margin-top:4px"></div>
       <div id="modal-timer"></div>
+      <div id="modal-build"></div>
       <div id="modal-plan"></div>
       <div id="modal-dod"></div>
       <div id="modal-tech" class="events" style="margin-top:16px"></div>
@@ -362,6 +440,117 @@ function durasi(isoMulai, msSekarang) {
   const sisaM = m % 60;
   if (j > 0) return j + 'j ' + (sisaM < 10 ? '0' : '') + sisaM + 'm';
   return m + 'm';
+}
+function durasiDetik(isoMulai, msSekarang) {
+  if (!isoMulai) return '';
+  const d = Math.max(0, Math.floor(((msSekarang || Date.now()) - new Date(isoMulai).getTime()) / 1000));
+  if (!isFinite(d)) return '';
+  const m = Math.floor(d / 60);
+  const s = d % 60;
+  const j = Math.floor(m / 60);
+  const sisaM = m % 60;
+  if (j > 0) return j + 'j ' + (sisaM < 10 ? '0' : '') + sisaM + 'm ' + (s < 10 ? '0' : '') + s + 'd';
+  if (m > 0) return m + 'm ' + (s < 10 ? '0' : '') + s + 'd';
+  return s + 'd';
+}
+function labelBuildStatus(st) {
+  const k = String(st || 'building').toLowerCase();
+  if (k === 'building') return '🔨 BUILDING';
+  if (k === 'testing') return '🧪 TESTING';
+  if (k === 'scanning') return '🛡️ SCANNING';
+  if (k === 'deploying') return '🚀 DEPLOYING';
+  if (k === 'succeeded') return '✅ BUILD SUKSES';
+  if (k === 'failed') return '❌ BUILD GAGAL';
+  return '⏸️ IDLE';
+}
+function renderPipeline(s) {
+  const phase = String(s.phase || 'coding').toLowerCase();
+  const order = [
+    { id: 'coding', lbl: '1. Code' },
+    { id: 'testing', lbl: '2. Build & Test' },
+    { id: 'documentation', lbl: '3. Docs' },
+    { id: 'ready', lbl: '4. Ready' },
+    { id: 'commit', lbl: '5. Commit' },
+    { id: 'release', lbl: '6. Release' }
+  ];
+  const idxMap = { coding: 0, testing: 1, documentation: 2, ready: 3, commit: 4, release: 5, ready_to_complete: 6 };
+  const curIdx = idxMap[phase] !== undefined ? idxMap[phase] : 0;
+  return '<div class="pipeline">' + order.map(function(step, idx) {
+    var cls = idx < curIdx ? 'pipe-step done' : (idx === curIdx ? 'pipe-step current' : 'pipe-step');
+    return '<span class="' + cls + '">' + (idx < curIdx ? '✓ ' : '') + esc(step.lbl) + '</span>';
+  }).join('') + '</div>';
+}
+function renderBuildBox(ab, jNow) {
+  if (!ab || !ab.target) return '';
+  const st = String(ab.status || 'building').toLowerCase();
+  const isRunning = st === 'building' || st === 'testing' || st === 'scanning' || st === 'deploying';
+  const hasPct = typeof ab.progress === 'number' && isFinite(ab.progress);
+  const pct = hasPct ? Math.max(0, Math.min(100, Math.round(ab.progress))) : 45;
+  const barCls = (!hasPct && isRunning) ? 'build-bar indeterminate' : 'build-bar';
+  const elapsed = ab.startedAt ? durasiDetik(ab.startedAt, ab.finishedAt ? new Date(ab.finishedAt).getTime() : jNow) : '';
+  const liveAttr = (isRunning && ab.startedAt) ? ' data-live-start="' + esc(ab.startedAt) + '"' : '';
+  return '<div class="build-card ' + esc(st) + '" style="margin-top:10px">' +
+    '<div class="row" style="justify-content:space-between;align-items:center">' +
+      '<span class="build-badge ' + esc(st) + '">' + labelBuildStatus(st) + '</span>' +
+      (elapsed ? '<span class="meta"' + liveAttr + '>⏱ ' + esc(elapsed) + '</span>' : '') +
+    '</div>' +
+    '<div class="build-target">🏗️ ' + esc(ab.target) + '</div>' +
+    (ab.stage ? '<div class="build-stage">▸ ' + esc(ab.stage) + (hasPct ? ' (' + pct + '%)' : '') + '</div>' : '') +
+    '<div class="' + barCls + '"><i style="width:' + pct + '%"></i></div>' +
+    (ab.command ? '<div class="build-cmd">$ ' + esc(ab.command) + (ab.output ? '\\n' + esc(ab.output) : '') + '</div>' :
+      (ab.output ? '<div class="build-cmd">' + esc(ab.output) + '</div>' : '')) +
+  '</div>';
+}
+function renderBuildMonitor(activeSessions, jNow) {
+  const el = document.getElementById('build-monitor');
+  if (!el) return;
+  const buildingSessions = (activeSessions || []).filter(function(s) {
+    return s.active_build && s.active_build.target;
+  });
+  if (!buildingSessions.length) {
+    el.innerHTML = '';
+    return;
+  }
+  const runningCount = buildingSessions.filter(function(s) {
+    const st = String(s.active_build.status || '').toLowerCase();
+    return st === 'building' || st === 'testing' || st === 'scanning' || st === 'deploying';
+  }).length;
+  el.innerHTML = '<div class="build-hero">' +
+    '<div class="build-hero-head">' +
+      '<div class="build-hero-title">🏗️ Live Build &amp; Execution Monitor (' +
+        (runningCount > 0 ? runningCount + ' sedang berjalan' : buildingSessions.length + ' tercatat') + ')</div>' +
+      '<span class="meta">Real-time dari dev-workflow MCP</span>' +
+    '</div>' +
+    '<div class="build-grid">' +
+      buildingSessions.map(function(s) {
+        const ab = s.active_build;
+        const st = String(ab.status || 'building').toLowerCase();
+        const isRunning = st === 'building' || st === 'testing' || st === 'scanning' || st === 'deploying';
+        const hasPct = typeof ab.progress === 'number' && isFinite(ab.progress);
+        const pct = hasPct ? Math.max(0, Math.min(100, Math.round(ab.progress))) : 45;
+        const barCls = (!hasPct && isRunning) ? 'build-bar indeterminate' : 'build-bar';
+        const elapsed = ab.startedAt ? durasiDetik(ab.startedAt, ab.finishedAt ? new Date(ab.finishedAt).getTime() : jNow) : '';
+        const liveAttr = (isRunning && ab.startedAt) ? ' data-live-start="' + esc(ab.startedAt) + '"' : '';
+        return '<div class="build-card ' + esc(st) + '" data-session-key="' + esc(s.session_key) + '">' +
+          '<div class="row" style="justify-content:space-between;align-items:center">' +
+            '<span class="build-badge ' + esc(st) + '">' + labelBuildStatus(st) + '</span>' +
+            '<span class="proj-pill">' + esc(s.machine) + ' · ' + esc(s.project_name || 'proyek') + '</span>' +
+          '</div>' +
+          '<div class="build-target">' + esc(ab.target) + '</div>' +
+          (ab.stage ? '<div class="build-stage">▸ ' + esc(ab.stage) + (hasPct ? ' (' + pct + '%)' : '') + '</div>' : '') +
+          '<div class="' + barCls + '"><i style="width:' + pct + '%"></i></div>' +
+          (ab.command || ab.output
+            ? '<div class="build-cmd">' + (ab.command ? '$ ' + esc(ab.command) : '') +
+              (ab.command && ab.output ? '\\n' : '') + (ab.output ? esc(ab.output) : '') + '</div>'
+            : '') +
+          '<div class="row" style="justify-content:space-between;margin-top:6px">' +
+            '<span class="meta">' + esc(s.task || '') + '</span>' +
+            (elapsed ? '<span class="meta" style="color:#79c0ff;font-weight:600"' + liveAttr + '>⏱ ' + esc(elapsed) + '</span>' : '') +
+          '</div>' +
+        '</div>';
+      }).join('') +
+    '</div>' +
+  '</div>';
 }
 
 let lastData = null;
@@ -415,9 +604,16 @@ function bukaDetail(sessionKey) {
   const t = durasi(s.started_at, jNow);
   const timerEl = document.getElementById('modal-timer');
   if (t) {
-    timerEl.innerHTML = '<span class="timer-badge">⏱ berjalan ' + esc(t) + '</span>';
+    timerEl.innerHTML = '<span class="timer-badge">⏱ berjalan ' + esc(t) + '</span>' + renderPipeline(s);
   } else {
-    timerEl.innerHTML = '';
+    timerEl.innerHTML = renderPipeline(s);
+  }
+
+  const buildModalEl = document.getElementById('modal-build');
+  if (buildModalEl) {
+    buildModalEl.innerHTML = s.active_build
+      ? '<div class="modal-sec-title">Status Build &amp; Eksekusi</div>' + renderBuildBox(s.active_build, jNow)
+      : '';
   }
 
   // Plan
@@ -676,6 +872,22 @@ function render(data) {
   }
 
   const list = document.getElementById('list');
+  const buildingNowCount = activeSessions.filter(function(s) {
+    const st = s.active_build && String(s.active_build.status || '').toLowerCase();
+    return st === 'building' || st === 'testing' || st === 'scanning' || st === 'deploying';
+  }).length;
+  const kpiEl = document.getElementById('kpi-strip');
+  if (kpiEl) {
+    const onlineMachines = (data.machines || []).filter(function(m) { return !m.stale; }).length;
+    kpiEl.innerHTML =
+      '<div class="kpi-card"><span class="kpi-lbl">⚡ Task Aktif</span><span class="kpi-val">' + activeSessions.length + '</span><span class="kpi-sub">sesi sedang berjalan</span></div>' +
+      '<div class="kpi-card' + (buildingNowCount > 0 ? ' building-active' : '') + '"><span class="kpi-lbl">🏗️ Sedang Build / Test</span><span class="kpi-val" style="color:' + (buildingNowCount > 0 ? '#f0c674' : '#e6edf3') + '">' + buildingNowCount + '</span><span class="kpi-sub">' + (buildingNowCount > 0 ? 'proses build aktif' : 'tidak ada build aktif') + '</span></div>' +
+      '<div class="kpi-card"><span class="kpi-lbl">🖥️ Mesin Terhubung</span><span class="kpi-val">' + onlineMachines + '/' + (data.machines || []).length + '</span><span class="kpi-sub">aktif melapor</span></div>' +
+      '<div class="kpi-card"><span class="kpi-lbl">✅ Riwayat (7 Hari)</span><span class="kpi-val" style="color:#3fb950">' + (data.history || []).length + '</span><span class="kpi-sub">sesi tercatat</span></div>';
+  }
+
+  renderBuildMonitor(activeSessions, jNow);
+
   if (!activeSessions.length) {
     list.innerHTML = '<div class="empty">belum ada task aktif; koneksi device tercatat di tab Mesin</div>';
   } else {
@@ -704,17 +916,23 @@ function render(data) {
         : '<div class="btnrow"><button class="btn" data-share="' + esc(s.session_key) + '">Bagikan</button></div>';
 
       const sisaPlan = Math.max(0, rencana.length - 2);
+      const durText = durasi(s.started_at, jNow);
 
       return '<div class="card clickable-card ' + cardCls + '" data-session-key="' + esc(s.session_key) + '">' +
         '<div class="row"><span class="' + chipCls + '">' + chipText + '</span>' +
         '<span class="phase" style="background:#a371f71a;color:#d2a8ff;border-color:#a371f755">' +
         esc(String(s.agent_tool || 'unknown').toUpperCase()) + '</span>' +
-        '<span class="task">' + esc(s.task || s.session_title || '(tanpa task)') + '</span></div>' +
+        (s.project_name ? '<span class="proj-pill">' + esc(s.project_name) + '</span>' : '') +
+        (durText ? '<span class="meta" style="margin-left:auto;color:#79c0ff">⏱ ' + esc(durText) + '</span>' : '') +
+        '</div>' +
+        '<div class="task" style="margin-top:6px">' + esc(s.task || s.session_title || '(tanpa task)') + '</div>' +
         renderTaskMetadata(s) +
         (s.session_title ? '<div class="meta" style="color:#79c0ff;margin-top:2px">💬 ' + esc(s.session_title) + '</div>' : '') +
         note +
-        '<div class="meta">' + esc(s.machine) + ' · ' + esc(s.project_name) +
+        '<div class="meta" style="margin-top:3px">' + esc(s.machine) + ' · ' + esc(s.project_name) +
         ' · ' + esc(s.task_type) + ' · ' + ago(s.updated_at, jNow) + '</div>' +
+        renderPipeline(s) +
+        renderBuildBox(s.active_build, jNow) +
         (total ? '<div class="bar"><i style="width:' + pct + '%"></i></div>' +
           '<div class="meta">rencana ' + done + '/' + total + ' · DoD ' + s.dod_done + '/' + s.dod_total +
           (s.dod_waived ? ' (' + s.dod_waived + ' dilewati)' : '') + '</div>' : '') +
@@ -831,6 +1049,12 @@ async function cabutYatim(tombol) {
 }
 
 // Delegasi klik pada elemen
+document.getElementById('build-monitor').addEventListener('click', function (e) {
+  var card = e.target.closest('[data-session-key]');
+  if (card) {
+    bukaDetail(card.dataset.sessionKey);
+  }
+});
 document.getElementById('list').addEventListener('click', function (e) {
   if (e.target.closest('a[href]')) return;
   var btn = e.target.closest('[data-share],[data-copy],[data-revoke]');
@@ -930,6 +1154,16 @@ document.addEventListener('click', async function(e) {
 tick(); muatTautan();
 setInterval(tick, ${POLL_MS});
 setInterval(muatTautan, 30000);
+setInterval(function () {
+  var nodes = document.querySelectorAll('[data-live-start]');
+  var nowMs = Date.now();
+  nodes.forEach(function (el) {
+    var iso = el.getAttribute('data-live-start');
+    if (iso) {
+      el.textContent = '⏱ ' + durasiDetik(iso, nowMs);
+    }
+  });
+}, 1000);
 </script></body></html>`;
 
 async function query(sql, params) {
@@ -1021,16 +1255,31 @@ async function pruneOldRows() {
 async function upsertSession(body) {
   const { sql, params } = buildSessionUpsert(body);
   await query(sql, params);
-  return str(body.sessionKey, 200);
+  const key = str(body.sessionKey, 200);
+  if (body && body.activeBuild && typeof body.activeBuild === 'object') {
+    liveBuildsBySession.set(key, normalizeBuildState(body.activeBuild));
+  } else if (body && (body.phase === 'idle' || body.phase === 'closed' || body.phase === 'done')) {
+    liveBuildsBySession.delete(key);
+  }
+  return key;
 }
 
 async function insertEvent(body) {
   const kind = str(body.kind, 80);
   if (!kind) throw new Error('kind wajib');
+  const sessionKey = str(body.sessionKey, 200);
+  if (kind.startsWith('build_') && body.detail) {
+    try {
+      const parsed = JSON.parse(String(body.detail));
+      if (parsed && typeof parsed === 'object' && sessionKey) {
+        liveBuildsBySession.set(sessionKey, normalizeBuildState(parsed));
+      }
+    } catch {}
+  }
   await query(
     `INSERT INTO events (session_key, machine, project_name, kind, detail)
      VALUES ($1,$2,$3,$4,$5)`,
-    [str(body.sessionKey, 200), str(body.machine, 120), str(body.projectName, 160),
+    [sessionKey, str(body.machine, 120), str(body.projectName, 160),
      kind, str(body.detail, 1000)]);
   return true;
 }
@@ -1183,8 +1432,9 @@ const server = http.createServer(async (req, res) => {
       const { sql, params } = buildSessionsQuery({ limit, idleTtl: IDLE_TTL, emptyIdleTtl: EMPTY_IDLE_TTL });
       const sessions = await query(sql, params);
       const events = await query(
-        `SELECT at, kind, detail, project_name, machine
-           FROM events ORDER BY at DESC LIMIT 15`);
+        `SELECT at, session_key, kind, detail, project_name, machine
+           FROM events ORDER BY at DESC LIMIT 20`);
+      const eventBuilds = extractActiveBuildFromEvents(events.rows);
       // Kapan laporan terakhir masuk? Diambil dari kedua tabel supaya satu
       // laporan pun (sesi atau event) cukup untuk membuktikan jalur hidup.
       const last = await query(
@@ -1244,7 +1494,24 @@ const server = http.createServer(async (req, res) => {
           liveMs: LIVE_MS,
           stuckMs: STUCK_MS,
         });
-        return { ...row, state: s.status, state_label: LABELS[s.status] || s.status };
+        let activeBuild =
+          liveBuildsBySession.get(row.session_key) ||
+          eventBuilds.get(row.session_key) ||
+          (row.machine && row.project_name ? eventBuilds.get(`${row.machine}::${row.project_name}`) : null) ||
+          null;
+        if (!activeBuild && s.status === 'live' && (row.phase === 'testing' || row.phase === 'release')) {
+          const rencana = Array.isArray(row.plan_json) ? row.plan_json : [];
+          const openStep = rencana.find((p) => p && p.status !== 'done');
+          activeBuild = normalizeBuildState({
+            status: row.phase === 'release' ? 'deploying' : 'testing',
+            target: row.project_name || row.task || 'Active Build / Test',
+            stage: openStep ? openStep.text : `Running ${row.phase} phase`,
+            progress: row.plan_total ? Math.round((Number(row.plan_done || 0) / Number(row.plan_total)) * 100) : null,
+            startedAt: row.updated_at || row.started_at,
+            updatedAt: row.updated_at,
+          });
+        }
+        return { ...row, state: s.status, state_label: LABELS[s.status] || s.status, active_build: activeBuild };
       });
       // Buang kartu kembar (mesin + task sama) sebelum dikirim ke layar.
       const tampil = dedupeSessions(rows);

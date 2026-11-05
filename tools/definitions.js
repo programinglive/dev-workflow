@@ -895,5 +895,74 @@ export function getToolList() {
       description:'Retry pending Zettly task and outcome synchronization without blindly creating duplicates. Optionally link an existing Todo. No code execution or task deletion.',
       inputSchema:{type:'object',properties:{todoId:{type:'integer',minimum:1,description:'Existing Zettly Todo ID to link to the current workflow task.'}},additionalProperties:false},
     },
+    {
+      name: "recommend_mcp_tools",
+      description:
+        "Act as the central discovery index and smart recommender for all MCP servers and tools in our ecosystem (central-gateway, pocketbase, infra-knowledge, notify, factory, zettly, clinic-helper, playwright, gcp, cloudflare, netlify, mermaid). Pass a 'query' or 'projectDir' (or omit to use the active task context) to get ranked MCP server and tool recommendations, or pass 'includeAll: true' to browse the complete ecosystem catalog.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description:
+              "Optional topic, task description, or question to match against the MCP ecosystem index (e.g. 'send Pusher notification and query PocketBase', 'deploy systemd service via SSH', 'run Clinic Paratest'). Defaults to the active task context when omitted.",
+          },
+          projectDir: {
+            type: "string",
+            description:
+              "Optional project directory path to boost project-specific MCP tools (e.g. 'D:/code/clinic'). Defaults to the active session projectDir.",
+          },
+          limit: {
+            type: "number",
+            description: "Maximum number of recommended MCP servers to return (1-12, default: 4).",
+          },
+          includeAll: {
+            type: "boolean",
+            description: "When true, render the complete catalog of all MCP servers and tools in the ecosystem.",
+          },
+        },
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "report_build_status",
+      description:
+        "Report live build, test, security scan, or deployment progress so the Dev Workflow Monitor dashboard and get_workflow_status display real-time visibility into what is currently being built.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          status: {
+            type: "string",
+            enum: ["building", "testing", "scanning", "deploying", "succeeded", "failed", "idle"],
+            description: "Current build or execution status.",
+          },
+          target: {
+            type: "string",
+            description:
+              "What is being built or executed (e.g. 'Clinic Docker Image v0.2.11 + Trivy Scan', 'Frontend Vite Bundle', 'Paratest Suite').",
+          },
+          command: {
+            type: "string",
+            description: "Optional command line being executed (e.g. 'npm run build', 'docker build -t app:latest .').",
+          },
+          stage: {
+            type: "string",
+            description: "Current build step or stage description (e.g. 'Step 2/4: Compiling assets').",
+          },
+          progress: {
+            type: "number",
+            minimum: 0,
+            maximum: 100,
+            description: "Optional completion percentage (0-100).",
+          },
+          output: {
+            type: "string",
+            description: "Optional sanitized log snippet or build output summary.",
+          },
+        },
+        required: ["status", "target"],
+        additionalProperties: false,
+      },
+    },
   ];
 }

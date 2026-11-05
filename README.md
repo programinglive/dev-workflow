@@ -79,8 +79,10 @@ finished.
 
 | Path | Single responsibility |
 |---|---|
-| `index.js` | MCP entry point: registers the 46 tools, English implementation instructions and handlers |
-| `workflow-state.js` | The state machine and its persistence (phase, DoD, plan, history) |
+| `index.js` | MCP entry point: registers the 48 tools, English implementation instructions and handlers |
+| `mcp-index.js` | Central MCP ecosystem index & context-aware recommender for all 12 ecosystem MCP servers |
+| `build-monitor.js`, `monitor-server/build-monitor.cjs` | Real-time build & execution status tracker (`report_build_status`) shared between MCP and the live monitor dashboard |
+| `workflow-state.js` | The state machine and its persistence (phase, DoD, plan, history, activeBuild) |
 | `workflow-guidance.js` | English implementation instructions delivered at connection and workflow checkpoints |
 | `zettly-client.js` | Device-local owner credentials, account checks and bounded authenticated Zettly requests |
 | `zettly-workflow.js` | Canonical Todo links, progress synchronization and durable linked-outcome retries |
@@ -142,7 +144,7 @@ See [MCP client configuration](#mcp-client-configuration).
 
 ## Available Tools
 
-46 tools. See [service connections and proactive Zettly direction](docs/service-integrations.md).
+48 tools. See [service connections and proactive Zettly direction](docs/service-integrations.md).
 
 | Tool | Purpose |
 |---|---|
@@ -153,6 +155,8 @@ See [MCP client configuration](#mcp-client-configuration).
 | `get_sentry_issue` | Retrieve one bounded issue summary without raw event payloads |
 | `link_sentry_issue` | Link a verified issue and optional existing Factory task to the current canonical Zettly Todo |
 | `start_task` | Begin a task; requires `definitionOfDone` and `plan`; automatically creates or links its Zettly Todo |
+| `recommend_mcp_tools` | Central discovery index and context-aware recommender for all MCP servers and tools (`central-gateway`, `pocketbase`, `infra-knowledge`, `notify`, `factory`, `zettly`, `clinic-helper`, `playwright`, `gcp`, `cloudflare`, `netlify`, `mermaid`) |
+| `report_build_status` | Report live build, test, security scan, or deployment progress (`building`, `testing`, `scanning`, `deploying`, `succeeded`, `failed`, `idle`) with target, command, stage, progress percentage, and output snippet |
 | `sync_zettly_task` | Retry pending Zettly task/outcome synchronization or link an existing Todo |
 | `set_plan` | Replace the work plan of the running task |
 | `search_project` | Search bounded local text in the active repo; returns sanitized path:line citations |
@@ -190,6 +194,31 @@ See [MCP client configuration](#mcp-client-configuration).
 | `update_factory_task` | Edit a task, including filling a missing definition of done |
 | `claim_factory_task` | Claim a Factory task and start a local workflow |
 | `sync_task_status` | Report a status change back to Factory |
+
+### Central MCP Ecosystem Index (`recommend_mcp_tools`)
+
+Because `dev-workflow` is always the first MCP server invoked in every coding session, it acts as the discovery index and smart recommender for all MCP servers in our ecosystem (`central-gateway`, `pocketbase`, `infra-knowledge`, `notify`, `factory`, `zettly`, `clinic-helper`, `playwright`, `gcp`, `cloudflare`, `netlify`, `mermaid`).
+
+- **Automatic Recommendations**: `start_task`, `get_workflow_status`, and `continue_workflow` score the active task description, `projectDir`, `definitionOfDone`, and `plan` steps against `MCP_ECOSYSTEM_INDEX` (`mcp-index.js`) and append a `🧭 Recommended MCP Tools` block showing the best-matching MCP servers, key tools, and why they matched.
+- **On-Demand Search & Full Catalog**: Call `recommend_mcp_tools` with `{ "query": "send Pusher alert and inspect PocketBase", "projectDir": "D:/code/notification-hub" }` to get targeted recommendations, or `{ "includeAll": true }` to view the complete ecosystem catalog.
+
+### Live Build & Execution Monitor (`report_build_status`)
+
+When a session runs a build, test suite, container image build, security scan, or deployment, call `report_build_status`:
+
+```json
+{
+  "status": "building",
+  "target": "clinic-app:v0.2.11 + Trivy Scan",
+  "command": "docker build -t clinic-app:v0.2.11 . && trivy image clinic-app:v0.2.11",
+  "stage": "Step 2/4: Compiling Vite frontend assets",
+  "progress": 50,
+  "output": "vite v5.4.0 building for production..."
+}
+```
+
+- **MCP Status Visibility**: `get_workflow_status`, `continue_workflow`, and `list_active_sessions` render a `🏗️ Active Build / Execution Monitor` section with an ASCII progress bar, elapsed duration, command, and recent build history.
+- **Mission-Control Web Dashboard (`monitor-server/dashboard.cjs`)**: Displays a top KPI strip, a dedicated **🏗️ Live Build & Execution Monitor** hero radar with animated progress bars and 1-second live ticking timers, plus a 6-step Workflow Pipeline Stepper on every session card and detail modal.
 
 ### Searching the active project
 

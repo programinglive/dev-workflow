@@ -7,6 +7,8 @@ import path from "node:path";
 import { STRANDED_TASK_FILENAME } from "../../workflow-state.js";
 import { renderPlanFull } from "./plan.js";
 import { fetchActiveSessions, monitorUrl, localMonitorUrl } from "../../monitor.js";
+import { formatMcpRecommendations } from "../../mcp-index.js";
+import { formatBuildStatusBlock } from "../../build-monitor.js";
 
 /**
  * Bahan gerbang dokumentasi untuk pesan penolakan.
@@ -106,6 +108,13 @@ export async function handleGetWorkflowStatus(workflowState) {
         renderChecklist(dodItems, status.dodRevision);
 
   const planBlock = renderPlanFull(status.plan);
+  const buildBlock = formatBuildStatusBlock(status.activeBuild, status.buildHistory);
+  const mcpBlock = formatMcpRecommendations({
+    description: status.taskDescription,
+    projectDir: status.projectDir,
+    definitionOfDone: status.definitionOfDone,
+    plan: status.plan,
+  });
 
   // Replika dan pertikaian penulis: dua keadaan yang dulu tidak punya suara
   // sama sekali. Yang pertama membuat dashboard tampak kosong padahal datanya
@@ -165,7 +174,7 @@ Released: ${status.released ? "✅" : "❌"}
 
 ${dodBlock}
 
-${planBlock}
+${planBlock}${buildBlock ? `\n\n${buildBlock}` : ""}${mcpBlock ? `\n\n${mcpBlock}` : ""}
 
 Next step: ${nextStep}${opsNote}${sharedWarning}${strandedNote}`
   );
@@ -305,6 +314,21 @@ export async function handleContinueWorkflow(workflowState, context) {
 
   sections.push(`➡️ ${getContinueGuidance(status)}`);
 
+  const buildBlock = formatBuildStatusBlock(status.activeBuild, status.buildHistory);
+  if (buildBlock) {
+    sections.push(buildBlock);
+  }
+
+  const mcpRecs = formatMcpRecommendations({
+    description: status.taskDescription,
+    projectDir: status.projectDir,
+    definitionOfDone: status.definitionOfDone,
+    plan: status.plan,
+  });
+  if (mcpRecs) {
+    sections.push(mcpRecs);
+  }
+
   return textResponse(sections.join("\n\n"));
 }
 
@@ -404,11 +428,16 @@ export async function handleListActiveSessions(args = {}, context = {}) {
     const planText = s.plan_total ? ` · Rencana: ${s.plan_done}/${s.plan_total}` : "";
     const dodText = s.dod_total ? ` · DoD: ${s.dod_done}/${s.dod_total}` : "";
     const agent = s.agent_tool && s.agent_tool !== "unknown" ? ` [${s.agent_tool}]` : "";
+    const ab = s.active_build || s.activeBuild || null;
+    const buildLine =
+      ab && ab.target
+        ? `\n   🏗️ Build: [${String(ab.status || "building").toUpperCase()}] ${ab.target}${ab.stage ? ` — ${ab.stage}` : ""}${Number.isFinite(ab.progress) ? ` (${ab.progress}%)` : ""}`
+        : "";
 
     lines.push(
       `${i + 1}. [${machine}] ${proj}${agent}\n` +
       `   Task: ${task}\n` +
-      `   Fase: ${phase} (${stateLabel})${planText}${dodText}`
+      `   Fase: ${phase} (${stateLabel})${planText}${dodText}${buildLine}`
     );
   }
 
