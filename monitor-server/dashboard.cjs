@@ -1476,7 +1476,8 @@ const server = http.createServer(async (req, res) => {
       const historyBuildRows = historyKeys.length ? await query(
         `SELECT DISTINCT ON (session_key) at, session_key, kind, detail, project_name, machine
            FROM events
-          WHERE session_key = ANY($1::text[]) AND kind LIKE 'build_%'
+          WHERE session_key = ANY($1::text[])
+            AND (kind LIKE 'build_%' OR kind IN ('tests_passed', 'tests_failed', 'release'))
           ORDER BY session_key, at DESC`,
         [historyKeys],
       ) : { rows: [] };
