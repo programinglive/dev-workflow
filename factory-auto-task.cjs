@@ -1,46 +1,59 @@
 'use strict';
 
 /**
- * Mencatat task ke board Factory secara otomatis saat `start_task`.
- *
- * MENGAPA
- * -------
- * Pemilik meminta "setiap pekerjaan terekam di Factory". Sebelum ini, jalur
- * Factory hanya dipakai lewat tool manual (`create_factory_task`), sehingga
- * pekerjaan nyata tidak pernah sampai ke board - dan board berhenti di
- * 31 Oktober tanpa ada yang menyadarinya.
- *
- * ATURAN KERAS
- * ------------
- * 1. TIDAK PERNAH menggagalkan `start_task`. Board yang mati tidak boleh
- *    menghalangi orang mulai bekerja.
- * 2. Tidak menahan: batas waktu pendek, dan kegagalan dilaporkan sebagai
- *    peringatan di hasil tool, bukan galat.
- * 3. Hanya berjalan bila `FACTORY_AUTO_TASK=1`. Menyalakannya mengubah
- *    perilaku (setiap task membuat kartu), jadi harus disengaja.
- * 4. Bila gagal, ALASANNYA ikut ditampilkan. Kegagalan yang tidak terlihat
- *    adalah persis yang membuat board diam dua hari.
+ * Record development work in Factory when start_task succeeds.
+ * The Factory task is linked to the same canonical Zettly Todo and retains
+ * the original source identity. Network failures remain visible warnings.
+ * An explicit FACTORY_AUTO_TASK=false disables creation for isolated tests.
  */
 
 const DEFAULT_TIMEOUT_MS = 8000;
+const {spawnSync}=require('node:child_process');
 
-/** Apakah pencatatan otomatis diminta. */
+/** Determine whether Factory recording is enabled. */
 function autoTaskEnabled(env = process.env) {
   const v = String(env.FACTORY_AUTO_TASK || '').trim().toLowerCase();
-  return v === '1' || v === 'true' || v === 'yes';
+  return !['0', 'false', 'no', 'mati'].includes(v);
 }
 
-/** Project Factory yang paling cocok dengan path proyek lokal. */
-function pickProject(projects, projectPath) {
+/** Match the Factory project to the Git remote or the repository directory. */
+function pickProject(projects, projectPath, repositoryUrl='') {
   const daftar = Array.isArray(projects) ? projects : [];
   if (daftar.length === 0) return null;
+  const normalizedRemote=String(repositoryUrl||'').replace(/\.git$/,'');
+  const remote=(/^[^/]+\/[^/]+$/.test(normalizedRemote)?normalizedRemote:normalizedRemote.match(/[:/]([^/:]+\/[^/]+)$/)?.[1])?.toLowerCase();
+  if(remote){const match=daftar.find(project=>String(project.name||'').toLowerCase()===remote);if(match)return match;}
   const nama = String(projectPath || '')
     .replace(/[\\/]+$/, '')
     .split(/[\\/]/)
     .pop();
-  if (!nama) return daftar[0];
+  if (!nama) return null;
   const cocok = daftar.find((p) => String(p.name || '').split('/').pop() === nama);
-  return cocok || daftar[0];
+  return cocok || null;
+}
+
+function repositoryName(projectPath) {
+  const local=String(projectPath||'');
+  const remote=local?spawnSync('git',['-C',local,'config','--get','remote.origin.url'],{encoding:'utf8',windowsHide:true,timeout:3000}).stdout?.trim():'';
+  return String(remote||'').replace(/\.git$/,'').match(/[:/]([^/:]+\/[^/]+)$/)?.[1]?.toLowerCase()||'';
+}
+
+function taskHasWorkflowLink(task,state) {
+  const description=String(task?.description||'');
+  const workflowId=String(state?.workflowTaskId||'');
+  const todoId=Number(state?.zettly?.todoId);
+  const markers=[...description.matchAll(/\bWorkflow(?: task)?:\s*([A-Za-z0-9._:-]+)/g)].map(match=>match[1]);
+  if(markers.length)return Boolean(workflowId&&markers.includes(workflowId));
+  const sameTodo=Number.isSafeInteger(todoId)&&todoId>0&&new RegExp(`Zettly Todo #${todoId}(?:\\D|$)`).test(description);
+  const sameTitle=String(task?.title||'').trim().toLowerCase()===String(state?.taskDescription||'').trim().toLowerCase();
+  return Boolean(sameTodo&&sameTitle);
+}
+
+function taskMatchesProject(task,projectPath) {
+  const name=String(task?.projectName||'').toLowerCase();
+  const remote=repositoryName(projectPath);
+  const local=String(projectPath||'').replace(/[\\/]+$/,'').split(/[\\/]/).pop().toLowerCase();
+  return Boolean(name&&(remote?name===remote:name.split('/').pop()===local));
 }
 
 /**
@@ -52,6 +65,10 @@ async function recordToFactory({ state, env = process.env, client, timeoutMs = D
   const s = state || {};
   const judul = String(s.taskDescription || '').trim();
   if (!judul) return { ok: false, reason: 'task kosong' };
+  const existingId = s.zettly?.externalLinks?.factory?.id;
+  if (typeof existingId === 'string' && /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(existingId)) {
+    return { ok: true, id: existingId, reused: true };
+  }
 
   try {
     const mod = client || (await import('./factory-client.js'));
@@ -62,9 +79,14 @@ async function recordToFactory({ state, env = process.env, client, timeoutMs = D
       setTimeout(() => tolak(new Error(`timeout ${timeoutMs}ms`)), timeoutMs),
     );
 
-    const proyek = await Promise.race([mod.listProjects(cfg), batas]);
-    const pilih = pickProject(proyek, s.projectDir);
-    if (!pilih) return { ok: false, reason: 'tidak ada project di Factory' };
+    const workspace=mod.readWorkspace?await Promise.race([mod.readWorkspace(cfg),batas]):{projects:await Promise.race([mod.listProjects(cfg),batas]),tasks:[]};
+    const projectDir=String(s.projectDir||'');
+    const remote=repositoryName(projectDir);
+    const pilih = pickProject(workspace.projects, projectDir,remote);
+    if (!pilih) return { ok: false, reason: 'no matching Factory project for the Git repository' };
+    const marker=s.workflowTaskId?`Workflow task: ${s.workflowTaskId}`:'';
+    const reused=Array.isArray(workspace.tasks)?workspace.tasks.find(task=>task.projectId===(pilih.id||pilih.projectId)&&taskHasWorkflowLink(task,s)):null;
+    if(reused?.id)return {ok:true,id:reused.id,reused:true};
 
     const dod = Array.isArray(s.definitionOfDone) ? s.definitionOfDone : [];
     const dodText =
@@ -78,9 +100,11 @@ async function recordToFactory({ state, env = process.env, client, timeoutMs = D
         projectId: pilih.id || pilih.projectId,
         title: judul,
         description:
-          `Dibuat otomatis dari sesi ${String(env.DEVWF_MACHINE || '?')}` +
+          `Created by Dev Workflow on ${String(env.DEVWF_MACHINE || '?')}` +
           (s.projectDir ? ` di ${s.projectDir}` : '') +
-          (rencana.length ? `\n\nRencana:\n${rencana.map((p) => `- ${p.text}`).join('\n')}` : ''),
+          (marker?`\n${marker}`:'')+
+          (s.zettly?.todoId?`\nZettly Todo #${s.zettly.todoId}`:'')+
+          (rencana.length ? `\n\nPlan:\n${rencana.map((p) => `- ${p.text}`).join('\n')}` : ''),
         status: 'backlog',
         priority: 'normal',
         acceptance: 'Task ini tercatat di board Factory dan dapat ditindaklanjuti.',
@@ -96,4 +120,4 @@ async function recordToFactory({ state, env = process.env, client, timeoutMs = D
   }
 }
 
-module.exports = { recordToFactory, autoTaskEnabled, pickProject, DEFAULT_TIMEOUT_MS };
+module.exports = { recordToFactory, autoTaskEnabled, pickProject, taskHasWorkflowLink, taskMatchesProject, DEFAULT_TIMEOUT_MS };

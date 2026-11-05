@@ -194,17 +194,17 @@ async function handleRunFullWorkflow(args, { workflowState, exec, git, utils }) 
   while (true) {
     const state = workflowState.state;
 
-    if (!state.bugFixed) {
-      const resp = await executeStep("mark_bug_fixed", handleMarkBugFixed, [{ summary: args.summary }, workflowState]);
-      if (isErrorResponse(resp)) return resp;
-      continue;
-    }
-
     if (!state.featureFlowCreated) {
       if (!args.mermaidCode || !args.featureFlowDescription) {
         return textResponse("⚠️ 'run_full_workflow' now requires 'mermaidCode' and 'featureFlowDescription' to support the Mermaid step.");
       }
       const resp = await executeStep("create_feature_flow", handleCreateFeatureFlow, [{ mermaidCode: args.mermaidCode, description: args.featureFlowDescription }, workflowState]);
+      if (isErrorResponse(resp)) return resp;
+      continue;
+    }
+
+    if (!state.bugFixed) {
+      const resp = await executeStep("mark_bug_fixed", handleMarkBugFixed, [{ summary: args.summary }, workflowState]);
       if (isErrorResponse(resp)) return resp;
       continue;
     }
@@ -385,6 +385,10 @@ async function dispatchToolCall({
         if(focused.response)return focused.response;
         return handleStartTask(focused.args, workflowState, git);
       }
+      case 'link_factory_task':
+        return handleIntegrationTool('link_factory_task',args,workflowState,integrationOptions);
+      case 'link_zettly_drawing':
+        return handleIntegrationTool('link_zettly_drawing',args,workflowState,integrationOptions);
       case "set_definition_of_done":
         return handleSetDefinitionOfDone(args, workflowState);
       case "set_plan":
@@ -398,7 +402,7 @@ async function dispatchToolCall({
       case "mark_bug_fixed":
         return handleMarkBugFixed(args, workflowState);
       case "create_feature_flow":
-        return handleCreateFeatureFlow(args, workflowState);
+        return handleCreateFeatureFlow(args, workflowState, zettlyOptions);
       case "create_tests":
         return handleCreateTests(workflowState);
       case "skip_tests":
@@ -490,6 +494,8 @@ export async function handleToolCall(context) {
     let response=await dispatchToolCall({...context,request:{...context.request,params:{...context.request.params,arguments:args}}});
     const name=context.request.params.name;
     const syncTools=new Set(['start_task','set_plan','mark_plan_step','set_definition_of_done','mark_dod_item','waive_dod_item','mark_bug_fixed','create_tests','skip_tests','run_tests','create_documentation','waive_documentation','check_ready_to_commit','commit_and_push','perform_release','skip_release','get_workflow_status','continue_workflow','resume_session','claim_factory_task','link_sentry_issue','report_build_status']);
+    syncTools.add('link_factory_task');
+    syncTools.add('link_zettly_drawing');
     if(context.workflowState&&!response?.isError&&!isErrorResponse(response)&&!context.workflowState.lastConflict&&syncTools.has(name)){
       const notes=[];
       if(name==='get_workflow_status'&&context.workflowState.state.zettlyOutbox?.length){const result=await flushZettlyOutbox(context.workflowState,context.zettlyOptions);if(result.note)notes.push(result.note);}

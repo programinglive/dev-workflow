@@ -11,19 +11,36 @@ import path from 'node:path';
 const issue={id:'123',shortId:'APP-1',title:'Example issue',permalink:'https://example.sentry.io/issues/123/',project:{slug:'app'}};
 const factoryId='11111111-1111-4111-8111-111111111111';
 function fixture(){
- const workflowState={state:{workflowTaskId:'task-connector-1',taskDescription:'Fix the source issue',currentPhase:'coding',zettly:{todoId:166},zettlyOutbox:[],plan:[],definitionOfDone:[]},async save(){return {verified:true};}};
+ const workflowState={state:{workflowTaskId:'task-connector-1',taskDescription:'Fix the source issue',projectDir:'/repo',currentPhase:'coding',zettly:{todoId:166},zettlyOutbox:[],plan:[],definitionOfDone:[]},async save(){return {verified:true};}};
  let todo={id:166,type:'todo',is_completed:false,description:'Owner context',title:'Owner task',related_todos:[{id:167}]};const outcomes=[];const calls=[];
  const note={id:167,type:'note',is_completed:false,title:'Prior decision',description:'Reuse the verified integration.',related_todos:[]};
  const zettly={async request(method,route,body){calls.push({method,route});if(route==='/user')return {data:{id:1}};if(route==='/todos?type=todo')return {data:[todo]};if(route==='/todos?type=note')return {data:[note]};if(route==='/todos/167')return {data:note};if(route.startsWith('/todos/')){if(method==='PATCH')todo={...todo,...body};return {data:todo};}if(route.startsWith('/journal/entries')){if(method==='POST'){const entry={...body,id:1};outcomes.push(entry);return {data:entry};}return {data:outcomes};}throw Error('Unexpected request');}};
  const sentry={organization:'example',async listIssues(){return [issue];},async getIssue(){return issue;}};
- const factory={async readWorkspace(){return {projects:[{id:'project-1'}],tasks:[]};},async findTask(id){return id===factoryId?{id,taskKey:'TASK-1',title:'Existing Factory work'}:null;}};
+ const factory={async readWorkspace(){return {projects:[{id:'project-1'}],tasks:[]};},async findTask(id){return id===factoryId?{id,taskKey:'TASK-1',title:'Existing Factory work',projectName:'repo',description:'Workflow task: task-connector-1\nZettly Todo #166'}:null;}};
  return {workflowState,options:{env:{},zettly,sentry,factory},calls,outcomes,getTodo:()=>todo};
 }
 const text=result=>result.content.map(item=>item.text||'').join(' ');
 test('the MCP catalog exposes service status, issue reads and explicit canonical linking',()=>{
  const catalog=getToolList();
- for(const name of ['get_integration_status','list_sentry_issues','get_sentry_issue','link_sentry_issue','get_zettly_task_context'])assert.ok(catalog.some(tool=>tool.name===name),'Missing tool '+name);
+ for(const name of ['get_integration_status','list_sentry_issues','get_sentry_issue','link_sentry_issue','link_factory_task','get_zettly_task_context'])assert.ok(catalog.some(tool=>tool.name===name),'Missing tool '+name);
  assert.ok(catalog.find(tool=>tool.name==='link_sentry_issue').inputSchema.required.includes('issueId'));
+});
+test('an existing Factory task can be linked without a Sentry issue or duplicate Todo',async()=>{
+ const f=fixture();const result=await handleIntegrationTool('link_factory_task',{factoryTaskId:factoryId},f.workflowState,f.options);
+ assert.ok(!result.isError,text(result));assert.equal(f.workflowState.state.zettly.externalLinks.factory.id,factoryId);
+ await syncZettlyTask(f.workflowState,{env:{DEVWF_ZETTLY_SYNC:'1'},client:f.options.zettly,force:true});
+ assert.match(f.getTodo().description,/TASK-1/);assert.equal(f.workflowState.state.zettly.todoId,166);
+});
+test('a visible but unrelated Factory task cannot be linked or later marked done',async()=>{
+ const f=fixture();f.options.factory.findTask=async id=>({id,projectName:'another-repo',description:'Zettly Todo #999'});
+ const result=await handleIntegrationTool('link_factory_task',{factoryTaskId:factoryId},f.workflowState,f.options);
+ assert.equal(result.isError,true);assert.equal(f.workflowState.state.dodFactoryTaskId,undefined);assert.equal(f.workflowState.state.zettly.externalLinks,undefined);
+});
+test('Draw linking rejects a visible drawing from another Todo or workflow',async()=>{
+ const f=fixture();
+ f.options.zettly={async request(){return {drawing:{id:5,document:{document:{store:{'document:document':{meta:{zettlyTodoId:999,workflowTaskId:'other'}}}}}}};}};
+ const result=await handleIntegrationTool('link_zettly_drawing',{drawingId:5},f.workflowState,f.options);
+ assert.equal(result.isError,true);assert.equal(f.workflowState.state.zettly.externalLinks,undefined);
 });
 test('connection checks verify all three clients without returning credentials or project data',async()=>{
  const f=fixture();const result=await handleIntegrationTool('get_integration_status',{},f.workflowState,f.options);

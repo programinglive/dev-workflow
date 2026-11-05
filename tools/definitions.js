@@ -29,6 +29,16 @@ export function getToolList() {
       inputSchema:{type:'object',properties:{issueId:{type:'string',pattern:'^\\d{1,30}$'}},required:['issueId'],additionalProperties:false},
     },
     {
+      name:'link_factory_task',
+      description:'Verify and link one existing Factory task to the active canonical Zettly Todo and monitor session. Reuses the task without creating a second Todo or worker run.',
+      inputSchema:{type:'object',properties:{factoryTaskId:{type:'string',pattern:'^[0-9a-fA-F]{8}-[0-9a-fA-F-]{27}$'}},required:['factoryTaskId'],additionalProperties:false},
+    },
+    {
+      name:'link_zettly_drawing',
+      description:'Verify an existing Zettly Draw item owned by the canonical Zettly account and link it to the active development workflow without creating a duplicate.',
+      inputSchema:{type:'object',properties:{drawingId:{type:'integer',minimum:1}},required:['drawingId'],additionalProperties:false},
+    },
+    {
       name:'link_sentry_issue',
       description:'Verify and link a Sentry issue and optional existing Factory task to the current canonical Zettly Todo. Requires an active workflow task with an existing Todo link; creates no additional task and does not resolve the issue or dispatch work.',
       inputSchema:{type:'object',properties:{issueId:{type:'string',pattern:'^\\d{1,30}$'},factoryTaskId:{type:'string',description:'Optional existing Factory task UUID.'}},required:['issueId'],additionalProperties:false},

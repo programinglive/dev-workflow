@@ -5,8 +5,11 @@ import {readFactoryConfig,readWorkspace,findTask} from '../../factory-client.js'
 import {mkdir,writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
+import {createHash} from 'node:crypto';
 import {sanitize} from '../../security/sanitizer.js';
 import {readZettlyTaskContext} from '../../zettly-context.js';
+import {drawingMatchesWorkflow} from '../../zettly-drawing.js';
+import {taskHasWorkflowLink,taskMatchesProject} from '../../factory-task-relations.js';
 
 const failed=message=>({...textResponse(message),isError:true});
 const json=value=>textResponse(JSON.stringify(value));
@@ -55,6 +58,39 @@ export async function handleIntegrationTool(name,args={},workflowState,options={
    ]);
    return json({zettly,factory,sentry,backgroundWorker:'not_managed_by_this_mcp'});
   }
+  if(name==='link_factory_task'){
+   const state=workflowState?.state;
+   if(!state?.workflowTaskId||!Number.isSafeInteger(state.zettly?.todoId)||state.zettly.todoId<1)return failed('Start a workflow with a canonical Zettly Todo before linking Factory.');
+   if(!factoryId(args.factoryTaskId))return failed('Provide a valid Factory task UUID.');
+   if(!api.factory)return failed('Factory is not configured. No link was changed.');
+   const taskIdentity=state.workflowTaskId;
+   const guard=()=>{if(workflowState.state!==state||state.workflowTaskId!==taskIdentity||workflowState.lastConflict)throw Error('Task ownership changed');};
+   const task=await api.factory.findTask(args.factoryTaskId);guard();
+   if(!task||task.id!==args.factoryTaskId||!taskMatchesProject(task,state.projectDir)||!taskHasWorkflowLink(task,state))return failed('The Factory task does not match this repository and canonical workflow. No link was changed.');
+   const previous=state.zettly.externalLinks,previousId=state.dodFactoryTaskId;
+   state.zettly.externalLinks={...previous,factory:{id:task.id,taskKey:String(task.taskKey||'').slice(0,100)}};
+   state.dodFactoryTaskId=task.id;
+   try{const result=await workflowState.save();guard();if(result?.verified===false||result?.conflict)throw Error('Factory link persistence was not verified');}
+   catch(error){if(workflowState.state===state){if(previous===undefined)delete state.zettly.externalLinks;else state.zettly.externalLinks=previous;state.dodFactoryTaskId=previousId;}throw error;}
+   return textResponse(`Verified Factory task ${task.taskKey||task.id} linked to the existing Zettly Todo #${state.zettly.todoId}.`);
+  }
+  if(name==='link_zettly_drawing'){
+   const state=workflowState?.state;
+   if(!state?.workflowTaskId||!Number.isSafeInteger(state.zettly?.todoId)||state.zettly.todoId<1)return failed('Start a workflow with a canonical Zettly Todo before linking Draw.');
+   if(!Number.isSafeInteger(args.drawingId)||args.drawingId<1)return failed('Provide a valid positive drawing ID.');
+   if(!api.zettly)return failed('Zettly owner connection is unavailable. No drawing link was changed.');
+   const taskIdentity=state.workflowTaskId;
+   const guard=()=>{if(workflowState.state!==state||state.workflowTaskId!==taskIdentity||workflowState.lastConflict)throw Error('Task ownership changed');};
+   const response=await api.zettly.request('GET',`/drawings/${args.drawingId}`);guard();
+   const drawing=response.drawing||response.data?.drawing||response.data;
+   if(Number(drawing?.id)!==args.drawingId||!drawingMatchesWorkflow(drawing,state))return failed('The drawing does not match this canonical workflow and Todo. No link was changed.');
+   const previous=state.zettly.externalLinks;
+   const drawingCode=drawing.document.document.store['document:document'].meta.mermaidCode;
+   state.zettly.externalLinks={...previous,drawing:{id:args.drawingId,revision:drawingCode===state.mermaidCode?createHash('sha256').update(String(state.mermaidCode||'')).digest('hex'):'',url:`https://zettly.programinglive.com/draw/${args.drawingId}`}};
+   try{const saved=await workflowState.save();guard();if(saved?.verified===false||saved?.conflict)throw Error('Drawing link persistence was not verified');}
+   catch(error){if(workflowState.state===state){if(previous===undefined)delete state.zettly.externalLinks;else state.zettly.externalLinks=previous;}throw error;}
+   return textResponse(`Verified Zettly Draw #${args.drawingId} linked to Todo #${state.zettly.todoId}.`);
+  }
   if(!api.sentry)return failed('Sentry is not configured. Set SENTRY_ORG and SENTRY_ACCESS_TOKEN in the private launcher environment, or select a private file with DEVWF_SENTRY_CONFIG.');
   if(name==='list_sentry_issues')return json(api.sentry.listIssuePage?await api.sentry.listIssuePage(args):await api.sentry.listIssues(args));
   if(name==='inventory_sentry_issues'){
@@ -80,7 +116,7 @@ export async function handleIntegrationTool(name,args={},workflowState,options={
   if(args.factoryTaskId){
    if(!api.factory)return failed('Factory is not configured. No link was changed.');
    const task=await api.factory.findTask(args.factoryTaskId);guard();
-   if(!task||task.id!==args.factoryTaskId)return failed('The Factory task is not visible to this account. No link was changed.');
+   if(!task||task.id!==args.factoryTaskId||!taskMatchesProject(task,state.projectDir)||!taskHasWorkflowLink(task,state))return failed('The Factory task does not match this repository and canonical workflow. No link was changed.');
    factory={id:task.id,taskKey:String(task.taskKey||'').slice(0,100)};
   }
   const previous=state.zettly.externalLinks;

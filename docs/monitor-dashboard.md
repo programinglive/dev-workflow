@@ -828,3 +828,7 @@ cukup untuk membuktikan tombolnya bekerja tanpa membuka WhatsApp.
 **Xiaomi Pad 6 bisa terkunci pola** dan menampilkan "Draw pattern" di atas
 aplikasi. Itu kunci perangkat, bukan kerusakan aplikasi - jangan coba
 menembusnya; verifikasi di tablet lain atau minta pemilik membukanya.
+
+## Connected development work
+
+Each active development session keeps its original source distinct from its linked execution and planning records. The session detail shows the canonical Zettly Todo, the Factory task, any verified Sentry issue, and the Zettly Draw plan as separate links. Factory recording is enabled by default for a configured, matching repository. A failed Factory write is shown in the `start_task` result so the session cannot appear fully connected by accident. Create the Mermaid flow before marking implementation complete; the flow is also saved as editable shapes in Zettly Draw.

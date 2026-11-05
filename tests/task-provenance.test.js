@@ -39,3 +39,8 @@ test('cached context from another canonical Todo is never reported as a task rel
  const result=buildTaskProvenance({zettly:{todoId:170},zettlyContext:{todoId:166,nodes:[{id:167,distance:1,title:'Other task context'}],edges:[]}});
  assert.ok(!result.taskRelations.some(link=>link.id==='167'));
 });
+test('Zettly Draw remains a distinct visual-plan relation with a safe URL',()=>{
+ const state={taskOrigin:{system:'manual',id:''},zettly:{todoId:215,externalLinks:{factory:{id:factoryId},drawing:{id:5,url:'https://zettly.programinglive.com/draw/5'}}}};
+ const relation=buildTaskProvenance(state).taskRelations.find(item=>item.system==='zettly_draw');
+ assert.equal(relation.id,'5');assert.equal(relation.relation,'visual_plan');assert.equal(relation.url,'https://zettly.programinglive.com/draw/5');
+});

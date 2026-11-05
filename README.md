@@ -170,7 +170,9 @@ See [MCP client configuration](#mcp-client-configuration).
 | `set_definition_of_done` | Add or replace the checklist of the current task |
 | `mark_dod_item` | Prove one item, with evidence |
 | `waive_dod_item` | Exclude one item, with a reason |
-| `create_feature_flow` | Record the feature flow as Mermaid |
+| `create_feature_flow` | Record the Mermaid plan and publish an editable Zettly Draw linked to the canonical Todo |
+| `link_factory_task` | Verify and link an existing Factory task to the active Todo and monitor session |
+| `link_zettly_drawing` | Verify and link an existing Zettly Draw to the active Todo |
 | `mark_bug_fixed` | Mark the implementation done |
 | `create_tests` | Mark tests as written |
 | `skip_tests` | Skip tests with a justification |
@@ -185,6 +187,8 @@ See [MCP client configuration](#mcp-client-configuration).
 | `next_steps` | Show the follow-ups stored by the last completed task |
 | `get_workflow_status` | Show the current phase |
 | `continue_workflow` | Get guidance on the next step |
+
+Development tasks are recorded in Factory by default when the configured account and a matching Git repository project are available. The original request, Zettly Todo, Sentry issue if applicable, Factory task, and visual plan remain separate linked records. `start_task` reports a visible warning when Factory recording fails; it never chooses an unrelated project. Existing Factory links are reused. `create_feature_flow` publishes editable shapes and a preview in Zettly Draw, while `mark_bug_fixed` requires that flow first. The monitor shows the source and linked records. An explicit `FACTORY_AUTO_TASK=false` is reserved for isolated test environments.
 | `view_history` | List completed tasks |
 | `run_full_workflow` | Run every step in one call (requires `dodEvidence` for open items) |
 | `rerun_workflow` | Restart the current task from the beginning |

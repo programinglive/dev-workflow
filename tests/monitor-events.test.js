@@ -11,6 +11,7 @@ import {
   handleCreateTests,
   handleRunTests,
   handleMarkPlanStep,
+  handleCreateFeatureFlow,
 } from "../tools/handler-modules/workflow-handlers.js";
 
 /**
@@ -86,6 +87,7 @@ test("alur penuh tetap berhasil walau monitor mati", async () => {
     assert.match(step.content[0].text, /^✅/);
     assert.equal(ws.state.plan[0].status, "done");
 
+    await handleCreateFeatureFlow({mermaidCode:'flowchart TD; A[Inspect] --> B[Verify]',description:'Inspect and verify the result'},ws);
     await handleMarkBugFixed({ summary: "ubah" }, ws);
     await handleCreateTests(ws);
     const ran = await handleRunTests({ passed: true, testCommand: "npm test" }, ws);

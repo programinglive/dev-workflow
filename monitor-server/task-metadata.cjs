@@ -24,7 +24,7 @@ function normalizeTaskMetadata(input) {
   const seen = new Set();
   if (Array.isArray(value.taskRelations)) {
     for (const item of value.taskRelations.slice(0, 120)) {
-      const normalized = record(item, ['zettly', 'factory', 'sentry'], true);
+      const normalized = record(item, ['zettly', 'zettly_draw', 'factory', 'sentry'], true);
       if (!normalized || !normalized.id) continue;
       const key = normalized.system + ':' + normalized.id + ':' + normalized.relation;
       if (seen.has(key)) continue;
@@ -43,7 +43,7 @@ function renderTaskMetadata(session) {
     taskRelations: session.task_relations_json,
   });
   const escape = v => String(v || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
-  const names = { zettly: 'Zettly', factory: 'Factory', sentry: 'Sentry', manual: 'Manual', unknown: 'Unknown' };
+  const names = { zettly: 'Zettly', zettly_draw: 'Zettly Draw', factory: 'Factory', sentry: 'Sentry', manual: 'Manual', unknown: 'Unknown' };
   const item = (record, relation) => {
     const text = names[record.system] + (record.id ? ' #' + record.id : '') +
       (record.label ? ' · ' + record.label : '') + (relation && record.relation ? ' (' + record.relation + ')' : '');
@@ -54,7 +54,7 @@ function renderTaskMetadata(session) {
   const origin = normalized.taskOrigin.system ? normalized.taskOrigin : { system: 'unknown' };
   return '<div class="task-metadata meta"><div>Source: ' + item(origin, false) + '</div>' +
     (normalized.workflowTaskId ? '<div>Workflow: ' + escape(normalized.workflowTaskId) + '</div>' : '') +
-    (normalized.taskRelations.length ? '<div>Relations: ' + normalized.taskRelations.map(r => item(r, true)).join(' · ') + '</div>' : '') + '</div>';
+    (normalized.taskRelations.length ? '<div class="task-relation-list"><span>Relations:</span> ' + normalized.taskRelations.map(r => '<span class="task-relation task-relation-' + escape(r.system) + '">' + item(r, true) + '</span>').join('') + '</div>' : '') + '</div>';
 }
 
 module.exports = { normalizeTaskMetadata, renderTaskMetadata };

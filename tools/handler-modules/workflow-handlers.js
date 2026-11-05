@@ -24,6 +24,7 @@ import { pinSessionProject, resolveHistoryFile } from "../../workflow-state.js";
 import { assignWorkflowIdentity, validateZettlyTaskArguments } from '../../zettly-workflow.js';
 import { recommendMcpTools, formatMcpRecommendations, formatFullMcpCatalog } from "../../mcp-index.js";
 import { normalizeBuildState, formatBuildStatusBlock } from "../../build-monitor.js";
+import {flowGraph,syncZettlyDrawing} from '../../zettly-drawing.js';
 
 /**
  * Catat repo proyek untuk sesi ini.
@@ -352,10 +353,14 @@ export async function handleStartTask(args, workflowState, git) {
     const { createRequire } = await import("node:module");
     const req = createRequire(import.meta.url);
     const { recordToFactory } = req("../../factory-auto-task.cjs");
-    const hasil = await recordToFactory({ state: workflowState.state });    if (hasil.ok) {
+    const hasil = await recordToFactory({ state: workflowState.state });
+    if (hasil.ok) {
       workflowState.state.dodFactoryTaskId = hasil.id;
-      factoryNote = `\n\n🏭 Tercatat di Factory: ${hasil.id}`;
-    } else if (hasil.reason && hasil.reason !== "dimatikan") {
+      workflowState.state.zettly.externalLinks={...workflowState.state.zettly.externalLinks,factory:{id:hasil.id,taskKey:''}};
+      const persisted=await workflowState.save();
+      if(persisted?.verified===false||persisted?.conflict)throw Error('Factory link persistence was not verified');
+      factoryNote = `\n\n🏭 ${hasil.reused?'Linked existing':'Recorded in'} Factory: ${hasil.id}`;
+    } else if (hasil.reason) {
       factoryNote = `\n\n⚠️ Factory TIDAK mencatat task ini: ${hasil.reason}`;
     }
   } catch (e) {
@@ -392,6 +397,10 @@ export async function handleStartTask(args, workflowState, git) {
 export async function handleMarkBugFixed(args, workflowState) {
   if (workflowState.state.currentPhase === "idle") {
     return textResponse("⚠️ Please start a task first using 'start_task'!");
+  }
+
+  if (!workflowState.state.featureFlowCreated) {
+    return textResponse("⚠️ Record the issue-solving plan with create_feature_flow before marking implementation complete.");
   }
 
   if (workflowState.state.bugFixed) {
@@ -437,7 +446,7 @@ export async function handleMarkBugFixed(args, workflowState) {
   );
 }
 
-export async function handleCreateFeatureFlow(args, workflowState) {
+export async function handleCreateFeatureFlow(args, workflowState, zettlyOptions={}) {
   if (workflowState.state.currentPhase === "idle") {
     return textResponse("⚠️ Please start a task first using 'start_task'!");
   }
@@ -448,15 +457,17 @@ export async function handleCreateFeatureFlow(args, workflowState) {
   if (!mermaidCode || !description) {
     return textResponse("⚠️ Please provide both 'mermaidCode' and 'description' when creating a feature flow.");
   }
+  try{flowGraph(mermaidCode);}catch(error){return textResponse(`⚠️ Invalid Mermaid flow: ${error.message}`);}
 
   workflowState.state.featureFlowCreated = true;
   workflowState.state.mermaidCode = mermaidCode;
   workflowState.state.featureFlowDescription = description;
   workflowState.state.readyCheckCompleted = false;
   await workflowState.save();
+  const drawing=await syncZettlyDrawing(workflowState,zettlyOptions);
 
   return textResponse(
-    `✅ Feature flow recorded!\n\nDescription: ${description}\n\nNext Steps:\n1. ✓ Start task\n2. ✓ Describe feature flow\n3. ⏳ Fix/implement the feature\n4. ⏳ Create tests\n5. ⏳ Run tests\n6. ⏳ Create documentation\n7. ⏳ Run 'check_ready_to_commit'\n8. ⏳ Run 'commit_and_push'\n9. ⏳ Run 'perform_release'\n10. ⏳ Complete task`
+    `✅ Feature flow recorded!\n\nDescription: ${description}\n${drawing.ok?`Zettly Draw #${drawing.id}: ${drawing.url||''}`:drawing.note}\n\nNext Steps:\n1. ✓ Start task\n2. ✓ Describe feature flow\n3. ⏳ Fix/implement the feature\n4. ⏳ Create tests\n5. ⏳ Run tests\n6. ⏳ Create documentation\n7. ⏳ Run 'check_ready_to_commit'\n8. ⏳ Run 'commit_and_push'\n9. ⏳ Run 'perform_release'\n10. ⏳ Complete task`
   );
 }
 

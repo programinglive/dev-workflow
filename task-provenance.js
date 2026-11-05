@@ -4,7 +4,7 @@ const SYSTEMS=new Set(['zettly','factory','sentry','manual','unknown']);
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function validId(system,value) {
  const id=String(value??'');
- return system==='zettly'?/^[1-9]\d{0,14}$/.test(id)&&Number.isSafeInteger(Number(id)):system==='sentry'?/^\d{1,30}$/.test(id):system==='factory'?uuid.test(id):['manual','unknown'].includes(system)&&!id;
+ return ['zettly','zettly_draw'].includes(system)?/^[1-9]\d{0,14}$/.test(id)&&Number.isSafeInteger(Number(id)):system==='sentry'?/^\d{1,30}$/.test(id):system==='factory'?uuid.test(id):['manual','unknown'].includes(system)&&!id;
 }
 export function validateTaskSource(source,zettlyTodoId) {
  if(source===undefined)return null;
@@ -18,7 +18,7 @@ function safeUrl(value) {
 }
 function reference(system,id,{url='',label='',relation=''}={}) {
  id=String(id??'');
- const fallback=system==='zettly'?`https://zettly.programinglive.com/todos/${id}`:system==='factory'?'https://factory.programinglive.com/':system==='sentry'?`https://sentry.io/issues/${id}/`:'';
+ const fallback=system==='zettly'?`https://zettly.programinglive.com/todos/${id}`:system==='zettly_draw'?`https://zettly.programinglive.com/draw/${id}`:system==='factory'?'https://factory.programinglive.com/':system==='sentry'?`https://sentry.io/issues/${id}/`:'';
  return {system,id,url:safeUrl(url)||fallback,label:String(sanitize(label||`${system} ${id}`)).slice(0,200),...(relation?{relation}:{})};
 }
 export function originForTask(args={},previous) {
@@ -35,6 +35,7 @@ export function buildTaskProvenance(state={}) {
  const links=state.zettly?.externalLinks||{};
  if(state.zettly?.todoId)add('zettly',state.zettly.todoId,{relation:'tracks',label:`Zettly #${state.zettly.todoId}`});
  if(links.factory)add('factory',links.factory.id,{relation:'executes',label:links.factory.taskKey||links.factory.id});
+ if(links.drawing)add('zettly_draw',links.drawing.id,{relation:'visual_plan',label:`Draw #${links.drawing.id}`,url:links.drawing.url});
  if(links.sentry)add('sentry',links.sentry.issueId,{relation:'source_issue',label:links.sentry.shortId||links.sentry.issueId,url:links.sentry.url});
  if(['zettly','factory','sentry'].includes(taskOrigin.system))add(taskOrigin.system,taskOrigin.id,{url:taskOrigin.url,label:taskOrigin.label,relation:'origin'});
  if(state.focus?.id&&state.focus?.ownerId&&Number(state.focus.todoId)===Number(state.zettly?.todoId))taskRelations.push({system:'zettly',id:'focus:'+state.focus.id,url:safeUrl(state.focus.url),label:'Focus: '+String(state.focus.title||'').slice(0,160),relation:'focus'});
