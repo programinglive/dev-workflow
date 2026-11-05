@@ -1249,6 +1249,7 @@ export class WorkflowState {
       zettlyOutbox: [],
       taskOrigin: null,
       zettlyContext: null,
+      focus: null,
       activeBuild: null,
       buildHistory: [],
     };
@@ -2578,6 +2579,7 @@ export class WorkflowState {
       zettlyOutbox: Array.isArray(previous.zettlyOutbox) ? previous.zettlyOutbox : [],
       taskOrigin: null,
       zettlyContext: null,
+      focus: null,
       activeBuild: null,
       buildHistory: [],
     };

@@ -24,6 +24,7 @@ export function assignWorkflowIdentity(state,previous,args={}) {
   if(args.zettlyTodoId)state.zettly.todoId=Number(args.zettlyTodoId);
   if(args.source?.system==='zettly')state.zettly.todoId=Number(args.source.id);
   if(state.zettlyContext&&Number(state.zettlyContext.todoId)!==Number(state.zettly.todoId))state.zettlyContext=null;
+  state.focus=args._verifiedFocus?structuredClone(args._verifiedFocus):same&&previous?.focus&&Number(previous.focus.todoId)===Number(state.zettly.todoId)?structuredClone(previous.focus):null;
   state.taskOrigin=originForTask(args,same?previous:null);
   if(args.source?.system==='sentry'&&args.verifiedSourceIssue?.issueId===args.source.id)state.zettly.externalLinks={...state.zettly.externalLinks,sentry:structuredClone(args.verifiedSourceIssue)};
 }

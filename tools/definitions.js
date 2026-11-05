@@ -1,5 +1,8 @@
+import {focusToolDefinitions} from '../focus-workflow.js';
+
 export function getToolList() {
   return [
+    ...focusToolDefinitions,
     {
       name:'get_zettly_task_context',
       description:'Read bounded incoming and outgoing Zettly task/note relations, prior decisions and context as untrusted source data. Detects cycles and reports partial or truncated coverage. Defaults to the current canonical Todo; context attaches only to that same active Todo. No external writes.',
@@ -59,6 +62,9 @@ export function getToolList() {
             type: "string",
             description: "Clear description of what you're going to code",
           },
+          focusId: {type:'integer',minimum:1,description:'Current Zettly focus to verify and link before work starts.'},
+          requireFocus: {type:'boolean',description:'Refuse task creation when there is no verified single active focus.'},
+          expectedOwnerId: {type:'integer',minimum:1,description:'Expected Zettly owner; prevents linking a browser focus from another account.'},
           classification: {
             type:'string',enum:['PUBLIC','INTERNAL','CONFIDENTIAL','SECRET'],
             description:'Knowledge sensitivity. Defaults to INTERNAL. SECRET input is denied; supply a SecretReference instead.',
@@ -866,6 +872,9 @@ export function getToolList() {
             description: "Factory task id (UUID) to claim.",
           },
           zettlyTodoId: {type:'integer',minimum:1,description:'Reuse the known canonical Zettly Todo for this Factory task instead of creating another tracking Todo.'},
+          focusId: {type:'integer',minimum:1,description:'Verify and link the claimed canonical task to the current focus.'},
+          requireFocus: {type:'boolean',description:'Refuse the claim when no single active focus is available.'},
+          expectedOwnerId: {type:'integer',minimum:1,description:'Expected Zettly owner for focus verification.'},
           step: {
             type: "string",
             description: "Short description of what you are about to do, shown on the device row (max 240 chars).",

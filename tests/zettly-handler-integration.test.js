@@ -18,6 +18,49 @@ function mockApi() {
 function context(workflowState,client) {return {workflowState,normalizeRequestArgs:args=>({args,error:null}),exec:async()=>({stdout:''}),git:createGitMock(),utils:testUtils,zettlyOptions:{env:{DEVWF_ZETTLY_SYNC:'1'},client}};}
 const startArgs={description:'Track English implementation in Zettly',type:'bugfix',definitionOfDone:['Synchronization is verified'],plan:['Verify task lifecycle']};
 
+test('focus tools dispatch structured JSON and guarded start links the persisted canonical task',async()=>{
+ await withWorkflowState(async state=>{
+  const client=mockApi(),original=client.request;
+  client.request=async(method,route,body)=>{
+   if(route==='/user')return {id:1,name:'Owner'};
+   if(route==='/focus')return {data:[{id:7,user_id:1,title:'Complete the current feature',description:'One focus',completed_at:null}]};
+   const value=await original(method,route,body);
+   if(method==='POST'&&route==='/todos'){client.tasks.get(value.data.id).user_id=1;value.data.user_id=1;}
+   return value;
+  };
+  const ctx=context(state,client);
+  const current=await handleToolCall({...ctx,request:createRequest('get_current_focus',{})});
+  assert.equal(JSON.parse(current.content[0].text).focus.id,7);
+  const started=await handleToolCall({...ctx,request:createRequest('start_task',{...startArgs,focusId:7,requireFocus:true})});
+  assert.ok(!started.isError,started.content[0].text);
+  assert.equal(state.state.focus.id,7);assert.equal(state.state.focus.todoId,1);
+  assert.match(client.tasks.get(1).description,/dev-workflow-focus:7/);
+  await state.load();assert.equal(state.state.focus.id,7);
+  state.reset();assert.equal(state.state.focus,null);
+ });
+});
+
+test('required missing focus preserves the current task and makes no task writes',async()=>{
+ await withWorkflowState(async state=>{
+  state.state.taskDescription='Preserve this current task';state.state.workflowTaskId='preserved-task';
+  const calls=[];const client={async request(method,route){calls.push({method,route});return route==='/user'?{id:1}:{data:[]};}};
+  const r=await handleToolCall({...context(state,client),request:createRequest('start_task',{...startArgs,requireFocus:true})});
+  assert.equal(r.isError,true);assert.equal(state.state.taskDescription,'Preserve this current task');assert.ok(calls.every(c=>c.method==='GET'));
+ });
+});
+
+test('rejected Factory claim preserves the previous task focus and makes no remote link writes',async()=>{
+ const previousUrl=process.env.FACTORY_URL,previousApi=process.env.FACTORY_API_URL;
+ delete process.env.FACTORY_URL;delete process.env.FACTORY_API_URL;
+ try {await withWorkflowState(async state=>{
+  state.state.workflowTaskId='old-task';state.state.taskDescription='Previous work';state.state.currentPhase='coding';state.state.zettly={todoId:20};state.state.focus={id:7,todoId:20,ownerId:1,title:'Keep this focus'};
+  const calls=[];const client={async request(method,route,body){calls.push({method,route,body});if(route==='/user')return {id:1};if(route==='/focus')return {data:[{id:7,user_id:1,title:'Keep this focus',completed_at:null}]};if(route==='/todos/20')return {data:{id:20,user_id:1,description:'Original work'}};return {data:{id:20}};}};
+  const response=await handleToolCall({...context(state,client),zettlyOptions:{env:{DEVWF_ZETTLY_SYNC:'0'},client},request:createRequest('claim_factory_task',{recordId:'missing',focusId:7})});
+  assert.equal(state.state.focus.todoId,20);assert.equal(state.state.taskDescription,'Previous work');assert.ok(calls.every(c=>c.method==='GET'));
+  assert.equal(response.isError,true);
+ });}finally{if(previousUrl===undefined)delete process.env.FACTORY_URL;else process.env.FACTORY_URL=previousUrl;if(previousApi===undefined)delete process.env.FACTORY_API_URL;else process.env.FACTORY_API_URL=previousApi;}
+});
+
 test('handlers create and persist one Todo, synchronize progress, and complete one linked outcome',async()=>{
  await withWorkflowState(async state=>{
   const client=mockApi(),ctx=context(state,client);

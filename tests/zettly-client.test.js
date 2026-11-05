@@ -32,6 +32,14 @@ test('requests authenticate in memory and do not follow redirects',async()=>{
  await assert.rejects(client.request('GET','https://untrusted.example/'),/relative/);
 });
 
+test('focus API routes remain bounded to the managed Zettly host',async()=>{
+ const routes=[];
+ const client=createZettlyClient({base:'https://zettly.example',token:'test-only-auth-value'},{fetchImpl:async(url)=>{routes.push(url);return new Response('{"success":true,"data":[]}',{status:200});}});
+ for(const [method,route] of [['GET','/focus'],['POST','/focus'],['GET','/focus/7'],['POST','/focus/7/complete']])await client.request(method,route,method==='POST'?{}:undefined);
+ assert.ok(routes.every(url=>url.startsWith('https://zettly.example/api/v1/focus')));
+ await assert.rejects(client.request('POST','/focus/7/other-operation',{}),/supported/);
+});
+
 test('network and HTTP errors expose safe status without credential text',async()=>{
  const client=createZettlyClient({base:'https://zettly.example',token:'test-only-auth-value'},{fetchImpl:async()=>{throw new Error('private diagnostic test-only-auth-value');}});
  await assert.rejects(client.request('POST','/todos',{title:'Test'}),error=>error.uncertain===true&&!error.message.includes('test-only-auth-value'));

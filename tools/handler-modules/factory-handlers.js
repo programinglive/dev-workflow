@@ -131,7 +131,7 @@ export async function handleClaimFactoryTask(args = {}, { workflowState } = {}) 
 
     const step = typeof args.step === "string" && args.step.trim() ? args.step.trim() : "Working on the task";
     const session = await claimTask(config, { recordId, step, takeoverReason });
-    if (!session) throw new Error("Factory accepted the claim but returned no work session.");
+    if (!session?.id) throw new Error("Factory accepted the claim but returned no work session identity.");
 
     // Tanpa ini sesi jadi "tidak ada kabar" dalam 120 detik padahal sedang
     // dikerjakan, dan papan terlihat penuh task mati.
@@ -176,10 +176,11 @@ export async function handleClaimFactoryTask(args = {}, { workflowState } = {}) 
       assignWorkflowIdentity(workflowState.state,null,{zettlyTodoId:args.zettlyTodoId,source:{system:'factory',id:recordId}});
       }else if(args.zettlyTodoId){if(workflowState.state.zettly.todoId!==args.zettlyTodoId)workflowState.state.zettlyContext=null;workflowState.state.zettly.todoId=args.zettlyTodoId;}
       workflowState.state.zettly.externalLinks={...workflowState.state.zettly.externalLinks,factory:{id:recordId,taskKey:task.taskKey||''}};
-      await workflowState.save();
+      const saved=await workflowState.save();
+      if(saved?.verified===false||workflowState.lastConflict)throw new Error('Factory claim exists, but local workflow persistence was not verified.');
     }
 
-    return textResponse(
+    const claimResponse = textResponse(
       [
         `Claimed [${task.taskKey || task.id}] ${task.title}`,
         archivedTask
@@ -207,6 +208,7 @@ export async function handleClaimFactoryTask(args = {}, { workflowState } = {}) 
         .filter(Boolean)
         .join("\n"),
     );
+    return {...claimResponse,structuredContent:{factoryClaim:{recordId,sessionId:String(session.id),workflowTaskId:workflowState?.state.workflowTaskId||null}}};
   } catch (error) {
     // Factory menolak take over tanpa alasan. Balas dengan arahan yang bisa
     // dijalankan, bukan dengan pesan error mentah.

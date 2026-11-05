@@ -79,7 +79,7 @@ finished.
 
 | Path | Single responsibility |
 |---|---|
-| `index.js` | MCP entry point: registers the 48 tools, English implementation instructions and handlers |
+| `index.js` | MCP entry point: registers the 52 tools, English implementation instructions and handlers |
 | `mcp-index.js` | Central MCP ecosystem index & context-aware recommender for all 12 ecosystem MCP servers |
 | `build-monitor.js`, `monitor-server/build-monitor.cjs` | Real-time build & execution status tracker (`report_build_status`) shared between MCP and the live monitor dashboard |
 | `workflow-state.js` | The state machine and its persistence (phase, DoD, plan, history, activeBuild) |
@@ -144,10 +144,14 @@ See [MCP client configuration](#mcp-client-configuration).
 
 ## Available Tools
 
-48 tools. See [service connections and proactive Zettly direction](docs/service-integrations.md).
+52 tools. See [service connections and proactive Zettly direction](docs/service-integrations.md) and [focus-first development](docs/focus-workflow.md).
 
 | Tool | Purpose |
 |---|---|
+| `get_current_focus` | Read the configured owner and single active Zettly focus |
+| `set_focus` | Set one focus without replacing unfinished work |
+| `link_task_to_focus` | Associate the active canonical task while preserving its source |
+| `complete_focus` | Close focus only after linked work is complete and evidence is recorded |
 | `get_integration_status` | Verify authenticated access to Zettly, Factory and Sentry without exposing credentials |
 | `get_zettly_task_context` | Read bounded linked task/note context, cycles and incoming/outgoing coverage |
 | `list_sentry_issues` | Read bounded Sentry issue summaries in the configured organization |

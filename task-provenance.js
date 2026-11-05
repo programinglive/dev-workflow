@@ -37,6 +37,7 @@ export function buildTaskProvenance(state={}) {
  if(links.factory)add('factory',links.factory.id,{relation:'executes',label:links.factory.taskKey||links.factory.id});
  if(links.sentry)add('sentry',links.sentry.issueId,{relation:'source_issue',label:links.sentry.shortId||links.sentry.issueId,url:links.sentry.url});
  if(['zettly','factory','sentry'].includes(taskOrigin.system))add(taskOrigin.system,taskOrigin.id,{url:taskOrigin.url,label:taskOrigin.label,relation:'origin'});
+ if(state.focus?.id&&state.focus?.ownerId&&Number(state.focus.todoId)===Number(state.zettly?.todoId))taskRelations.push({system:'zettly',id:'focus:'+state.focus.id,url:safeUrl(state.focus.url),label:'Focus: '+String(state.focus.title||'').slice(0,160),relation:'focus'});
  const context=Number(state.zettlyContext?.todoId)===Number(state.zettly?.todoId)?state.zettlyContext:null;
  for(const node of (context?.nodes||[]).slice(0,50)){
   if(node.distance>0){
