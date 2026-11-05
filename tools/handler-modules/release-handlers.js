@@ -37,6 +37,68 @@ async function safeExecStdout(exec, command) {
   }
 }
 
+const RELEASE_TAG_Version_REGEX = /^v?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)$/;
+const RELEASE_COMMIT_VERSION_REGEX =
+  /^(?:chore\(release\)|release(?:\([^)]+\))?):\s*v?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)\b/i;
+
+/**
+ * Detects whether HEAD is already a release commit or already has a semver
+ * release tag pointing directly at HEAD.
+ *
+ * Why this exists: when an agent or release script has already created the
+ * `chore(release): X.Y.Z` commit and `vX.Y.Z` tag before calling `perform_release`
+ * to record it, re-running `npm run release` on top of HEAD triggers a second
+ * full verification/release cycle and hangs or creates duplicate release commits.
+ */
+async function detectExistingReleaseOnHead(git, fallbackLastCommitMessage = "") {
+  let tags = [];
+  if (typeof git?.getTagsAtHead === "function") {
+    try {
+      const rawTags = await git.getTagsAtHead();
+      if (Array.isArray(rawTags)) {
+        tags = rawTags.map((t) => String(t || "").trim()).filter(Boolean);
+      }
+    } catch {
+      tags = [];
+    }
+  }
+
+  let matchedTag = "";
+  let tagVersion = "";
+  for (const tag of tags) {
+    const m = RELEASE_TAG_Version_REGEX.exec(tag);
+    if (m) {
+      matchedTag = tag;
+      tagVersion = m[1];
+      break;
+    }
+  }
+
+  let lastCommitMessage = "";
+  if (typeof git?.getLastCommitMessage === "function") {
+    try {
+      lastCommitMessage = String((await git.getLastCommitMessage()) || "").trim();
+    } catch {
+      lastCommitMessage = "";
+    }
+  }
+  if (!lastCommitMessage && fallbackLastCommitMessage) {
+    lastCommitMessage = String(fallbackLastCommitMessage).trim();
+  }
+
+  const firstLine = lastCommitMessage.split(/\r?\n/)[0] || "";
+  const commitMatch = RELEASE_COMMIT_VERSION_REGEX.exec(firstLine);
+  const commitVersion = commitMatch ? commitMatch[1] : "";
+
+  return {
+    alreadyReleased: Boolean(matchedTag || commitVersion),
+    matchedTag,
+    tagVersion,
+    commitVersion,
+    lastCommitMessage,
+  };
+}
+
 export async function handleSkipRelease(args, workflowState) {
   if (workflowState.state.currentPhase === "idle") {
     return textResponse("⚠️ Please start a task first using 'start_task' before skipping release.");
@@ -152,6 +214,14 @@ export async function handlePerformRelease(args, context) {
     );
   }
 
+  const existingRelease = await detectExistingReleaseOnHead(
+    git,
+    workflowState.state.lastCommitMessage
+  );
+  const isAlreadyReleasedMode =
+    (existingRelease.alreadyReleased || args.recordOnly === true) &&
+    args.forceRun !== true;
+
   if (!workflowState.state.commitAndPushCompleted) {
     let hasWorkingChanges;
     try {
@@ -164,18 +234,21 @@ export async function handlePerformRelease(args, context) {
       );
     }
 
-    if (hasWorkingChanges) {
+    if (hasWorkingChanges || !isAlreadyReleasedMode) {
+      if (!hasWorkingChanges) {
+        workflowState.state.currentPhase = "commit";
+        await workflowState.save();
+      }
       return textResponse(
         "⚠️ Please run 'commit_and_push' after the ready check before recording a release!"
       );
     }
 
-    workflowState.state.currentPhase = "commit";
-    await workflowState.save();
-
-    return textResponse(
-      "⚠️ Please run 'commit_and_push' after the ready check before recording a release!"
-    );
+    // Break deadlock when HEAD is already a release commit/tag and working tree is clean
+    workflowState.state.commitAndPushCompleted = true;
+    if (existingRelease.lastCommitMessage && !workflowState.state.lastCommitMessage) {
+      workflowState.state.lastCommitMessage = existingRelease.lastCommitMessage;
+    }
   }
 
   const rawReleaseCommand = typeof args.command === "string" ? args.command.trim() : "";
@@ -217,7 +290,7 @@ export async function handlePerformRelease(args, context) {
     releaseCommand = `npm run release:${releaseType}`;
   }
 
-  if (!releaseCommand) {
+  if (!releaseCommand && !isAlreadyReleasedMode) {
     return textResponse("⚠️ Please provide a non-empty 'command' when using 'perform_release'.");
   }
 
@@ -258,7 +331,91 @@ export async function handlePerformRelease(args, context) {
       statusSummary.lines.map((line) => `   • ${line}`).join("\n")
     : "";
 
-  const lastCommitMessage = await git.getLastCommitMessage();
+  const explicitVersion =
+    typeof args.version === "string" ? args.version.trim().replace(/^v/i, "") : "";
+  const explicitNotes =
+    typeof args.notes === "string"
+      ? args.notes
+      : typeof args.releaseNotes === "string"
+        ? args.releaseNotes
+        : "";
+
+  if (isAlreadyReleasedMode) {
+    const branchForPush =
+      workflowState.state.lastPushBranch || (await git.getCurrentBranch()) || "";
+    const pushCommand = branchForPush
+      ? `git push --follow-tags origin ${utils.shellEscape(branchForPush)}`
+      : "git push --follow-tags";
+
+    let headSha = "";
+    try {
+      headSha = await git.getHeadSha();
+    } catch {
+      headSha = "";
+    }
+
+    let alreadyOnRemote = false;
+    if (headSha && branchForPush) {
+      try {
+        const remoteSha = await git.getRemoteBranchSha(branchForPush);
+        if (remoteSha === headSha) {
+          alreadyOnRemote = true;
+        }
+      } catch {
+        // Ignore remote SHA read error
+      }
+      if (!alreadyOnRemote && typeof git.isCommitOnRemoteBranch === "function") {
+        try {
+          alreadyOnRemote = Boolean(
+            await git.isCommitOnRemoteBranch(headSha, branchForPush)
+          );
+        } catch {
+          alreadyOnRemote = false;
+        }
+      }
+    }
+
+    if (!alreadyOnRemote) {
+      try {
+        await exec(pushCommand);
+      } catch (error) {
+        return textResponse(
+          `❌ Push rilis GAGAL. Rilis TIDAK tercatat sebagai selesai.\n\n` +
+          `Repo: ${repoLabel()}\nBranch: ${branchForPush || "(tidak diketahui)"}\n` +
+          `Penyebab: ${error.stderr || error.stdout || error.message}`
+        );
+      }
+    }
+
+    const resolvedVersion =
+      explicitVersion ||
+      existingRelease.tagVersion ||
+      existingRelease.commitVersion ||
+      "";
+    const recordedCommand =
+      releaseCommand ||
+      (existingRelease.matchedTag
+        ? `(existing release tag ${existingRelease.matchedTag})`
+        : "(existing release commit on HEAD)");
+
+    workflowState.state.released = true;
+    if (resolvedVersion) {
+      workflowState.state.releaseVersion = resolvedVersion;
+    }
+    workflowState.state.releaseCommand = recordedCommand;
+    workflowState.state.releaseNotes = explicitNotes;
+    workflowState.state.currentPhase = "ready_to_complete";
+    await workflowState.save();
+
+    const message = summarizeHistory(workflowState.state.history, args.limit || 10);
+    const summaryBlock = message ? `\n\n${message}` : "";
+    return textResponse(
+      `✅ Release recorded (already exists on HEAD${resolvedVersion ? `: v${resolvedVersion}` : ""}; skipped re-running release script).` +
+      `${leftOverNote}${summaryBlock}`
+    );
+  }
+
+  const lastCommitMessage = existingRelease.lastCommitMessage || (await git.getLastCommitMessage());
   if (!releaseType) {
     releaseType = utils.determineReleaseTypeFromCommit(
       lastCommitMessage || workflowState.state.lastCommitMessage
@@ -349,9 +506,13 @@ export async function handlePerformRelease(args, context) {
     );
   }
 
+  const resolvedTagVersion = tagAfter ? String(tagAfter).replace(/^v/i, "") : "";
   workflowState.state.released = true;
+  if (explicitVersion || resolvedTagVersion) {
+    workflowState.state.releaseVersion = explicitVersion || resolvedTagVersion;
+  }
   workflowState.state.releaseCommand = finalCommand;
-  workflowState.state.releaseNotes = typeof args.notes === "string" ? args.notes : "";
+  workflowState.state.releaseNotes = explicitNotes;
   workflowState.state.currentPhase = "ready_to_complete";
   await workflowState.save();
 

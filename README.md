@@ -1165,6 +1165,12 @@ Point it at any directory inside the project; the repo root is discovered
 upward. Non-git commands are unaffected. Full incident write-up:
 [`docs/2026-10-30-project-dir-misrouting.md`](docs/2026-10-30-project-dir-misrouting.md).
 
+**`perform_release`, `commit_and_push`, and `create_documentation` when changes are already committed/released** —
+- `perform_release` inspects `HEAD` before running any release script. If `HEAD` already has a semver release tag (`git tag --points-at HEAD`) or a `chore(release): X.Y.Z` commit message (or `recordOnly: true` is passed), it records the release idempotently without re-running `npm run release`, and automatically satisfies `commitAndPushCompleted` when the working tree is clean.
+- `commit_and_push` on a clean working tree verifies remote branch state via exact SHA, `git merge-base --is-ancestor`, and `git ls-remote --heads origin <branch>`, and automatically runs `git push origin <branch>` if `HEAD` has not yet been pushed.
+- `create_documentation` and `check_ready_to_commit` accept documentation files already committed during the active task (`git log --since=<taskStartedAt>`) or in `HEAD` when the working tree is clean.
+- `exec.js` closes child `stdin` immediately and cleans up inherited stdout/stderr pipes after direct child exit so Windows background grandchild processes cannot hang MCP tool calls.
+
 **A task jumped straight to `done` after reporting `review`** - it was reported
 twice. Factory treats the second report as approval. Current versions block that
 at the client, but if it already happened, review the task and move it back to

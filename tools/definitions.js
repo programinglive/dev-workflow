@@ -431,17 +431,36 @@ export function getToolList() {
     {
       name: "perform_release",
       description:
-        "Record release details after committing and pushing your changes.",
+        "Execute or record a release after committing and pushing your changes. " +
+        "If HEAD already has a release tag (e.g. v5.0.12) or a 'chore(release): X.Y.Z' commit, " +
+        "records the existing release idempotently without re-running the release command.",
       inputSchema: {
         type: "object",
         properties: {
           command: {
             type: "string",
-            description: "Release command that was executed",
+            description: "Release command to execute or that was executed (e.g. 'npm run release:patch'). Optional if HEAD is already released.",
+          },
+          version: {
+            type: "string",
+            description: "Optional semantic version being released (e.g. '5.0.12')",
+          },
+          releaseType: {
+            type: "string",
+            enum: ["patch", "minor", "major"],
+            description: "Optional explicit release bump type",
           },
           notes: {
             type: "string",
             description: "Optional release notes",
+          },
+          releaseNotes: {
+            type: "string",
+            description: "Alias for optional release notes",
+          },
+          recordOnly: {
+            type: "boolean",
+            description: "When true, records the release in workflow state without executing a release script",
           },
           projectDir: {
             type: "string",
@@ -449,7 +468,7 @@ export function getToolList() {
               "Absolute path to the repository to release. Overrides the repo pinned by 'start_task' for this call.",
           },
         },
-        required: ["command"],
+        required: [],
       },
     },
     {
