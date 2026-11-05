@@ -26,6 +26,10 @@ import {
   hasOnlyForeignChanges,
   parseStatusEntries,
   workingTreeSummary,
+  getTagsAtHead,
+  isCommitOnRemoteBranch,
+  getCommittedFilesSince,
+  getHeadChangedFiles,
 } from "./git-helpers.js";
 
 export function createGitFacade() {
@@ -47,5 +51,9 @@ export function createGitFacade() {
     parseStatusEntries,
     foreignDirtyEntries,
     hasOnlyForeignChanges,
+    getTagsAtHead,
+    isCommitOnRemoteBranch,
+    getCommittedFilesSince,
+    getHeadChangedFiles,
   };
 }

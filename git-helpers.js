@@ -408,3 +408,125 @@ export async function inspectCommitDiff(sha) {
 
   return { paths, todos };
 }
+
+/**
+ * Returns all git tags pointing directly at HEAD.
+ */
+export async function getTagsAtHead() {
+  try {
+    const { stdout } = await exec("git", {
+      executable: "git",
+      arguments: ["tag", "--points-at", "HEAD"],
+      timeout: 10000,
+    });
+    return String(stdout ?? "")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Checks whether a commit SHA is already present on `origin/<branch>`, either
+ * via local remote-tracking ancestry (`git merge-base --is-ancestor`) or by
+ * querying `git ls-remote --heads origin <branch>` when the local tracking ref
+ * is stale.
+ */
+export async function isCommitOnRemoteBranch(sha, branch) {
+  const targetSha = String(sha ?? "").trim();
+  const targetBranch = String(branch ?? "").trim();
+  if (!targetSha || !targetBranch) {
+    return false;
+  }
+
+  try {
+    await exec("git", {
+      executable: "git",
+      arguments: ["merge-base", "--is-ancestor", targetSha, `origin/${targetBranch}`],
+      timeout: 8000,
+    });
+    return true;
+  } catch {
+    // Local tracking ref may be stale or missing; fall through to ls-remote check.
+  }
+
+  try {
+    const { stdout } = await exec("git", {
+      executable: "git",
+      arguments: ["ls-remote", "--heads", "origin", targetBranch],
+      timeout: 10000,
+    });
+    const remoteSha = String(stdout ?? "")
+      .trim()
+      .split(/\s+/)[0];
+    if (!remoteSha) {
+      return false;
+    }
+    if (remoteSha === targetSha) {
+      return true;
+    }
+    await exec("git", {
+      executable: "git",
+      arguments: ["merge-base", "--is-ancestor", targetSha, remoteSha],
+      timeout: 8000,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Lists files modified in commits since the given ISO timestamp (`taskStartedAt`).
+ */
+export async function getCommittedFilesSince(sinceIso) {
+  const since = String(sinceIso ?? "").trim();
+  if (!since) {
+    return [];
+  }
+
+  try {
+    const { stdout } = await exec("git", {
+      executable: "git",
+      arguments: ["log", `--since=${since}`, "--name-only", "--pretty=format:"],
+      timeout: 10000,
+    });
+    return Array.from(
+      new Set(
+        String(stdout ?? "")
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter(Boolean)
+      )
+    );
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Lists files changed in HEAD (and HEAD~1 if available) so documentation files
+ * that were already committed in the current task are still recognized when
+ * the working tree is clean.
+ */
+export async function getHeadChangedFiles() {
+  try {
+    const { stdout } = await exec("git", {
+      executable: "git",
+      arguments: ["log", "-n", "2", "--name-only", "--pretty=format:"],
+      timeout: 10000,
+    });
+    return Array.from(
+      new Set(
+        String(stdout ?? "")
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter(Boolean)
+      )
+    );
+  } catch {
+    return [];
+  }
+}

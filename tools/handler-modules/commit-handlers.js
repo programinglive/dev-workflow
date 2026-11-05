@@ -123,26 +123,44 @@ async function verifyPushed(git, branch) {
     return { ok: false, detail: `tidak bisa membaca HEAD: ${error.message}` };
   }
 
-  let remote;
+  let remote = "";
+  let remoteLookupError = false;
   try {
     remote = await git.getRemoteBranchSha(branch);
   } catch {
+    remoteLookupError = true;
+  }
+
+  if (!remoteLookupError && remote === head) {
+    return { ok: true, head };
+  }
+
+  // If local tracking ref differs or is stale, check whether HEAD is already
+  // an ancestor of origin/<branch> or present on remote via ls-remote.
+  if (typeof git.isCommitOnRemoteBranch === "function") {
+    try {
+      const onRemote = await git.isCommitOnRemoteBranch(head, branch);
+      if (onRemote) {
+        return { ok: true, head };
+      }
+    } catch {
+      // Ignore ancestry/ls-remote check error and fall back to standard failure detail
+    }
+  }
+
+  if (remoteLookupError) {
     return {
       ok: false,
       detail: `branch origin/${branch} tidak ditemukan di remote setelah push`,
     };
   }
 
-  if (remote !== head) {
-    return {
-      ok: false,
-      detail:
-        `origin/${branch} berada di ${remote.slice(0, 8)}, ` +
-        `sedangkan HEAD di ${head.slice(0, 8)}`,
-    };
-  }
-
-  return { ok: true, head };
+  return {
+    ok: false,
+    detail:
+      `origin/${branch} berada di ${remote.slice(0, 8)}, ` +
+      `sedangkan HEAD di ${head.slice(0, 8)}`,
+  };
 }
 
 export async function handleCommitAndPush(args, context) {
@@ -243,7 +261,19 @@ export async function handleCommitAndPush(args, context) {
     // masih tertinggal - dan kalimat "Assuming commit and push already
     // completed" (dipakai sampai 31 Oktober 2026) membuat agen percaya
     // pekerjaannya sudah masuk padahal tidak ada yang dikerjakan sama sekali.
-    const pushed = await verifyPushed(git, branchForPush);
+    let pushed = await verifyPushed(git, branchForPush);
+    if (!pushed.ok && branchForPush && typeof exec === "function") {
+      try {
+        const pushTarget =
+          typeof utils?.shellEscape === "function"
+            ? utils.shellEscape(branchForPush)
+            : branchForPush;
+        await exec(`git push origin ${pushTarget}`);
+        pushed = await verifyPushed(git, branchForPush);
+      } catch {
+        // Ignore push failure here; !pushed.ok will report the exact reason below
+      }
+    }
     if (!pushed.ok) {
       return textResponse(
         `⚠️ Tidak ada perubahan untuk di-commit, tetapi HEAD BELUM ada di remote.\n` +

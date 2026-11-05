@@ -3,6 +3,7 @@ import { existsSync } from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { sanitize } from '../../security/sanitizer.js';
+import { parseStatusEntries as defaultParseStatusEntries } from "../../git-helpers.js";
 
 export const PROJECT_SUMMARY_FILENAME = "project-summary.json";
 
@@ -249,12 +250,40 @@ export async function loadDocGateInputs({ workflowState, git } = {}) {
   let changedPaths = [];
   try {
     const output = await git.getStatusOutput();
-    const entries = typeof git.parseStatusEntries === "function"
-      ? git.parseStatusEntries(output)
-      : [];
+    const parseFn =
+      typeof git.parseStatusEntries === "function"
+        ? git.parseStatusEntries
+        : defaultParseStatusEntries;
+    const entries = parseFn(output);
     changedPaths = entries.map((entry) => entry.path).filter(Boolean);
   } catch {
     changedPaths = [];
+  }
+
+  // Include files already committed during this task (e.g., when a release script
+  // or prior commit already committed CHANGELOG.md / RELEASE_NOTES.md / README.md).
+  if (state.taskStartedAt && typeof git.getCommittedFilesSince === "function") {
+    try {
+      const committedSinceStart = await git.getCommittedFilesSince(state.taskStartedAt);
+      if (Array.isArray(committedSinceStart) && committedSinceStart.length > 0) {
+        changedPaths = Array.from(new Set([...changedPaths, ...committedSinceStart.filter(Boolean)]));
+      }
+    } catch {
+      // Ignore committed-files lookup failure
+    }
+  }
+
+  // If working tree is clean and no task-window commits were found, fall back to
+  // files changed in HEAD so post-commit documentation recording does not deadlock.
+  if (changedPaths.length === 0 && typeof git.getHeadChangedFiles === "function") {
+    try {
+      const headFiles = await git.getHeadChangedFiles();
+      if (Array.isArray(headFiles) && headFiles.length > 0) {
+        changedPaths = Array.from(new Set(headFiles.filter(Boolean)));
+      }
+    } catch {
+      // Ignore HEAD changed-files lookup failure
+    }
   }
 
   let toplevel = "";
