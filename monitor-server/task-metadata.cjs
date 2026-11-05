@@ -45,10 +45,15 @@ function renderTaskMetadata(session) {
   const escape = v => String(v || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
   const names = { zettly: 'Zettly', zettly_draw: 'Zettly Draw', factory: 'Factory', sentry: 'Sentry', manual: 'Manual', unknown: 'Unknown' };
   const item = (record, relation) => {
-    const text = names[record.system] + (record.id ? ' #' + record.id : '') +
-      (record.label ? ' · ' + record.label : '') + (relation && record.relation ? ' (' + record.relation + ')' : '');
+    const prefix = names[record.system];
+    const label = record.label || '';
+    const shortId = record.id ? (record.system === 'factory' ? record.id.slice(0, 8) : record.id) : '';
+    const named = label.startsWith(prefix + ' ') ? label : record.system === 'zettly_draw' && label.startsWith('Draw #') ? 'Zettly ' + label : prefix + (label ? (['factory', 'sentry'].includes(record.system) ? ' ' : ' · ') + label : '');
+    const main = shortId && !named.includes(shortId) ? named + ' #' + shortId : named;
+    const relationNames = { tracks: 'Todo', executes: 'eksekusi', visual_plan: 'rencana visual', source_issue: 'isu sumber', focus: 'fokus' };
+    const text = main + (relation && relationNames[record.relation] ? ' · ' + relationNames[record.relation] : '');
     return record.url
-      ? '<a href="' + escape(record.url) + '" target="_blank" rel="noopener noreferrer">' + escape(text) + '</a>'
+      ? '<a href="' + escape(record.url) + '" title="' + escape(record.id) + '" target="_blank" rel="noopener noreferrer">' + escape(text) + '</a>'
       : escape(text);
   };
   const origin = normalized.taskOrigin.system ? normalized.taskOrigin : { system: 'unknown' };

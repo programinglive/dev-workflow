@@ -110,6 +110,7 @@ test('dashboard renders explicit origin separately from every relation with IDs 
   assert.match(legacy, /Source: Unknown/);
   const drawing=context.renderTaskMetadata({task_relations_json:[{system:'zettly_draw',id:'5',url:'https://zettly.programinglive.com/draw/5',label:'Draw #5',relation:'visual_plan'}]});
   assert.match(drawing,/Zettly Draw/);assert.match(drawing,/task-relation-zettly_draw/);
+  assert.ok(!drawing.includes('Draw #5 · Draw #5'));
   assert.doesNotMatch(legacy, /Source: Zettly/);
   const malicious = context.renderTaskMetadata({ task_origin_json: { ...origin, id: '<script>', url: 'javascript:alert(1)' },
     task_relations_json: [{ ...relations[0], url: 'https://user:secret@example.com/a', label: '<img onerror=alert(1)>' }] });
