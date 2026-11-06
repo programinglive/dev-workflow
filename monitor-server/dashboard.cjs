@@ -607,8 +607,8 @@ function renderBuildBox(ab, jNow, machine) {
     renderBuildLocation(ab, machine) +
     (ab.stage ? '<div class="build-stage">▸ ' + esc(ab.stage) + (hasPct ? ' (' + pct + '%)' : '') + '</div>' : '') +
     '<div class="' + barCls + '"><i style="width:' + pct + '%"></i></div>' +
-    (ab.command ? '<div class="build-cmd">$ ' + esc(ab.command) + (ab.output ? '\\n' + esc(ab.output) : '') + '</div>' :
-      (ab.output ? '<div class="build-cmd">' + esc(ab.output) + '</div>' : '')) +
+    (ab.command ? '<div class="build-cmd">$ ' + esc(ab.command) + '</div>' : '') +
+    (ab.output ? '<div class="event-out-box" style="margin-top:6px">' + esc(ab.output) + '</div>' : '') +
   '</div>';
 }
 function renderBuildMonitor(activeSessions, jNow) {
@@ -650,10 +650,8 @@ function renderBuildMonitor(activeSessions, jNow) {
           renderBuildLocation(ab, s.machine) +
           (ab.stage ? '<div class="build-stage">▸ ' + esc(ab.stage) + (hasPct ? ' (' + pct + '%)' : '') + '</div>' : '') +
           '<div class="' + barCls + '"><i style="width:' + pct + '%"></i></div>' +
-          (ab.command || ab.output
-            ? '<div class="build-cmd">' + (ab.command ? '$ ' + esc(ab.command) : '') +
-              (ab.command && ab.output ? '\\n' : '') + (ab.output ? esc(ab.output) : '') + '</div>'
-            : '') +
+          (ab.command ? '<div class="build-cmd">$ ' + esc(ab.command) + '</div>' : '') +
+          (ab.output ? '<div class="event-out-box" style="margin-top:6px">' + esc(ab.output) + '</div>' : '') +
           '<div class="row" style="justify-content:space-between;margin-top:6px">' +
             '<span class="meta">' + esc(s.task || '') + '</span>' +
             (elapsed ? '<span class="meta" style="color:#79c0ff;font-weight:600"' + liveAttr + '>⏱ ' + esc(elapsed) + '</span>' : '') +
