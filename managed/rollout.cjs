@@ -142,7 +142,7 @@ function prewarmDevices() {
 }
 
 function syncRuleText(content) {
-  const pattern = /(?ms)<!-- managed-development-workflow:start -->.*?<!-- managed-development-workflow:end -->/;
+  const pattern = /<!-- managed-development-workflow:start -->[\s\S]*?<!-- managed-development-workflow:end -->/;
   if (pattern.test(content)) {
     return content.replace(pattern, MANAGED_RULE_BLOCK);
   }
