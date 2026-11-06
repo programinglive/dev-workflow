@@ -170,7 +170,7 @@ See [MCP client configuration](#mcp-client-configuration).
 | `set_definition_of_done` | Add or replace the checklist of the current task |
 | `mark_dod_item` | Prove one item, with evidence |
 | `waive_dod_item` | Exclude one item, with a reason |
-| `create_feature_flow` | Record the Mermaid plan and publish an editable Zettly Draw linked to the canonical Todo |
+| `create_feature_flow` | Record the Mermaid plan and publish an editable Zettly Draw linked to the canonical Todo (tldraw v4 store schema, fractional indexing, and ProseMirror richText compliant) |
 | `link_factory_task` | Verify and link an existing Factory task to the active Todo and monitor session |
 | `link_zettly_drawing` | Verify and link an existing Zettly Draw to the active Todo |
 | `mark_bug_fixed` | Mark the implementation done |

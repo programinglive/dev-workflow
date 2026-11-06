@@ -1,8 +1,46 @@
 import {createHash} from 'node:crypto';
 import {createZettlyClient,resolveZettlyConfig,zettlySyncEnabled} from './zettly-client.js';
 
-const richText=text=>({type:'doc',content:[{type:'paragraph',content:[{type:'text',text}]}]});
+const BASE62='0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+export function fractionalIndex(index) {
+  const i=Number(index);
+  if(i<62)return `a${BASE62[i]}`;
+  const high=Math.floor(i/62),low=i%62;
+  return `b${BASE62[high]}${BASE62[low]}`;
+}
+
+const richText=text=>{
+  const trimmed=String(text||'').trim();
+  if(!trimmed)return {type:'doc',content:[{type:'paragraph',content:[]}]};
+  return {type:'doc',content:[{type:'paragraph',content:[{type:'text',text:trimmed}]}]};
+};
 const xml=text=>String(text).replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+
+export const TLDRAW_SCHEMA={
+  schemaVersion:2,
+  sequences:{
+    'com.tldraw.store':5,'com.tldraw.asset':1,'com.tldraw.camera':1,'com.tldraw.document':2,
+    'com.tldraw.instance':26,'com.tldraw.instance_page_state':5,'com.tldraw.page':1,
+    'com.tldraw.instance_presence':6,'com.tldraw.pointer':1,'com.tldraw.shape':4,
+    'com.tldraw.asset.bookmark':2,'com.tldraw.asset.image':6,'com.tldraw.asset.video':5,
+    'com.tldraw.shape.group':0,'com.tldraw.shape.text':4,'com.tldraw.shape.bookmark':2,
+    'com.tldraw.shape.draw':4,'com.tldraw.shape.geo':11,'com.tldraw.shape.note':10,
+    'com.tldraw.shape.line':5,'com.tldraw.shape.frame':1,'com.tldraw.shape.arrow':8,
+    'com.tldraw.shape.highlight':3,'com.tldraw.shape.embed':4,'com.tldraw.shape.image':5,
+    'com.tldraw.shape.video':4,'com.tldraw.binding.arrow':1
+  }
+};
+
+export const TLDRAW_SESSION={
+  version:0,
+  currentPageId:'page:page',
+  exportBackground:true,
+  isFocusMode:false,
+  isDebugMode:false,
+  isToolLocked:false,
+  isGridMode:false,
+  pageStates:[{pageId:'page:page',camera:{x:0,y:0,z:1},selectedShapeIds:[],focusedGroupId:null}]
+};
 
 export function flowGraph(mermaidCode) {
   const code=String(mermaidCode||'').trim();
@@ -45,16 +83,17 @@ export function drawingPayload(state,mermaidCode,description) {
   const nodes=graph.nodes;
   const store={
     'document:document':{id:'document:document',typeName:'document',gridSize:20,name:title,meta:{workflowTaskId:String(state.workflowTaskId||''),zettlyTodoId:todoId,factoryTaskId:String(state.zettly?.externalLinks?.factory?.id||''),mermaidCode:String(mermaidCode).slice(0,10000)}},
-    'page:main':{id:'page:main',typeName:'page',name:'Development flow',index:'a1',meta:{}},
+    'page:page':{id:'page:page',typeName:'page',name:'Page 1',index:'a1',meta:{}},
   };
   const height=50+Math.ceil(nodes.length/2)*154;
   const colors=['blue','orange','violet','green'];
   const nodeBlocks=[];
   const edgeBlocks=[];
+  let orderIndex=1;
   for(let index=0;index<nodes.length;index++){
     const x=40+(index%2)*320,y=40+Math.floor(index/2)*154;
     const color=colors[index%colors.length];
-    store[`shape:step${index+1}`]={id:`shape:step${index+1}`,typeName:'shape',type:'geo',x,y,rotation:0,index:`a${index+1}`,parentId:'page:main',isLocked:false,opacity:1,props:{geo:'rectangle',w:250,h:94,color,fill:'semi',dash:'solid',size:'m',font:'sans',align:'middle',verticalAlign:'middle',richText:richText(`${index+1}. ${nodes[index].label}`),labelColor:'black',url:'',growY:0,scale:1},meta:{}};
+    store[`shape:step${index+1}`]={id:`shape:step${index+1}`,typeName:'shape',type:'geo',x,y,rotation:0,index:fractionalIndex(orderIndex++),parentId:'page:page',isLocked:false,opacity:1,props:{geo:'rectangle',w:250,h:94,color,fill:'semi',dash:'solid',size:'m',font:'sans',align:'middle',verticalAlign:'middle',richText:richText(`${index+1}. ${nodes[index].label}`),labelColor:'black',url:'',growY:0,scale:1},meta:{}};
     nodeBlocks.push(`<rect x="${x}" y="${y}" width="250" height="94" rx="14" fill="#172036" stroke="${['#60a5fa','#f59e0b','#a78bfa','#22c55e'][index%4]}" stroke-width="2"/><text x="${x+125}" y="${y+52}" text-anchor="middle" fill="#fff" font-family="Arial" font-size="15">${index+1}. ${xml(nodes[index].label.slice(0,24))}</text>`);
   }
   for(let index=0;index<graph.edges.length;index++){
@@ -65,11 +104,18 @@ export function drawingPayload(state,mermaidCode,description) {
     else if(toY>fromY){x1=fromX+125;y1=fromY+94;x2=toX+125;y2=toY;}
     else{x1=fromX+125;y1=fromY;x2=toX+125;y2=toY+94;}
     const id=`shape:edge${index+1}`;
-    store[id]={id,typeName:'shape',type:'arrow',x:x1,y:y1,rotation:0,index:`a${nodes.length+index+1}`,parentId:'page:main',isLocked:false,opacity:1,props:{kind:'arc',labelColor:'black',color:'black',fill:'none',dash:'solid',size:'m',arrowheadStart:'none',arrowheadEnd:'arrow',font:'sans',start:{x:0,y:0},end:{x:x2-x1,y:y2-y1},bend:0,richText:richText(edge.label),labelPosition:0.5,scale:1,elbowMidPoint:0.5},meta:{from:edge.from,to:edge.to}};
+    store[id]={id,typeName:'shape',type:'arrow',x:x1,y:y1,rotation:0,index:fractionalIndex(orderIndex++),parentId:'page:page',isLocked:false,opacity:1,props:{kind:'arc',labelColor:'black',color:'black',fill:'none',dash:'solid',size:'m',arrowheadStart:'none',arrowheadEnd:'arrow',font:'sans',start:{x:0,y:0},end:{x:x2-x1,y:y2-y1},bend:0,richText:richText(edge.label),labelPosition:0.5,scale:1,elbowMidPoint:0.5},meta:{from:edge.from,to:edge.to}};
     edgeBlocks.push(`<path d="M${x1} ${y1} L${x2} ${y2}" fill="none" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)"/>${edge.label?`<text x="${(x1+x2)/2}" y="${(y1+y2)/2-5}" text-anchor="middle" fill="#e2e8f0" font-family="Arial" font-size="13">${xml(edge.label)}</text>`:''}`);
   }
   const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="680" height="${height}" viewBox="0 0 680 ${height}"><rect width="680" height="${height}" rx="22" fill="#0b1020"/><defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#94a3b8"/></marker></defs>${edgeBlocks.join('')}${nodeBlocks.join('')}</svg>`;
-  return {title,document:{document:{name:title,store}},thumbnail:'data:image/svg+xml;charset=utf-8,'+encodeURIComponent(svg)};
+  return {
+    title,
+    document:{
+      document:{name:title,store,schema:TLDRAW_SCHEMA},
+      session:TLDRAW_SESSION
+    },
+    thumbnail:'data:image/svg+xml;charset=utf-8,'+encodeURIComponent(svg)
+  };
 }
 
 export async function syncZettlyDrawing(workflowState,{client,env=process.env}={}) {

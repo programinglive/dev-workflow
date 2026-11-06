@@ -24,7 +24,7 @@ test('decision branches and retries remain separate arrows in the Draw document'
  const store=drawingPayload(state(),graph,'Decision flow').document.document.store;
  const arrows=Object.values(store).filter(record=>record.type==='arrow');
  assert.equal(arrows.length,4);assert.ok(arrows.some(record=>record.meta.from==='C'&&record.meta.to==='B'));
- assert.ok(arrows.some(record=>record.props.richText.content[0].content[0].text==='Yes'));
+ assert.ok(arrows.some(record=>record.props.richText?.content?.[0]?.content?.[0]?.text==='Yes'));
 });
 test('standard Mermaid pipe labels remain attached to their branches',()=>{
  const parsed=flowGraph('flowchart TD; A[Start] --> B{Ready?}; B -->|Yes| C[Ship]; B -->|No| D[Fix]');
@@ -50,4 +50,33 @@ test('an uncertain create result does not silently create another drawing',async
  const client={async request(){calls++;throw Error('Connection closed after write');}};
  const first=await syncZettlyDrawing(workflowState,{client});const second=await syncZettlyDrawing(workflowState,{client});
  assert.equal(first.ok,false);assert.match(second.note,/uncertain/);assert.equal(calls,1);
+});
+
+test('tldraw document complies with tldraw v4 store schema, session, and fractional indexing',()=>{
+ const largeFlow='flowchart TD\n  A[Step 1] --> B[Step 2]\n  B --> C[Step 3]\n  C --> D[Step 4]\n  D --> E[Step 5]\n  E --> F[Step 6]\n  F --> G[Step 7]\n  G --> H[Step 8]\n  H --> I[Step 9]\n  I --> J[Step 10]';
+ const result=drawingPayload(state(),largeFlow,'Large flow');
+ const doc=result.document;
+ assert.ok(doc.document.schema);
+ assert.equal(doc.session.currentPageId,'page:page');
+ const store=doc.document.store;
+ assert.ok(store['page:page']);
+ assert.equal(store['page:page'].id,'page:page');
+ 
+ const shapes=Object.values(store).filter(r=>r.typeName==='shape');
+ for(const shape of shapes){
+   assert.equal(shape.parentId,'page:page');
+   assert.match(shape.index,/^[a-z][0-9A-Za-z]+$/);
+   assert.ok(!shape.index.includes('10')); // Fractional index must not be naive a10
+   if(shape.type==='geo'){
+     assert.equal(shape.props.url,'');
+   }
+   if(shape.type==='arrow'){
+     assert.equal(shape.props.url,undefined);
+   }
+   const textNode=shape.props.richText?.content?.[0]?.content?.[0];
+   if(textNode){
+     assert.equal(typeof textNode.text,'string');
+     assert.ok(textNode.text.length>0);
+   }
+ }
 });
