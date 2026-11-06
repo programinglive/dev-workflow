@@ -29,6 +29,7 @@ Thumbs.db
 .state/
 *.tgz
 *.tsbuildinfo
+.managed-publish/
 
 !web/lib/
 

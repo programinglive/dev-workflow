@@ -61,3 +61,11 @@ test("dashboard.cjs renders Mesin Builder with Remote VM and Local badge tags", 
   assert.match(dashboardSource, /Remote VM/);
   assert.match(dashboardSource, /Lokal/);
 });
+
+test("checkpoint rollout documentation exists and records all three devices", () => {
+  const doc = readFileSync(path.join(ROOT, "docs/checkpoints/2026-11-06-mandatory-flow-gate-and-multi-device-rollout.md"), "utf8");
+  assert.match(doc, /HELLOWORLD/);
+  assert.match(doc, /Mac/);
+  assert.match(doc, /MMCH/);
+  assert.match(doc, /4f5e1f4253c8/);
+});
