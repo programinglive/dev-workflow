@@ -199,12 +199,24 @@ test("extractActiveBuildFromEvents reconstructs live build state for dashboard s
       }),
       at: new Date().toISOString(),
     },
+    {
+      session_key: "ses_2",
+      machine: "HELLOWORLD",
+      project_name: "todoapp",
+      kind: "build_succeeded",
+      detail: "Webpack bundle built in 12s",
+      at: new Date().toISOString(),
+    },
   ];
 
   const map = extractActiveBuildFromEvents(events);
   assert.ok(map.get("ses_1"));
   assert.equal(map.get("ses_1").target, "clinic:v0.2.11");
   assert.equal(map.get("ses_1").progress, 70);
+
+  assert.ok(map.get("ses_2"));
+  assert.equal(map.get("ses_2").status, "succeeded");
+  assert.equal(map.get("ses_2").stage, "Webpack bundle built in 12s");
 });
 
 test("monitor-server/dashboard.cjs includes Live Build Monitor UI, KPI strip, and pipeline stepper", () => {

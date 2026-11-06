@@ -286,7 +286,8 @@ function extractActiveBuildFromEvents(events = []) {
       (ev.machine && ev.project_name ? `${ev.machine}::${ev.project_name}` : '');
     if (!key || bySession.has(key)) continue;
 
-    const parsedEvent = parseEventDetail(ev.detail);
+    const rawDetail = String(ev.detail || '').trim();
+    const parsedEvent = parseEventDetail(rawDetail);
     if (parsedEvent.isBuild && parsedEvent.data) {
       bySession.set(
         key,
