@@ -13,6 +13,14 @@ Build and test events include the same session key as the monitor snapshot, so r
 
 The web monitor displays the location in its build summary and session detail. The Android app has a Build tab and a shortcut on the Active tab. Running builds appear first, followed by recent builds visible in the monitor session and event response. The mobile card shows status, target, location, stage, progress, project, and time; tapping it opens session detail. Android APKs must be rebuilt and reinstalled for native UI changes to appear on a device.
 
+## Zettly Draw Mermaid Flow Preview
+
+When an agent executes `create_feature_flow`, a canonical Zettly Draw canvas is created and linked to the active task. The DevWorkflow live monitor surfaces this diagram directly in session cards and modal details:
+- **Inline Preview**: Session cards display an inline SVG thumbnail preview of the recorded architecture flow diagram fetched from `/api/drawings/:id/thumbnail`.
+- **Flow Modal Lightbox**: Clicking the preview thumbnail opens an enlarged modal (`#modal-flow`) rendering the full vector diagram cleanly with high resolution.
+- **Export & Navigation**: The modal provides a one-click "Download PNG" button that converts the vector diagram into a downloadable high-resolution PNG image without requiring navigation away from the dashboard, as well as a direct link to open and edit the drawing in Zettly Draw.
+- **Server Endpoint**: `/api/drawings/:id/thumbnail` serves the cached SVG diagram with `image/svg+xml` content type directly from the Zettly database connection.
+
 Berkas di `monitor-server/`:
 
 | Berkas | Isi |
@@ -43,6 +51,14 @@ when the MCP process exits, after which the taskless idle card expires according
 to `EMPTY_IDLE_TTL` (one minute). The default 30-second interval can be adjusted
 with `DEVWF_MONITOR_HEARTBEAT_MS` (100–60000 ms). The server cannot report clients
 that are not connected to the `dev-workflow` MCP.
+
+## Zettly Draw Mermaid Flow Preview
+
+When an agent executes `create_feature_flow`, a canonical Zettly Draw canvas is created and linked to the active task. The DevWorkflow live monitor surfaces this diagram directly in session cards and modal details:
+- **Inline Preview**: Session cards display an inline SVG thumbnail preview of the recorded architecture flow diagram fetched from `/api/drawings/:id/thumbnail`.
+- **Flow Modal Lightbox**: Clicking the preview thumbnail opens an enlarged modal (`#modal-flow`) rendering the full vector diagram cleanly with high resolution.
+- **Export & Navigation**: The modal provides a one-click "Download PNG" button that converts the vector diagram into a downloadable high-resolution PNG image without requiring navigation away from the dashboard, as well as a direct link to open and edit the drawing in Zettly Draw.
+- **Server Endpoint**: `/api/drawings/:id/thumbnail` serves the cached SVG diagram with `image/svg+xml` content type directly from the Zettly database connection.
 
 Berkas di `monitor-server/`:
 

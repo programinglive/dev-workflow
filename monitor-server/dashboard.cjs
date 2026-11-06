@@ -137,6 +137,20 @@ const IDLE_TTL = process.env.IDLE_TTL || '30 minutes';
 const EMPTY_IDLE_TTL = process.env.EMPTY_IDLE_TTL || '1 minute';
 
 const pool = DB_URL ? new pg.Pool({ connectionString: DB_URL, max: 4 }) : null;
+const ZETTLY_DB_URL = process.env.ZETTLY_DATABASE_URL || (DB_URL ? DB_URL.replace(/\/devwf_monitor(\?|$)/, '/prod_zettly$1') : '');
+const zettlyPool = ZETTLY_DB_URL ? new pg.Pool({ connectionString: ZETTLY_DB_URL, max: 2 }) : null;
+
+async function fetchDrawing(id) {
+  if (zettlyPool) {
+    try {
+      const res = await zettlyPool.query('SELECT id, title, thumbnail FROM drawings WHERE id = $1', [id]);
+      if (res.rows && res.rows[0]) return res.rows[0];
+    } catch (e) {
+      console.error('fetchDrawing error:', e.message);
+    }
+  }
+  return null;
+}
 
 const PAGE = `<!doctype html>
 <html lang="id"><head><meta charset="utf-8">
@@ -228,6 +242,10 @@ const PAGE = `<!doctype html>
   .task-relation { display:inline-flex; align-items:center; max-width:100%; padding:2px 8px; border:1px solid #2d3b50; border-radius:999px; background:#101a2a; overflow-wrap:anywhere; }
   .task-relation-factory { border-color:#9e6a2266; background:#2a1c0e; }
   .task-relation-zettly_draw { border-color:#8b5cf666; background:#201630; }
+  .flow-preview { margin-top:8px; }
+  .flow-thumb-box { transition:border-color .15s ease, box-shadow .15s ease; }
+  .flow-thumb-box:hover { border-color:#58a6ff !important; box-shadow:0 0 0 1px #58a6ff44; }
+  .flow-thumb-box:hover .flow-thumb-hint { background:#1f6febdd !important; color:#fff !important; }
   .proj-pill { display:inline-block; background:#1f6feb1a; color:#58a6ff; border:1px solid #1f6feb44;
                padding:1px 8px; border-radius:6px; font-weight:600; font-size:11px; }
   .phase { background:#1f6feb22; color:#79c0ff; border:1px solid #1f6feb55;
@@ -418,6 +436,37 @@ const PAGE = `<!doctype html>
       <div id="modal-share-slot" style="flex:1"></div>
       <button class="btn" id="modal-tutup-btn">Tutup</button>
       <button class="btn danger" id="modal-close-session-btn" style="display:none">✕ Tutup Sesi</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL FLOW PREVIEW -->
+<div id="modal-flow" class="modal" style="display:none;z-index:1100">
+  <div class="modal-backdrop" id="modal-flow-backdrop"></div>
+  <div class="modal-box" style="max-width:920px;width:95vw;">
+    <div class="modal-header">
+      <div class="row">
+        <span class="phase" style="background:#8b5cf622;color:#a78bfa;border-color:#8b5cf655">📐 FLOW DIAGRAM</span>
+        <span id="modal-flow-title" style="font-weight:600;font-size:14px;color:#f0f6fc"></span>
+      </div>
+      <button class="modal-close" id="modal-flow-close-btn">&times;</button>
+    </div>
+    <div class="modal-body" style="text-align:center;padding:16px;">
+      <div id="modal-flow-loading" style="padding:40px;color:#8b949e">Memuat diagram flow...</div>
+      <div id="modal-flow-container" style="background:#0b1020;border:1px solid #30363d;border-radius:8px;padding:12px;overflow:auto;max-height:70vh;display:flex;align-items:center;justify-content:center;">
+        <img id="modal-flow-img" src="" alt="Flow Diagram" style="max-width:100%;height:auto;object-fit:contain;display:none;" />
+      </div>
+    </div>
+    <div class="modal-footer" style="display:flex;justify-content:space-between;align-items:center;">
+      <a id="modal-flow-link" href="#" target="_blank" rel="noopener noreferrer" class="btn" style="text-decoration:none;display:inline-flex;align-items:center;gap:6px;">
+        Buka di Zettly Draw ↗
+      </a>
+      <div style="display:flex;gap:8px;">
+        <button class="btn" id="modal-flow-png-btn" style="background:#238636;color:#fff;border-color:#2ea043">
+          💾 Download PNG
+        </button>
+        <button class="btn" id="modal-flow-tutup-btn">Tutup</button>
+      </div>
     </div>
   </div>
 </div>
@@ -690,6 +739,64 @@ function bukaDetail(sessionKey) {
 function tutupModal() {
   document.getElementById('modal-detail').style.display = 'none';
   activeDetailKey = null;
+}
+
+var currentFlowData = { id: '', title: '', url: '' };
+
+function openFlowModal(id, title, url) {
+  currentFlowData = { id: String(id || ''), title: title || ('Draw #' + id), url: url || '' };
+  var modal = document.getElementById('modal-flow');
+  var titleEl = document.getElementById('modal-flow-title');
+  var imgEl = document.getElementById('modal-flow-img');
+  var linkEl = document.getElementById('modal-flow-link');
+  var loadingEl = document.getElementById('modal-flow-loading');
+
+  if (titleEl) titleEl.textContent = currentFlowData.title;
+  if (linkEl) {
+    linkEl.href = currentFlowData.url || ('https://zettly.programinglive.com/draw/' + id);
+  }
+  if (loadingEl) {
+    loadingEl.style.display = 'block';
+    loadingEl.textContent = 'Memuat diagram flow...';
+  }
+  if (imgEl) {
+    imgEl.style.display = 'none';
+    imgEl.onload = function() {
+      if (loadingEl) loadingEl.style.display = 'none';
+      imgEl.style.display = 'block';
+    };
+    imgEl.onerror = function() {
+      if (loadingEl) loadingEl.textContent = 'Gagal memuat preview diagram.';
+    };
+    imgEl.src = '/api/drawings/' + encodeURIComponent(id) + '/thumbnail?t=' + Date.now();
+  }
+  if (modal) modal.style.display = 'flex';
+}
+
+function tutupFlowModal() {
+  var modal = document.getElementById('modal-flow');
+  if (modal) modal.style.display = 'none';
+}
+
+function unduhFlowPng() {
+  var imgEl = document.getElementById('modal-flow-img');
+  if (!imgEl || !imgEl.complete || !imgEl.naturalWidth) return;
+  try {
+    var canvas = document.createElement('canvas');
+    var w = imgEl.naturalWidth || 680;
+    var h = imgEl.naturalHeight || 600;
+    canvas.width = w * 2;
+    canvas.height = h * 2;
+    var ctx = canvas.getContext('2d');
+    ctx.scale(2, 2);
+    ctx.drawImage(imgEl, 0, 0, w, h);
+    var a = document.createElement('a');
+    a.download = (currentFlowData.title || 'flow-diagram').replace(/[^a-zA-Z0-9_-]/g, '_') + '.png';
+    a.href = canvas.toDataURL('image/png');
+    a.click();
+  } catch (err) {
+    console.error('Download PNG failed:', err);
+  }
 }
 
 /**
@@ -1069,6 +1176,11 @@ document.getElementById('build-monitor').addEventListener('click', function (e) 
 });
 document.getElementById('list').addEventListener('click', function (e) {
   if (e.target.closest('a[href]')) return;
+  var flowBtn = e.target.closest('[data-flow-id]');
+  if (flowBtn) {
+    openFlowModal(flowBtn.dataset.flowId, flowBtn.dataset.flowTitle, flowBtn.dataset.flowUrl);
+    return;
+  }
   var btn = e.target.closest('[data-share],[data-copy],[data-revoke]');
   if (btn) {
     if (btn.dataset.share) { void tombolBagikan(btn.dataset.share, btn); }
@@ -1084,6 +1196,11 @@ document.getElementById('list').addEventListener('click', function (e) {
 
 document.getElementById('history').addEventListener('click', function (e) {
   if (e.target.closest('a[href]')) return;
+  var flowBtn = e.target.closest('[data-flow-id]');
+  if (flowBtn) {
+    openFlowModal(flowBtn.dataset.flowId, flowBtn.dataset.flowTitle, flowBtn.dataset.flowUrl);
+    return;
+  }
   var card = e.target.closest('[data-session-key]');
   if (card) {
     bukaDetail(card.dataset.sessionKey);
@@ -1105,6 +1222,11 @@ document.querySelector('.tabbar').addEventListener('click', function (e) {
 });
 
 document.getElementById('modal-detail').addEventListener('click', function (e) {
+  var flowBtn = e.target.closest('[data-flow-id]');
+  if (flowBtn) {
+    openFlowModal(flowBtn.dataset.flowId, flowBtn.dataset.flowTitle, flowBtn.dataset.flowUrl);
+    return;
+  }
   var btn = e.target.closest('[data-share],[data-copy],[data-revoke]');
   if (btn) {
     if (btn.dataset.share) { void tombolBagikan(btn.dataset.share, btn); }
@@ -1117,6 +1239,19 @@ document.getElementById('modal-detail').addEventListener('click', function (e) {
   }
 });
 
+var modalFlow = document.getElementById('modal-flow');
+if (modalFlow) {
+  modalFlow.addEventListener('click', function (e) {
+    if (e.target.closest('#modal-flow-png-btn')) {
+      unduhFlowPng();
+      return;
+    }
+    if (e.target.matches('#modal-flow-backdrop') || e.target.closest('#modal-flow-close-btn') || e.target.closest('#modal-flow-tutup-btn')) {
+      tutupFlowModal();
+    }
+  });
+}
+
 document.getElementById('tautan').addEventListener('click', function (e) {
   var t = e.target.closest('[data-copy],[data-revoke],[data-revoke-orphans]');
   if (!t) return;
@@ -1126,7 +1261,10 @@ document.getElementById('tautan').addEventListener('click', function (e) {
 });
 
 document.addEventListener('keydown', function (e) {
-  if (e.key === 'Escape') tutupModal();
+  if (e.key === 'Escape') {
+    tutupModal();
+    tutupFlowModal();
+  }
 });
 
 // Handler tombol "Tutup Sesi" (force-close sesi macet dari dashboard)
@@ -1440,6 +1578,36 @@ const server = http.createServer(async (req, res) => {
       console.log(`[session/close] ${row.session_key} (${row.machine}/${row.project_name}) ditutup manual.`);
       res.writeHead(200, { 'content-type': 'application/json' });
       return res.end(JSON.stringify({ ok: true, closed: true, sessionKey: row.session_key }));
+    }
+    const drawingMatch = /^\/api\/drawings\/(\d+)\/thumbnail$/.exec(url.pathname);
+    if (drawingMatch && (req.method === 'GET' || req.method === 'HEAD')) {
+      const drawingId = Number(drawingMatch[1]);
+      if (!Number.isSafeInteger(drawingId) || drawingId < 1) {
+        res.writeHead(400, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: 'invalid drawing id' }));
+      }
+      try {
+        const row = await fetchDrawing(drawingId);
+        if (!row || !row.thumbnail) {
+          res.writeHead(404, { 'content-type': 'application/json' });
+          return res.end(JSON.stringify({ ok: false, error: 'drawing thumbnail not found' }));
+        }
+        let svg = String(row.thumbnail);
+        if (svg.startsWith('data:image/svg+xml;charset=utf-8,')) {
+          svg = decodeURIComponent(svg.slice('data:image/svg+xml;charset=utf-8,'.length));
+        } else if (svg.startsWith('data:image/svg+xml;base64,')) {
+          svg = Buffer.from(svg.slice('data:image/svg+xml;base64,'.length), 'base64').toString('utf8');
+        }
+        res.writeHead(200, {
+          'content-type': 'image/svg+xml; charset=utf-8',
+          'cache-control': 'public, max-age=3600',
+        });
+        if (req.method === 'HEAD') return res.end();
+        return res.end(svg);
+      } catch (err) {
+        res.writeHead(500, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: 'failed to fetch drawing: ' + err.message }));
+      }
     }
     if (url.pathname === '/api/sessions') {
       const limit = Math.min(50, Number(url.searchParams.get('limit') || 20));

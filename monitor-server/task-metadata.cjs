@@ -57,9 +57,30 @@ function renderTaskMetadata(session) {
       : escape(text);
   };
   const origin = normalized.taskOrigin.system ? normalized.taskOrigin : { system: 'unknown' };
+
+  let drawPreviewHtml = '';
+  const drawRelation = normalized.taskRelations.find(r => r.system === 'zettly_draw');
+  if (drawRelation && drawRelation.id) {
+    const drawId = escape(drawRelation.id);
+    const drawUrl = escape(drawRelation.url || '');
+    const drawTitle = escape(drawRelation.label || ('Draw #' + drawId));
+    drawPreviewHtml = '<div class="flow-preview" data-flow-id="' + drawId + '" data-flow-title="' + drawTitle + '" data-flow-url="' + drawUrl + '" style="margin-top:8px;">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;font-size:11px;color:#8b949e;">' +
+      '<span>📐 Flow Diagram</span>' +
+      (drawUrl ? '<a href="' + drawUrl + '" target="_blank" rel="noopener noreferrer" style="color:#58a6ff;text-decoration:none;">Buka di Zettly ↗</a>' : '') +
+      '</div>' +
+      '<div class="flow-thumb-box" style="cursor:pointer;background:#0b1020;border:1px solid #30363d;border-radius:6px;overflow:hidden;position:relative;display:flex;align-items:center;justify-content:center;padding:4px;max-height:160px;">' +
+      '<img src="/api/drawings/' + drawId + '/thumbnail" alt="' + drawTitle + '" loading="lazy" style="max-width:100%;max-height:150px;object-fit:contain;border-radius:4px;" onerror="this.parentElement.style.display=\'none\'" />' +
+      '<div class="flow-thumb-hint" style="position:absolute;bottom:4px;right:6px;background:rgba(13,17,23,0.85);color:#c9d1d9;padding:2px 6px;border-radius:4px;font-size:10px;border:1px solid #30363d;pointer-events:none;">🔍 Perbesar / PNG</div>' +
+      '</div>' +
+      '</div>';
+  }
+
   return '<div class="task-metadata meta"><div>Source: ' + item(origin, false) + '</div>' +
     (normalized.workflowTaskId ? '<div>Workflow: ' + escape(normalized.workflowTaskId) + '</div>' : '') +
-    (normalized.taskRelations.length ? '<div class="task-relation-list"><span>Relations:</span> ' + normalized.taskRelations.map(r => '<span class="task-relation task-relation-' + escape(r.system) + '">' + item(r, true) + '</span>').join('') + '</div>' : '') + '</div>';
+    (normalized.taskRelations.length ? '<div class="task-relation-list"><span>Relations:</span> ' + normalized.taskRelations.map(r => '<span class="task-relation task-relation-' + escape(r.system) + '">' + item(r, true) + '</span>').join('') + '</div>' : '') +
+    drawPreviewHtml +
+    '</div>';
 }
 
 module.exports = { normalizeTaskMetadata, renderTaskMetadata };
