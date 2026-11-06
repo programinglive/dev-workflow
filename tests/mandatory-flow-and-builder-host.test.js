@@ -25,6 +25,15 @@ test("generateDefaultFlow creates valid Mermaid flow parsable by flowGraph", () 
 test("MANDATORY_FLOW_RULE is injected in WORKFLOW_INSTRUCTIONS", () => {
   assert.ok(WORKFLOW_INSTRUCTIONS.includes(MANDATORY_FLOW_RULE));
   assert.match(WORKFLOW_INSTRUCTIONS, /Mandatory Mermaid Flow Design Gate/);
+  assert.match(WORKFLOW_INSTRUCTIONS, /Multi-Device & Multi-AI Consistency/);
+  assert.match(WORKFLOW_INSTRUCTIONS, /node managed\/rollout\.cjs/);
+});
+
+test("managed/rollout.cjs exports expected rule block and functions", () => {
+  const rollout = readFileSync(path.join(ROOT, "managed/rollout.cjs"), "utf8");
+  assert.match(rollout, /Multi-Device & Multi-AI Consistency/);
+  assert.match(rollout, /promoteToServers/);
+  assert.match(rollout, /syncRules/);
 });
 
 test("normalizeBuildState auto-detects buildHost from SSH commands", () => {

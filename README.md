@@ -100,6 +100,7 @@ finished.
 | `mobile-app/` | The tablet client (Expo/React Native) that shows the same sessions on a wall screen. Includes a **"Buka di Browser"** button (Info tab) and a tappable header URL that open the dashboard in the device browser via `Linking.openURL`. |
 | `security/` | Secret references, output scanning, and the audit |
 | `factory-*.js`, `db/` | Software Factory integration: claiming board tasks, pushing results |
+| `managed/` | Central release distribution, bootstrap launcher, protocol validation, and automated multi-device rollout (`managed/rollout.cjs`) |
 | `scripts/` | Release, build, verification, and server setup helpers |
 | `tests/` | One file per behaviour; `monitor-*` covers the dashboard, `web-*` the site |
 | `docs/` | Deployment guides, architecture notes, and the specs/plans this project was built from |

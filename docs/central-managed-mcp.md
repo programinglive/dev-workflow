@@ -1,16 +1,20 @@
 # One release for HELLOWORLD, MMCH and Mac
 
-The managed deployment has one approved source release on `n8n-instance`, reachable only through Tailscale at `http://100.78.134.44:3101`. It distributes immutable, authenticated archives. The existing monitor remains at `http://100.107.65.21:3100`.
+The managed deployment has one approved source release hosted on `docker-alma` (`100.117.87.66:3101`) and proxied by `n8n-instance` (`100.78.134.44:3101`), reachable only through Tailscale. It distributes immutable, authenticated archives. The existing live monitor remains at `http://100.107.65.21:3100`.
 
 This is centrally managed distribution with local execution. Git, files, tests, Factory credentials and repository paths remain on the device. It does not move development repositories onto a production server. There is no remote command-execution API.
 
-## Daily updates
+## Daily updates & Multi-Device Rollout
+
+To publish, promote, and propagate rules to all three devices (**HELLOWORLD**, **Mac**, **MMCH**) and three AI CLIs (**Codex**, **OpenCode**, **AGY**) in a single automated step:
 
 1. Commit and test changes in an isolated development branch.
-2. Run `node managed/publish.cjs <private-staging-directory>` from the reviewed checkout. It creates `current.json` and a SHA256-named archive under `releases/` from the committed Git tree only.
-3. Copy the archive to `/var/lib/devwf-releases/releases/` on n8n-instance. Verify its SHA256 there against the staged manifest.
-4. Upload `current.json` to a temporary filename, validate it with `managed/protocol.cjs`, then atomically rename it over `/var/lib/devwf-releases/current.json`.
-5. On the next MCP connection each device downloads and verifies the approved release automatically. No `git pull`, package update or development-checkout switching is required on devices. First startup of a new release installs production dependencies and checks the native SQLite module. Prewarm with `node <managed>/device-entry.cjs <client> --resolve-only` when appropriate; keep tokens in the existing process environment/configuration.
+2. Run `node managed/rollout.cjs` from the reviewed checkout.
+   - Publishes the archive from the committed Git tree and calculates SHA256.
+   - Deploys and promotes atomically on both `docker-alma` and `n8n-instance`.
+   - Copies updated bootstrap files (`launcher.cjs`, `protocol.cjs`, `device-entry.cjs`) to all three devices.
+   - Prewarms and verifies runtime resolution on HELLOWORLD, Mac, and MMCH.
+   - Synchronizes AI CLI rules in `.gemini/GEMINI.md`, `.codex/AGENTS.md`, and `.config/opencode/AGENTS.md` across all devices.
 
 Running processes keep their original release until reconnect. A release that adds tools may also require the client to refresh its tool list. Do not kill unrelated active sessions to update them.
 
