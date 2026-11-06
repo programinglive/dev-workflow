@@ -16,7 +16,7 @@ import {
 } from "react-native";
 import Constants from "expo-constants";
 import { namaSesi } from "./session-name";
-import { buildLocation, buildStatusLabel, isRunningBuild, visibleBuilds } from "./build-view";
+import { buildLocation, buildStatusLabel, isRunningBuild, parseEventDetail, visibleBuilds } from "./build-view";
 
 /**
  * Aplikasi monitor sesi dev-workflow.
@@ -292,16 +292,62 @@ export default function App() {
 
               {data && data.events && data.events.length > 0 && (
                 <View style={gaya.aktivitas}>
-                  <Text style={gaya.aktivitasJudul}>Aktivitas terakhir</Text>
-                  {data.events.slice(0, 8).map((e, i) => (
-                    <Text key={i} style={gaya.aktivitasItem}>
-                      <Text style={gaya.aktivitasJenis}>{e.kind}</Text> {e.detail}
-                      <Text style={gaya.aktivitasMeta}>
-                        {"  · "}
-                        {e.project_name} · {ago(e.at, jamServer)}
-                      </Text>
-                    </Text>
-                  ))}
+                  <Text style={gaya.aktivitasJudul}>Aktivitas &amp; Log Build Terakhir</Text>
+                  {data.events.slice(0, 8).map((e, i) => {
+                    const parsed = parseEventDetail(e.detail);
+                    const timeAgoStr = ago(e.at, jamServer);
+                    if (parsed.isBuild && parsed.data) {
+                      const b = parsed.data;
+                      const rawSt = String(b.status || (e.kind.includes('succeeded') ? 'succeeded' : e.kind.includes('failed') ? 'failed' : 'building')).toLowerCase();
+                      const st = isRunningBuild(rawSt) || rawSt === 'succeeded' || rawSt === 'failed' ? rawSt : 'building';
+                      const isSuccess = st === 'succeeded';
+                      const isFailed = st === 'failed';
+                      const borderGaya = isSuccess ? gaya.eventCardBuildSuccess : (isFailed ? gaya.eventCardBuildFailed : gaya.eventCardBuildRunning);
+                      const badgeBg = isSuccess ? '#2ea04326' : (isFailed ? '#f8514926' : '#d2992226');
+                      const badgeFg = isSuccess ? WARNA.hijau : (isFailed ? '#ff7b72' : WARNA.kuning);
+                      const progress = Number.isFinite(b.progress) ? Math.max(0, Math.min(100, Math.round(b.progress))) : null;
+
+                      return (
+                        <View key={i} style={[gaya.eventCard, borderGaya]}>
+                          <View style={gaya.eventBarisAtas}>
+                            <View style={[gaya.eventBadge, { backgroundColor: badgeBg }]}>
+                              <Text style={[gaya.eventBadgeTeks, { color: badgeFg }]}>{buildStatusLabel(st)}</Text>
+                            </View>
+                            <Text style={gaya.eventTarget} numberOfLines={1}>{b.target || e.project_name || "Build"}</Text>
+                          </View>
+                          <Text style={gaya.eventMeta}>
+                            {(b.buildHost || e.machine ? `${b.buildHost || e.machine} · ` : "") + (e.project_name || "proyek") + (timeAgoStr ? ` · ${timeAgoStr}` : "")}
+                          </Text>
+                          {b.stage ? (
+                            <Text style={gaya.eventStage}>
+                              ▸ {b.stage} {progress !== null ? `(${progress}%)` : ""}
+                            </Text>
+                          ) : null}
+                          {progress !== null ? (
+                            <View style={gaya.barLuar}>
+                              <View style={[gaya.barDalam, { width: `${progress}%`, backgroundColor: isFailed ? '#f85149' : (isSuccess ? WARNA.hijau : WARNA.biru) }]} />
+                            </View>
+                          ) : null}
+                          {b.command ? <Text style={gaya.eventCmd}>$ {b.command}</Text> : null}
+                          {b.output ? <Text style={gaya.eventOut}>{b.output}</Text> : null}
+                        </View>
+                      );
+                    }
+
+                    return (
+                      <View key={i} style={[gaya.eventCard, gaya.eventCardGeneric]}>
+                        <View style={gaya.eventBarisAtas}>
+                          <View style={[gaya.eventBadge, { backgroundColor: '#1f6feb22' }]}>
+                            <Text style={[gaya.eventBadgeTeks, { color: WARNA.biruMuda }]}>{e.kind}</Text>
+                          </View>
+                          <Text style={gaya.eventDetailTeks} numberOfLines={2}>{parsed.text}</Text>
+                        </View>
+                        <Text style={gaya.eventMeta}>
+                          {(e.machine ? `${e.machine} · ` : "") + (e.project_name || "proyek") + (timeAgoStr ? ` · ${timeAgoStr}` : "")}
+                        </Text>
+                      </View>
+                    );
+                  })}
                 </View>
               )}
             </>
@@ -1012,6 +1058,28 @@ const gaya = StyleSheet.create({
   aktivitasItem: { color: WARNA.redup, fontSize: 12, marginBottom: 6 },
   aktivitasJenis: { color: WARNA.teks, fontWeight: "600" },
   aktivitasMeta: { color: "#5c6672" },
+
+  eventCard: {
+    backgroundColor: "#0d131d",
+    borderWidth: 1,
+    borderColor: "#21262d",
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 8,
+  },
+  eventCardBuildSuccess: { borderLeftWidth: 4, borderLeftColor: WARNA.hijau },
+  eventCardBuildRunning: { borderLeftWidth: 4, borderLeftColor: WARNA.kuning },
+  eventCardBuildFailed: { borderLeftWidth: 4, borderLeftColor: "#f85149" },
+  eventCardGeneric: { borderLeftWidth: 4, borderLeftColor: WARNA.biru },
+  eventBarisAtas: { flexDirection: "row", alignItems: "center", marginBottom: 4 },
+  eventBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginRight: 8 },
+  eventBadgeTeks: { fontSize: 10, fontWeight: "700" },
+  eventTarget: { color: WARNA.teks, fontSize: 13, fontWeight: "700", flex: 1 },
+  eventDetailTeks: { color: WARNA.teks, fontSize: 12, fontWeight: "500", flex: 1 },
+  eventMeta: { color: WARNA.redup, fontSize: 11, marginTop: 2 },
+  eventStage: { color: WARNA.biruMuda, fontSize: 12, marginTop: 4, fontWeight: "500" },
+  eventCmd: { backgroundColor: "#05080c", borderRadius: 6, padding: 6, marginTop: 6, color: "#8b949e", fontSize: 11, fontFamily: "monospace" },
+  eventOut: { backgroundColor: "#111822", borderRadius: 6, padding: 8, marginTop: 6, color: "#e6edf3", fontSize: 12, lineHeight: 17 },
 
   modalLatar: {
     flex: 1,

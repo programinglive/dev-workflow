@@ -261,6 +261,29 @@ const PAGE = `<!doctype html>
   .events b { color:#c9d1d9; font-weight:500; }
   .event-row { padding:7px 10px; border-bottom:1px solid #161b22; display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; }
   .event-row:last-child { border-bottom:none; }
+
+  /* Activity Box & Build Event Cards */
+  .activity-box { background:#0d131d; border:1px solid #212d3d; }
+  .events-scroll-container { max-height:360px; overflow-y:auto; padding-right:4px; scrollbar-width:thin; scrollbar-color:#30363d #090d13; }
+  .events-scroll-container::-webkit-scrollbar { width:6px; }
+  .events-scroll-container::-webkit-scrollbar-track { background:#090d13; border-radius:4px; }
+  .events-scroll-container::-webkit-scrollbar-thumb { background:#30363d; border-radius:4px; }
+  .event-card { background:#090d13; border:1px solid #21262d; border-radius:8px; padding:10px 12px; margin-bottom:8px; font-size:12px; transition:border-color .15s; }
+  .event-card:hover { border-color:#388bfd55; }
+  .event-card.build.succeeded { border-left:4px solid #2ea043; background:linear-gradient(90deg, rgba(46,160,67,0.06) 0%, #090d13 25%); }
+  .event-card.build.building, .event-card.build.testing, .event-card.build.scanning, .event-card.build.deploying { border-left:4px solid #d29922; background:linear-gradient(90deg, rgba(210,153,34,0.06) 0%, #090d13 25%); }
+  .event-card.build.failed { border-left:4px solid #f85149; background:linear-gradient(90deg, rgba(248,81,73,0.08) 0%, #090d13 25%); }
+  .event-card.generic { border-left:4px solid #388bfd; }
+  .event-head { display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:4px; }
+  .event-title-line { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .event-target-text { font-weight:700; color:#f0f6fc; font-size:13px; }
+  .event-meta-line { font-size:11px; color:#7d8590; display:flex; align-items:center; gap:6px; margin-left:auto; }
+  .event-host-pill { background:#161b22; border:1px solid #30363d; border-radius:4px; padding:1px 6px; color:#a5d6ff; font-size:11px; }
+  .event-stage-line { color:#79c0ff; font-size:12px; margin:4px 0 2px; font-weight:500; display:flex; align-items:center; gap:6px; }
+  .event-cmd-box { font:11px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace; background:#05080c; border:1px solid #1b222c; border-radius:6px; padding:5px 8px; color:#8b949e; margin-top:6px; word-break:break-all; }
+  .event-out-box { font-size:12px; line-height:1.5; color:#e6edf3; background:#101620; border-radius:6px; padding:8px 10px; margin-top:6px; border:1px solid #1f2937; white-space:pre-wrap; word-break:break-word; }
+  .event-kind-tag { background:#1f6feb22; color:#79c0ff; border:1px solid #1f6feb44; border-radius:4px; padding:1px 6px; font-weight:600; font-size:10px; text-transform:uppercase; }
+  .event-detail-text { color:#c9d1d9; font-weight:500; }
   .warn { border:1px solid #d2992255; background:#d299221a; color:#e3b341;
           border-radius:10px; padding:10px 12px; margin-bottom:12px; font-size:13px; }
   .warn b { color:#f0c674; }
@@ -353,9 +376,29 @@ const PAGE = `<!doctype html>
   <div id="warn"></div>
   <div id="alerts"></div>
   <div id="build-monitor"></div>
+
+  <!-- AKTIVITAS & BUILD LOG TERAKHIR (HIGH VISIBILITY: ABOVE ACTIVE SESSIONS) -->
+  <div class="card activity-box" id="activity-section" style="padding:12px 14px;margin-bottom:18px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <h1 style="font-size:14px;margin:0;color:#f0f6fc;display:flex;align-items:center;gap:6px">
+          <span>⚡ Aktivitas &amp; Build Log Terakhir</span>
+        </h1>
+        <span class="meta" id="events-count-badge" style="font-size:11px;background:#21262d;padding:1px 7px;border-radius:999px;color:#a5d6ff"></span>
+      </div>
+      <div style="display:flex;gap:6px;align-items:center">
+        <button id="filter-all-events" class="filter-chip active" style="padding:2px 8px;font-size:11px" onclick="setEventFilter('all')">Semua</button>
+        <button id="filter-build-events" class="filter-chip" style="padding:2px 8px;font-size:11px" onclick="setEventFilter('build')">Build saja</button>
+        <button id="btn-toggle-events" class="btn" style="padding:2px 8px;font-size:11px" onclick="toggleEventsCollapse()">Sembunyikan</button>
+      </div>
+    </div>
+    <div id="events-scroll-container" class="events-scroll-container">
+      <div id="events" class="events"></div>
+    </div>
+  </div>
+
+  <h1 style="font-size:14px;margin:20px 0 10px;color:#f0f6fc">Sesi Aktif</h1>
   <div id="list"><div class="empty">memuat…</div></div>
-  <h1 style="font-size:14px;margin:24px 0 10px">Aktivitas &amp; Build Log Terakhir</h1>
-  <div id="events" class="card events" style="padding:8px 12px"></div>
 </div>
 
 <!-- TAB 2: RIWAYAT -->
@@ -625,6 +668,127 @@ let lastData = null;
 let currentTab = 'aktif';
 let currentFilter = 'semua';
 let activeDetailKey = null;
+let eventFilter = 'all';
+let eventsCollapsed = false;
+
+function setEventFilter(filter) {
+  eventFilter = filter;
+  const btnAll = document.getElementById('filter-all-events');
+  const btnBuild = document.getElementById('filter-build-events');
+  if (btnAll) btnAll.classList.toggle('active', filter === 'all');
+  if (btnBuild) btnBuild.classList.toggle('active', filter === 'build');
+  if (lastData) {
+    const jNow = lastData.now ? new Date(lastData.now).getTime() : Date.now();
+    renderEventsList(lastData.events || [], jNow);
+  }
+}
+
+function toggleEventsCollapse() {
+  eventsCollapsed = !eventsCollapsed;
+  const c = document.getElementById('events-scroll-container');
+  const btn = document.getElementById('btn-toggle-events');
+  if (c) c.style.display = eventsCollapsed ? 'none' : 'block';
+  if (btn) btn.textContent = eventsCollapsed ? 'Tampilkan' : 'Sembunyikan';
+}
+
+function parseClientEventDetail(detail) {
+  if (!detail) return { isBuild: false, data: null, text: '' };
+  if (typeof detail === 'object') {
+    const isBuild = Boolean(detail.target || detail.command || detail.stage || detail.buildHost || detail.status || detail.progress !== undefined || detail.output);
+    return { isBuild, data: isBuild ? detail : null, text: detail.output || detail.stage || detail.target || JSON.stringify(detail) };
+  }
+  const str = String(detail).trim();
+  if (str.startsWith('{') && str.endsWith('}')) {
+    try {
+      const obj = JSON.parse(str);
+      if (obj && typeof obj === 'object') {
+        const isBuild = Boolean(obj.target || obj.command || obj.stage || obj.buildHost || obj.status || obj.progress !== undefined || obj.output);
+        return { isBuild, data: isBuild ? obj : null, text: obj.output || obj.stage || obj.target || str };
+      }
+    } catch (_) {}
+  }
+  return { isBuild: false, data: null, text: str };
+}
+
+function renderEventCard(e, jNow) {
+  const parsed = parseClientEventDetail(e.detail);
+  const timeStr = e.at ? ago(e.at, jNow) : '';
+  const proj = esc(e.project_name || 'proyek');
+  const kind = esc(e.kind || 'event');
+
+  if (parsed.isBuild && parsed.data) {
+    const b = parsed.data;
+    const rawSt = String(b.status || (e.kind.includes('succeeded') ? 'succeeded' : e.kind.includes('failed') ? 'failed' : 'building')).toLowerCase();
+    const st = (rawSt === 'building' || rawSt === 'testing' || rawSt === 'scanning' || rawSt === 'deploying' || rawSt === 'succeeded' || rawSt === 'failed') ? rawSt : 'building';
+    const stLabel = st === 'succeeded' ? 'BERHASIL' : st === 'failed' ? 'GAGAL' : st === 'building' ? 'BUILDING' : st === 'testing' ? 'TESTING' : st.toUpperCase();
+    const host = b.buildHost ? esc(b.buildHost) : (e.machine ? esc(e.machine) : '');
+    const target = esc(b.target || e.project_name || 'Build Target');
+    const stage = b.stage ? esc(b.stage) : '';
+    const progress = (typeof b.progress === 'number' && isFinite(b.progress)) ? Math.max(0, Math.min(100, Math.round(b.progress))) : null;
+    const cmd = b.command ? esc(b.command) : '';
+    const out = b.output ? esc(b.output) : '';
+
+    return '<div class="event-card build ' + esc(st) + '">' +
+      '<div class="event-head">' +
+        '<div class="event-title-line">' +
+          '<span class="build-badge ' + esc(st) + '" style="font-size:10px;padding:1px 7px">' + stLabel + '</span>' +
+          '<span class="event-target-text">' + target + '</span>' +
+        '</div>' +
+        '<div class="event-meta-line">' +
+          (host ? '<span class="event-host-pill">🖥️ ' + host + '</span>' : '') +
+          '<span style="color:#c9d1d9">' + proj + '</span>' +
+          (timeStr ? '<span>· ' + timeStr + '</span>' : '') +
+        '</div>' +
+      '</div>' +
+      (stage ? '<div class="event-stage-line">▸ ' + stage + (progress !== null ? ' (' + progress + '%)' : '') + '</div>' : '') +
+      (progress !== null ? '<div class="build-bar" style="margin:4px 0 6px;height:4px"><i style="width:' + progress + '%"></i></div>' : '') +
+      (cmd ? '<div class="event-cmd-box">$ ' + cmd + '</div>' : '') +
+      (out ? '<div class="event-out-box">' + out + '</div>' : '') +
+    '</div>';
+  }
+
+  // Non-build or generic events
+  return '<div class="event-card generic">' +
+    '<div class="event-head">' +
+      '<div class="event-title-line">' +
+        '<span class="event-kind-tag">' + kind + '</span>' +
+        '<span class="event-detail-text">' + esc(parsed.text) + '</span>' +
+      '</div>' +
+      '<div class="event-meta-line">' +
+        (e.machine ? '<span>' + esc(e.machine) + ' · </span>' : '') +
+        '<span style="color:#c9d1d9">' + proj + '</span>' +
+        (timeStr ? '<span>· ' + timeStr + '</span>' : '') +
+      '</div>' +
+    '</div>' +
+  '</div>';
+}
+
+function renderEventsList(events, jNow) {
+  const el = document.getElementById('events');
+  if (!el) return;
+  const badgeEl = document.getElementById('events-count-badge');
+
+  const allEvents = events || [];
+  const buildEvents = allEvents.filter(function(e) {
+    const k = String(e.kind || '');
+    if (k.startsWith('build_') || k === 'tests_passed' || k === 'tests_failed' || k === 'release') return true;
+    const p = parseClientEventDetail(e.detail);
+    return p.isBuild;
+  });
+
+  if (badgeEl) {
+    badgeEl.textContent = allEvents.length + ' aktivitas · ' + buildEvents.length + ' build';
+  }
+
+  const filtered = eventFilter === 'build' ? buildEvents : allEvents;
+  if (!filtered.length) {
+    el.innerHTML = '<div class="empty" style="padding:20px 0;font-size:12px">' +
+      (eventFilter === 'build' ? 'belum ada log build tercatat' : 'belum ada aktivitas tercatat') + '</div>';
+    return;
+  }
+
+  el.innerHTML = filtered.map(function(e) { return renderEventCard(e, jNow); }).join('');
+}
 
 function pilihTab(tabId) {
   currentTab = tabId;
@@ -1092,10 +1256,7 @@ function render(data) {
   ).join('') || '<div class="empty">belum ada mesin terhubung</div>';
 
   // Events
-  document.getElementById('events').innerHTML = (data.events || []).map(e =>
-    '<div style="padding:4px 0"><b>' + esc(e.kind) + '</b> ' + esc(e.detail) +
-    '<span class="meta"> · ' + esc(e.project_name) + ' · ' + ago(e.at, jNow) + '</span></div>').join('')
-    || '<div>—</div>';
+  renderEventsList(data.events || [], jNow);
 
   // Info
   const serverEl = document.getElementById('serverInfo');

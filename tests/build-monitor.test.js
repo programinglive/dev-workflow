@@ -9,6 +9,7 @@ import {
   normalizeBuildState,
   formatBuildStatusBlock,
   extractActiveBuildFromEvents,
+  parseEventDetail,
 } from "../build-monitor.js";
 import { buildSnapshot } from "../monitor.js";
 import { getToolList } from "../tools/definitions.js";
@@ -214,4 +215,38 @@ test("monitor-server/dashboard.cjs includes Live Build Monitor UI, KPI strip, an
   assert.match(dash, /renderBuildMonitor/);
   assert.match(dash, /renderPipeline/);
   assert.match(dash, /active_build/);
+});
+
+test("parseEventDetail safely parses JSON build event details and plain text", () => {
+  const plain = parseEventDetail("task started: refactor auth");
+  assert.equal(plain.isBuild, false);
+  assert.equal(plain.data, null);
+  assert.equal(plain.text, "task started: refactor auth");
+
+  const buildPayload = {
+    status: "building",
+    target: "Personal Voice Input Android APK",
+    buildHost: "HELLOWORLD",
+    command: "npm run tauri -- android build --apk",
+    stage: "Compiling Tauri Android and whisper-rs",
+    progress: 100,
+    output: "Release binary compiled successfully in 5m 50s",
+  };
+  const jsonParsed = parseEventDetail(JSON.stringify(buildPayload));
+  assert.equal(jsonParsed.isBuild, true);
+  assert.ok(jsonParsed.data);
+  assert.equal(jsonParsed.data.target, "Personal Voice Input Android APK");
+  assert.equal(jsonParsed.data.status, "building");
+  assert.equal(jsonParsed.data.buildHost, "HELLOWORLD");
+  assert.equal(jsonParsed.data.progress, 100);
+  assert.equal(jsonParsed.text, "Release binary compiled successfully in 5m 50s");
+
+  const malformed = parseEventDetail("{not valid json");
+  assert.equal(malformed.isBuild, false);
+  assert.equal(malformed.data, null);
+  assert.equal(malformed.text, "{not valid json");
+
+  const empty = parseEventDetail(null);
+  assert.equal(empty.isBuild, false);
+  assert.equal(empty.text, "");
 });

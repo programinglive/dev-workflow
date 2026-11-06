@@ -5,6 +5,7 @@ export const {
   normalizeBuildState,
   formatBuildStatusBlock,
   extractActiveBuildFromEvents,
+  parseEventDetail,
   formatElapsedShort,
   statusBadge,
 } = buildMonitor;
