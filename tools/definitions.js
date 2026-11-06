@@ -125,6 +125,12 @@ export function getToolList() {
               "two sessions on one working tree overwrite each other's files silently. Prefer closing the other " +
               "session or using a git worktree.",
           },
+          mermaidFlow: {
+            type: "string",
+            description:
+              "Optional initial Mermaid flowchart (flowchart TD / graph TD). If omitted, dev-workflow auto-generates " +
+              "an architecture flowchart from your task description and plan, and immediately creates a linked Zettly Draw Studio canvas.",
+          },
         },
         required: ["description", "type", "definitionOfDone", "plan"],
       },

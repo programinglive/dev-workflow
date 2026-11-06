@@ -51,20 +51,22 @@ external tools, runtime authentication stores, historical Git and backups still
 require operational controls. A credential already pasted into a model cannot be
 removed by this server.
 
-An MCP server that enforces development workflow discipline: **tests → documentation → commit → release**, with no way to skip a step.
+An MCP server that enforces development workflow discipline: **start (mandatory visual flow gate) → tests → documentation → commit → release**, with no way to skip a step.
 
 ```mermaid
 graph LR
-    A[start_task] --> S[Optional search_project discovery] --> B[Implement]
+    A[start_task] --> F[Auto Zettly Draw Canvas & Flow Gate]
+    F --> S[Optional search_project discovery]
+    S --> B[Implement]
     B --> C[mark_bug_fixed]
     C --> D[create_tests]
     D --> E[run_tests]
     E -- FAIL --> B
-    E -- PASS --> F[create_documentation]
-    F --> G[check_ready_to_commit]
-    G --> H[commit_and_push]
-    H --> I[perform_release / skip_release]
-    I --> J[complete_task]
+    E -- PASS --> G[create_documentation]
+    G --> H[check_ready_to_commit]
+    H --> I[commit_and_push]
+    I --> J[perform_release / skip_release]
+    J --> K[complete_task]
 ```
 
 ---

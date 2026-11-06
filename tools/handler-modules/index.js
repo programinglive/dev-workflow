@@ -383,7 +383,7 @@ async function dispatchToolCall({
         if(prepared.response)return prepared.response;
         const focused=await prepareTaskFocus(prepared.args,{...integrationOptions,client:zettlyOptions?.client||integrationOptions?.zettly,env:zettlyOptions?.env||integrationOptions?.env||process.env});
         if(focused.response)return focused.response;
-        return handleStartTask(focused.args, workflowState, git);
+        return handleStartTask(focused.args, workflowState, git, zettlyOptions);
       }
       case 'link_factory_task':
         return handleIntegrationTool('link_factory_task',args,workflowState,integrationOptions);

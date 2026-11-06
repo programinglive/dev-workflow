@@ -20,6 +20,43 @@ function cleanStr(val, maxLen = 400) {
   return String(val).trim().slice(0, maxLen);
 }
 
+function extractHostFromCommand(cmd) {
+  if (typeof cmd !== 'string' || !cmd.trim()) return '';
+  const cleanCmd = cmd.trim();
+
+  const gcloudMatch = cleanCmd.match(/gcloud\s+compute\s+ssh\s+([a-zA-Z0-9_.-]+)/i);
+  if (gcloudMatch && gcloudMatch[1]) {
+    return gcloudMatch[1];
+  }
+
+  const sshIdx = cleanCmd.search(/(?:^|\s)ssh(?:\.exe)?\s+/i);
+  if (sshIdx !== -1) {
+    const afterSsh = cleanCmd.slice(sshIdx).replace(/^(?:\s*)ssh(?:\.exe)?\s+/i, '');
+    const tokens = afterSsh.split(/\s+/);
+    let skipNext = false;
+    for (let i = 0; i < tokens.length; i++) {
+      const tok = tokens[i];
+      if (skipNext) {
+        skipNext = false;
+        continue;
+      }
+      if (tok.startsWith('-')) {
+        if (['-o', '-p', '-i', '-l', '-F', '-c'].includes(tok)) {
+          skipNext = true;
+        }
+        continue;
+      }
+      const host = tok.split('@').pop().split(':')[0];
+      if (host && /^[a-zA-Z0-9_.-]+$/.test(host)) {
+        return host;
+      }
+      break;
+    }
+  }
+
+  return '';
+}
+
 /**
  * Normalize and merge a build status update with any previous activeBuild state.
  *
@@ -47,14 +84,21 @@ function normalizeBuildState(input = {}, existing = null) {
   const sameRunningBuild = prev.target === target &&
     !['succeeded', 'failed', 'idle'].includes(prev.status) &&
     (prev.status === status || ['succeeded', 'failed', 'idle'].includes(status));
-  const buildHost = cleanStr(
-    input.buildHost !== undefined ? input.buildHost : sameRunningBuild ? prev.buildHost : '',
-    120,
-  );
   const command = cleanStr(
     input.command !== undefined ? input.command : prev.command || '',
     300,
   );
+  let resolvedBuildHost = cleanStr(
+    input.buildHost !== undefined ? input.buildHost : sameRunningBuild ? prev.buildHost : '',
+    120,
+  );
+  if (!resolvedBuildHost && command) {
+    resolvedBuildHost = extractHostFromCommand(command);
+  }
+  if (!resolvedBuildHost && typeof input.machine === 'string' && input.machine.trim()) {
+    resolvedBuildHost = cleanStr(input.machine, 120);
+  }
+  const buildHost = resolvedBuildHost;
   const stage = cleanStr(
     input.stage !== undefined ? input.stage : prev.stage || '',
     240,

@@ -535,9 +535,16 @@ function renderPipeline(s) {
   }).join('') + '</div>';
 }
 function renderBuildLocation(ab, machine) {
-  return '<div class="build-location">' + (ab.buildHost
-    ? 'Build di <strong>' + esc(ab.buildHost) + '</strong>'
-    : 'Host build belum dilaporkan' + (machine ? ' · Pelapor ' + esc(machine) : '')) + '</div>';
+  const host = ab.buildHost || machine || '';
+  if (host) {
+    const isRemoteVm = machine && host.toLowerCase() !== machine.toLowerCase();
+    const tag = isRemoteVm
+      ? ' <span class="badge" style="background:#4338ca;color:#fff;font-size:10px;padding:1px 6px;border-radius:4px;margin-left:4px">Remote VM</span>'
+      : ' <span class="badge" style="background:#0284c7;color:#fff;font-size:10px;padding:1px 6px;border-radius:4px;margin-left:4px">Lokal</span>';
+    const reporter = isRemoteVm ? ' <span class="meta" style="font-size:11px;opacity:0.8">· Pelapor ' + esc(machine) + '</span>' : '';
+    return '<div class="build-location">🏗️ Mesin Builder: <strong>' + esc(host) + '</strong>' + tag + reporter + '</div>';
+  }
+  return '<div class="build-location">🏗️ Mesin Builder: <strong>Lokal</strong>' + (machine ? ' <span class="meta">(' + esc(machine) + ')</span>' : '') + '</div>';
 }
 function renderBuildBox(ab, jNow, machine) {
   if (!ab || !ab.target) return '';
