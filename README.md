@@ -933,17 +933,26 @@ captured stderr before the build test asserts on it.
 
 ## CI
 
-`.github/workflows/ci.yml` runs on the **self-hosted runner on MMCH**, not on
+`.github/workflows/ci.yml` is a thin caller for the organisation-wide standard
+`programinglive/ci-cd@v1`. It runs on the **self-hosted runner on MMCH**, not on
 GitHub-hosted minutes:
 
 ```yaml
-runs-on: [self-hosted, windows, mmch]
+jobs:
+  ci:
+    uses: programinglive/ci-cd/.github/workflows/ci-node.yml@v1
+    with:
+      runner: '["self-hosted","windows","mmch"]'
 ```
 
 | Job | Steps |
 |---|---|
-| `test` | `npm ci` → `npm test` → `build:server` → **verify the bundle starts** → `npm audit --omit=dev --audit-level=high` → setup-stack suite |
-| `web` | `npm ci` in `web/` → static export build → verify `out/index.html` and CSS size → `npm audit --audit-level=high` |
+| `ci` (test/lint/build) | `npm ci` → `npm test` → security boundaries → setup-stack suite → `npm run lint` → `build:server` → **verify the bundle starts** → `npm audit --omit=dev --audit-level=high` |
+| `ci` (web) | `npm ci` in `web/` → static export build → `npm audit --omit=dev --audit-level=high` |
+
+The workflow definition lives in `programinglive/ci-cd`, so every repository
+runs the same steps. Changing this repository's checks means changing the
+caller's `with:` block, not copying pipeline code.
 
 The bundle verification step exists because a successful build does not mean
 the artefact runs. `dist/index.mjs` is the published package entry, and a
