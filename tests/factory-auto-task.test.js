@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { autoTaskEnabled, pickProject, recordToFactory } = require("../factory-auto-task.cjs");
+const { autoTaskEnabled, pickProject, recordToFactory, factoryTitle } = require("../factory-auto-task.cjs");
 
 /**
  * Pemilik meminta "setiap pekerjaan terekam di Factory". Sebelum ini jalur
@@ -96,4 +96,38 @@ test("tanpa DoD tetap mengirim teks yang sah", async () => {
   });
   assert.equal(hasil.ok, true);
   assert.match(dikirim.definitionOfDone, /task selesai dan terverifikasi/);
+});
+
+/**
+ * Judul kartu Factory dibatasi 3-140 karakter. `start_task` mengirim
+ * deskripsi tugas sebagai judul, dan deskripsi yang wajar sering lebih
+ * panjang dari 140 - akibatnya kartu tidak pernah dibuat, tetapi
+ * `start_task` tetap berhasil dan hanya menyisipkan peringatan kecil.
+ * Pekerjaan jadi tidak tercatat tanpa ada yang menyadarinya.
+ *
+ * Yang benar: potong judulnya, simpan teks lengkap di deskripsi.
+ */
+test("judul panjang dipotong ke batas Factory, bukan menggagalkan pencatatan", () => {
+  const panjang = "x".repeat(200);
+  const hasil = factoryTitle(panjang);
+  assert.ok(hasil.length <= 140, `judul ${hasil.length} karakter, harus <= 140`);
+  assert.ok(hasil.endsWith("…"), "judul yang dipotong diberi tanda elipsis");
+});
+
+test("judul yang sudah pendek tidak diubah", () => {
+  assert.equal(factoryTitle("Perbaiki login ERP"), "Perbaiki login ERP");
+});
+
+test("spasi berlebih dirapikan supaya tidak memakan kuota 140", () => {
+  assert.equal(factoryTitle("  a   b  \n c "), "a b c");
+});
+
+test("judul tepat 140 karakter dibiarkan utuh", () => {
+  const pas = "y".repeat(140);
+  assert.equal(factoryTitle(pas), pas);
+});
+
+test("judul 141 karakter dipotong menjadi 140", () => {
+  const hasil = factoryTitle("z".repeat(141));
+  assert.equal(hasil.length, 140);
 });

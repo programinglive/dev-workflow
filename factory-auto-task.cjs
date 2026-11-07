@@ -23,6 +23,24 @@
  */
 
 const DEFAULT_TIMEOUT_MS = 8000;
+const TITLE_MAX = 140;
+
+/**
+ * Judul kartu Factory dibatasi 3-140 karakter oleh API-nya.
+ *
+ * `start_task` memakai deskripsi tugas sebagai judul, dan deskripsi yang
+ * wajar sering melewati 140 karakter. Dulu judul dikirim apa adanya:
+ * Factory menolak, `start_task` tetap berhasil, dan satu-satunya jejaknya
+ * adalah peringatan kecil di hasil tool - jadi pekerjaan bisa tidak
+ * tercatat tanpa ada yang menyadarinya.
+ *
+ * Teks lengkap tetap disimpan di deskripsi kartu; yang dipotong hanya judul.
+ */
+function factoryTitle(text, max = TITLE_MAX) {
+  const rapi = String(text || '').replace(/\s+/g, ' ').trim();
+  if (rapi.length <= max) return rapi;
+  return rapi.slice(0, max - 1).trimEnd() + '\u2026';
+}
 
 /** Apakah pencatatan otomatis diminta. */
 function autoTaskEnabled(env = process.env) {
@@ -76,7 +94,7 @@ async function recordToFactory({ state, env = process.env, client, timeoutMs = D
     const dibuat = await Promise.race([
       mod.createTask(cfg, {
         projectId: pilih.id || pilih.projectId,
-        title: judul,
+        title: factoryTitle(judul),
         description:
           `Dibuat otomatis dari sesi ${String(env.DEVWF_MACHINE || '?')}` +
           (s.projectDir ? ` di ${s.projectDir}` : '') +
@@ -96,4 +114,4 @@ async function recordToFactory({ state, env = process.env, client, timeoutMs = D
   }
 }
 
-module.exports = { recordToFactory, autoTaskEnabled, pickProject, DEFAULT_TIMEOUT_MS };
+module.exports = { recordToFactory, autoTaskEnabled, pickProject, factoryTitle, DEFAULT_TIMEOUT_MS, TITLE_MAX };
