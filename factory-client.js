@@ -408,6 +408,26 @@ function processStartedAt() {
   return new Date(Date.now() - process.uptime() * 1000);
 }
 
+/**
+ * Headers for a Cloudflare Access service token.
+ *
+ * PocketBase sits behind Cloudflare Access, so an unauthenticated request is
+ * answered with a 302 to the Access login page (HTML) instead of JSON. Callers
+ * then fail with "Unexpected token '<'" which looks like a broken endpoint but
+ * is really a missing service token. Both values are optional: when they are
+ * absent the request is sent unchanged, which keeps local and test setups
+ * working.
+ */
+function accessHeaders() {
+  const id = process.env.CF_ACCESS_CLIENT_ID;
+  const secret = process.env.CF_ACCESS_CLIENT_SECRET;
+  if (!id || !secret) return {};
+  return {
+    "CF-Access-Client-Id": id,
+    "CF-Access-Client-Secret": secret,
+  };
+}
+
 /** Satu percobaan login dengan pasangan email/password tertentu. */
 function attemptLogin(config, fetchImpl, { email, password }) {
   registerRuntimeSecret(password);
@@ -420,6 +440,7 @@ function attemptLogin(config, fetchImpl, { email, password }) {
       // tidak diizinkan"), dan galat itu mudah disalahartikan sebagai password
       // salah. Dikirim eksplisit supaya tidak bergantung pada perilaku bawaan.
       Origin: config.url,
+      ...accessHeaders(),
     },
     body: JSON.stringify({ identity: email, password }),
   });
@@ -508,6 +529,7 @@ async function request(config, path, { method = "GET", body, fetchImpl = fetch }
       // berhasil (200) hanya setelah header ini ditambahkan.
       Origin: config.url,
       ...(body ? { "content-type": "application/json" } : {}),
+      ...accessHeaders(),
     },
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
