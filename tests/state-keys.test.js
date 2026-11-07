@@ -34,9 +34,10 @@ test("sanitasi kunci sama dengan yang dipakai nama berkas legacy", () => {
 });
 
 test("project_path dinormalisasi sehingga satu proyek jadi satu baris", () => {
-  assert.equal(normalizeProjectPath("D:\\code\\Foo\\"), "d:/code/foo");
+  const expected = process.platform === "win32" ? "d:/code/foo" : "D:/code/Foo";
+  assert.equal(normalizeProjectPath("D:\\code\\Foo\\"), expected);
   assert.equal(normalizeProjectPath("d:/code/foo"), "d:/code/foo");
-  assert.equal(normalizeProjectPath("D:\\code\\Foo"), "d:/code/foo");
+  assert.equal(normalizeProjectPath("D:\\code\\Foo"), expected);
 });
 
 test("normalisasi path mengosongkan nilai bukan-string", () => {

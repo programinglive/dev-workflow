@@ -54,7 +54,7 @@ test("di POSIX, huruf besar-kecil dipertahankan", () => {
 
 test("jalur akar tidak menjadi string kosong", () => {
   assert.equal(normalizeProjectPath("/"), "/");
-  assert.equal(normalizeProjectPath("C:\\"), "c:/");
+  assert.equal(normalizeProjectPath("C:\\"), process.platform === "win32" ? "c:/" : "C:/");
 });
 
 // --- 2. state_writer_history: index + retensi ------------------------------

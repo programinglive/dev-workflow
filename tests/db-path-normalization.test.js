@@ -36,20 +36,23 @@ const ENTRY = {
   timestamp: "2026-11-02T10:00:00.000Z",
 };
 
+const EXPECTED_NORM = process.platform === "win32" ? "d:/code/foo" : "D:/Code/Foo";
+const ALT_SPELLING = process.platform === "win32" ? "d:/code/foo" : "D:/Code/Foo/";
+
 test("riwayat ditulis dengan path ternormalisasi", async () => {
   await withAdapter(async (adapter) => {
     await adapter.insertHistoryEntry("u", "D:\\Code\\Foo\\", ENTRY);
     const row = adapter.db
       .prepare("SELECT project_path FROM workflow_history LIMIT 1")
       .get();
-    assert.equal(row.project_path, "d:/code/foo");
+    assert.equal(row.project_path, EXPECTED_NORM);
   });
 });
 
 test("riwayat dengan ejaan berbeda menunjuk baris yang sama", async () => {
   await withAdapter(async (adapter) => {
     await adapter.insertHistoryEntry("u", "D:\\Code\\Foo", ENTRY);
-    await adapter.insertHistoryEntry("u", "d:/code/foo", ENTRY);
+    await adapter.insertHistoryEntry("u", ALT_SPELLING, ENTRY);
     const rows = adapter.db.prepare("SELECT count(*) c FROM workflow_history").get().c;
     assert.equal(rows, 1, "satu proyek = satu baris riwayat");
   });
@@ -58,7 +61,7 @@ test("riwayat dengan ejaan berbeda menunjuk baris yang sama", async () => {
 test("membaca riwayat dengan ejaan berbeda tetap menemukannya", async () => {
   await withAdapter(async (adapter) => {
     await adapter.insertHistoryEntry("u", "D:\\Code\\Foo", ENTRY);
-    const result = await adapter.getHistoryForUser("u", "d:/code/foo", { pageSize: 10 });
+    const result = await adapter.getHistoryForUser("u", ALT_SPELLING, { pageSize: 10 });
     assert.equal(result.total, 1);
     assert.equal(result.entries.length, 1);
   });
@@ -69,7 +72,7 @@ test("ringkasan proyek ditulis dan dibaca dengan path ternormalisasi", async () 
     await adapter.insertHistoryEntry("u", "D:\\Code\\Foo", ENTRY);
     await adapter.updateSummaryForUser("u", "D:/Code/Foo/");
 
-    const summary = await adapter.getSummaryForUser("u", "d:/code/foo");
+    const summary = await adapter.getSummaryForUser("u", ALT_SPELLING);
     assert.ok(summary, "ringkasan harus ditemukan dengan ejaan lain");
     assert.equal(summary.totalTasks, 1);
 

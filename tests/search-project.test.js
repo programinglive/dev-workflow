@@ -19,6 +19,7 @@ async function makeRepo() {
   execFileSync('git', ['-C', root, 'init', '-q']);
   execFileSync('git', ['-C', root, 'config', 'user.email', 'search-test@example.invalid']);
   execFileSync('git', ['-C', root, 'config', 'user.name', 'Search Test']);
+  execFileSync('git', ['-C', root, 'config', 'core.excludesFile', '']);
   return root;
 }
 

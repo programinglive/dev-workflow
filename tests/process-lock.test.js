@@ -145,7 +145,7 @@ test("lock diletakkan di .state proyek, bukan di direktori user", () => {
     "workflow-state.ses_x.json"
   );
 
-  assert.equal(projectLockDir(stateFile), path.join("C:", "proyek", ".state"));
+  assert.equal(projectLockDir(stateFile), path.resolve("C:", "proyek", ".state"));
 });
 
 test("dua sesi berbeda di proyek yang sama memakai lock yang SAMA", () => {
@@ -167,20 +167,22 @@ test("state di luar tata letak .state memakai direktorinya sendiri", () => {
 test("gagal menulis lock dilaporkan, bukan ditelan diam-diam", () => {
   // Sebelum ini kegagalan menulis mengembalikan { acquired: true } saja, jadi
   // sistem tampak sehat padahal tidak ada penanda apa pun di disk.
-  const result = acquireProcessLock({
-    dir: "/tidak/bisa/ditulis",
-    pid: 111,
-    now: 1000,
-    isAlive: () => false,
-    writeFileImpl: () => {
-      throw Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
-    },
+  withTempDir((dir) => {
+    const result = acquireProcessLock({
+      dir,
+      pid: 111,
+      now: 1000,
+      isAlive: () => false,
+      writeFileImpl: () => {
+        throw Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
+      },
+    });
+
+    assert.equal(result.acquired, true);
+    assert.equal(result.wrote, false);
+    assert.match(String(result.error || ""), /EACCES/);
+
+    const warning = lockWarning(result);
+    assert.match(String(warning || ""), /tidak bisa|gagal|EACCES/i);
   });
-
-  assert.equal(result.acquired, true);
-  assert.equal(result.wrote, false);
-  assert.match(String(result.error || ""), /EACCES/);
-
-  const warning = lockWarning(result);
-  assert.match(String(warning || ""), /tidak bisa|gagal|EACCES/i);
 });
