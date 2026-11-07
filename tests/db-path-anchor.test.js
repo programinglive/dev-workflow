@@ -91,10 +91,11 @@ test("DEV_WORKFLOW_DB_PATH tetap menang bila diisi", () => {
 });
 
 test("tata letak users/<user> tetap berakar pada direktori .state", () => {
+  const baseRepo = path.resolve("/repo");
   const resolved = resolveDbPath({
-    stateFile: "D:\\repo\\.state\\users\\alice\\workflow-state.ses_x.json",
+    stateFile: path.join(baseRepo, ".state", "users", "alice", "workflow-state.ses_x.json"),
     env: {},
-    cwd: "D:\\repo",
+    cwd: baseRepo,
   });
-  assert.equal(resolved, path.join("D:\\repo\\.state", "dev-workflow.db"));
+  assert.equal(resolved, path.join(baseRepo, ".state", "dev-workflow.db"));
 });

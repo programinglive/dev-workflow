@@ -1,6 +1,6 @@
 import { safeLog } from './security/sanitizer.js';
 import fs from "fs/promises";
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync } from "fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, realpathSync } from "fs";
 import path from "path";
 import { assertSafeKnowledge } from './security/policy.js';
 import { sanitize } from './security/sanitizer.js';
@@ -866,13 +866,22 @@ export function resolveStateFile({ sessionId = null } = {}) {
   return path.join(userDir, sessionStateFilename(process.env, sessionId));
 }
 
+function canonicalPath(candidate) {
+  const resolved = path.resolve(candidate);
+  try {
+    return realpathSync(resolved);
+  } catch {
+    return resolved;
+  }
+}
+
 /**
  * Nama subdirektori per proyek: nama folder yang masih terbaca manusia, plus
  * potongan hash supaya dua proyek bernama sama (mis. `clinic` di dua root)
  * tidak bertabrakan.
  */
 function projectKey(projectRoot) {
-  const resolved = path.resolve(projectRoot);
+  const resolved = canonicalPath(projectRoot);
   const nama = path.basename(resolved)
     .replace(/[^A-Za-z0-9._-]+/g, "-")
     .replace(/^-+|-+$/g, "")
@@ -1011,7 +1020,7 @@ function migrateStateToSession({ sourcePath, targetPath, projectRoot, projectDir
       return;
     }
     if (projectRoot) {
-      const sama = path.resolve(pemilik).toLowerCase() === path.resolve(projectRoot).toLowerCase();
+      const sama = canonicalPath(pemilik).toLowerCase() === canonicalPath(projectRoot).toLowerCase();
       if (!sama) {
         return;
       }
