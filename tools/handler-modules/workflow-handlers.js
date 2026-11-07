@@ -18,7 +18,7 @@ import {
   MAX_WAIVER_REASON,
 } from "./docs.js";
 import { activeForeignLock, projectLockDir, currentIsAlive, DEFAULT_LOCK_STALE_MS } from "../../process-lock.js";
-import { reportEventSafe } from "../../monitor.js";
+import { reportEventSafe, updateSessionTitle } from "../../monitor.js";
 import { resolveProjectDir, setActiveProjectDir } from "../../exec.js";
 import { pinSessionProject, resolveHistoryFile } from "../../workflow-state.js";
 import { assignWorkflowIdentity, validateZettlyTaskArguments } from '../../zettly-workflow.js';
@@ -332,6 +332,16 @@ export async function handleStartTask(args, workflowState, git, zettlyOptions = 
   // commit sesi ini, dan tidak ada yang bisa membedakannya dari luar.
   workflowState.state.dirtyAtStart = await captureDirtyAtStart(git);
   assignWorkflowIdentity(workflowState.state,previousTaskIdentity,args);
+
+  // Sinkronkan judul sesi AI (OpenCode / Monitor) ke deskripsi task baru
+  try {
+    const sKey = (typeof workflowState._sessionKey === "function" ? workflowState._sessionKey()?.key : "") || workflowState.sessionId || "";
+    if (sKey && typeof updateSessionTitle === "function") {
+      updateSessionTitle(sKey, args.description);
+    }
+  } catch {
+    // Best effort: kegagalan penamaan sesi tidak boleh mengganggu start_task
+  }
 
   const warnings = [];
 

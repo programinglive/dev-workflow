@@ -11,6 +11,8 @@ pids
 node_modules/
 build/
 dist/
+__pycache__/
+*.pyc
 test-output.html
 web/.next/
 lib/
