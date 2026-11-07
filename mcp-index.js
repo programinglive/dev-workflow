@@ -4,14 +4,14 @@
  * Since `dev-workflow` is always the first MCP server invoked in every coding
  * session (`start_task`, `get_workflow_status`, `continue_workflow`), it acts
  * as the discovery index and router for all other MCP servers available across
- * our devices and central gateway (`http://100.78.134.44:3200/sse`).
+ * our devices and central gateway (`http://100.77.138.14:3200/sse`).
  */
 
 export const MCP_ECOSYSTEM_INDEX = Object.freeze([
   {
     id: "notify",
     serverName: "central-gateway (notify_*)",
-    endpoint: "http://100.78.134.44:3200/sse -> Notification Hub (100.78.134.44:3099)",
+    endpoint: "http://100.77.138.14:3200/sse -> Notification Hub (100.77.138.14:3099)",
     category: "Notifications & Real-Time Events",
     summary:
       "Send multi-channel notifications (Discord, Pusher Channels ap1, Email, Telegram, WhatsApp, Slack), inspect topic routing (alerts, backup, security, finance, ops), and query delivery logs.",
@@ -55,7 +55,7 @@ export const MCP_ECOSYSTEM_INDEX = Object.freeze([
   {
     id: "pocketbase",
     serverName: "central-gateway (pb_*) / pocketbase",
-    endpoint: "http://100.78.134.44:3200/sse -> PocketBase (100.78.134.44:8090)",
+    endpoint: "http://100.77.138.14:3200/sse -> PocketBase (100.77.138.14:8090)",
     category: "Database, Collections & Unified Auth",
     summary:
       "Inspect and manage PocketBase collections, schemas, records, superuser/activity_users authentication, and persistence stores.",
@@ -120,7 +120,7 @@ export const MCP_ECOSYSTEM_INDEX = Object.freeze([
   {
     id: "infra-knowledge",
     serverName: "infra-knowledge / central-gateway (infra_*)",
-    endpoint: "Local MCP + http://100.78.134.44:3200/sse",
+    endpoint: "Local MCP + http://100.77.138.14:3200/sse",
     category: "Infrastructure, VMs, SSH & Deployment Topology",
     summary:
       "Discover servers/VMs, IP addresses, Tailscale nodes, domains, repositories, deployment paths, fleet health, and run commands via SSH.",
@@ -132,8 +132,8 @@ export const MCP_ECOSYSTEM_INDEX = Object.freeze([
       },
       {
         name: "find_instance",
-        description: "Find VM/server details by name, IP, or service (e.g. n8n-instance, 100.78.134.44).",
-        keywords: ["vm", "instance", "server", "ip", "n8n-instance", "tailscale"],
+        description: "Find VM/server details by name, IP, or service (e.g. bw-tools, 100.77.138.14).",
+        keywords: ["vm", "instance", "server", "ip", "bw-tools", "tailscale"],
       },
       {
         name: "ssh_vm",
@@ -173,8 +173,8 @@ export const MCP_ECOSYSTEM_INDEX = Object.freeze([
         "vm",
         "ssh",
         "ssh_vm",
-        "n8n-instance",
-        "100.78.134.44",
+        "bw-tools",
+        "100.77.138.14",
         "100.107.65.21",
         "tailscale",
         "systemd",
@@ -317,7 +317,7 @@ export const MCP_ECOSYSTEM_INDEX = Object.freeze([
   {
     id: "factory",
     serverName: "dev-workflow (factory tools) / factory / central-gateway (factory_*)",
-    endpoint: "Built into dev-workflow + http://100.78.134.44:3200/sse -> Factory (100.78.134.44:3000)",
+    endpoint: "Built into dev-workflow + http://100.77.138.14:3200/sse -> Factory (100.77.138.14:3000)",
     category: "Factory Kanban & Autonomous Task Queue",
     summary:
       "List projects and kanban tasks, create/update tasks, claim queued tasks for execution, and move tasks across backlog, queued, running, review, and done.",
@@ -380,10 +380,10 @@ export const MCP_ECOSYSTEM_INDEX = Object.freeze([
   {
     id: "central-gateway",
     serverName: "central-gateway",
-    endpoint: "http://100.78.134.44:3200/sse",
+    endpoint: "http://100.77.138.14:3200/sse",
     category: "Unified Remote MCP Gateway (SSE)",
     summary:
-      "Single remote SSE MCP server on n8n-instance (100.78.134.44:3200) aggregating PocketBase (pb_*), Infrastructure (infra_*), Factory (factory_*), and Notification Hub (notify_*) tools for zero-maintenance multi-device access.",
+      "Single remote SSE MCP server on bw-tools (100.77.138.14:3200) aggregating PocketBase (pb_*), Infrastructure (infra_*), Factory (factory_*), and Notification Hub (notify_*) tools for zero-maintenance multi-device access.",
     tools: [
       {
         name: "pb_* / infra_* / factory_* / notify_*",
@@ -719,7 +719,7 @@ export function formatFullMcpCatalog(optionalQueryResult = null) {
 
   lines.push("📚 Complete MCP Ecosystem Index:");
   lines.push(
-    "All devices share `dev-workflow` (auto-updated from `http://100.78.134.44:3101`) as the entry index, plus `central-gateway` (`http://100.78.134.44:3200/sse`) for centralized remote tools."
+    "All devices share `dev-workflow` (auto-updated from `http://100.77.138.14:3101`) as the entry index, plus `central-gateway` (`http://100.77.138.14:3200/sse`) for centralized remote tools."
   );
   lines.push("");
 

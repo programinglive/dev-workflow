@@ -9,7 +9,7 @@ User=devwf-releases
 Group=devwf-releases
 WorkingDirectory=/opt/devwf-managed
 EnvironmentFile=/etc/devwf-managed.env
-Environment=HOST=100.78.134.44
+Environment=HOST=100.77.138.14
 Environment=PORT=3101
 Environment=DEVWF_RELEASE_ROOT=/var/lib/devwf-releases
 ExecStart=/usr/bin/node /opt/devwf-managed/release-server.cjs
