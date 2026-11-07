@@ -132,6 +132,10 @@ export function buildSnapshot({ state, sessionKey = "", projectPath = "", sessio
     // ada petunjuk. Tidak pernah menebak.
     agentTool: detectTool({ env, commandLine: String(process.argv.slice(0, 2).join(' ')) }),
     activeBuild: s.activeBuild && typeof s.activeBuild === "object" ? s.activeBuild : null,
+    // Lokasi proyek. Path lokal menjawab "ada di mana" untuk mesin ini; remote
+    // git tetap berguna dari perangkat lain. Dikosongkan bila memang bukan repo.
+    repositoryPath: String(s.repository?.path || ""),
+    repositoryRemote: String(s.repository?.remote || ""),
   };
 }
 

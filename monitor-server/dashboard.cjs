@@ -1951,6 +1951,34 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+/**
+ * Repository identity columns.
+ *
+ * Added after the first deployment, so the running database needs a migration.
+ * `IF NOT EXISTS` keeps the boot idempotent. A database user without ALTER
+ * rights prints the SQL instead of taking the dashboard down.
+ */
+const ensureSessionRepositoryColumnsSql = `
+  ALTER TABLE sessions ADD COLUMN IF NOT EXISTS repo_path text NOT NULL DEFAULT '';
+  ALTER TABLE sessions ADD COLUMN IF NOT EXISTS repo_remote text NOT NULL DEFAULT '';
+`;
+
+/**
+ * Apply the repository columns only when they are missing.
+ *
+ * The dashboard runs as the application user, which does not own the table.
+ * Checking first keeps a healthy deployment quiet; only a real gap prints the
+ * SQL the operator must run as the table owner.
+ */
+async function ensureSessionRepositoryColumns() {
+  const existing = await query(
+    `SELECT column_name FROM information_schema.columns
+      WHERE table_name = 'sessions' AND column_name IN ('repo_path', 'repo_remote')`,
+  );
+  if (existing.rows.length >= 2) return;
+  await query(ensureSessionRepositoryColumnsSql);
+}
+
 server.listen(PORT, HOST, () => {
   console.log(`devwf-monitor listening on ${HOST}:${PORT}`);
   if (!WRITE_TOKEN) {
@@ -1966,6 +1994,12 @@ server.listen(PORT, HOST, () => {
     } catch (error) {
       console.error('GAGAL menyiapkan tabel share_links:', String((error && error.message) || error));
       console.error('Jalankan sekali sebagai user database aplikasi:\n' + ensureTableSql);
+    }
+    try {
+      await ensureSessionRepositoryColumns();
+    } catch (error) {
+      console.error('GAGAL menyiapkan kolom repository:', String((error && error.message) || error));
+      console.error('Jalankan sekali sebagai user database aplikasi:\n' + ensureSessionRepositoryColumnsSql);
     }
   })();
   // Penghapusan otomatis MATI kecuali PRUNE_ENABLED diisi eksplisit.

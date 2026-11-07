@@ -641,6 +641,14 @@ function Kartu({ s, jamServer, onPress }) {
         </Text>
       ) : null}
 
+      {/* Lokasi proyek: path lokal untuk mesin ini, remote git untuk perangkat lain. */}
+      {s.repo_path || s.repo_remote ? (
+        <Text style={gaya.meta} numberOfLines={1}>
+          📁 {s.repo_path || s.repo_remote}
+          {s.repo_path && s.repo_remote ? " · 🔗 " + s.repo_remote : ""}
+        </Text>
+      ) : null}
+
       {s.state === "possibly_stuck" && (
         <Text style={[gaya.catatan, { color: WARNA.kuning }]}>
           tidak ada kabar {ago(s.updated_at, jamServer)}

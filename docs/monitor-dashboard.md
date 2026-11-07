@@ -464,6 +464,55 @@ terakhir: `COALESCE(NULLIF(EXCLUDED.agent_tool,''), sessions.agent_tool, 'unknow
 Terbukti di produksi: kirim laporan dengan `projectName`, lalu kirim laporan
 tanpa `projectName` — nama proyek dan `agent_tool` tetap ada.
 
+## Repository di kartu sesi (7 November 2026)
+
+Kartu yang hanya berbunyi "clinic" tidak menjawab pertanyaan pemilik: *proyeknya
+ada di mana?* Path lokal sudah tersimpan di `project_path` tetapi hanya muncul di
+modal detail, dan remote git belum pernah diambil sama sekali.
+
+Sekarang `start_task` menangkap identitas repository sekali per task
+(`repository.js`), lalu menyimpannya di state:
+
+```json
+{ "repository": { "path": "D:/code/clinic", "remote": "https://github.com/org/clinic.git" } }
+```
+
+- `git rev-parse --show-toplevel` → `path`
+- `git remote get-url origin` → `remote`
+
+Keduanya best-effort: direktori yang bukan repo, `git` yang tidak ada, atau
+perintah yang gagal menghasilkan `{ path: "", remote: "" }` dan **tidak pernah**
+menggagalkan `start_task`. Hasil kosong tetap disimpan supaya setiap `save()`
+tidak memanggil `git` berulang kali.
+
+Alurnya: `monitor.js` mengirim `repositoryPath`/`repositoryRemote` di snapshot →
+`session-upsert.cjs` menyimpannya di kolom `repo_path`/`repo_remote` → kartu dan
+modal menampilkan `📁 <path> · 🔗 <remote>`. Remote dirender sebagai tautan bila
+protokolnya `http(s)`.
+
+Kolom baru ditambahkan oleh migrasi idempoten saat dashboard boot. Dashboard
+berjalan sebagai user aplikasi yang **bukan** pemilik tabel, jadi migrasi
+memeriksa `information_schema` lebih dulu dan hanya mencetak SQL bila kolomnya
+benar-benar belum ada. SQL manualnya:
+
+```sql
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS repo_path text NOT NULL DEFAULT '';
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS repo_remote text NOT NULL DEFAULT '';
+```
+
+Sama seperti `project_name`, kedua kolom memakai
+`COALESCE(NULLIF(EXCLUDED.repo_path,''), sessions.repo_path)`: laporan ringkas
+saat task ditutup tidak boleh menghapus lokasi proyek yang sudah tercatat.
+
+## Peringatan flow yang belum ada
+
+Kartu task tanpa relasi `zettly_draw` sekarang menampilkan
+`⚠ Flow belum ada — jalankan create_feature_flow`. Sebelumnya preview flow
+hilang diam-diam, sehingga task yang melewati gerbang Mermaid tidak bisa
+dibedakan dari task yang flow-nya gagal terkirim. `create_feature_flow` juga
+melaporkan snapshot sekali lagi setelah drawing ditautkan, karena relasi itu
+ditambahkan **sesudah** penyimpanan state.
+
 ## Rekap durasi per proyek
 
 Timer per sesi tidak pernah dijumlahkan, jadi pemilik tahu satu sesi memakan 45

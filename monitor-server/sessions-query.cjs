@@ -39,6 +39,7 @@ function buildSessionsQuery({
     sql: `SELECT session_key, machine, project_path, project_name, task, task_type, phase,
                  plan_json, plan_done, plan_total, dod_done, dod_total, dod_waived,
                  started_at, session_title, agent_tool, updated_at,
+                 repo_path, repo_remote,
                  workflow_task_id, task_origin_json, task_relations_json
             FROM sessions
            WHERE phase NOT IN ('closed', 'done', 'cancelled')

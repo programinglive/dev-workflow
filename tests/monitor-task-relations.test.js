@@ -27,7 +27,8 @@ test('sparse completion preserves provenance while a new workflow ID or task tit
     task TEXT, task_type TEXT, phase TEXT, plan_json TEXT, plan_done INTEGER,
     plan_total INTEGER, dod_done INTEGER, dod_total INTEGER, dod_waived INTEGER,
     owner_pid INTEGER, started_at TEXT, session_title TEXT, agent_tool TEXT, updated_at TEXT,
-    workflow_task_id TEXT DEFAULT '', task_origin_json TEXT DEFAULT '{}', task_relations_json TEXT DEFAULT '[]'
+    workflow_task_id TEXT DEFAULT '', task_origin_json TEXT DEFAULT '{}', task_relations_json TEXT DEFAULT '[]',
+    repo_path TEXT DEFAULT '', repo_remote TEXT DEFAULT ''
   )`);
   const save = body => {
     const { sql, params } = buildSessionUpsert({ sessionKey: 's', ...body });

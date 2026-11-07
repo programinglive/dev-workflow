@@ -18,7 +18,7 @@ import {
   MAX_WAIVER_REASON,
 } from "./docs.js";
 import { activeForeignLock, projectLockDir, currentIsAlive, DEFAULT_LOCK_STALE_MS } from "../../process-lock.js";
-import { reportEventSafe, updateSessionTitle } from "../../monitor.js";
+import { reportEventSafe, updateSessionTitle, buildSnapshot, reportSnapshot } from "../../monitor.js";
 import { resolveProjectDir, setActiveProjectDir } from "../../exec.js";
 import { pinSessionProject, resolveHistoryFile } from "../../workflow-state.js";
 import { assignWorkflowIdentity, validateZettlyTaskArguments } from '../../zettly-workflow.js';
@@ -528,6 +528,24 @@ export async function handleCreateFeatureFlow(args, workflowState, zettlyOptions
   workflowState.state.readyCheckCompleted = false;
   await workflowState.save();
   const drawing=await syncZettlyDrawing(workflowState,zettlyOptions);
+
+  // The drawing relation is added AFTER the save above. Report once more so the
+  // card shows the flow immediately instead of waiting for an unrelated save.
+  try {
+    const sessionKey = typeof workflowState._sessionKey === 'function'
+      ? workflowState._sessionKey().key
+      : '';
+    await reportSnapshot({
+      snapshot: buildSnapshot({
+        state: workflowState.state,
+        sessionKey,
+        projectPath: workflowState.state.projectDir || '',
+        sessionStartedAt: workflowState.state.taskStartedAt || '',
+      }),
+    });
+  } catch {
+    // Reporting is best-effort; the flow itself is already recorded.
+  }
 
   return textResponse(
     `✅ Feature flow recorded!\n\nDescription: ${description}\n${drawing.ok?`Zettly Draw #${drawing.id}: ${drawing.url||''}`:drawing.note}\n\nNext Steps:\n1. ✓ Start task\n2. ✓ Describe feature flow\n3. ⏳ Fix/implement the feature\n4. ⏳ Create tests\n5. ⏳ Run tests\n6. ⏳ Create documentation\n7. ⏳ Run 'check_ready_to_commit'\n8. ⏳ Run 'commit_and_push'\n9. ⏳ Run 'perform_release'\n10. ⏳ Complete task`
