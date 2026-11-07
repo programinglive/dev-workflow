@@ -1,9 +1,10 @@
 name: CI
 
-# Runs on the self-hosted runner on MMCH, not on GitHub-hosted minutes.
-# See docs/homelab/ci-runner.md for setup and docs/homelab/cli-tools.md for the
-# tool inventory on that machine.
-
+# Standard pipeline from programinglive/ci-cd.
+#
+# Runs on the self-hosted Windows runner on MMCH, matching the previous
+# workflow. The commands preserve the checks that existed before: unit tests,
+# security boundaries, lint, server bundle verification, and the web build.
 on:
   pull_request:
     branches:
@@ -16,99 +17,14 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  test:
-    name: Test, build and audit
-    # MMCH is a Windows 11 machine, so the runner reports Windows labels.
-    # Both the generic and OS-specific labels are required: the generic one
-    # alone would let any future Linux runner pick this job up.
-    runs-on: [self-hosted, windows, mmch]
-
-    timeout-minutes: 30
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Verify toolchain
-        shell: powershell
-        run: |
-          node --version
-          npm --version
-          git --version
-
-      - name: Install dependencies
-        shell: powershell
-        run: npm ci --no-audit --no-fund
-
-      - name: Run tests
-        shell: powershell
-        run: npm test
-
-      - name: Security boundary tests and source lint
-        shell: powershell
-        run: |
-          npm run test:security
-          npm run lint
-
-      - name: Build server bundle
-        shell: powershell
-        run: npm run build:server
-
-      - name: Verify the built bundle starts
-        shell: powershell
-        run: node scripts/verify-bundle.mjs
-
-      - name: Audit production dependencies
-        shell: powershell
-        run: npm audit --omit=dev --audit-level=high
-
-      - name: Verify stack setup helpers
-        shell: powershell
-        run: node --test tests/setup-stack.test.js
-
-      # Do not upload arbitrary logs: dependencies and external commands may write
-      # credentials. Review sanitized diagnostics locally instead.
-
-  web:
-    name: Web dashboard build and audit
-    runs-on: [self-hosted, windows, mmch]
-    timeout-minutes: 30
-
-    defaults:
-      run:
-        working-directory: web
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Install dependencies
-        shell: powershell
-        run: npm ci --no-audit --no-fund
-
-      - name: Build static export
-        shell: powershell
-        run: npm run build
-
-      - name: Lint dashboard
-        shell: powershell
-        run: npm run lint
-
-      - name: Verify static export output
-        shell: powershell
-        run: |
-          if (!(Test-Path 'out/index.html')) { throw 'Static export did not produce out/index.html' }
-          $css = Get-ChildItem 'out' -Recurse -Filter '*.css'
-          if (!$css) { throw 'Static export produced no CSS' }
-          $total = ($css | Measure-Object -Property Length -Sum).Sum
-          Write-Host "CSS files: $($css.Count), total bytes: $total"
-          if ($total -lt 5000) { throw "CSS output suspiciously small ($total bytes) - Tailwind may have failed" }
-
-      - name: Audit web dependencies
-        shell: powershell
-        run: npm audit --audit-level=high
+  ci:
+    uses: programinglive/ci-cd/.github/workflows/ci-node.yml@v1
+    with:
+      node-version: "24"
+      runner: '["self-hosted","windows","mmch"]'
+      test-command: npm test && npm run test:security && node --test tests/setup-stack.test.js
+      lint-command: npm run lint
+      build-command: npm run build:server && node scripts/verify-bundle.mjs
+      web-build-command: npm run build
+      web-dir: web

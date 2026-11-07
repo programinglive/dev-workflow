@@ -39,6 +39,8 @@ function buildHistoryQuery({
   return {
     sql: `SELECT session_key, machine, project_name, task, task_type, session_title, agent_tool,
                  phase, started_at, updated_at,
+                 repo_path, repo_remote,
+                 workflow_task_id, task_origin_json, task_relations_json,
                  CASE WHEN started_at IS NULL THEN NULL
                       ELSE EXTRACT(EPOCH FROM (updated_at - started_at))::int
                  END AS duration_seconds,

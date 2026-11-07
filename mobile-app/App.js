@@ -16,6 +16,7 @@ import {
 } from "react-native";
 import Constants from "expo-constants";
 import { namaSesi } from "./session-name";
+import { buildLocation, buildStatusLabel, isRunningBuild, parseEventDetail, visibleBuilds } from "./build-view";
 
 /**
  * Aplikasi monitor sesi dev-workflow.
@@ -161,6 +162,7 @@ export default function App() {
   const health = (data && data.health) || {};
   const jamServer = data && data.now ? new Date(data.now).getTime() : undefined;
   const riwayat = (data && data.history) || [];
+  const builds = useMemo(() => visibleBuilds(sesi, riwayat), [sesi, riwayat]);
   const mesin = (data && data.machines) || [];
 
   /**
@@ -272,6 +274,10 @@ export default function App() {
         >
           {tab === "aktif" && (
             <>
+              <Pressable onPress={() => setTab("build")} style={gaya.buildShortcut}>
+                <Text style={gaya.buildShortcutTitle}>Build &amp; eksekusi</Text>
+                <Text style={gaya.buildShortcutMeta}>{builds.length ? `${builds.length} tercatat · lihat status dan lokasi ›` : "Belum ada build dilaporkan ›"}</Text>
+              </Pressable>
               {sesi.length === 0 ? (
                 <Text style={gaya.kosong}>belum ada sesi melapor</Text>
               ) : (
@@ -286,16 +292,92 @@ export default function App() {
 
               {data && data.events && data.events.length > 0 && (
                 <View style={gaya.aktivitas}>
-                  <Text style={gaya.aktivitasJudul}>Aktivitas terakhir</Text>
-                  {data.events.slice(0, 8).map((e, i) => (
-                    <Text key={i} style={gaya.aktivitasItem}>
-                      <Text style={gaya.aktivitasJenis}>{e.kind}</Text> {e.detail}
-                      <Text style={gaya.aktivitasMeta}>
-                        {"  · "}
-                        {e.project_name} · {ago(e.at, jamServer)}
-                      </Text>
-                    </Text>
-                  ))}
+                  <Text style={gaya.aktivitasJudul}>Aktivitas &amp; Log Build Terakhir</Text>
+                  {data.events.slice(0, 8).map((e, i) => {
+                    const parsed = parseEventDetail(e.detail);
+                    const timeAgoStr = ago(e.at, jamServer);
+                    if (parsed.isBuild && parsed.data) {
+                      const b = parsed.data;
+                      const rawSt = String(b.status || (e.kind.includes('succeeded') ? 'succeeded' : e.kind.includes('failed') ? 'failed' : 'building')).toLowerCase();
+                      const st = isRunningBuild(rawSt) || rawSt === 'succeeded' || rawSt === 'failed' ? rawSt : 'building';
+                      const isSuccess = st === 'succeeded';
+                      const isFailed = st === 'failed';
+                      const borderGaya = isSuccess ? gaya.eventCardBuildSuccess : (isFailed ? gaya.eventCardBuildFailed : gaya.eventCardBuildRunning);
+                      const badgeBg = isSuccess ? '#2ea04326' : (isFailed ? '#f8514926' : '#d2992226');
+                      const badgeFg = isSuccess ? WARNA.hijau : (isFailed ? '#ff7b72' : WARNA.kuning);
+                      const progress = Number.isFinite(b.progress) ? Math.max(0, Math.min(100, Math.round(b.progress))) : null;
+
+                      return (
+                        <View key={i} style={[gaya.eventCard, borderGaya]}>
+                          <View style={gaya.eventBarisAtas}>
+                            <View style={[gaya.eventBadge, { backgroundColor: badgeBg }]}>
+                              <Text style={[gaya.eventBadgeTeks, { color: badgeFg }]}>{buildStatusLabel(st)}</Text>
+                            </View>
+                            <Text style={gaya.eventTarget} numberOfLines={1}>{b.target || e.project_name || "Build"}</Text>
+                          </View>
+                          <Text style={gaya.eventMeta}>
+                            {(b.buildHost || e.machine ? `${b.buildHost || e.machine} · ` : "") + (e.project_name || "proyek") + (timeAgoStr ? ` · ${timeAgoStr}` : "")}
+                          </Text>
+                          {b.stage ? (
+                            <Text style={gaya.eventStage}>
+                              ▸ {b.stage} {progress !== null ? `(${progress}%)` : ""}
+                            </Text>
+                          ) : null}
+                          {progress !== null ? (
+                            <View style={gaya.barLuar}>
+                              <View style={[gaya.barDalam, { width: `${progress}%`, backgroundColor: isFailed ? '#f85149' : (isSuccess ? WARNA.hijau : WARNA.biru) }]} />
+                            </View>
+                          ) : null}
+                          {b.command ? <Text style={gaya.eventCmd}>$ {b.command}</Text> : null}
+                          {b.output ? <Text style={gaya.eventOut}>{b.output}</Text> : null}
+                        </View>
+                      );
+                    }
+
+                    return (
+                      <View key={i} style={[gaya.eventCard, gaya.eventCardGeneric]}>
+                        <View style={gaya.eventBarisAtas}>
+                          <View style={[gaya.eventBadge, { backgroundColor: '#1f6feb22' }]}>
+                            <Text style={[gaya.eventBadgeTeks, { color: WARNA.biruMuda }]}>{e.kind}</Text>
+                          </View>
+                          <Text style={gaya.eventDetailTeks} numberOfLines={2}>{parsed.text}</Text>
+                        </View>
+                        <Text style={gaya.eventMeta}>
+                          {(e.machine ? `${e.machine} · ` : "") + (e.project_name || "proyek") + (timeAgoStr ? ` · ${timeAgoStr}` : "")}
+                        </Text>
+                      </View>
+                    );
+                  })}
+                </View>
+              )}
+            </>
+          )}
+
+          {tab === "build" && (
+            <>
+              <Text style={gaya.buildIntro}>Build berjalan ditampilkan lebih dulu. Lokasi hanya disebut sebagai host build bila dilaporkan langsung oleh pelaksana.</Text>
+              {builds.length === 0 ? (
+                <Text style={gaya.kosong}>belum ada build yang dilaporkan</Text>
+              ) : (
+                <View style={[gaya.grid, !duaKolom && gaya.gridSatu]}>
+                  {builds.map((s) => {
+                    const build = s.active_build;
+                    const running = isRunningBuild(build.status);
+                    const progress = Number.isFinite(build.progress) ? Math.max(0, Math.min(100, Math.round(build.progress))) : null;
+                    return (
+                      <Pressable key={s.session_key} onPress={() => setDipilih(s.session_key)} style={[duaKolom ? gaya.sel : gaya.selPenuh, gaya.buildCard]}>
+                        <View style={gaya.baris}>
+                          <Text style={[gaya.buildStatus, { color: build.status === "failed" ? "#ff7b72" : running ? WARNA.kuning : WARNA.hijau }]}>{buildStatusLabel(build.status)}</Text>
+                          <Text style={gaya.buildProject} numberOfLines={1}>{s.project_name || "Proyek"}</Text>
+                        </View>
+                        <Text style={gaya.buildTarget} numberOfLines={2}>{build.target}</Text>
+                        <Text style={gaya.buildHost} numberOfLines={2}>{buildLocation(build, s.machine)}</Text>
+                        {build.stage ? <Text style={gaya.buildStage} numberOfLines={2}>{build.stage}</Text> : null}
+                        <View style={gaya.barLuar}><View style={[gaya.barDalam, { width: `${progress === null ? 0 : progress}%`, backgroundColor: build.status === "failed" ? "#f85149" : WARNA.biru }]} /></View>
+                        <Text style={gaya.buildFooter}>{progress === null ? "Progres belum dilaporkan" : `${progress}%`} · {ago(build.updatedAt || s.updated_at, jamServer)} · Detail ›</Text>
+                      </Pressable>
+                    );
+                  })}
                 </View>
               )}
             </>
@@ -471,6 +553,7 @@ export default function App() {
       <View style={gaya.tabBar}>
         {[
           { id: "aktif", ikon: "▦", label: "Aktif" },
+          { id: "build", ikon: "⬡", label: "Build" },
           { id: "riwayat", ikon: "☰", label: "Riwayat" },
           { id: "rekap", ikon: "Σ", label: "Rekap" },
           { id: "mesin", ikon: "▣", label: "Mesin" },
@@ -555,6 +638,14 @@ function Kartu({ s, jamServer, onPress }) {
       {s.project_name ? (
         <Text style={gaya.proyek} numberOfLines={1}>
           {s.project_name}
+        </Text>
+      ) : null}
+
+      {/* Lokasi proyek: path lokal untuk mesin ini, remote git untuk perangkat lain. */}
+      {s.repo_path || s.repo_remote ? (
+        <Text style={gaya.meta} numberOfLines={1}>
+          📁 {s.repo_path || s.repo_remote}
+          {s.repo_path && s.repo_remote ? " · 🔗 " + s.repo_remote : ""}
         </Text>
       ) : null}
 
@@ -734,6 +825,15 @@ function DetailSesi({ s, jamServer, onClose }) {
           })()}
 
           <ScrollView style={gaya.modalIsi}>
+            {s.active_build?.target ? (
+              <View style={gaya.buildDetail}>
+                <Text style={gaya.bagianJudul}>Build · {buildStatusLabel(s.active_build.status)}</Text>
+                <Text style={gaya.buildTarget}>{s.active_build.target}</Text>
+                <Text style={gaya.buildHost}>{buildLocation(s.active_build, s.machine)}</Text>
+                {s.active_build.stage ? <Text style={gaya.buildStage}>{s.active_build.stage}</Text> : null}
+                {Number.isFinite(s.active_build.progress) ? <Text style={gaya.buildFooter}>Progres {Math.round(s.active_build.progress)}%</Text> : null}
+              </View>
+            ) : null}
             {total > 0 && (
               <>
                 <Text style={gaya.bagianJudul}>Rencana {selesai}/{total}</Text>
@@ -841,6 +941,18 @@ const gaya = StyleSheet.create({
 
   daftar: { paddingBottom: 40 },
   kosong: { color: WARNA.redup, textAlign: "center", marginTop: 60, fontSize: 16 },
+  buildShortcut: { borderWidth: 1, borderColor: "#2f81f766", backgroundColor: "#122034", borderRadius: 14, padding: 14, marginBottom: 14 },
+  buildShortcutTitle: { color: WARNA.biruMuda, fontSize: 16, fontWeight: "700" },
+  buildShortcutMeta: { color: WARNA.teks, fontSize: 12, marginTop: 4 },
+  buildIntro: { color: WARNA.redup, fontSize: 12, lineHeight: 18, marginBottom: 14 },
+  buildCard: { borderWidth: 1, borderColor: "#2f81f766", backgroundColor: WARNA.card, borderRadius: 14, padding: 14, minHeight: 175 },
+  buildStatus: { fontSize: 11, fontWeight: "700", letterSpacing: 0.5 },
+  buildProject: { color: WARNA.redup, fontSize: 12, flexShrink: 1 },
+  buildTarget: { color: WARNA.teks, fontSize: 16, fontWeight: "700", marginTop: 8 },
+  buildHost: { color: WARNA.biruMuda, fontSize: 12, fontWeight: "600", marginTop: 7 },
+  buildStage: { color: "#b9c3cf", fontSize: 12, marginTop: 8 },
+  buildFooter: { color: WARNA.redup, fontSize: 11, marginTop: 8 },
+  buildDetail: { borderBottomWidth: 1, borderBottomColor: WARNA.garis, paddingBottom: 12, marginBottom: 12 },
 
   // Dua kolom: kartu mengisi setengah lebar. `flexWrap` membuat baris baru
   // otomatis, jadi 2 sesi duduk berdampingan dan 4 sesi jadi 2x2.
@@ -943,10 +1055,10 @@ const gaya = StyleSheet.create({
     paddingBottom: 10,
     paddingTop: 8,
   },
-  tabItem: { flex: 1, alignItems: "center", justifyContent: "center", paddingVertical: 4 },
+  tabItem: { flex: 1, minHeight: 44, alignItems: "center", justifyContent: "center", paddingVertical: 4 },
   tabIkon: { color: WARNA.redup, fontSize: 18, lineHeight: 22 },
   tabIkonAktif: { color: WARNA.biruMuda },
-  tabLabel: { color: WARNA.redup, fontSize: 11, marginTop: 2 },
+  tabLabel: { color: WARNA.redup, fontSize: 10, marginTop: 2 },
   tabLabelAktif: { color: WARNA.biruMuda, fontWeight: "700" },
   riwayatNama: { color: WARNA.teks, fontSize: 13, fontWeight: "600" },
   riwayatMeta: { color: WARNA.redup, fontSize: 11, marginTop: 1 },
@@ -954,6 +1066,28 @@ const gaya = StyleSheet.create({
   aktivitasItem: { color: WARNA.redup, fontSize: 12, marginBottom: 6 },
   aktivitasJenis: { color: WARNA.teks, fontWeight: "600" },
   aktivitasMeta: { color: "#5c6672" },
+
+  eventCard: {
+    backgroundColor: "#0d131d",
+    borderWidth: 1,
+    borderColor: "#21262d",
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 8,
+  },
+  eventCardBuildSuccess: { borderLeftWidth: 4, borderLeftColor: WARNA.hijau },
+  eventCardBuildRunning: { borderLeftWidth: 4, borderLeftColor: WARNA.kuning },
+  eventCardBuildFailed: { borderLeftWidth: 4, borderLeftColor: "#f85149" },
+  eventCardGeneric: { borderLeftWidth: 4, borderLeftColor: WARNA.biru },
+  eventBarisAtas: { flexDirection: "row", alignItems: "center", marginBottom: 4 },
+  eventBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginRight: 8 },
+  eventBadgeTeks: { fontSize: 10, fontWeight: "700" },
+  eventTarget: { color: WARNA.teks, fontSize: 13, fontWeight: "700", flex: 1 },
+  eventDetailTeks: { color: WARNA.teks, fontSize: 12, fontWeight: "500", flex: 1 },
+  eventMeta: { color: WARNA.redup, fontSize: 11, marginTop: 2 },
+  eventStage: { color: WARNA.biruMuda, fontSize: 12, marginTop: 4, fontWeight: "500" },
+  eventCmd: { backgroundColor: "#05080c", borderRadius: 6, padding: 6, marginTop: 6, color: "#8b949e", fontSize: 11, fontFamily: "monospace" },
+  eventOut: { backgroundColor: "#111822", borderRadius: 6, padding: 8, marginTop: 6, color: "#e6edf3", fontSize: 12, lineHeight: 17 },
 
   modalLatar: {
     flex: 1,

@@ -4,6 +4,14 @@ import {mkdtemp,writeFile,rm,mkdir} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {readZettlyConfig,resolveZettlyConfig,createZettlyClient} from '../zettly-client.js';
+import {sanitize} from '../security/sanitizer.js';
+
+test('device-local owner credentials are registered for egress redaction without entering workflow data',()=>{
+ const value='opaque-device-fixture-credential-for-redaction';
+ const config=readZettlyConfig({ZETTLY_API_BASE:'https://zettly.example',ZETTLY_API_TOKEN:value});
+ assert.equal(config.token,value);
+ assert.ok(!JSON.stringify(sanitize({message:'Provider echoed '+value})).includes(value));
+});
 
 test('Zettly credentials use existing local config with environment overrides',async()=>{
  const dir=await mkdtemp(path.join(os.tmpdir(),'zettly-config-test-'));
@@ -22,6 +30,14 @@ test('requests authenticate in memory and do not follow redirects',async()=>{
  assert.equal(result.data.id,7);assert.equal(sent.url,'https://zettly.example/api/v1/todos/7');
  assert.equal(sent.options.headers.authorization,'Bearer test-only-auth-value');assert.equal(sent.options.redirect,'error');
  await assert.rejects(client.request('GET','https://untrusted.example/'),/relative/);
+});
+
+test('focus API routes remain bounded to the managed Zettly host',async()=>{
+ const routes=[];
+ const client=createZettlyClient({base:'https://zettly.example',token:'test-only-auth-value'},{fetchImpl:async(url)=>{routes.push(url);return new Response('{"success":true,"data":[]}',{status:200});}});
+ for(const [method,route] of [['GET','/focus'],['POST','/focus'],['GET','/focus/7'],['POST','/focus/7/complete']])await client.request(method,route,method==='POST'?{}:undefined);
+ assert.ok(routes.every(url=>url.startsWith('https://zettly.example/api/v1/focus')));
+ await assert.rejects(client.request('POST','/focus/7/other-operation',{}),/supported/);
 });
 
 test('network and HTTP errors expose safe status without credential text',async()=>{

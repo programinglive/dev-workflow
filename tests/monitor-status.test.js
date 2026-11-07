@@ -101,3 +101,14 @@ test("setiap status punya label yang bisa dibaca manusia", () => {
   }
   assert.equal(LABELS.possibly_stuck, "mungkin macet");
 });
+
+test("fase terminal selalu berakhir, walau baru saja ditutup", () => {
+  // Diukur 7 November 2026: sesi yang ditutup manual tampil "aktif" di Riwayat
+  // dan masuk filter Live, bukan Selesai, karena classifySession hanya melihat
+  // umur laporan.
+  for (const phase of ["closed", "done", "cancelled", "archived"]) {
+    const s = classifySession({ phase, updatedAt: menitLalu(1), now: NOW });
+    assert.equal(s.status, "ended", `${phase} harus berakhir`);
+    assert.equal(s.terminal, true, `${phase} harus ditandai terminal`);
+  }
+});

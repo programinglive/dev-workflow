@@ -3,12 +3,15 @@ import {sanitize} from './security/sanitizer.js';
 import {normalizeProjectPath} from './db/session-key.js';
 import {StateConflict} from './db/errors.js';
 import {createZettlyClient,resolveZettlyConfig,zettlySyncEnabled} from './zettly-client.js';
+import {validateTaskSource,originForTask,buildTaskProvenance} from './task-provenance.js';
+import {renderAiSessions} from './ai-sessions.js';
 
 const escape=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 const hash=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const TERMINAL=['completed','cancelled','closed_with_exceptions'];
 
 export function validateZettlyTaskArguments(args={}) {
+  const sourceError=validateTaskSource(args.source,args.zettlyTodoId);if(sourceError)return sourceError;
   if(args.taskId!==undefined&&(typeof args.taskId!=='string'||!/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/.test(args.taskId)))return 'Invalid canonical taskId: use 3–128 letters, digits, dots, underscores, colons or hyphens.';
   if(args.zettlyTodoId!==undefined&&(!Number.isSafeInteger(args.zettlyTodoId)||args.zettlyTodoId<1))return 'Invalid zettlyTodoId: a positive integer is required.';
   return null;
@@ -17,9 +20,26 @@ export function validateZettlyTaskArguments(args={}) {
 export function assignWorkflowIdentity(state,previous,args={}) {
   const same=previous?.taskDescription===state.taskDescription&&normalizeProjectPath(previous?.projectDir||'')===normalizeProjectPath(state.projectDir||'')&&(!args.taskId||args.taskId===previous?.workflowTaskId);
   state.workflowTaskId=args.taskId||(same&&previous.workflowTaskId)||randomUUID();
+  if(!same&&previous?.taskDescription){
+    state.parentTask={
+      id:previous.workflowTaskId||'',
+      description:previous.taskDescription,
+      title:previous.taskDescription,
+      todoId:previous.zettly?.todoId||null
+    };
+  }else if(same&&previous?.parentTask){
+    state.parentTask=structuredClone(previous.parentTask);
+  }else{
+    state.parentTask=null;
+  }
   state.zettly=(same&&previous.zettly)?structuredClone(previous.zettly):{taskId:state.workflowTaskId,todoId:null};
   state.zettly.taskId=state.workflowTaskId;
   if(args.zettlyTodoId)state.zettly.todoId=Number(args.zettlyTodoId);
+  if(args.source?.system==='zettly')state.zettly.todoId=Number(args.source.id);
+  if(state.zettlyContext&&Number(state.zettlyContext.todoId)!==Number(state.zettly.todoId))state.zettlyContext=null;
+  state.focus=args._verifiedFocus?structuredClone(args._verifiedFocus):same&&previous?.focus&&Number(previous.focus.todoId)===Number(state.zettly.todoId)?structuredClone(previous.focus):null;
+  state.taskOrigin=originForTask(args,same?previous:null);
+  if(args.source?.system==='sentry'&&args.verifiedSourceIssue?.issueId===args.source.id)state.zettly.externalLinks={...state.zettly.externalLinks,sentry:structuredClone(args.verifiedSourceIssue)};
 }
 
 function ownershipGuard(workflowState) {
@@ -63,7 +83,14 @@ function blockFor(state,status,args={}) {
   const id=escape(state.workflowTaskId);
   const plan=safe.plan.map(item=>`[${item.status==='done'?'x':' '}] ${item.text}`).join('\n');
   const dod=safe.dod.map(item=>`[${item.status==='done'?'x':item.status==='waived'?'-':' '}] ${item.text}${item.evidence?' — '+item.evidence:''}`).join('\n');
-  return `<!-- dev-workflow:${id}:start --><section data-dev-workflow-id="${id}"><h3>Dev Workflow</h3><p>Task ID: <code>${id}</code></p><p>Project: ${escape(safe.project)}</p><p>Status: ${escape(status)}</p><p>Implementation language: English</p><h4>Plan</h4><pre>${escape(plan)}</pre><h4>Definition of done</h4><pre>${escape(dod)}</pre>${safe.commit?`<p>Commit: ${escape(safe.commit)}</p>`:''}${safe.reason?`<p>Reason: ${escape(safe.reason)}</p>`:''}${safe.next.length?`<h4>Next action</h4><pre>${escape(safe.next.join('\n'))}</pre>`:''}</section><!-- dev-workflow:${id}:end -->`;
+  const links=externalLinkSummary(state);
+  const sessions=renderAiSessions(state);
+  return `<!-- dev-workflow:${id}:start --><section data-dev-workflow-id="${id}"><h3>Dev Workflow</h3><p>Task ID: <code>${id}</code></p><p>Project: ${escape(safe.project)}</p><p>Status: ${escape(status)}</p><p>Implementation language: English</p>${links?`<h4>Connected work</h4><pre>${escape(links)}</pre>`:''}${sessions.length?`<h4>AI sessions</h4><pre>${escape(sessions.join('\n'))}</pre>`:''}<h4>Plan</h4><pre>${escape(plan)}</pre><h4>Definition of done</h4><pre>${escape(dod)}</pre>${safe.commit?`<p>Commit: ${escape(safe.commit)}</p>`:''}${safe.reason?`<p>Reason: ${escape(safe.reason)}</p>`:''}${safe.next.length?`<h4>Next action</h4><pre>${escape(safe.next.join('\n'))}</pre>`:''}</section><!-- dev-workflow:${id}:end -->`;
+}
+function externalLinkSummary(state) {
+  const links=sanitize(state.zettly?.externalLinks||{});
+  const provenance=buildTaskProvenance(state);
+  return [`Source: ${provenance.taskOrigin.system}${provenance.taskOrigin.id?` ${provenance.taskOrigin.id}`:''}`,links.sentry?`Sentry: ${links.sentry.shortId||links.sentry.issueId} ${links.sentry.url||''}`:'',links.factory?`Factory: ${links.factory.taskKey||links.factory.id} (${links.factory.id})`:'',links.drawing?`Zettly Draw: ${links.drawing.url||`https://zettly.programinglive.com/draw/${links.drawing.id}`}`:''].filter(Boolean).join('\n');
 }
 function mergeBlock(description,state,block) {
   const id=state.workflowTaskId.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
@@ -77,7 +104,7 @@ async function syncState(workflowState,state,status,args,options) {
   guard();
   if(!sourceClient){const result=pending(state,new Error('Not configured'));result.note='Zettly sync pending: configure the existing authenticated Zettly client. No Todo was created.';await persist(workflowState,guard);return result;}
   const client=checkedClient(sourceClient,guard);
-  if(options.todoId)state.zettly.todoId=Number(options.todoId);
+  if(options.todoId){if(Number(state.zettly.todoId)!==Number(options.todoId))state.zettlyContext=null;state.zettly.todoId=Number(options.todoId);}
   const block=blockFor(state,status,args);
   const payloadHash=hash([block,status]);
   if(!options.force&&Number.isSafeInteger(state.zettly.todoId)&&state.zettly.todoId>0&&state.zettly.lastPayloadHash===payloadHash&&!state.zettly.pending)return {ok:true,note:`Zettly Todo #${state.zettly.todoId} is linked.`};
@@ -122,7 +149,8 @@ export async function syncZettlyTask(workflowState,options={}) {
 }
 function outcomeContent(state,status,args) {
   const safe=sanitize({task:state.taskDescription,project:state.projectDir,commit:args.commitMessage||state.lastCommitMessage||'',dod:state.definitionOfDone||[],files:state.documentationFiles||[],next:args.nextSteps||[],reason:args.reason||''});
-  return [`[Dev Workflow outcome ID: ${state.workflowTaskId}; status: ${status}]`,`Status: ${status}`,`Task: ${safe.task}`,`Project: ${safe.project}`,`Commit: ${safe.commit}`,`Documentation: ${safe.files.join(', ')}`,...safe.dod.map(item=>`${item.status}: ${item.text}${item.evidence?' — '+item.evidence:''}`),safe.reason?`Reason: ${safe.reason}`:'',safe.next.length?`Next action: ${safe.next.join('; ')}`:''].filter(Boolean).join('\n');
+  const sessions=renderAiSessions(state);
+  return [`[Dev Workflow outcome ID: ${state.workflowTaskId}; status: ${status}]`,`Status: ${status}`,`Task: ${safe.task}`,`Project: ${safe.project}`,`Commit: ${safe.commit}`,`Documentation: ${safe.files.join(', ')}`,externalLinkSummary(state),...sessions.map(line=>`AI session: ${line}`),...safe.dod.map(item=>`${item.status}: ${item.text}${item.evidence?' — '+item.evidence:''}`),safe.reason?`Reason: ${safe.reason}`:'',safe.next.length?`Next action: ${safe.next.join('; ')}`:''].filter(Boolean).join('\n');
 }
 async function flushItem(workflowState,item,options) {
   const guard=ownershipGuard(workflowState);

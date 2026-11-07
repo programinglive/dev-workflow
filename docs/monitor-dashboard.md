@@ -5,6 +5,22 @@ langsung, tanpa login, di jaringan Tailscale.
 
 URL: `http://100.107.65.21:3100`
 
+## Build execution location and Android visibility
+
+`report_build_status` accepts `buildHost` for the machine that actually executes a build, test, scan, or deployment command. Set this field when the command runs on a remote builder. It is retained through progress and terminal updates for the same build and cleared when a new target begins. The reporting device (`machine`) remains separate from the executor. When `buildHost` is absent, the web and Android views say that the host was not reported and identify the reporting device instead of guessing where the command ran.
+
+Build and test events include the same session key as the monitor snapshot, so recent event history can be attached to the correct session. Build event JSON is kept intact within a bounded payload instead of being cut mid-document; this preserves the reported host after a monitor restart.
+
+The web monitor displays the location in its build summary and session detail. The Android app has a Build tab and a shortcut on the Active tab. Running builds appear first, followed by recent builds visible in the monitor session and event response. The mobile card shows status, target, location, stage, progress, project, and time; tapping it opens session detail. Android APKs must be rebuilt and reinstalled for native UI changes to appear on a device.
+
+## Zettly Draw Mermaid Flow Preview
+
+When an agent executes `create_feature_flow`, a canonical Zettly Draw canvas is created and linked to the active task. The DevWorkflow live monitor surfaces this diagram directly in session cards and modal details:
+- **Inline Preview**: Session cards display an inline SVG thumbnail preview of the recorded architecture flow diagram fetched from `/api/drawings/:id/thumbnail`.
+- **Flow Modal Lightbox**: Clicking the preview thumbnail opens an enlarged modal (`#modal-flow`) rendering the full vector diagram cleanly with high resolution.
+- **Export & Navigation**: The modal provides a one-click "Download PNG" button that converts the vector diagram into a downloadable high-resolution PNG image without requiring navigation away from the dashboard, as well as a direct link to open and edit the drawing in Zettly Draw.
+- **Server Endpoint**: `/api/drawings/:id/thumbnail` serves the cached SVG diagram with `image/svg+xml` content type directly from the Zettly database connection.
+
 Berkas di `monitor-server/`:
 
 | Berkas | Isi |
@@ -35,6 +51,14 @@ when the MCP process exits, after which the taskless idle card expires according
 to `EMPTY_IDLE_TTL` (one minute). The default 30-second interval can be adjusted
 with `DEVWF_MONITOR_HEARTBEAT_MS` (100–60000 ms). The server cannot report clients
 that are not connected to the `dev-workflow` MCP.
+
+## Zettly Draw Mermaid Flow Preview
+
+When an agent executes `create_feature_flow`, a canonical Zettly Draw canvas is created and linked to the active task. The DevWorkflow live monitor surfaces this diagram directly in session cards and modal details:
+- **Inline Preview**: Session cards display an inline SVG thumbnail preview of the recorded architecture flow diagram fetched from `/api/drawings/:id/thumbnail`.
+- **Flow Modal Lightbox**: Clicking the preview thumbnail opens an enlarged modal (`#modal-flow`) rendering the full vector diagram cleanly with high resolution.
+- **Export & Navigation**: The modal provides a one-click "Download PNG" button that converts the vector diagram into a downloadable high-resolution PNG image without requiring navigation away from the dashboard, as well as a direct link to open and edit the drawing in Zettly Draw.
+- **Server Endpoint**: `/api/drawings/:id/thumbnail` serves the cached SVG diagram with `image/svg+xml` content type directly from the Zettly database connection.
 
 Berkas di `monitor-server/`:
 
@@ -235,6 +259,17 @@ Status kini **diturunkan dari umur laporan**, bukan diklaim dari `phase`:
 | `possibly_stuck` | ≤ 2 jam (`STUCK_MS`) | kartu kuning + "mungkin berhenti di tengah jalan" |
 | `ended` | > 2 jam | kartu redup + "kemungkinan sudah selesai tanpa penutupan" |
 
+Pengecualian penting (7 November 2026): `closed`, `done`, `cancelled`, dan
+`archived` adalah **fase terminal**, bukan tebakan dari umur. Keempatnya
+langsung `ended` dengan penanda `terminal: true`, walau baru ditutup sedetik
+lalu. Sebelum ini sesi yang ditutup manual tampil "aktif" di Riwayat dan masuk
+filter **Live**, bukan **Selesai**, semata-mata karena `updated_at` baru.
+
+Tab Aktif juga tidak lagi menyimpan sesi non-idle yang sudah "berakhir":
+`buildSessionsQuery` membuang baris non-idle yang lebih tua dari `stuckTtl`
+(bawaan `2 hours`). Sebelumnya dua kartu "berakhir" menetap selamanya di Aktif
+karena filter hanya menyentuh `phase = 'idle'`.
+
 Kata "mungkin" dipakai sengaja: umur laporan **tidak dapat membuktikan** sesi
 sudah mati, hanya bahwa kabarnya berhenti.
 
@@ -313,11 +348,12 @@ dashboard tidak pernah berjalan.
 
 ```bash
 scp monitor-server/dashboard.cjs        root@100.107.65.21:/tmp/monitor.cjs
+scp monitor-server/build-monitor.cjs    root@100.107.65.21:/tmp/build-monitor.cjs
 scp monitor-server/sessions-query.cjs   root@100.107.65.21:/tmp/sessions-query.cjs
 scp monitor-server/devwf-monitor.service root@100.107.65.21:/tmp/devwf-monitor.service
 ssh root@100.107.65.21
 install -d -m 755 /opt/devwf-monitor
-install -m 644 /tmp/monitor.cjs /tmp/sessions-query.cjs /opt/devwf-monitor/
+install -m 644 /tmp/monitor.cjs /tmp/build-monitor.cjs /tmp/sessions-query.cjs /opt/devwf-monitor/
 install -m 644 /tmp/devwf-monitor.service /etc/systemd/system/devwf-monitor.service
 install -m 600 /dev/null /etc/devwf-monitor.env   # isi DATABASE_URL
 systemctl daemon-reload && systemctl restart devwf-monitor
@@ -439,6 +475,55 @@ terakhir: `COALESCE(NULLIF(EXCLUDED.agent_tool,''), sessions.agent_tool, 'unknow
 Terbukti di produksi: kirim laporan dengan `projectName`, lalu kirim laporan
 tanpa `projectName` — nama proyek dan `agent_tool` tetap ada.
 
+## Repository di kartu sesi (7 November 2026)
+
+Kartu yang hanya berbunyi "clinic" tidak menjawab pertanyaan pemilik: *proyeknya
+ada di mana?* Path lokal sudah tersimpan di `project_path` tetapi hanya muncul di
+modal detail, dan remote git belum pernah diambil sama sekali.
+
+Sekarang `start_task` menangkap identitas repository sekali per task
+(`repository.js`), lalu menyimpannya di state:
+
+```json
+{ "repository": { "path": "D:/code/clinic", "remote": "https://github.com/org/clinic.git" } }
+```
+
+- `git rev-parse --show-toplevel` → `path`
+- `git remote get-url origin` → `remote`
+
+Keduanya best-effort: direktori yang bukan repo, `git` yang tidak ada, atau
+perintah yang gagal menghasilkan `{ path: "", remote: "" }` dan **tidak pernah**
+menggagalkan `start_task`. Hasil kosong tetap disimpan supaya setiap `save()`
+tidak memanggil `git` berulang kali.
+
+Alurnya: `monitor.js` mengirim `repositoryPath`/`repositoryRemote` di snapshot →
+`session-upsert.cjs` menyimpannya di kolom `repo_path`/`repo_remote` → kartu dan
+modal menampilkan `📁 <path> · 🔗 <remote>`. Remote dirender sebagai tautan bila
+protokolnya `http(s)`.
+
+Kolom baru ditambahkan oleh migrasi idempoten saat dashboard boot. Dashboard
+berjalan sebagai user aplikasi yang **bukan** pemilik tabel, jadi migrasi
+memeriksa `information_schema` lebih dulu dan hanya mencetak SQL bila kolomnya
+benar-benar belum ada. SQL manualnya:
+
+```sql
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS repo_path text NOT NULL DEFAULT '';
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS repo_remote text NOT NULL DEFAULT '';
+```
+
+Sama seperti `project_name`, kedua kolom memakai
+`COALESCE(NULLIF(EXCLUDED.repo_path,''), sessions.repo_path)`: laporan ringkas
+saat task ditutup tidak boleh menghapus lokasi proyek yang sudah tercatat.
+
+## Peringatan flow yang belum ada
+
+Kartu task tanpa relasi `zettly_draw` sekarang menampilkan
+`⚠ Flow belum ada — jalankan create_feature_flow`. Sebelumnya preview flow
+hilang diam-diam, sehingga task yang melewati gerbang Mermaid tidak bisa
+dibedakan dari task yang flow-nya gagal terkirim. `create_feature_flow` juga
+melaporkan snapshot sekali lagi setelah drawing ditautkan, karena relasi itu
+ditambahkan **sesudah** penyimpanan state.
+
 ## Rekap durasi per proyek
 
 Timer per sesi tidak pernah dijumlahkan, jadi pemilik tahu satu sesi memakan 45
@@ -448,9 +533,11 @@ web. Batas hari diatur `SUMMARY_DAYS` (bawaan 7).
 
 Tiga keputusan:
 
-1. **Hanya sesi yang sudah ditutup** (`phase = 'idle'`). Durasi sesi berjalan
-   masih bertambah; memasukkannya membuat rekap berubah tiap 3 detik dan tidak
-   bisa dibandingkan antar hari.
+1. **Hanya sesi yang sudah final** (`phase IN ('idle','closed','done','cancelled')`).
+   Durasi sesi berjalan masih bertambah; memasukkannya membuat rekap berubah
+   tiap 3 detik dan tidak bisa dibandingkan antar hari. Fase terminal ikut
+   dihitung sejak 7 November 2026: sesi yang ditutup manual dulu hilang dari
+   rekap karena query hanya menerima `idle`.
 2. **`(tanpa proyek)` dipisah, tidak ditebak.** Sesi lama kehilangan namanya
    karena bug di atas. Menebak dari jalur atau judul berarti mengarang data.
 3. **Rekap ini hanya mungkin setelah `project_name` diperbaiki.** Tanpa
@@ -819,3 +906,7 @@ cukup untuk membuktikan tombolnya bekerja tanpa membuka WhatsApp.
 **Xiaomi Pad 6 bisa terkunci pola** dan menampilkan "Draw pattern" di atas
 aplikasi. Itu kunci perangkat, bukan kerusakan aplikasi - jangan coba
 menembusnya; verifikasi di tablet lain atau minta pemilik membukanya.
+
+## Connected development work
+
+Each active development session keeps its original source distinct from its linked execution and planning records. The session detail shows the canonical Zettly Todo, the Factory task, any verified Sentry issue, and the Zettly Draw plan as separate links. Factory recording is enabled by default for a configured, matching repository. A failed Factory write is shown in the `start_task` result so the session cannot appear fully connected by accident. Create the Mermaid flow before marking implementation complete; the flow is also saved as editable shapes in Zettly Draw.

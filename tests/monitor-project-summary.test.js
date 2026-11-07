@@ -43,7 +43,9 @@ test("sesi yang belum selesai tidak dihitung sebagai durasi final", () => {
   // setiap 3 detik dan tidak bisa dibandingkan antar hari.
   const { sql } = buildProjectSummaryQuery({});
   assert.match(sql, /started_at IS NOT NULL/);
-  assert.match(sql, /phase = 'idle'/, "hanya sesi yang sudah ditutup");
+  // Sesi yang ditutup manual (closed) dan sesi selesai (done) juga final:
+  // mengabaikannya membuat rekap kehilangan pekerjaan yang benar-benar selesai.
+  assert.match(sql, /phase IN \('idle', 'closed', 'done', 'cancelled'\)/);
 });
 
 test("batas hari bisa diatur dan nilai aneh jatuh ke bawaan", () => {
