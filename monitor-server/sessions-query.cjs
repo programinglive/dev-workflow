@@ -29,11 +29,20 @@
  */
 const DEFAULT_IDLE_TTL = '30 minutes';
 const DEFAULT_EMPTY_IDLE_TTL = '1 minute';
+/**
+ * Batas umur sesi non-idle di tab Aktif.
+ *
+ * Sesi yang berhenti melapor lebih lama dari ini tidak mungkin masih bekerja:
+ * dashboard sendiri sudah melabelinya "berakhir". Sebelum ini, baris seperti
+ * itu menetap selamanya karena filter hanya menyentuh phase `idle`.
+ */
+const DEFAULT_STUCK_TTL = '2 hours';
 
 function buildSessionsQuery({
   limit = 20,
   idleTtl = DEFAULT_IDLE_TTL,
   emptyIdleTtl = DEFAULT_EMPTY_IDLE_TTL,
+  stuckTtl = DEFAULT_STUCK_TTL,
 } = {}) {
   return {
     sql: `SELECT session_key, machine, project_path, project_name, task, task_type, phase,
@@ -51,14 +60,24 @@ function buildSessionsQuery({
                      OR updated_at < now() - $2::interval
                    )
                  )
+             AND NOT (
+                   phase <> 'idle'
+                   AND updated_at < now() - $4::interval
+                 )
            ORDER BY updated_at DESC
            LIMIT $1`,
     params: [
       limit,
       idleTtl || DEFAULT_IDLE_TTL,
       emptyIdleTtl || DEFAULT_EMPTY_IDLE_TTL,
+      stuckTtl || DEFAULT_STUCK_TTL,
     ],
   };
 }
 
-module.exports = { buildSessionsQuery, DEFAULT_IDLE_TTL, DEFAULT_EMPTY_IDLE_TTL };
+module.exports = {
+  buildSessionsQuery,
+  DEFAULT_IDLE_TTL,
+  DEFAULT_EMPTY_IDLE_TTL,
+  DEFAULT_STUCK_TTL,
+};

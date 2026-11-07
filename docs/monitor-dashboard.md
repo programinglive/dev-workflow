@@ -259,6 +259,17 @@ Status kini **diturunkan dari umur laporan**, bukan diklaim dari `phase`:
 | `possibly_stuck` | ≤ 2 jam (`STUCK_MS`) | kartu kuning + "mungkin berhenti di tengah jalan" |
 | `ended` | > 2 jam | kartu redup + "kemungkinan sudah selesai tanpa penutupan" |
 
+Pengecualian penting (7 November 2026): `closed`, `done`, `cancelled`, dan
+`archived` adalah **fase terminal**, bukan tebakan dari umur. Keempatnya
+langsung `ended` dengan penanda `terminal: true`, walau baru ditutup sedetik
+lalu. Sebelum ini sesi yang ditutup manual tampil "aktif" di Riwayat dan masuk
+filter **Live**, bukan **Selesai**, semata-mata karena `updated_at` baru.
+
+Tab Aktif juga tidak lagi menyimpan sesi non-idle yang sudah "berakhir":
+`buildSessionsQuery` membuang baris non-idle yang lebih tua dari `stuckTtl`
+(bawaan `2 hours`). Sebelumnya dua kartu "berakhir" menetap selamanya di Aktif
+karena filter hanya menyentuh `phase = 'idle'`.
+
 Kata "mungkin" dipakai sengaja: umur laporan **tidak dapat membuktikan** sesi
 sudah mati, hanya bahwa kabarnya berhenti.
 
@@ -522,9 +533,11 @@ web. Batas hari diatur `SUMMARY_DAYS` (bawaan 7).
 
 Tiga keputusan:
 
-1. **Hanya sesi yang sudah ditutup** (`phase = 'idle'`). Durasi sesi berjalan
-   masih bertambah; memasukkannya membuat rekap berubah tiap 3 detik dan tidak
-   bisa dibandingkan antar hari.
+1. **Hanya sesi yang sudah final** (`phase IN ('idle','closed','done','cancelled')`).
+   Durasi sesi berjalan masih bertambah; memasukkannya membuat rekap berubah
+   tiap 3 detik dan tidak bisa dibandingkan antar hari. Fase terminal ikut
+   dihitung sejak 7 November 2026: sesi yang ditutup manual dulu hilang dari
+   rekap karena query hanya menerima `idle`.
 2. **`(tanpa proyek)` dipisah, tidak ditebak.** Sesi lama kehilangan namanya
    karena bug di atas. Menebak dari jalur atau judul berarti mengarang data.
 3. **Rekap ini hanya mungkin setelah `project_name` diperbaiki.** Tanpa
