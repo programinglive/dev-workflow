@@ -1571,12 +1571,27 @@ async function pruneOldRows() {
 async function upsertSession(body) {
   const { sql, params } = buildSessionUpsert(body);
   await query(sql, params);
-  const key = str(body.sessionKey, 200);
+  const key = str(body.cardKey || body.sessionKey, 200);
   if (body && body.activeBuild && typeof body.activeBuild === 'object') {
     liveBuildsBySession.set(key, normalizeBuildState(body.activeBuild));
-  } else if (body && (body.phase === 'idle' || body.phase === 'closed' || body.phase === 'done')) {
+  } else {
     liveBuildsBySession.delete(key);
   }
+
+  // Zettelkasten Chaining: bila ada parentCardKey dan berbeda dari kartu ini,
+  // arsipkan kartu induk agar tidak ganda di tab Sesi Aktif
+  if (body && body.parentCardKey && body.parentCardKey !== key) {
+    try {
+      await query(
+        `UPDATE sessions
+            SET phase = CASE WHEN phase NOT IN ('done', 'closed', 'cancelled') THEN 'archived' ELSE phase END,
+                updated_at = now()
+          WHERE session_key = $1`,
+        [str(body.parentCardKey, 200)]
+      );
+    } catch {}
+  }
+
   return key;
 }
 
@@ -1862,6 +1877,11 @@ const server = http.createServer(async (req, res) => {
           eventBuilds.get(row.session_key) ||
           (row.machine && row.project_name ? eventBuilds.get(`${row.machine}::${row.project_name}`) : null) ||
           null;
+        if (activeBuild && row.started_at) {
+          const buildTime = new Date(activeBuild.updatedAt || activeBuild.startedAt).getTime();
+          const taskTime = new Date(row.started_at).getTime();
+          if (buildTime < taskTime) activeBuild = null;
+        }
         if (!activeBuild && s.status === 'live' && (row.phase === 'testing' || row.phase === 'release')) {
           const rencana = Array.isArray(row.plan_json) ? row.plan_json : [];
           const openStep = rencana.find((p) => p && p.status !== 'done');

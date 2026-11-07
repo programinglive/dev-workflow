@@ -60,7 +60,7 @@ function normalTool(v) {
  */
 function buildSessionUpsert(body = {}) {
   const b = body || {};
-  const key = str(b.sessionKey, 200);
+  const key = str(b.cardKey || b.sessionKey, 200);
   if (!key) throw new Error('sessionKey wajib');
 
   const plan = Array.isArray(b.plan) ? b.plan.slice(0, 40) : [];

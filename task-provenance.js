@@ -1,10 +1,10 @@
 import {sanitize} from './security/sanitizer.js';
 
-const SYSTEMS=new Set(['zettly','factory','sentry','manual','unknown']);
+const SYSTEMS=new Set(['zettly','factory','sentry','manual','session_chain','unknown']);
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function validId(system,value) {
  const id=String(value??'');
- return ['zettly','zettly_draw'].includes(system)?/^[1-9]\d{0,14}$/.test(id)&&Number.isSafeInteger(Number(id)):system==='sentry'?/^\d{1,30}$/.test(id):system==='factory'?uuid.test(id):['manual','unknown'].includes(system)&&!id;
+ return ['zettly','zettly_draw'].includes(system)?/^[1-9]\d{0,14}$/.test(id)&&Number.isSafeInteger(Number(id)):system==='sentry'?/^\d{1,30}$/.test(id):system==='factory'?uuid.test(id):system==='session_chain'?Boolean(id&&id.length<=200):['manual','unknown'].includes(system)&&!id;
 }
 export function validateTaskSource(source,zettlyTodoId) {
  if(source===undefined)return null;
@@ -38,6 +38,10 @@ export function buildTaskProvenance(state={}) {
  if(links.drawing)add('zettly_draw',links.drawing.id,{relation:'visual_plan',label:`Draw #${links.drawing.id}`,url:links.drawing.url});
  if(links.sentry)add('sentry',links.sentry.issueId,{relation:'source_issue',label:links.sentry.shortId||links.sentry.issueId,url:links.sentry.url});
  if(['zettly','factory','sentry'].includes(taskOrigin.system))add(taskOrigin.system,taskOrigin.id,{url:taskOrigin.url,label:taskOrigin.label,relation:'origin'});
+ if(state.parentTask&&(state.parentTask.cardKey||state.parentTask.id||state.parentTask.description)){
+  const parentId=String(state.parentTask.cardKey||state.parentTask.id||'parent');
+  add('session_chain',parentId,{relation:'preceded_by',label:String(state.parentTask.description||state.parentTask.title||parentId).slice(0,160)});
+ }
  if(state.focus?.id&&state.focus?.ownerId&&Number(state.focus.todoId)===Number(state.zettly?.todoId))taskRelations.push({system:'zettly',id:'focus:'+state.focus.id,url:safeUrl(state.focus.url),label:'Focus: '+String(state.focus.title||'').slice(0,160),relation:'focus'});
  const context=Number(state.zettlyContext?.todoId)===Number(state.zettly?.todoId)?state.zettlyContext:null;
  for(const node of (context?.nodes||[]).slice(0,50)){

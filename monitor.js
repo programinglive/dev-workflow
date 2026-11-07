@@ -67,6 +67,22 @@ export function machineName(env = process.env) {
   }
 }
 
+/**
+ * Generate a unique card key per topic within a session (Zettelkasten card identity).
+ */
+export function cardKeyFor(sessionKey, title, taskId = '') {
+  const baseKey = String(sessionKey || '').trim();
+  if (!baseKey) return '';
+  const cleanTitle = String(title || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48);
+  if (!cleanTitle && !taskId) return baseKey;
+  const tag = cleanTitle || String(taskId || '').slice(0, 16);
+  return `${baseKey}::${tag}`;
+}
+
 /** Ringkasan satu sesi, bentuk yang dipakai dashboard. */
 export function buildSnapshot({ state, sessionKey = "", projectPath = "", sessionStartedAt = "", env = process.env } = {}) {
   const s = state || {};  const plan = Array.isArray(s.plan) ? s.plan : [];
@@ -81,9 +97,19 @@ export function buildSnapshot({ state, sessionKey = "", projectPath = "", sessio
     .split(/[\\/]/)
     .pop() || "";
 
+  const cleanTitle = sessionTitle(sessionKey, env) || String(s.taskDescription || "").slice(0, 200);
+  const cardKey = cardKeyFor(sessionKey, cleanTitle, s.workflowTaskId);
+  let parentCardKey = '';
+  if (s.parentTask && (s.parentTask.cardKey || s.parentTask.description || s.parentTask.title)) {
+    parentCardKey = s.parentTask.cardKey || cardKeyFor(sessionKey, s.parentTask.description || s.parentTask.title, s.parentTask.id);
+  }
+
   return {
     ...buildTaskProvenance(s),
     sessionKey,
+    cardKey,
+    parentCardKey,
+    parentTask: s.parentTask || null,
     machine: machineName(env),
     projectPath: String(projectPath || ""),
     projectName,
@@ -101,7 +127,7 @@ export function buildSnapshot({ state, sessionKey = "", projectPath = "", sessio
     // Judul percakapan OpenCode, bila bisa dibaca. Dipakai kartu di tablet
     // supaya orang tahu sesi mana yang dimaksud, bukan kode `ses_...`.
     // Bila kosong, jatuh ke taskDescription agar kartu di monitor tetap informatif.
-    sessionTitle: sessionTitle(sessionKey, env) || String(s.taskDescription || "").slice(0, 200),
+    sessionTitle: cleanTitle,
     // Alat AI pemanggil: codex, antigravity, opencode, atau unknown bila tidak
     // ada petunjuk. Tidak pernah menebak.
     agentTool: detectTool({ env, commandLine: String(process.argv.slice(0, 2).join(' ')) }),

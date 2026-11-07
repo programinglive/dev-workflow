@@ -24,7 +24,7 @@ function normalizeTaskMetadata(input) {
   const seen = new Set();
   if (Array.isArray(value.taskRelations)) {
     for (const item of value.taskRelations.slice(0, 120)) {
-      const normalized = record(item, ['zettly', 'zettly_draw', 'factory', 'sentry'], true);
+      const normalized = record(item, ['zettly', 'zettly_draw', 'factory', 'sentry', 'session_chain'], true);
       if (!normalized || !normalized.id) continue;
       const key = normalized.system + ':' + normalized.id + ':' + normalized.relation;
       if (seen.has(key)) continue;
@@ -43,14 +43,20 @@ function renderTaskMetadata(session) {
     taskRelations: session.task_relations_json,
   });
   const escape = v => String(v || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
-  const names = { zettly: 'Zettly', zettly_draw: 'Zettly Draw', factory: 'Factory', sentry: 'Sentry', manual: 'Manual', unknown: 'Unknown' };
+  const names = { zettly: 'Zettly', zettly_draw: 'Zettly Draw', factory: 'Factory', sentry: 'Sentry', session_chain: 'Zettelkasten', manual: 'Manual', unknown: 'Unknown' };
   const item = (record, relation) => {
+    if (record.system === 'session_chain') {
+      const relNames = { preceded_by: 'Lanjutan dari', superseded_by: 'Dilanjutkan di' };
+      const relLabel = relation && relNames[record.relation] ? relNames[record.relation] : 'Rujukan';
+      const text = '🔗 ' + relLabel + ': ' + escape(record.label);
+      return '<span class="session-chain-pill" data-session-chain="' + escape(record.id) + '" style="color:#d2a8ff;cursor:pointer;font-weight:600;">' + text + '</span>';
+    }
     const prefix = names[record.system];
     const label = record.label || '';
     const shortId = record.id ? (record.system === 'factory' ? record.id.slice(0, 8) : record.id) : '';
     const named = label.startsWith(prefix + ' ') ? label : record.system === 'zettly_draw' && label.startsWith('Draw #') ? 'Zettly ' + label : prefix + (label ? (['factory', 'sentry'].includes(record.system) ? ' ' : ' · ') + label : '');
     const main = shortId && !named.includes(shortId) ? named + ' #' + shortId : named;
-    const relationNames = { tracks: 'Todo', executes: 'eksekusi', visual_plan: 'rencana visual', source_issue: 'isu sumber', focus: 'fokus' };
+    const relationNames = { tracks: 'Todo', executes: 'eksekusi', visual_plan: 'rencana visual', source_issue: 'isu sumber', focus: 'fokus', preceded_by: 'Lanjutan dari', superseded_by: 'Dilanjutkan di' };
     const text = main + (relation && relationNames[record.relation] ? ' · ' + relationNames[record.relation] : '');
     return record.url
       ? '<a href="' + escape(record.url) + '" title="' + escape(record.id) + '" target="_blank" rel="noopener noreferrer">' + escape(text) + '</a>'

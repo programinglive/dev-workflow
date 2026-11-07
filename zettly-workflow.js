@@ -19,6 +19,18 @@ export function validateZettlyTaskArguments(args={}) {
 export function assignWorkflowIdentity(state,previous,args={}) {
   const same=previous?.taskDescription===state.taskDescription&&normalizeProjectPath(previous?.projectDir||'')===normalizeProjectPath(state.projectDir||'')&&(!args.taskId||args.taskId===previous?.workflowTaskId);
   state.workflowTaskId=args.taskId||(same&&previous.workflowTaskId)||randomUUID();
+  if(!same&&previous?.taskDescription){
+    state.parentTask={
+      id:previous.workflowTaskId||'',
+      description:previous.taskDescription,
+      title:previous.taskDescription,
+      todoId:previous.zettly?.todoId||null
+    };
+  }else if(same&&previous?.parentTask){
+    state.parentTask=structuredClone(previous.parentTask);
+  }else{
+    state.parentTask=null;
+  }
   state.zettly=(same&&previous.zettly)?structuredClone(previous.zettly):{taskId:state.workflowTaskId,todoId:null};
   state.zettly.taskId=state.workflowTaskId;
   if(args.zettlyTodoId)state.zettly.todoId=Number(args.zettlyTodoId);
