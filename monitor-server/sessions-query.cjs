@@ -36,11 +36,12 @@ function buildSessionsQuery({
   emptyIdleTtl = DEFAULT_EMPTY_IDLE_TTL,
 } = {}) {
   return {
-    sql: `SELECT session_key, machine, project_path, project_name, task, task_type, phase,
+    sql: `SELECT session_key, task_id, parent_task_id, parent_task_title,
+                 machine, project_path, project_name, task, task_type, phase,
                  plan_json, plan_done, plan_total, dod_done, dod_total, dod_waived,
                  started_at, session_title, agent_tool, updated_at
             FROM sessions
-           WHERE phase NOT IN ('closed', 'done', 'cancelled')
+           WHERE phase NOT IN ('closed', 'done', 'cancelled', 'handed-off')
              AND (NULLIF(BTRIM(task), '') IS NOT NULL OR NULLIF(BTRIM(session_title), '') IS NOT NULL)
              AND NOT (
                    phase = 'idle'

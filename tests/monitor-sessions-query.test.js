@@ -73,5 +73,7 @@ test('anonymous connections never appear as active tasks, real session titles re
   const {sql}=buildSessionsQuery();
   assert.match(sql,/NULLIF\(BTRIM\(task\), ''\)/);
   assert.match(sql,/NULLIF\(BTRIM\(session_title\), ''\)/);
-  assert.match(sql,/phase NOT IN \('closed', 'done', 'cancelled'\)/);
+  // 'handed-off' ditambahkan 8 November 2026: kartu yang sudah diserahkan ke
+  // kartu berikutnya dalam sesi yang sama bukan lagi pekerjaan aktif.
+  assert.match(sql,/phase NOT IN \('closed', 'done', 'cancelled', 'handed-off'\)/);
 });
