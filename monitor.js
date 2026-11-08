@@ -77,8 +77,23 @@ export function buildSnapshot({ state, sessionKey = "", projectPath = "", sessio
     .split(/[\\/]/)
     .pop() || "";
 
+  // Zettelkasten chaining: satu kartu per task, jadi server butuh identitas
+  // task dan, bila ini lanjutan, identitas kartu sebelumnya. Parent tanpa id
+  // diperlakukan sebagai tidak ada supaya tidak membuat rantai palsu.
+  const taskId = String(s.workflowTaskId || "");
+  const parent = s.parentTask && typeof s.parentTask === "object" ? s.parentTask : null;
+  const parentTask = parent && String(parent.taskId || "")
+    ? {
+        taskId: String(parent.taskId),
+        title: String(parent.title || ""),
+        startedAt: String(parent.startedAt || ""),
+      }
+    : null;
+
   return {
     sessionKey,
+    taskId,
+    parentTask,
     machine: machineName(env),
     projectPath: String(projectPath || ""),
     projectName,
