@@ -32,11 +32,9 @@ test('the ETA line has labels for overdue, stalled and failed', () => {
 });
 
 test('the ETA is recomputed from the same estimator the tools use', () => {
-  // The page must inline the module's estimator, not a second implementation
-  // that can drift from what build_estimate answers.
-  for (const name of ['MIN_SAMPLES', 'STALL_MS', 'toMs', 'numberOrNull', 'clamp0', 'minutes', 'isRevised']) {
-    assert.match(dash, new RegExp(`const ${name} = \\$\\{${name}(\\.toString\\(\\))?\\}`));
-  }
+  // The page inlines the module's estimator verbatim, so a human and an agent
+  // can never be answered by two different implementations.
+  assert.match(dash, /const estimateBuild = \$\{estimateBuild\.toString\(\)\};/);
 });
 
 test('the inlined estimator compiles inside the page scope', () => {
