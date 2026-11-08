@@ -239,7 +239,7 @@ export async function handleStartTask(args, workflowState, git) {
   //   1. Proses MCP LAIN menulis berkas state setelah kita memuatnya.
   //   2. Task kita sendiri yang belum selesai lalu diganti task baru.
   const preservedBeforeSave = await workflowState.reconcileWithDisk();
-  const previousTaskIdentity = {taskDescription:workflowState.state.taskDescription,projectDir:workflowState.state.projectDir,workflowTaskId:workflowState.state.workflowTaskId,zettly:workflowState.state.zettly};
+  const previousTaskIdentity = {taskDescription:workflowState.state.taskDescription,projectDir:workflowState.state.projectDir,workflowTaskId:workflowState.state.workflowTaskId,startedAt:workflowState.state.taskStartedAt,zettly:workflowState.state.zettly};
   const { archivedTask } = workflowState.reset({ archive: true });
 
   workflowState.state.currentPhase = "coding";
@@ -252,6 +252,15 @@ export async function handleStartTask(args, workflowState, git) {
   workflowState.state.taskStartedAt = new Date().toISOString();
   workflowState.state.classification = classify(args);
   workflowState.state.taskDescription = args.description;
+  // Zettelkasten chaining: remember which card this one continues. The
+  // identity was captured before reset() because reset wipes it.
+  workflowState.state.parentTask = previousTaskIdentity.taskDescription
+    ? {
+        taskId: previousTaskIdentity.workflowTaskId || "",
+        title: previousTaskIdentity.taskDescription,
+        startedAt: previousTaskIdentity.startedAt || "",
+      }
+    : null;
   workflowState.state.taskType = args.type;
   workflowState.state.plan = planDerived
     ? createPlan(dodCheck.items.map((text) => `Complete: ${text}`))
