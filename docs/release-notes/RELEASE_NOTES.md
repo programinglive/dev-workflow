@@ -4,6 +4,7 @@ Authoritative history of user-visible changes for the Development Workflow MCP S
 
 | Version | Date | Notes |
 |---------|------|-------|
+| 1.24.2 | 2026-11-08 | **monitor:** unify task-metadata and card-chain models into one upsert and dashboard (6b3a0f8) |
 | 1.12.3 | 2026-10-28 | **release:** catat rilis 1.12.2 (5c67101) |
 | 1.12.2 | 2026-10-28 | **release:** catat rilis 1.12.1 (3beaa23) |
 | 1.12.1 | 2026-10-28 | **release:** catat rilis 1.12.0 (bb8624b) |
