@@ -52,30 +52,6 @@ to `EMPTY_IDLE_TTL` (one minute). The default 30-second interval can be adjusted
 with `DEVWF_MONITOR_HEARTBEAT_MS` (100–60000 ms). The server cannot report clients
 that are not connected to the `dev-workflow` MCP.
 
-## Zettly Draw Mermaid Flow Preview
-
-When an agent executes `create_feature_flow`, a canonical Zettly Draw canvas is created and linked to the active task. The DevWorkflow live monitor surfaces this diagram directly in session cards and modal details:
-- **Inline Preview**: Session cards display an inline SVG thumbnail preview of the recorded architecture flow diagram fetched from `/api/drawings/:id/thumbnail`.
-- **Flow Modal Lightbox**: Clicking the preview thumbnail opens an enlarged modal (`#modal-flow`) rendering the full vector diagram cleanly with high resolution.
-- **Export & Navigation**: The modal provides a one-click "Download PNG" button that converts the vector diagram into a downloadable high-resolution PNG image without requiring navigation away from the dashboard, as well as a direct link to open and edit the drawing in Zettly Draw.
-- **Server Endpoint**: `/api/drawings/:id/thumbnail` serves the cached SVG diagram with `image/svg+xml` content type directly from the Zettly database connection.
-
-Berkas di `monitor-server/`:
-
-| Berkas | Isi |
-|---|---|
-| `dashboard.cjs` | Server HTTP: `/`, `/health`, `/api/sessions`, `/api/events`, `/api/share`, `POST /api/session`, `POST /api/event` |
-| `sessions-query.cjs` | Penyusun SQL daftar sesi (tanpa jaringan, bisa diuji) |
-| `share-links.cjs` | Token, URL publik, dan SQL `share_links` (murni) |
-| `share-page.cjs` | Halaman publik + OG tag + `PUBLIC_DENY` (murni) |
-| `share-route.cjs` | Penjaga Origin/header dan handler create/revoke/list |
-| `share-server.cjs` | Server publik `127.0.0.1:3200`, hanya `GET`/`HEAD` |
-| `devwf-monitor.service` | Unit systemd; kredensial dibaca dari `EnvironmentFile` |
-| `devwf-share.service` | Unit systemd untuk server publik |
-| `cloudflared-devwf-share.service` | Unit systemd tunnel `devwf-share` |
-| `share-tunnel.yml` | Config tunnel: `devwfshare.programinglive.com` -> `127.0.0.1:3200` |
-| `devwf-monitor.env.example` | Contoh isi `/etc/devwf-monitor.env` |
-
 ## Mengemudikan tablet lewat adb
 
 Kedua tablet membuka adb TCP di port 5555 di alamat Tailscale-nya:
