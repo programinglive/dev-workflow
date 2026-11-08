@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const { pairBuildRuns, percentile, summarizeRuns, estimateBuild } = require('../monitor-server/build-report.cjs');
+const { pairBuildRuns, percentile, summarizeRuns, estimateBuild, buildReportQuery, buildReportPayload } = require('../monitor-server/build-report.cjs');
 
 const T0 = '2026-11-08T10:00:00.000Z';
 const at = (minutes) => new Date(Date.parse(T0) + minutes * 60000).toISOString();
@@ -233,4 +233,35 @@ test("a stage change re-estimates from stage baselines", () => {
   });
   assert.equal(est.basis, "stage");
   assert.equal(est.remainingLowMs, 90000);
+});
+
+
+test("the query clamps the window to 1..30 days", () => {
+  assert.equal(buildReportQuery({ days: 0 }).params[0], "1");
+  assert.equal(buildReportQuery({ days: 99 }).params[0], "30");
+  assert.equal(buildReportQuery({ days: 7 }).params[0], "7");
+});
+
+test("the query adds optional project and host filters as parameters", () => {
+  const plain = buildReportQuery({ days: 30 });
+  assert.equal(plain.params.length, 1);
+  const filtered = buildReportQuery({ days: 30, project: "clinic", host: "mmch" });
+  assert.equal(filtered.params.length, 3);
+  assert.deepEqual(filtered.params.slice(1), ["clinic", "mmch"]);
+  assert.match(filtered.sql, /project_name = \$2/);
+});
+
+test("the report payload builds totals, projects and slowest from rows", () => {
+  const T0 = "2026-11-08T10:00:00.000Z";
+  const at = (m) => new Date(Date.parse(T0) + m * 60000).toISOString();
+  const rows = [
+    { at: at(0), session_key: "s", project_name: "clinic", kind: "build_started", detail: JSON.stringify({ target: "verify", startedAt: at(0) }) },
+    { at: at(4), session_key: "s", project_name: "clinic", kind: "build_succeeded", detail: JSON.stringify({ target: "verify", startedAt: at(0), finishedAt: at(4) }) },
+  ];
+  const payload = buildReportPayload(rows, { days: 7, now: at(10) });
+  assert.equal(payload.window_days, 7);
+  assert.equal(payload.totals.runs, 1);
+  assert.equal(payload.totals.succeeded, 1);
+  assert.equal(payload.projects[0].p50Ms, 240000);
+  assert.ok(payload.generated_at);
 });
