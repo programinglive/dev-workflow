@@ -64,6 +64,25 @@ function renderTaskMetadata(session) {
   };
   const origin = normalized.taskOrigin.system ? normalized.taskOrigin : { system: 'unknown' };
 
+  const repoPath = typeof session.repo_path === 'string' ? session.repo_path.trim() : '';
+  const repoRemote = typeof session.repo_remote === 'string' ? session.repo_remote.trim() : '';
+  let repositoryHtml = '';
+  if (repoPath || repoRemote) {
+    const remoteHtml = /^https?:\/\//i.test(repoRemote)
+      ? '<a href="' + escape(repoRemote) + '" target="_blank" rel="noopener noreferrer">' + escape(repoRemote) + '</a>'
+      : escape(repoRemote);
+    repositoryHtml = '<div class="repo-line meta" style="margin-top:4px;color:#8b949e">📁 ' + escape(repoPath) +
+      (repoRemote ? ' · 🔗 ' + remoteHtml : '') + '</div>';
+  }
+
+  // A task card without a Mermaid flow hides the one thing the owner asked for:
+  // the steps. Say it out loud instead of silently omitting the preview.
+  const hasFlow = normalized.taskRelations.some((record) => record.system === 'zettly_draw');
+  const taskText = String(session.task || session.session_title || '').trim();
+  const flowWarning = taskText && !hasFlow
+    ? '<div class="flow-missing meta" style="margin-top:4px;color:#d29922">⚠ Flow belum ada — jalankan create_feature_flow</div>'
+    : '';
+
   let drawPreviewHtml = '';
   const drawRelation = normalized.taskRelations.find(r => r.system === 'zettly_draw');
   if (drawRelation && drawRelation.id) {
@@ -85,6 +104,8 @@ function renderTaskMetadata(session) {
   return '<div class="task-metadata meta"><div>Source: ' + item(origin, false) + '</div>' +
     (normalized.workflowTaskId ? '<div>Workflow: ' + escape(normalized.workflowTaskId) + '</div>' : '') +
     (normalized.taskRelations.length ? '<div class="task-relation-list"><span>Relations:</span> ' + normalized.taskRelations.map(r => '<span class="task-relation task-relation-' + escape(r.system) + '">' + item(r, true) + '</span>').join('') + '</div>' : '') +
+    repositoryHtml +
+    flowWarning +
     drawPreviewHtml +
     '</div>';
 }

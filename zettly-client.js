@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
+import {registerRuntimeSecret} from './security/runtime-secrets.js';
 const execFileAsync=promisify(execFile);
 
 export function zettlySyncEnabled(env=process.env) {
@@ -27,6 +28,7 @@ export function readZettlyConfig(env=process.env) {
   let url;
   try {url=new URL(base);} catch {return null;}
   if(!['https:','http:'].includes(url.protocol)||url.username||url.password||url.search||url.hash) return null;
+  registerRuntimeSecret(token);
   return {base,token};
 }
 
@@ -77,7 +79,7 @@ export async function resolveZettlyConfig(env=process.env,{platform=process.plat
 export function createZettlyClient(config,{fetchImpl=fetch,timeoutMs=8000}={}) {
   let ownerCheck;
   async function request(method,route,body) {
-    if(!/^\/(?:user|todos(?:\/\d+)?|journal\/entries)(?:\?[^#]*)?$/.test(route)) throw new Error('Use a supported relative Zettly API path');
+    if(!/^\/(?:user|todos(?:\/\d+)?|drawings(?:\/[1-9]\d*)?|focus(?:\/(?:current|[1-9]\d*(?:\/complete)?))?|journal\/entries)(?:\?[^#]*)?$/.test(route)) throw new Error('Use a supported relative Zettly API path');
     let response;
     try {
       response=await fetchImpl(config.base+'/api/v1'+route,{method,redirect:'error',signal:AbortSignal.timeout(timeoutMs),

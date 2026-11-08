@@ -54,6 +54,7 @@ process.env.DEV_WORKFLOW_TEST_STATE_DIR = stateDir;
 // sendiri (tests/monitor-*.test.js).
 process.env.DEVWF_MONITOR_URL = "";
 process.env.DEVWF_ZETTLY_SYNC = '0';
+process.env.FACTORY_AUTO_TASK = 'false';
 
 function cleanup() {
   try {

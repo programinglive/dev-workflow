@@ -31,6 +31,17 @@ const CACHE_MS = 5 * 60 * 1000;
 
 let cache = new Map();
 
+function normalizeOptions(optsOrEnv) {
+  if (!optsOrEnv) return { env: process.env, now: Date.now() };
+  if (typeof optsOrEnv === 'object' && ('env' in optsOrEnv || 'now' in optsOrEnv)) {
+    return {
+      env: optsOrEnv.env || process.env,
+      now: typeof optsOrEnv.now === 'number' ? optsOrEnv.now : Date.now(),
+    };
+  }
+  return { env: optsOrEnv, now: Date.now() };
+}
+
 /** Lokasi opencode.db yang lazim, sesuai platform. */
 function candidatePaths(env = process.env) {
   const home = env.USERPROFILE || env.HOME || os.homedir();
@@ -50,8 +61,9 @@ function candidatePaths(env = process.env) {
  *
  * @returns {string} judul, atau string kosong bila tidak ditemukan.
  */
-function sessionTitle(sessionKey, { env = process.env, now = Date.now() } = {}) {
+function sessionTitle(sessionKey, optsOrEnv) {
   try {
+    const { env, now } = normalizeOptions(optsOrEnv);
     const key = String(sessionKey || '');
     if (!key) return '';
 
@@ -87,9 +99,57 @@ function sessionTitle(sessionKey, { env = process.env, now = Date.now() } = {}) 
   }
 }
 
+/**
+ * Perbarui judul sesi di opencode.db dan sinkronkan ke cache.
+ * Dipanggil saat start_task agar judul sesi di OpenCode dan monitor
+ * sesuai dengan tugas aktif yang sedang dikerjakan.
+ *
+ * @param {string} sessionKey
+ * @param {string} newTitle
+ * @param {{ env?: NodeJS.ProcessEnv, now?: number } | NodeJS.ProcessEnv} [optsOrEnv]
+ * @returns {boolean} true bila berhasil diupdate ke db, false bila dilewati/gagal.
+ */
+function updateSessionTitle(sessionKey, newTitle, optsOrEnv) {
+  try {
+    const { env, now } = normalizeOptions(optsOrEnv);
+    const key = String(sessionKey || '').trim();
+    const cleanTitle = String(newTitle || '')
+      .replace(/[\r\n\t]+/g, ' ')
+      .trim()
+      .slice(0, 200);
+    if (!key || !cleanTitle) return false;
+
+    // Selalu perbarui cache terlebih dahulu agar pemanggil di proses ini
+    // (misalnya monitor snapshot) langsung mendapat judul baru
+    cache.set(key, { title: cleanTitle, at: now });
+
+    const file = candidatePaths(env).find((p) => {
+      try {
+        return fs.existsSync(p);
+      } catch {
+        return false;
+      }
+    });
+    if (!file) return false;
+
+    const Database = require('better-sqlite3');
+    const db = new Database(file, { timeout: 2000 });
+    try {
+      const stmt = db.prepare('UPDATE session_v2 SET title = ?, time_updated = ? WHERE id = ?');
+      const result = stmt.run(cleanTitle, now, key);
+      return result.changes > 0;
+    } finally {
+      db.close();
+    }
+  } catch {
+    // Penamaan sesi adalah pelengkap UX; tidak boleh memicu kegagalan workflow
+    return false;
+  }
+}
+
 /** Kosongkan cache - dipakai tes. */
 function resetTitleCache() {
   cache = new Map();
 }
 
-module.exports = { sessionTitle, resetTitleCache, candidatePaths, CACHE_MS };
+module.exports = { sessionTitle, updateSessionTitle, resetTitleCache, candidatePaths, CACHE_MS };

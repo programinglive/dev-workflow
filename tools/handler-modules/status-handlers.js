@@ -211,7 +211,10 @@ export async function handleReadyCheck(workflowState, context = {}) {
       name: status.testsSkipped ? "Tests skipped acknowledged" : "Tests passed",
       done: testsPassedDone,
     },
-    { name: "Documentation created", done: status.documentationCreated },
+    {
+      name: status.documentationWaived ? "Documentation waived" : "Documentation created",
+      done: Boolean(status.documentationCreated || status.documentationWaived),
+    },
     { name: "Documentation updated for code changes", done: docGateSatisfied },
     { name: "Definition of done satisfied", done: dodSatisfied },
   ];

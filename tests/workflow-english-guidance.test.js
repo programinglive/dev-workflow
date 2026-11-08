@@ -8,6 +8,9 @@ test('workflow initialization instructions require English implementation artifa
  assert.match(WORKFLOW_INSTRUCTIONS.slice(0,512),/English/);
  for(const term of ['identifiers','comments','docstrings','test descriptions','developer documentation','commit messages']) assert.ok(WORKFLOW_INSTRUCTIONS.includes(term));
  assert.match(WORKFLOW_INSTRUCTIONS,/Zettly/);
+ assert.match(WORKFLOW_INSTRUCTIONS,/Sentry/);
+ assert.match(WORKFLOW_INSTRUCTIONS,/Factory/);
+ assert.match(WORKFLOW_INSTRUCTIONS,/verified fix/);
 });
 
 test('start and status responses remind the AI about English code and localized product text',async()=>{

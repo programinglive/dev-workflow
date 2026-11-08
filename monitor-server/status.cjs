@@ -33,6 +33,9 @@ const DEFAULT_LIVE_MS = 15 * 60 * 1000;
 /** Di atas ini, sesi dianggap berakhir tanpa penutupan. */
 const DEFAULT_STUCK_MS = 2 * 60 * 60 * 1000;
 
+/** Fase yang berarti sesi sudah ditutup, apa pun umur laporannya. */
+const TERMINAL_PHASES = new Set(['closed', 'done', 'cancelled', 'archived', 'handed-off']);
+
 /**
  * @param {object} args
  * @param {string} args.phase            fase dari state workflow
@@ -53,9 +56,11 @@ function classifySession({
   const ageMs = ageOf(updatedAt, now);
 
   if (fase === 'idle') return { status: 'idle', ageMs };
-  // Kartu yang sudah diserahkan ke kartu berikutnya dalam sesi yang sama
-  // bukan pekerjaan aktif: sesinya hidup, topiknya sudah pindah.
-  if (fase === 'handed-off') return { status: 'ended', ageMs };
+  // Fase terminal adalah fakta, bukan tebakan dari umur laporan: sesi yang
+  // sudah ditutup tidak boleh tampil "aktif" hanya karena baru ditutup.
+  // `handed-off` (kartu diserahkan ke kartu berikutnya dalam sesi yang
+  // sama) termasuk: sesinya hidup, tetapi topik itu sudah pindah.
+  if (TERMINAL_PHASES.has(fase)) return { status: 'ended', ageMs, terminal: true };
   // Tanpa waktu laporan yang sah, tidak ada dasar untuk menyebutnya hidup.
   if (ageMs === null) return { status: 'ended', ageMs: null };
   if (ageMs <= liveMs) return { status: 'live', ageMs };

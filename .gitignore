@@ -11,6 +11,8 @@ pids
 node_modules/
 build/
 dist/
+__pycache__/
+*.pyc
 test-output.html
 web/.next/
 lib/
@@ -29,6 +31,7 @@ Thumbs.db
 .state/
 *.tgz
 *.tsbuildinfo
+.managed-publish/
 
 !web/lib/
 

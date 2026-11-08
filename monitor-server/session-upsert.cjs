@@ -63,12 +63,18 @@ function normalTool(v) {
  */
 const HANDOFF_PHASE = 'handed-off';
 
-/** Kartu sebelumnya, dari kiriman snapshot (model chain v1.24.1). */
+/**
+ * Kartu sebelumnya, dari kiriman snapshot. Dua bentuk parent hidup berdampingan:
+ * model chain v1.24.1 mengirim {taskId, title, startedAt}, sedangkan
+ * assignWorkflowIdentity (main) mengirim {id, description, title, todoId}.
+ * Keduanya dinormalisasi jadi satu record, sehingga klien lama maupun klien
+ * baru tetap bisa mencatat tautan rantainya.
+ */
 function parentOf(b) {
   const p = b && b.parentTask && typeof b.parentTask === 'object' ? b.parentTask : null;
-  const id = p ? str(p.taskId, 200) : '';
+  const id = p ? str(p.taskId || p.id, 200) : '';
   if (!id) return null;
-  return { taskId: id, title: str(p.title, 500) };
+  return { taskId: id, title: str(p.title || p.description, 500) };
 }
 
 /**
