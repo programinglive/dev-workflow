@@ -139,4 +139,129 @@ function pairBuildRuns(events = []) {
   return { runs, unclosed };
 }
 
-module.exports = { pairBuildRuns };
+/**
+ * Nearest-rank percentile over real observed values.
+ *
+ * Interpolating would invent a duration that never happened; the report is used
+ * to promise a number of minutes, so every returned value is a build that
+ * actually ran.
+ *
+ * @param {number[]} values unsorted durations in milliseconds
+ * @param {number} p percentile 0..100
+ * @returns {number|null} null when there is nothing to rank
+ */
+function percentile(values, p) {
+  const sorted = (Array.isArray(values) ? values : [])
+    .filter((value) => Number.isFinite(value))
+    .sort((a, b) => a - b);
+  if (sorted.length === 0) return null;
+  const clamped = Math.min(100, Math.max(0, Number(p) || 0));
+  const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil((clamped / 100) * sorted.length) - 1));
+  return sorted[index];
+}
+
+function groupCount(durations) {
+  const valid = durations.filter((value) => Number.isFinite(value));
+  return {
+    count: valid.length,
+    p50Ms: percentile(valid, 50),
+    p90Ms: percentile(valid, 90),
+  };
+}
+
+function stageAggregates(runs) {
+  const byStage = new Map();
+  for (const run of runs) {
+    for (const stage of Array.isArray(run.stages) ? run.stages : []) {
+      if (!stage || !stage.stage || !Number.isFinite(stage.durationMs) || stage.durationMs <= 0) continue;
+      if (!byStage.has(stage.stage)) byStage.set(stage.stage, []);
+      byStage.get(stage.stage).push(stage.durationMs);
+    }
+  }
+  return [...byStage.entries()]
+    .map(([stage, durations]) => ({ stage, count: durations.length, p50Ms: percentile(durations, 50) }))
+    .sort((a, b) => b.count - a.count || a.stage.localeCompare(b.stage));
+}
+
+/**
+ * Aggregate completed runs into the report payload.
+ *
+ * Only succeeded runs feed the baseline: a fast failure is not evidence that a
+ * build takes less time. Failed runs are counted in `totals`, and unclosed runs
+ * are counted but never timed.
+ *
+ * @param {Array<object>} runs completed runs from pairBuildRuns
+ * @param {{trendLimit?: number, unclosed?: Array<object>}} [options]
+ */
+function summarizeRuns(runs = [], { trendLimit = 20, unclosed = [] } = {}) {
+  const list = (Array.isArray(runs) ? runs : []).filter(Boolean);
+  const succeeded = list.filter((run) => run.status === 'succeeded');
+  const failed = list.filter((run) => run.status === 'failed');
+
+  const byProject = new Map();
+  for (const run of list) {
+    const project = String(run.project || run.host || run.target || 'unknown');
+    if (!byProject.has(project)) byProject.set(project, []);
+    byProject.get(project).push(run);
+  }
+
+  const projects = [...byProject.entries()]
+    .map(([project, projectRuns]) => {
+      const ok = projectRuns.filter((run) => run.status === 'succeeded');
+      const durations = ok.map((run) => run.durationMs).filter((value) => Number.isFinite(value));
+
+      const byTarget = new Map();
+      for (const run of ok) {
+        const target = String(run.target || '');
+        if (!byTarget.has(target)) byTarget.set(target, []);
+        byTarget.get(target).push(run.durationMs);
+      }
+
+      return {
+        project,
+        count: ok.length,
+        p50Ms: percentile(durations, 50),
+        p90Ms: percentile(durations, 90),
+        maxMs: durations.length ? Math.max(...durations) : null,
+        minMs: durations.length ? Math.min(...durations) : null,
+        meanMs: durations.length
+          ? Math.round(durations.reduce((sum, value) => sum + value, 0) / durations.length)
+          : null,
+        trend: ok.slice(-trendLimit).map((run) => ({
+          at: run.finishedAt || run.startedAt || null,
+          durationMs: run.durationMs,
+          status: run.status,
+        })),
+        targets: [...byTarget.entries()]
+          .map(([target, values]) => ({ target, ...groupCount(values) }))
+          .sort((a, b) => b.count - a.count || a.target.localeCompare(b.target)),
+        stages: stageAggregates(ok),
+      };
+    })
+    .sort((a, b) => b.count - a.count || a.project.localeCompare(b.project));
+
+  const slowest = list
+    .filter((run) => Number.isFinite(run.durationMs))
+    .sort((a, b) => b.durationMs - a.durationMs)
+    .slice(0, 3)
+    .map((run) => ({
+      project: run.project || '',
+      target: run.target || '',
+      durationMs: run.durationMs,
+      at: run.finishedAt || run.startedAt || null,
+      status: run.status,
+    }));
+
+  return {
+    totals: {
+      runs: list.length,
+      succeeded: succeeded.length,
+      failed: failed.length,
+      unclosed: Array.isArray(unclosed) ? unclosed.length : 0,
+    },
+    projects,
+    slowest,
+  };
+}
+
+module.exports = { pairBuildRuns, percentile, summarizeRuns };
