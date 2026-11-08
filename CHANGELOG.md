@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.26.0](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.25.0...v1.26.0) (2026-11-08)
+
+
+### 📝 Documentation
+
+* **monitor:** record devwf table ownership in card-chaining runbook ([17170fd](https://github.com/programinglive/dev-workflow-mcp-server/commit/17170fd46edec59d2a0715622203340df00b4c15))
+* **release:** add 1.25.0 release notes entry ([8479b5c](https://github.com/programinglive/dev-workflow-mcp-server/commit/8479b5c3db70f4deb03d1fa1f15ded22f2463413))
+
+
+### ✨ Features
+
+* **start-task:** show which tasks other sessions hold before choosing ([#63](https://github.com/programinglive/dev-workflow-mcp-server/issues/63)) ([f07f2e0](https://github.com/programinglive/dev-workflow-mcp-server/commit/f07f2e03f1a7f497c12939374ada22220cf88abe))
+
+
+### 🐛 Bug Fixes
+
+* **managed:** name bw-tools instead of the deleted hosts in the rule block ([e491868](https://github.com/programinglive/dev-workflow-mcp-server/commit/e4918689dd8325b27cfc5898a9735fc1b19d26b6))
+* **managed:** send the rule block as base64 so backticks survive the shell ([9baf693](https://github.com/programinglive/dev-workflow-mcp-server/commit/9baf6935614bfd7aa70ccbeeb5c05b162ddd721d))
+
+
+### 🧹 Chores
+
+* merge origin/main into monitor reconciliation branch ([4f37770](https://github.com/programinglive/dev-workflow-mcp-server/commit/4f37770b2663434ca70a71ded9d81554b05ff95a)), closes [#63](https://github.com/programinglive/dev-workflow-mcp-server/issues/63)
+
 ## [1.25.0](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.24.2...v1.25.0) (2026-11-08)
 
 
