@@ -33,7 +33,11 @@ OpenCode, Codex and AGY (Antigravity CLI and IDE) use the same centrally managed
 <!-- managed-development-workflow:end -->`;
 
 function run(cmd, args, opts = {}) {
-  return execFileSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...opts }).trim();
+  // `input` is only delivered when stdin is a pipe. The old default of 'ignore'
+  // silently dropped the rule-sync script, so `python -` read an empty stdin and
+  // the ssh call sat there until the rollout timed out.
+  const stdio = opts.input == null ? ['ignore', 'pipe', 'pipe'] : ['pipe', 'pipe', 'pipe'];
+  return execFileSync(cmd, args, { encoding: 'utf8', stdio, ...opts }).trim();
 }
 
 /**
@@ -292,13 +296,20 @@ function syncRules() {
     path.join(process.env.USERPROFILE, '.codex', 'AGENTS.md'),
     path.join(process.env.USERPROFILE, '.config', 'opencode', 'AGENTS.md'),
   ];
+  let localChanged = 0;
+  let localPresent = 0;
   for (const f of hwFiles) {
-    if (fs.existsSync(f)) {
-      const updated = syncRuleText(fs.readFileSync(f, 'utf8'));
-      fs.writeFileSync(f, updated, 'utf8');
-    }
+    if (!fs.existsSync(f)) continue;
+    localPresent += 1;
+    const before = fs.readFileSync(f, 'utf8');
+    const updated = syncRuleText(before);
+    if (updated === before) continue;
+    fs.writeFileSync(f, updated, 'utf8');
+    localChanged += 1;
   }
-  console.log(`      ✅ HELLOWORLD rules synchronized (${hwFiles.filter((f) => fs.existsSync(f)).length}/3 files)`);
+  // Report what actually changed, not just that the device was visited: a
+  // silent "synchronized" hid a stale rule block on MMCH for a whole day.
+  console.log(`      ✅ HELLOWORLD rules synchronized (${localChanged} changed of ${localPresent}/3 files)`);
 
   // 2. Mac
   try {
@@ -371,6 +382,17 @@ function syncRulesOnDevice({host, python, label}) {
 function main() {
   console.log('🚀 Starting Dev Workflow MCP Central Rollout & Rule Sync');
   console.log('========================================================');
+  // `--rules-only` exists so the rule block can be re-applied and verified
+  // without publishing a release. Publishing copies the committed tree and
+  // promotes it to the release host; when only the rules changed (or when a
+  // device missed an earlier sync) that work is unnecessary and slow.
+  if (process.argv.includes('--rules-only')) {
+    console.log('mode: rules only (no publish, no promote)');
+    syncRules();
+    console.log('========================================================');
+    console.log('🎉 Rule synchronization completed.');
+    return;
+  }
   const manifest = publishRelease();
   promoteToServers(manifest);
   updateBootstraps();
@@ -392,6 +414,7 @@ if (require.main === module) {
 module.exports = {
   publishRelease,
   syncRuleText,
+  syncRulesOnDevice,
   MANAGED_RULE_BLOCK,
   classifyLineage,
   makeGitIsAncestor,

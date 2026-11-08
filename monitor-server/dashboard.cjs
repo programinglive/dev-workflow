@@ -22,6 +22,7 @@ const {
 const { buildHealth, DEFAULT_STALE_AFTER_MS } = require('./health.cjs');
 const { buildMachinesQuery, DEFAULT_STALE_AFTER_DAYS } = require('./machines-query.cjs');
 const { dedupeSessions } = require('./dedupe-sessions.cjs');
+const { withRepoLink } = require('./repo-link.cjs');
 const { buildHistoryQuery, formatDuration, DEFAULT_HISTORY_DAYS } = require('./history-query.cjs');
 const {
   buildAlerts,
@@ -232,6 +233,8 @@ const PAGE = `<!doctype html>
   .card.ended { opacity:.62; }
   .clickable-card { cursor:pointer; transition:border-color .15s, background-color .15s, transform .15s; }
   .clickable-card:hover { border-color:#58a6ff88; background:#131a24; transform:translateY(-1px); }
+  .repo-link { color:#2f81f7; text-decoration:none; font-size:12px; word-break:break-all; }
+  .repo-link:hover { text-decoration:underline; color:#58a6ff; }
   .phase.stuck { background:#d2992222; color:#e3b341; border-color:#d2992255; }
   .phase.ended { background:#6e768122; color:#8b949e; border-color:#6e768155; }
   .row { display:flex; gap:8px; align-items:baseline; flex-wrap:wrap; }
@@ -529,6 +532,19 @@ function renderChain(s) {
     (from && to ? ' · ' : '') +
     (to ? '↪ dilanjutkan ke "' + esc(to) + '"' : '') +
     '</div>';
+}
+
+/**
+ * Repository link for a session.
+ *
+ * The URL is built on the server (monitor-server/repo-link.cjs), so every
+ * client shows the same address and the conversion itself is covered by tests.
+ */
+function repoLinkHtml(s) {
+  if (!s || !s.repo_url) return '';
+  const label = s.repo_label || s.repo_url;
+  return '<a class="repo-link" href="' + esc(s.repo_url) + '" target="_blank" rel="noopener noreferrer"' +
+    ' title="' + esc(s.repo_url) + '">🔗 ' + esc(label) + ' ↗</a>';
 }
 function ago(iso, nowMs) {
   if (!iso) return '';
@@ -840,7 +856,9 @@ function bukaDetail(sessionKey) {
   document.getElementById('modal-project').textContent = s.project_name || '';
   document.getElementById('modal-meta').textContent =
     esc(s.machine) + (s.task_type ? ' · ' + s.task_type : '') + ' · ' + ago(s.updated_at, jNow);
-  document.getElementById('modal-path').textContent = s.project_path || '';
+  document.getElementById('modal-path').innerHTML =
+    (repoLinkHtml(s) ? '<div style="margin-bottom:2px">' + repoLinkHtml(s) + '</div>' : '') +
+    esc(s.project_path || '');
 
   const t = durasi(s.started_at, jNow);
   const timerEl = document.getElementById('modal-timer');
@@ -1232,6 +1250,7 @@ function render(data) {
         note +
         '<div class="meta" style="margin-top:3px">' + esc(s.machine) + ' · ' + esc(s.project_name) +
         ' · ' + esc(s.task_type) + ' · ' + ago(s.updated_at, jNow) + '</div>' +
+        (repoLinkHtml(s) ? '<div style="margin-top:3px">' + repoLinkHtml(s) + '</div>' : '') +
         renderPipeline(s) +
         renderBuildBox(s.active_build, jNow, s.machine) +
         (total ? '<div class="bar"><i style="width:' + pct + '%"></i></div>' +
@@ -1930,7 +1949,7 @@ const server = http.createServer(async (req, res) => {
             updatedAt: row.updated_at,
           });
         }
-        return { ...row, state: s.status, state_label: LABELS[s.status] || s.status, active_build: activeBuild };
+        return { ...withRepoLink(row), state: s.status, state_label: LABELS[s.status] || s.status, active_build: activeBuild };
       });
       // Tautan rantai untuk kartu aktif. Arah "dilanjutkan ke" biasanya kosong
       // di sini karena kartu lama sudah handed-off dan hanya ada di riwayat.
