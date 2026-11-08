@@ -907,6 +907,20 @@ cukup untuk membuktikan tombolnya bekerja tanpa membuka WhatsApp.
 aplikasi. Itu kunci perangkat, bukan kerusakan aplikasi - jangan coba
 menembusnya; verifikasi di tablet lain atau minta pemilik membukanya.
 
+## Rantai kartu per topik (Zettelkasten)
+
+Sejak 8 November 2026 satu sesi agen bisa memuat lebih dari satu kartu. Setiap
+`start_task` membuat kartu baru yang menyimpan identitas kartu sebelumnya;
+kartu lama ditandai `handed-off` sehingga pindah dari tab Aktif ke Riwayat.
+Kartu penerus menampilkan `↩ lanjutan dari "..."` dan kartu lama menampilkan
+`↪ dilanjutkan ke "..."`. Kotak build hanya muncul pada kartu yang benar-benar
+memilikinya.
+
+Skema `sessions` berubah (kolom `task_id`, `parent_task_id`,
+`parent_task_title`, primary key komposit) dan harus dimigrasikan dengan
+`node scripts/migrate-monitor-db.cjs`. Rincian alur, rollback, dan daftar
+tesnya ada di [card-chaining.md](card-chaining.md).
+
 ## Connected development work
 
 Each active development session keeps its original source distinct from its linked execution and planning records. The session detail shows the canonical Zettly Todo, the Factory task, any verified Sentry issue, and the Zettly Draw plan as separate links. Factory recording is enabled by default for a configured, matching repository. A failed Factory write is shown in the `start_task` result so the session cannot appear fully connected by accident. Create the Mermaid flow before marking implementation complete; the flow is also saved as editable shapes in Zettly Draw.

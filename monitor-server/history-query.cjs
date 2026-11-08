@@ -37,7 +37,8 @@ function buildHistoryQuery({
   const hari = Number(historyDays) > 0 ? Number(historyDays) : DEFAULT_HISTORY_DAYS;
   const batas = Number(limit) > 0 ? Math.min(200, Number(limit)) : DEFAULT_HISTORY_LIMIT;
   return {
-    sql: `SELECT session_key, machine, project_name, task, task_type, session_title, agent_tool,
+    sql: `SELECT session_key, task_id, parent_task_id, parent_task_title,
+                  machine, project_name, task, task_type, session_title, agent_tool,
                  phase, started_at, updated_at,
                  repo_path, repo_remote,
                  workflow_task_id, task_origin_json, task_relations_json,

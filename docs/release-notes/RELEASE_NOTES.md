@@ -4,6 +4,9 @@ Authoritative history of user-visible changes for the Development Workflow MCP S
 
 | Version | Date | Notes |
 |---------|------|-------|
+| 1.26.0 | 2026-11-08 | **release:** merge origin/main into the monitor reconciliation line (4f37770): start-task now shows which tasks other sessions hold before choosing (#63), managed-rules bw-tools fix; restores a forward-only central release pointer that also contains the unified card-chain monitor of v1.25.0 (56992e9) |
+| 1.25.0 | 2026-11-08 | **monitor:** merge origin/main monitor truth fixes (PR #59) into the unified card-chain upsert; assignWorkflowIdentity is the single parentTask writer (0a414bb) |
+| 1.24.2 | 2026-11-08 | **monitor:** unify task-metadata and card-chain models into one upsert and dashboard (6b3a0f8) |
 | 1.12.3 | 2026-10-28 | **release:** catat rilis 1.12.2 (5c67101) |
 | 1.12.2 | 2026-10-28 | **release:** catat rilis 1.12.1 (3beaa23) |
 | 1.12.1 | 2026-10-28 | **release:** catat rilis 1.12.0 (bb8624b) |

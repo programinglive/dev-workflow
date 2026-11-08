@@ -42,7 +42,7 @@ test("assignWorkflowIdentity captures parentTask when task changes", () => {
   assert.equal(nextState.parentTask.todoId, 101);
 });
 
-test("buildSnapshot includes cardKey, parentCardKey, and session_chain relation", () => {
+test("buildSnapshot includes taskId, normalized parentTask, and session_chain relation", () => {
   const state = {
     workflowTaskId: "task-next-uuid",
     taskDescription: "Second topic: Docker migration",
@@ -63,11 +63,16 @@ test("buildSnapshot includes cardKey, parentCardKey, and session_chain relation"
   });
 
   assert.equal(snapshot.sessionKey, "ses_chain_1");
-  assert.equal(snapshot.cardKey, "ses_chain_1::second-topic-docker-migration");
-  assert.equal(snapshot.parentCardKey, "ses_chain_1::first-topic-gcp-audit");
+  assert.equal(snapshot.taskId, "task-next-uuid");
+  assert.deepEqual(snapshot.parentTask, {
+    taskId: "task-prev-uuid",
+    title: "First topic: GCP audit",
+    startedAt: "",
+  });
 
   const chainRelation = snapshot.taskRelations.find((r) => r.system === "session_chain");
   assert.ok(chainRelation, "session_chain relation exists in taskRelations");
+  assert.equal(chainRelation.id, "task-prev-uuid");
   assert.equal(chainRelation.relation, "preceded_by");
   assert.equal(chainRelation.label, "First topic: GCP audit");
 });

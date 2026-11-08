@@ -66,7 +66,8 @@ test("arsip menormalkan project_path supaya cadangan legacy bisa ditemukan", () 
   archiveLegacyState(db);
 
   const row = db.prepare("SELECT project_path FROM workflow_state_legacy").get();
-  assert.equal(row.project_path, "d:/code/foo", "harus dinormalkan saat diarsipkan");
+  const expected = process.platform === "win32" ? "d:/code/foo" : "D:/Code/Foo";
+  assert.equal(row.project_path, expected, "harus dinormalkan saat diarsipkan");
 });
 
 test("penulis yang memegang versi lama tidak boleh mengembalikan fase", async () => {

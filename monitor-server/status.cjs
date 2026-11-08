@@ -34,7 +34,7 @@ const DEFAULT_LIVE_MS = 15 * 60 * 1000;
 const DEFAULT_STUCK_MS = 2 * 60 * 60 * 1000;
 
 /** Fase yang berarti sesi sudah ditutup, apa pun umur laporannya. */
-const TERMINAL_PHASES = new Set(['closed', 'done', 'cancelled', 'archived']);
+const TERMINAL_PHASES = new Set(['closed', 'done', 'cancelled', 'archived', 'handed-off']);
 
 /**
  * @param {object} args
@@ -58,6 +58,8 @@ function classifySession({
   if (fase === 'idle') return { status: 'idle', ageMs };
   // Fase terminal adalah fakta, bukan tebakan dari umur laporan: sesi yang
   // sudah ditutup tidak boleh tampil "aktif" hanya karena baru ditutup.
+  // `handed-off` (kartu diserahkan ke kartu berikutnya dalam sesi yang
+  // sama) termasuk: sesinya hidup, tetapi topik itu sudah pindah.
   if (TERMINAL_PHASES.has(fase)) return { status: 'ended', ageMs, terminal: true };
   // Tanpa waktu laporan yang sah, tidak ada dasar untuk menyebutnya hidup.
   if (ageMs === null) return { status: 'ended', ageMs: null };

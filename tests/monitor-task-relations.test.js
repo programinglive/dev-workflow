@@ -22,13 +22,18 @@ test('sparse completion preserves provenance while a new workflow ID or task tit
   db.function('now', () => '2026-11-04');
   db.function('LEAST', { varargs: true }, (...values) => values.filter(v => v !== null).sort()[0] ?? null);
   db.function('GREATEST', { varargs: true }, (...values) => values.filter(v => v !== null).sort().at(-1) ?? null);
+  // Mirror the production schema after migrations 001/002/003: the composite
+  // primary key (session_key, task_id) plus the task-metadata columns.
   db.exec(`CREATE TABLE sessions (
-    session_key TEXT PRIMARY KEY, machine TEXT, project_path TEXT, project_name TEXT,
+    session_key TEXT NOT NULL, task_id TEXT NOT NULL DEFAULT '',
+    machine TEXT, project_path TEXT, project_name TEXT,
     task TEXT, task_type TEXT, phase TEXT, plan_json TEXT, plan_done INTEGER,
     plan_total INTEGER, dod_done INTEGER, dod_total INTEGER, dod_waived INTEGER,
     owner_pid INTEGER, started_at TEXT, session_title TEXT, agent_tool TEXT, updated_at TEXT,
     workflow_task_id TEXT DEFAULT '', task_origin_json TEXT DEFAULT '{}', task_relations_json TEXT DEFAULT '[]',
-    repo_path TEXT DEFAULT '', repo_remote TEXT DEFAULT ''
+    repo_path TEXT DEFAULT '', repo_remote TEXT DEFAULT '',
+    parent_task_id TEXT, parent_task_title TEXT,
+    PRIMARY KEY (session_key, task_id)
   )`);
   const save = body => {
     const { sql, params } = buildSessionUpsert({ sessionKey: 's', ...body });

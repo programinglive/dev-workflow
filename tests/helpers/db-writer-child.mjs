@@ -104,4 +104,8 @@ if (mode === "state") {
 }
 
 await adapter.close();
-process.stdout.write(JSON.stringify({ ok, conflicts, errors }) + "\n");
+process.stdout.write(JSON.stringify({ ok, conflicts, errors }) + "\n", () => {
+  if (typeof process.disconnect === "function" && process.connected) {
+    process.disconnect();
+  }
+});
