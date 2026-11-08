@@ -59,13 +59,31 @@ service `devwf-monitor`):
 3. Copy the unified monitor files in (owner `.bak` convention; on the server
    the entry point is `monitor.cjs`, in the repository it is `dashboard.cjs`).
 4. Apply the migrations as the table owner, one transaction:
-   `psql -v ON_ERROR_STOP=1 -d devwf_monitor` with `001` + `002` + `003`.
+   `psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -d devwf_monitor` with
+   `001` + `002` + `003`. Since the 2026-11-08 ownership transfer the table
+   owner is the `devwf` role (source `DATABASE_URL` from
+   `/etc/devwf-monitor.env`), so no `sudo -u postgres psql` is needed.
 5. Start the service and verify `/api/sessions` returns the chain and
    metadata columns.
 
 Steps 2-5 keep the old upsert and the new primary key from ever meeting: the
 old code stops before the key swap, and the new code (whose upsert conflicts
 on `(session_key, task_id)`) starts only after the composite key exists.
+
+## Ownership
+
+Since 2026-11-08, every table and sequence in `devwf_monitor`
+(`events`, `events_id_seq`, `sessions`, `share_links`) is owned by the `devwf`
+service role. Schema migrations and any `ALTER TABLE` therefore run as
+`devwf` with the service's `DATABASE_URL` — no `sudo -u postgres psql`.
+Before the transfer these objects were owned by `postgres`, which forced
+every schema change to be escalated. If a newly created object ever shows up
+owned by `postgres`, re-attach it in the same single-transaction style:
+
+```sql
+ALTER TABLE public.<name> OWNER TO devwf;
+ALTER SEQUENCE public.<name>_id_seq OWNER TO devwf;
+```
 
 ## Rollback
 
