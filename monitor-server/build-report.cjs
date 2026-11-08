@@ -433,4 +433,72 @@ function estimateBuild({
   });
 }
 
-module.exports = { pairBuildRuns, percentile, summarizeRuns, estimateBuild };
+/**
+ * SQL for the report window.
+ *
+ * Only build events are read, and the window is clamped to the event retention
+ * so the report can never promise history the pruner already deleted.
+ *
+ * @param {{days?: number, project?: string|null, host?: string|null}} [options]
+ */
+function buildReportQuery({ days = 30, project = null, host = null } = {}) {
+  // `days: 0` must clamp to 1, not fall back to the default: `Number(0) || 30`
+  // would silently widen a window the caller asked to narrow.
+  const requested = days === null || days === undefined || days === '' ? 30 : Number(days);
+  const windowDays = String(Math.min(30, Math.max(1, Number.isFinite(requested) ? requested : 30)));
+  const params = [windowDays];
+  const conditions = [`at >= now() - ($1::text || ' days')::interval`];
+
+  if (project) {
+    params.push(String(project));
+    conditions.push(`project_name = $${params.length}`);
+  }
+  if (host) {
+    params.push(String(host));
+    // buildHost lives inside the JSON detail; matching it here keeps the report
+    // filterable without a schema change.
+    conditions.push(`detail::jsonb->>'buildHost' = $${params.length}`);
+  }
+
+  return {
+    sql: `SELECT at, session_key, project_name, kind, detail
+            FROM events
+           WHERE kind LIKE 'build_%'
+             AND ${conditions.join(' AND ')}
+           ORDER BY at ASC`,
+    params,
+  };
+}
+
+/**
+ * Shape the report the dashboard, the API and the MCP tool all read.
+ *
+ * @param {Array<object>} rows event rows from buildReportQuery
+ * @param {{days?: number, now?: string|number}} [options]
+ */
+function buildReportPayload(rows = [], { days = 30, now = new Date().toISOString() } = {}) {
+  const { runs, unclosed } = pairBuildRuns(rows);
+  const summary = summarizeRuns(runs, { unclosed });
+  return {
+    window_days: Number(days) || 30,
+    generated_at: typeof now === 'number' ? new Date(now).toISOString() : String(now),
+    totals: summary.totals,
+    projects: summary.projects,
+    slowest: summary.slowest,
+    unclosed: unclosed.map((run) => ({
+      project: run.project || '',
+      target: run.target || '',
+      host: run.host || '',
+      started_at: run.startedAt || null,
+    })),
+  };
+}
+
+module.exports = {
+  pairBuildRuns,
+  percentile,
+  summarizeRuns,
+  estimateBuild,
+  buildReportQuery,
+  buildReportPayload,
+};

@@ -22,6 +22,7 @@ const {
 const { buildHealth, DEFAULT_STALE_AFTER_MS } = require('./health.cjs');
 const { buildMachinesQuery, DEFAULT_STALE_AFTER_DAYS } = require('./machines-query.cjs');
 const { dedupeSessions } = require('./dedupe-sessions.cjs');
+const { buildReportQuery, buildReportPayload } = require('./build-report.cjs');
 const { withRepoLink } = require('./repo-link.cjs');
 const { buildHistoryQuery, formatDuration, DEFAULT_HISTORY_DAYS } = require('./history-query.cjs');
 const {
@@ -1995,6 +1996,21 @@ const server = http.createServer(async (req, res) => {
       return res.end(
         JSON.stringify({ now: serverNow, sessions: tampil, events: events.rows, health, machines: machineRows.rows, history, alerts, summary, shares, summary_days: SUMMARY_DAYS }),
       );
+    }
+    if (url.pathname === '/api/builds/report') {
+      // Duration report for the build box and the Build tab. Read-only, and the
+      // window is clamped inside buildReportQuery to the event retention.
+      const days = Number(url.searchParams.get('days') || 30);
+      const project = url.searchParams.get('project');
+      const host = url.searchParams.get('host');
+      const { sql, params } = buildReportQuery({ days, project, host });
+      const rows = await query(sql, params);
+      const payload = buildReportPayload(rows.rows, {
+        days: Number(params[0]),
+        now: new Date().toISOString(),
+      });
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      return res.end(JSON.stringify(payload));
     }
     if (url.pathname === '/api/events') {
       const rows = await query(
