@@ -7,6 +7,9 @@ import { sanitize } from './security/sanitizer.js';
 import { normalizeItems as normalizeDodItems, mergeDefinitionOfDone as mergeDodItems } from './tools/handler-modules/dod.js';
 import { resolveSessionKeyWithSource, sanitizeSessionKey, normalizeProjectPath } from './db/session-key.js';
 import { StateUnavailable, StateConflict } from './db/errors.js';
+import {buildTaskProvenance} from './task-provenance.js';
+import { recordAiSession, currentSessionContext } from './ai-sessions.js';
+import { captureRepository } from './repository.js';
 import { normalizePlan } from './tools/handler-modules/plan.js';
 import { fileURLToPath } from "url";
 import { pathToFileURL } from "url";
@@ -1246,6 +1249,9 @@ export class WorkflowState {
       workflowTaskId: "",
       zettly: null,
       zettlyOutbox: [],
+      taskOrigin: null,
+      zettlyContext: null,
+      focus: null,
       activeBuild: null,
       buildHistory: [],
     };
@@ -1650,6 +1656,39 @@ export class WorkflowState {
     const { key: sessionKey, source: keySource } = this._sessionKey();
     const userId = getCurrentUserId(this.stateFile);
     const projectPath = this._projectPath();
+
+    // Capture repository identity at the start of a task.
+    // Best-effort: no git, no repo, or failing commands must not stop start_task.
+    // An empty result is stored too, so a non-repository project is not probed
+    // again on every save.
+    if (this.state.projectDir && !this.state.repository) {
+      try {
+        const repo = await captureRepository({ dir: this.state.projectDir });
+        this.state.repository = { path: repo.path, remote: repo.remote };
+      } catch (error) {
+        this.state.repository = { path: "", remote: "" };
+      }
+    }
+
+    // Index the current AI session for resumable access from Zettly Todo.
+    // Only OpenCode sessions (`ses_...`) can be resumed; Codex/Antigravity keys
+    // (`proc-...`) are process-only and marked as such.
+    if (this.state.workflowTaskId) {
+      try {
+        const context = currentSessionContext({ key: sessionKey, env: process.env });
+        recordAiSession(this.state, {
+          key: sessionKey,
+          agent: context.agent,
+          machine: context.machine,
+          title: context.title,
+          source: keySource,
+          phase: this.state.currentPhase || "idle",
+          now: Date.now(),
+        });
+      } catch (error) {
+        // AI session indexing is best-effort. Failures are logged but never block.
+      }
+    }
 
     // Baca baris SESI INI dari SQLite. `null` berarti sesi baru - bukan
     // kegagalan. Isi yang rusak melempar dari adapter, dan itu memang benar:
@@ -2509,6 +2548,7 @@ export class WorkflowState {
       archivedTask = previous.taskDescription;
       history.push({
         classification: previous.classification || "INTERNAL",
+        ...buildTaskProvenance(previous),
         taskDescription: previous.taskDescription,
         taskType: previous.taskType || "other",
         commitMessage: previous.lastCommitMessage || "",
@@ -2572,6 +2612,9 @@ export class WorkflowState {
       workflowTaskId: "",
       zettly: null,
       zettlyOutbox: Array.isArray(previous.zettlyOutbox) ? previous.zettlyOutbox : [],
+      taskOrigin: null,
+      zettlyContext: null,
+      focus: null,
       activeBuild: null,
       buildHistory: [],
     };
@@ -2583,6 +2626,7 @@ export class WorkflowState {
     this.state.history.push({
       classification: this.state.classification || "INTERNAL",
       ...(this.state.workflowTaskId ? {workflowTaskId:this.state.workflowTaskId,zettlyTodoId:this.state.zettly?.todoId||null} : {}),
+      ...buildTaskProvenance(this.state),
       ...entry,
       timestamp: new Date().toISOString(),
     });

@@ -2,7 +2,6 @@ import { exec as execCallback, execFile as execFileCallback } from "child_proces
 import { existsSync } from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { promisify } from "util";
 import { sanitize } from './security/sanitizer.js';
 
 const DEFAULT_MAX_BUFFER = 50 * 1024 * 1024;

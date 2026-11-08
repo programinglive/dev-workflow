@@ -4,7 +4,9 @@ The managed deployment has one approved source release on `bw-tools`, reachable 
 
 This is centrally managed distribution with local execution. Git, files, tests, Factory credentials and repository paths remain on the device. It does not move development repositories onto a production server. There is no remote command-execution API.
 
-## Daily updates
+## Daily updates & Multi-Device Rollout
+
+To publish, promote, and propagate rules to all three devices (**HELLOWORLD**, **Mac**, **MMCH**) and three AI CLIs (**Codex**, **OpenCode**, **AGY**) in a single automated step:
 
 1. Commit and test changes in an isolated development branch.
 2. Run `node managed/publish.cjs <private-staging-directory>` from the reviewed checkout. It creates `current.json` and a SHA256-named archive under `releases/` from the committed Git tree only.

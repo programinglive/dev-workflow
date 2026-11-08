@@ -3,9 +3,12 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { buildSessionsQuery, DEFAULT_IDLE_TTL, DEFAULT_EMPTY_IDLE_TTL } = require(
-  "../monitor-server/sessions-query.cjs",
-);
+const {
+  buildSessionsQuery,
+  DEFAULT_IDLE_TTL,
+  DEFAULT_EMPTY_IDLE_TTL,
+  DEFAULT_STUCK_TTL,
+} = require("../monitor-server/sessions-query.cjs");
 
 /**
  * Sesi mati tidak boleh memenuhi layar tablet.
@@ -74,4 +77,15 @@ test('anonymous connections never appear as active tasks, real session titles re
   assert.match(sql,/NULLIF\(BTRIM\(task\), ''\)/);
   assert.match(sql,/NULLIF\(BTRIM\(session_title\), ''\)/);
   assert.match(sql,/phase NOT IN \('closed', 'done', 'cancelled'\)/);
+});
+
+test("sesi non-idle yang sudah berakhir keluar dari tab Aktif", () => {
+  // Diukur 7 November 2026: dua kartu berstatus "berakhir" menetap selamanya di
+  // Aktif (893 menit dan 148 menit) karena filter hanya menyentuh phase idle.
+  const { sql, params } = buildSessionsQuery({});
+  assert.match(sql, /phase <> 'idle'/);
+  assert.match(sql, /updated_at < now\(\) - \$4::interval/);
+  assert.equal(params[3], DEFAULT_STUCK_TTL);
+  assert.equal(buildSessionsQuery({ stuckTtl: "30 minutes" }).params[3], "30 minutes");
+  assert.equal(buildSessionsQuery({ stuckTtl: "" }).params[3], DEFAULT_STUCK_TTL);
 });

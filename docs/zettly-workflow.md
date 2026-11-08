@@ -12,6 +12,19 @@ Progress updates an integration-owned block in the Todo description with the pro
 
 The state records the Todo ID and account identity. Terminal sync work is persisted in `zettlyOutbox` before a local reset. `sync_zettly_task` retries pending work; status requests also retry pending terminal work. A resumed successful completion supersedes an earlier pending forced closure with the latest verified snapshot.
 
+## AI session index in the Todo
+
+A closed session takes its conversation with it. To make the work findable again, the integration-owned block now carries an `AI sessions` section built from `state.aiSessions` (`ai-sessions.js`):
+
+```
+ses_e4b3f3805ffeiua93K1Cq0VIgc · opencode · HELLOWORLD · "Fix POS deploy" · resumable
+proc-67a1a335-... · codex · MMCH · "Handover" · tidak bisa di-resume (proses)
+```
+
+Each `save()` upserts the current session (deduplicated by key, newest first, capped at 10), so a handover across sessions keeps every participant. `startedAt` is preserved from the first report; `lastSeenAt` follows the latest one.
+
+Only OpenCode session keys (`ses_...`) can be resumed, with `opencode --session <id>`. Codex and Antigravity report a per-process key (`proc-...`) that identifies the monitor card but no resumable conversation; those lines say so explicitly instead of pretending otherwise. The same list is written to the Zettly journal outcome, so the trail survives completion.
+
 ## Credentials and account ownership
 
 Credentials remain on each device. They are never copied to the central release host, logged, placed in a repository, or embedded in MCP client JSON.

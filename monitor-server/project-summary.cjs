@@ -43,7 +43,7 @@ function buildProjectSummaryQuery({ days = DEFAULT_SUMMARY_DAYS, limit = DEFAULT
             FROM sessions
            WHERE machine <> ''
              AND started_at IS NOT NULL
-             AND phase = 'idle'
+             AND phase IN ('idle', 'closed', 'done', 'cancelled')
              AND updated_at > now() - ($1::text || ' days')::interval
            GROUP BY 1
            ORDER BY total_seconds DESC NULLS LAST

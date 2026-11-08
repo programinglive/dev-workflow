@@ -1,5 +1,7 @@
 'use strict';
 
+const { normalizeTaskMetadata } = require('./task-metadata.cjs');
+
 /**
  * SQL untuk menyimpan satu sesi.
  *
@@ -58,25 +60,49 @@ function normalTool(v) {
  */
 function buildSessionUpsert(body = {}) {
   const b = body || {};
-  const key = str(b.sessionKey, 200);
+  const key = str(b.cardKey || b.sessionKey, 200);
   if (!key) throw new Error('sessionKey wajib');
 
   const plan = Array.isArray(b.plan) ? b.plan.slice(0, 40) : [];
+  const metadata = normalizeTaskMetadata(b);
+  // A sparse completion is still the same task. A nonempty changed identity or
+  // title starts a new task and must not inherit unrelated service links.
+  const newTask = `(
+    (EXCLUDED.workflow_task_id <> '' AND EXCLUDED.workflow_task_id <> COALESCE(sessions.workflow_task_id, ''))
+    OR (EXCLUDED.task <> '' AND EXCLUDED.task <> COALESCE(sessions.task, '')
+      AND (COALESCE(sessions.task, '') <> '' OR EXCLUDED.workflow_task_id = ''))
+  )`;
 
   return {
     sql: `INSERT INTO sessions (session_key, machine, project_path, project_name, task, task_type, phase,
                                plan_json, plan_done, plan_total, dod_done, dod_total, dod_waived,
-                               owner_pid, started_at, session_title, agent_tool, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,now())
+                               owner_pid, started_at, session_title, agent_tool,
+                               workflow_task_id, task_origin_json, task_relations_json,
+                               repo_path, repo_remote, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb,$20::jsonb,$21,$22,now())
          ON CONFLICT (session_key) DO UPDATE SET
            machine=EXCLUDED.machine,
            -- Identitas tidak boleh dihapus oleh kiriman kosong. Ini bug yang
            -- membuat nama proyek hilang tepat saat task ditutup.
            project_path=COALESCE(NULLIF(EXCLUDED.project_path, ''), sessions.project_path),
            project_name=COALESCE(NULLIF(EXCLUDED.project_name, ''), sessions.project_name),
+           -- Repository juga identitas: laporan ringkas saat task ditutup tidak
+           -- boleh menghapus lokasi proyek yang sudah tercatat.
+           repo_path=COALESCE(NULLIF(EXCLUDED.repo_path, ''), sessions.repo_path),
+           repo_remote=COALESCE(NULLIF(EXCLUDED.repo_remote, ''), sessions.repo_remote),
            -- Kolom "task" SENGAJA tidak dilindungi: mengosongkannya adalah cara
            -- sah menutup task.
            task=EXCLUDED.task, task_type=EXCLUDED.task_type, phase=EXCLUDED.phase,
+           workflow_task_id=CASE WHEN ${newTask} THEN EXCLUDED.workflow_task_id
+             ELSE COALESCE(NULLIF(EXCLUDED.workflow_task_id, ''), sessions.workflow_task_id) END,
+           task_origin_json=CASE
+             WHEN COALESCE(EXCLUDED.task_origin_json->>'system', 'unknown') <> 'unknown' THEN EXCLUDED.task_origin_json
+             WHEN ${newTask} THEN EXCLUDED.task_origin_json
+             ELSE sessions.task_origin_json END,
+           task_relations_json=CASE
+             WHEN EXCLUDED.task_relations_json <> '[]'::jsonb THEN EXCLUDED.task_relations_json
+             WHEN ${newTask} THEN '[]'::jsonb
+             ELSE sessions.task_relations_json END,
            plan_json=EXCLUDED.plan_json, plan_done=EXCLUDED.plan_done, plan_total=EXCLUDED.plan_total,
            dod_done=EXCLUDED.dod_done, dod_total=EXCLUDED.dod_total, dod_waived=EXCLUDED.dod_waived,
            owner_pid=EXCLUDED.owner_pid,
@@ -129,6 +155,11 @@ function buildSessionUpsert(body = {}) {
       b.startedAt || null,
       str(b.sessionTitle, 200),
       normalTool(b.agentTool),
+      metadata.workflowTaskId,
+      JSON.stringify(metadata.taskOrigin),
+      JSON.stringify(metadata.taskRelations),
+      str(b.repositoryPath, 512),
+      str(b.repositoryRemote, 512),
     ],
   };
 }
