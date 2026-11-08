@@ -20,21 +20,25 @@
  */
 
 import os from "node:os";
+import {buildTaskProvenance} from './task-provenance.js';
 import { createRequire } from "node:module";
 
 // Judul sesi dibaca dari opencode.db. Dimuat lewat createRequire + try/catch
 // supaya mesin tanpa berkas itu (mis. CLI saja) tetap jalan seperti biasa.
 const requireCjs = createRequire(import.meta.url);
 let sessionTitle = () => "";
+let updateSessionTitle = () => false;
 let detectTool = () => "unknown";
 try {
-  ({ sessionTitle } = requireCjs("./opencode-session-title.cjs"));
+  ({ sessionTitle, updateSessionTitle } = requireCjs("./opencode-session-title.cjs"));
   ({ detectTool } = requireCjs("./agent-tool.cjs"));
 
   if (typeof sessionTitle !== "function") sessionTitle = () => "";
+  if (typeof updateSessionTitle !== "function") updateSessionTitle = () => false;
   if (typeof detectTool !== "function") detectTool = () => "unknown";
 } catch {
   sessionTitle = () => "";
+  updateSessionTitle = () => false;
   detectTool = () => "unknown";
 }
 
@@ -63,6 +67,22 @@ export function machineName(env = process.env) {
   }
 }
 
+/**
+ * Generate a unique card key per topic within a session (Zettelkasten card identity).
+ */
+export function cardKeyFor(sessionKey, title, taskId = '') {
+  const baseKey = String(sessionKey || '').trim();
+  if (!baseKey) return '';
+  const cleanTitle = String(title || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48);
+  if (!cleanTitle && !taskId) return baseKey;
+  const tag = cleanTitle || String(taskId || '').slice(0, 16);
+  return `${baseKey}::${tag}`;
+}
+
 /** Ringkasan satu sesi, bentuk yang dipakai dashboard. */
 export function buildSnapshot({ state, sessionKey = "", projectPath = "", sessionStartedAt = "", env = process.env } = {}) {
   const s = state || {};  const plan = Array.isArray(s.plan) ? s.plan : [];
@@ -77,20 +97,29 @@ export function buildSnapshot({ state, sessionKey = "", projectPath = "", sessio
     .split(/[\\/]/)
     .pop() || "";
 
-  // Zettelkasten chaining: satu kartu per task, jadi server butuh identitas
-  // task dan, bila ini lanjutan, identitas kartu sebelumnya. Parent tanpa id
-  // diperlakukan sebagai tidak ada supaya tidak membuat rantai palsu.
+  const cleanTitle = sessionTitle(sessionKey, env) || String(s.taskDescription || "").slice(0, 200);
+
+  // Zettelkasten chaining: one card per task, so the server needs the task's
+  // identity and, when this card continues a previous one, the identity of
+  // the previous card. A parent without an id is treated as absent so it can
+  // never create a false link.
+  //
+  // Two parent shapes coexist after the merge: this lineage captured
+  // {taskId, title, startedAt}; main's assignWorkflowIdentity captures
+  // {id, description, title, todoId}. Both normalize to one record.
   const taskId = String(s.workflowTaskId || "");
   const parent = s.parentTask && typeof s.parentTask === "object" ? s.parentTask : null;
-  const parentTask = parent && String(parent.taskId || "")
+  const parentId = parent ? String(parent.taskId || parent.id || "") : "";
+  const parentTask = parentId
     ? {
-        taskId: String(parent.taskId),
-        title: String(parent.title || ""),
+        taskId: parentId,
+        title: String(parent.title || parent.description || ""),
         startedAt: String(parent.startedAt || ""),
       }
     : null;
 
   return {
+    ...buildTaskProvenance(s),
     sessionKey,
     taskId,
     parentTask,
@@ -110,11 +139,16 @@ export function buildSnapshot({ state, sessionKey = "", projectPath = "", sessio
     startedAt: sessionStartedAt || "",
     // Judul percakapan OpenCode, bila bisa dibaca. Dipakai kartu di tablet
     // supaya orang tahu sesi mana yang dimaksud, bukan kode `ses_...`.
-    sessionTitle: sessionTitle(sessionKey, env),
+    // Bila kosong, jatuh ke taskDescription agar kartu di monitor tetap informatif.
+    sessionTitle: cleanTitle,
     // Alat AI pemanggil: codex, antigravity, opencode, atau unknown bila tidak
     // ada petunjuk. Tidak pernah menebak.
     agentTool: detectTool({ env, commandLine: String(process.argv.slice(0, 2).join(' ')) }),
     activeBuild: s.activeBuild && typeof s.activeBuild === "object" ? s.activeBuild : null,
+    // Lokasi proyek. Path lokal menjawab "ada di mana" untuk mesin ini; remote
+    // git tetap berguna dari perangkat lain. Dikosongkan bila memang bukan repo.
+    repositoryPath: String(s.repository?.path || ""),
+    repositoryRemote: String(s.repository?.remote || ""),
   };
 }
 
@@ -178,13 +212,13 @@ export async function reportEvent({ env = process.env, event, fetchImpl = fetch,
  * Tanpa ini setiap pemanggil harus mengoper lima field yang sama, dan satu
  * pemanggil yang lupa akan menghasilkan baris tanpa nama proyek di dashboard.
  */
-export function eventFor(state, kind, detail = "") {
+export function eventFor(state, kind, detail = "", sessionKey = "") {
   const s = state || {};
   const projectPath = String(s.projectDir || "");
   return {
-    sessionKey: "",
+    sessionKey,
     kind,
-    detail: String(detail || "").slice(0, 1000),
+    detail: String(detail || "").slice(0, String(kind).startsWith("build_") ? 12000 : 1000),
     projectName: projectPath.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || "",
     task: String(s.taskDescription || ""),
   };
@@ -202,9 +236,9 @@ export function eventFor(state, kind, detail = "") {
  * Batas waktunya ada di dalam `reportEvent` (1,2 detik); kegagalan apa pun
  * dikembalikan sebagai false dan tidak pernah dilempar ke pemanggil.
  */
-export async function reportEventSafe(state, kind, detail = "") {
+export async function reportEventSafe(state, kind, detail = "", sessionKey = "") {
   try {
-    const payload = eventFor(state, kind, detail);
+    const payload = eventFor(state, kind, detail, sessionKey);
     return await reportEvent({ event: payload }).catch(() => false);
   } catch {
     return false;
@@ -271,6 +305,8 @@ export async function fetchActiveSessions({
     if (timer) clearTimeout(timer);
   }
 }
+
+export { sessionTitle, updateSessionTitle };
 
 
 

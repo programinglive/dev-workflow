@@ -1,6 +1,7 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
+import { readFileSync } from "node:fs";
 
 const require = createRequire(import.meta.url);
 const { buildSessionUpsert } = require("../monitor-server/session-upsert.cjs");
@@ -79,6 +80,7 @@ before(async () => {
     await pool.query("SELECT 1");
     await pool.query(`CREATE SCHEMA IF NOT EXISTS ${SKEMA}`);
     await pool.query(DDL);
+    await pool.query(readFileSync(new URL('../monitor-server/task-metadata-migration.sql', import.meta.url), 'utf8'));
     siap = true;
   } catch (e) {
     alasanLewat = `PostgreSQL tidak bisa dihubungi (${KONEKSI}): ${e.message}`;
@@ -96,7 +98,8 @@ async function simpan(body) {
 
 async function baca(kunci) {
   const r = await pool.query(
-    `SELECT project_name, project_path, task, session_title, agent_tool, started_at
+    `SELECT project_name, project_path, task, session_title, agent_tool, started_at,
+            workflow_task_id, task_origin_json, task_relations_json
        FROM sessions WHERE session_key = $1`,
     [kunci],
   );
@@ -182,6 +185,24 @@ test("started_at tidak hilang oleh laporan tanpa waktu mulai", async (t) => {
   await simpan({ ...DASAR, startedAt: "" });
 
   assert.ok((await baca(DASAR.sessionKey)).started_at, "started_at tidak boleh hilang");
+});
+
+test('PostgreSQL preserves task provenance on completion and clears relations for a different task', async (t) => {
+  if (lewati(t)) return;
+  await bersihkan();
+  const taskOrigin = { system: 'factory', id: 'F-7', url: 'https://factory.example/', label: 'Factory task' };
+  const taskRelations = [{ system: 'zettly', id: 'Z-2', url: 'https://zettly.example/todos/Z-2', label: 'Todo', relation: 'tracks' }];
+  await simpan({ ...DASAR, workflowTaskId: 'wf-1', taskOrigin, taskRelations });
+  await simpan({ ...DASAR, task: '', phase: 'idle' });
+  const completed = await baca(DASAR.sessionKey);
+  assert.equal(completed.workflow_task_id, 'wf-1');
+  assert.deepEqual(completed.task_origin_json, taskOrigin);
+  assert.deepEqual(completed.task_relations_json, taskRelations);
+  await simpan({ ...DASAR, task: 'New task', workflowTaskId: 'wf-2' });
+  const next = await baca(DASAR.sessionKey);
+  assert.equal(next.workflow_task_id, 'wf-2');
+  assert.deepEqual(next.task_origin_json, {});
+  assert.deepEqual(next.task_relations_json, []);
 });
 
 test("pembersihan: tidak ada baris uji yang tertinggal", async (t) => {

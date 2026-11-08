@@ -33,6 +33,7 @@ export { createGitFacade } from "./git-facade.js";
 export { WorkflowState } from "./workflow-state.js";
 
 export let workflowState = null;
+let lastToolInvocationTimestamp = Date.now();
 
 const __filename = fileURLToPath(import.meta.url);
 
@@ -61,6 +62,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 // Handle tool calls
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
+  lastToolInvocationTimestamp = Date.now();
   // Reload state from disk before each request to ensure consistency
   if (workflowState) {
     const sessionId = sessionKeyFromRequest(request);
@@ -263,11 +265,16 @@ export async function main() {
   const heartbeatMs = Number.isFinite(configuredHeartbeatMs) && configuredHeartbeatMs >= 100 && configuredHeartbeatMs <= 60_000
     ? configuredHeartbeatMs
     : 30_000;
+  const MAX_HEARTBEAT_INACTIVITY_MS = 20 * 60 * 1000;
   const reportHeartbeat = () => {
     if (!workflowState) return;
     // Keep completed-task cards on their normal history TTL; only live sessions
     // without a task and sessions with active work need repeated liveness data.
     if (workflowState.state?.currentPhase === "idle" && workflowState.state?.taskDescription) return;
+    if (Date.now() - lastToolInvocationTimestamp > MAX_HEARTBEAT_INACTIVITY_MS) {
+      // Inactive for > 20 mins: stop sending heartbeat pings so the monitor sees the session has paused
+      return;
+    }
     void reportToMonitorSafe({
       state: workflowState.state,
       stateFile: workflowState.stateFile,

@@ -231,6 +231,14 @@ test("claim handler opens a work session and starts the local workflow", async (
     assert.strictEqual(workflowState.state.definitionOfDone[0].text, "tes lulus");
     assert.match(workflowState.state.taskDescription, /Sambungkan MCP ke Factory|Task backlog/);
     assert.strictEqual(saved.length, 1);
+    assert.strictEqual(workflowState.state.taskOrigin.system,'factory');
+    assert.strictEqual(workflowState.state.taskOrigin.id,BACKLOG_ID);
+    assert.strictEqual(workflowState.state.zettly.externalLinks.factory.id,BACKLOG_ID);
+    const identity=workflowState.state.workflowTaskId;
+    workflowState.state.zettly.todoId=42;
+    await handleClaimFactoryTask({recordId:BACKLOG_ID,step:'Continue the same work'}, {workflowState});
+    assert.strictEqual(workflowState.state.workflowTaskId,identity,'A repeated claim must preserve the canonical identity');
+    assert.strictEqual(workflowState.state.zettly.todoId,42,'A repeated claim must reuse the known Zettly Todo');
 
     const start = stub.calls.find((call) => call.url.endsWith("/api/work"));
     assert.ok(start, "a POST /api/work should be sent");

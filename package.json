@@ -36,6 +36,8 @@
     "web": "npm start --prefix web",
     "release:first": "node scripts/release.cjs --first-release",
     "verify:bundle": "node scripts/verify-bundle.mjs",
+    "ci:test": "npm test && npm run test:security && node --test tests/setup-stack.test.js",
+    "ci:build": "npm run build:server && npm run verify:bundle",
     "update:check": "node scripts/check-update.mjs"
   },
   "keywords": [

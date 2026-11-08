@@ -177,6 +177,7 @@ test("tool memberi tahu bahwa aksinya TIDAK berlaku, bukan 'berhasil'", async ()
     await stale.load();
     stale.state.currentPhase = "coding";
     stale.state.taskDescription = "[A] task lama yang sudah usang";
+    stale.state.featureFlowCreated = true;
 
     // Proses lain memulai task baru sesudahnya.
     const worker = await otherProcess(stateFile);

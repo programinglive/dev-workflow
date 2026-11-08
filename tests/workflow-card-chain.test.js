@@ -61,10 +61,13 @@ test("a second task records the previous task as its parent card", async () => {
       null,
     );
 
+    // assignWorkflowIdentity is the single writer of state.parentTask, in
+    // main's shape {id, description, title, todoId}.
     assert.deepEqual(ws.state.parentTask, {
-      taskId: firstTaskId,
+      id: firstTaskId,
+      description: "first topic",
       title: "first topic",
-      startedAt: firstStartedAt,
+      todoId: null,
     });
     assert.notEqual(ws.state.workflowTaskId, firstTaskId, "the new card needs its own id");
   });
@@ -104,7 +107,7 @@ test("the parent card survives a reload from disk", async () => {
       null,
     );
     const parent = ws.state.parentTask;
-    assert.ok(parent && parent.taskId, "the parent card must exist before the reload");
+    assert.ok(parent && parent.id, "the parent card must exist before the reload");
 
     const reloaded = new WorkflowState(stateFile);
     await reloaded.load();

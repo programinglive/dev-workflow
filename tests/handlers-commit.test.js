@@ -366,6 +366,43 @@ test("drop_task membatalkan task Factory dengan cancelled", async () => {
   });
 });
 
+test("complete_task closes Factory through its configured client without an injected adapter", async () => {
+  await withWorkflowState(async (workflowState) => {
+    workflowState.state.currentPhase = "commit";
+    workflowState.state.taskDescription = "Close Factory automatically";
+    workflowState.state.dodFactoryTaskId = "factory-task-1";
+    workflowState.state.definitionOfDone = [{ id: "dod-1", text: "Factory closure verified", status: "done", revision: 0, evidence: "Test fixture" }];
+    await workflowState.save();
+
+    const priorUrl = process.env.FACTORY_URL;
+    const priorToken = process.env.FACTORY_TOKEN;
+    const priorFetch = globalThis.fetch;
+    const requests = [];
+    process.env.FACTORY_URL = "https://factory.test";
+    process.env.FACTORY_TOKEN = "test-token";
+    globalThis.fetch = async (url, options) => {
+      requests.push({ url, body: JSON.parse(options.body || "{}") });
+      return { ok: true, text: async () => JSON.stringify({ success: true }) };
+    };
+    try {
+      const response = await handleToolCall({
+        request: createRequest("complete_task", { commitMessage: "fix: close Factory automatically" }),
+        normalizeRequestArgs: (args) => ({ args, error: null }),
+        workflowState,
+        exec: async () => ({ stdout: "" }),
+        git: createGitMock({ hasWorkingChanges: async () => false, getStatusOutput: async () => "" }),
+        utils: testUtils,
+      });
+      assert.doesNotMatch(response.content[0].text, /Factory tidak tertutup/);
+      assert.ok(requests.some(({ body }) => body.action === "move_task" && body.id === "factory-task-1" && body.status === "done"), response.content[0].text);
+    } finally {
+      globalThis.fetch = priorFetch;
+      if (priorUrl === undefined) delete process.env.FACTORY_URL; else process.env.FACTORY_URL = priorUrl;
+      if (priorToken === undefined) delete process.env.FACTORY_TOKEN; else process.env.FACTORY_TOKEN = priorToken;
+    }
+  });
+});
+
 test("kegagalan menutup Factory tidak menggagalkan complete_task", async () => {
   await withWorkflowState(async (workflowState) => {
     workflowState.state.currentPhase = "commit";

@@ -52,6 +52,14 @@ test("buildSnapshot aman untuk state kosong", () => {
   assert.equal(s.task, "");
 });
 
+test("buildSnapshot menggunakan sessionTitle bila ada atau jatuh ke taskDescription", () => {
+  const sWithTask = buildSnapshot({ state, sessionKey: "ses_tanpa_db", env: {} });
+  assert.equal(sWithTask.sessionTitle, "Perbaiki retry");
+
+  const sEmpty = buildSnapshot({ state: {}, sessionKey: "ses_tanpa_db", env: {} });
+  assert.equal(sEmpty.sessionTitle, "");
+});
+
 test("reportSnapshot tidak melakukan apa pun tanpa URL", async () => {
   let called = false;
   const ok = await reportSnapshot({

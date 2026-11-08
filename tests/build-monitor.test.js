@@ -9,6 +9,7 @@ import {
   normalizeBuildState,
   formatBuildStatusBlock,
   extractActiveBuildFromEvents,
+  parseEventDetail,
 } from "../build-monitor.js";
 import { buildSnapshot } from "../monitor.js";
 import { getToolList } from "../tools/definitions.js";
@@ -70,6 +71,18 @@ test("normalizeBuildState tracks target, command, stage, progress, and timestamp
   assert.equal(finished.startedAt, started.startedAt);
   assert.equal(finished.progress, 100);
   assert.ok(finished.finishedAt);
+});
+
+test("build host is preserved within a build and cleared for a new target", () => {
+  const started = normalizeBuildState({status: "building", target: "Android APK", buildHost: "builder-vm"});
+  const finished = normalizeBuildState({status: "succeeded", target: "Android APK"}, started);
+  const next = normalizeBuildState({status: "building", target: "Web bundle"}, finished);
+  assert.equal(started.buildHost, "builder-vm");
+  assert.equal(finished.buildHost, "builder-vm");
+  assert.equal(next.buildHost, "");
+  assert.equal(normalizeBuildState({status: "testing", target: "Android APK"}, started).buildHost, "");
+  assert.match(formatBuildStatusBlock(started), /\*\*Build host\*\*: builder-vm/);
+  assert.ok(getToolList().find((tool) => tool.name === "report_build_status").inputSchema.properties.buildHost);
 });
 
 test("formatBuildStatusBlock renders active build progress bar, target, command, and stage", () => {
@@ -186,12 +199,24 @@ test("extractActiveBuildFromEvents reconstructs live build state for dashboard s
       }),
       at: new Date().toISOString(),
     },
+    {
+      session_key: "ses_2",
+      machine: "HELLOWORLD",
+      project_name: "todoapp",
+      kind: "build_succeeded",
+      detail: "Webpack bundle built in 12s",
+      at: new Date().toISOString(),
+    },
   ];
 
   const map = extractActiveBuildFromEvents(events);
   assert.ok(map.get("ses_1"));
   assert.equal(map.get("ses_1").target, "clinic:v0.2.11");
   assert.equal(map.get("ses_1").progress, 70);
+
+  assert.ok(map.get("ses_2"));
+  assert.equal(map.get("ses_2").status, "succeeded");
+  assert.equal(map.get("ses_2").stage, "Webpack bundle built in 12s");
 });
 
 test("monitor-server/dashboard.cjs includes Live Build Monitor UI, KPI strip, and pipeline stepper", () => {
@@ -202,4 +227,38 @@ test("monitor-server/dashboard.cjs includes Live Build Monitor UI, KPI strip, an
   assert.match(dash, /renderBuildMonitor/);
   assert.match(dash, /renderPipeline/);
   assert.match(dash, /active_build/);
+});
+
+test("parseEventDetail safely parses JSON build event details and plain text", () => {
+  const plain = parseEventDetail("task started: refactor auth");
+  assert.equal(plain.isBuild, false);
+  assert.equal(plain.data, null);
+  assert.equal(plain.text, "task started: refactor auth");
+
+  const buildPayload = {
+    status: "building",
+    target: "Personal Voice Input Android APK",
+    buildHost: "HELLOWORLD",
+    command: "npm run tauri -- android build --apk",
+    stage: "Compiling Tauri Android and whisper-rs",
+    progress: 100,
+    output: "Release binary compiled successfully in 5m 50s",
+  };
+  const jsonParsed = parseEventDetail(JSON.stringify(buildPayload));
+  assert.equal(jsonParsed.isBuild, true);
+  assert.ok(jsonParsed.data);
+  assert.equal(jsonParsed.data.target, "Personal Voice Input Android APK");
+  assert.equal(jsonParsed.data.status, "building");
+  assert.equal(jsonParsed.data.buildHost, "HELLOWORLD");
+  assert.equal(jsonParsed.data.progress, 100);
+  assert.equal(jsonParsed.text, "Release binary compiled successfully in 5m 50s");
+
+  const malformed = parseEventDetail("{not valid json");
+  assert.equal(malformed.isBuild, false);
+  assert.equal(malformed.data, null);
+  assert.equal(malformed.text, "{not valid json");
+
+  const empty = parseEventDetail(null);
+  assert.equal(empty.isBuild, false);
+  assert.equal(empty.text, "");
 });
