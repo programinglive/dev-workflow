@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.25.0](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.24.2...v1.25.0) (2026-11-08)
+
+
+### 🐛 Bug Fixes
+
+* **docs-gate:** allow ready check to pass when documentation is waived ([e79657a](https://github.com/programinglive/dev-workflow-mcp-server/commit/e79657a043240bf5ad09e3cb3cc55195010ba151))
+* **managed:** update rollout target to bw-tools and fix release ownership ([b008ce2](https://github.com/programinglive/dev-workflow-mcp-server/commit/b008ce27585e79830c97927a019e88a4fd147b94))
+
+
+### 📝 Documentation
+
+* **release:** add 1.24.2 release notes entry ([d582c2e](https://github.com/programinglive/dev-workflow-mcp-server/commit/d582c2e62ac7299459514262c1fc2a2f4ca13181))
+* **web:** record the recreated Netlify project id and DNS record ([#60](https://github.com/programinglive/dev-workflow-mcp-server/issues/60)) ([5970751](https://github.com/programinglive/dev-workflow-mcp-server/commit/59707515db556ea5a7eee69cacbd6f9d07932791))
+
+
+### 🧹 Chores
+
+* reconcile origin/main monitor truth fixes into unified card-chain monitor ([0a414bb](https://github.com/programinglive/dev-workflow-mcp-server/commit/0a414bbc38a43f043af4bb802bb0ec6ce47bc790)), closes [#59](https://github.com/programinglive/dev-workflow-mcp-server/issues/59)
+
 ### [1.24.2](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.24.1...v1.24.2) (2026-11-08)
 
 
