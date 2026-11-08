@@ -58,3 +58,13 @@ test('a device with no change is reported as a warning, not a success', () => {
   assert.match(source, /if \(!changed\) \{/, 'an empty change list must be handled');
   assert.match(source, /rules unchanged/, 'the warning must say nothing changed');
 });
+
+test('stdin is piped whenever the sync sends the script as input', () => {
+  // Measured 8 November 2026: `run()` defaulted stdin to 'ignore', so the
+  // script was dropped, `python -` read an empty stdin and ssh never returned.
+  assert.match(
+    source,
+    /opts\.input == null \? \['ignore', 'pipe', 'pipe'\] : \['pipe', 'pipe', 'pipe'\]/,
+    'input must switch stdin to a pipe, otherwise the script never reaches the device',
+  );
+});

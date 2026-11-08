@@ -473,9 +473,17 @@ menggagalkan `start_task`. Hasil kosong tetap disimpan supaya setiap `save()`
 tidak memanggil `git` berulang kali.
 
 Alurnya: `monitor.js` mengirim `repositoryPath`/`repositoryRemote` di snapshot →
-`session-upsert.cjs` menyimpannya di kolom `repo_path`/`repo_remote` → kartu dan
-modal menampilkan `📁 <path> · 🔗 <remote>`. Remote dirender sebagai tautan bila
-protokolnya `http(s)`.
+`session-upsert.cjs` menyimpannya di kolom `repo_path`/`repo_remote` →
+`monitor-server/repo-link.cjs` mengubah remote menjadi alamat web →
+`/api/sessions` mengirim `repo_url`/`repo_label` → kartu dan modal menampilkan
+tautan `🔗 <owner>/<repo> ↗`, sedangkan path lokal tetap ada di modal.
+
+`repo-link.cjs` menerima `git@github.com:org/repo.git` (bentuk scp),
+`ssh://git@host/org/repo.git`, `git://…`, `http(s)://…`; hasilnya selalu
+`https://…` tanpa sufiks `.git` dan tanpa kredensial yang tertanam di remote.
+Skema selain web (mis. `javascript:` atau `file:`) **tidak pernah** dijadikan
+tautan. Sesi yang remote-nya kosong tetap punya `repo_path`, hanya tanpa tautan —
+alamatnya tidak ditebak.
 
 Kolom baru ditambahkan oleh migrasi idempoten saat dashboard boot. Dashboard
 berjalan sebagai user aplikasi yang **bukan** pemilik tabel, jadi migrasi

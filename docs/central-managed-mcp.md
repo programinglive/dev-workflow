@@ -16,10 +16,16 @@ To publish, promote, and propagate rules to all three devices (**HELLOWORLD**, *
 
 Running processes keep their original release until reconnect. A release that adds tools may also require the client to refresh its tool list. Do not kill unrelated active sessions to update them.
 
-### Rule sync over SSH: two shell traps
+`node managed/rollout.cjs --rules-only` re-applies and verifies the rule block
+without publishing or promoting anything. Use it when only the rules changed, or
+to repair a device that missed an earlier sync. Publishing copies the committed
+tree, so the flag also avoids an unnecessary release archive on days when no code
+changed.
+
+### Rule sync over SSH: three traps
 
 `managed/rollout.cjs` rewrites the managed rule block in `.gemini/GEMINI.md`,
-`.codex/AGENTS.md` and `.config/opencode/AGENTS.md` on every device. Two failure
+`.codex/AGENTS.md` and `.config/opencode/AGENTS.md` on every device. Three failure
 modes were measured on 8 November 2026 and are now guarded:
 
 1. **Backticks are shell syntax.** Sending the block inside
@@ -33,8 +39,12 @@ modes were measured on 8 November 2026 and are now guarded:
    travels over stdin (`python -`), reads each file back, and the device prints
    `CHANGED=<files>`. An empty change list is reported as a warning, not a
    success.
+3. **`input` needs a piped stdin.** `run()` defaulted stdin to `'ignore'`, which
+   discards `input`; the device then read an empty script and the ssh call never
+   returned, so the rollout hung instead of reporting a failure. `run()` now
+   switches stdin to `'pipe'` whenever `input` is supplied.
 
-`tests/rollout-rule-sync.test.cjs` pins both properties.
+`tests/rollout-rule-sync.test.cjs` pins all three properties.
 
 ## Initial device setup
 
