@@ -200,11 +200,11 @@ Development tasks are recorded in Factory by default when the configured account
 | `project_summary` | Aggregate activity for the project |
 | `project_summary_data` | Read the persisted `project-summary.json` |
 | `project_summary_db` | Read the per-user summary from SQLite |
-| `list_active_sessions` | List active workflow sessions across all machines from the central monitor (`DEVWF_MONITOR_URL`). Output includes a 🔗 clickable dashboard URL. |
-| `list_factory_tasks` | List your Factory task queue (requires config) |
+| `list_active_sessions` | List active workflow sessions across all machines from the central monitor (`DEVWF_MONITOR_URL`). Output includes a 🔗 clickable dashboard URL. || `list_factory_tasks` | List your Factory task queue (requires config) |
 | `create_factory_task` | Record a new task with a required definition of done |
 | `update_factory_task` | Edit a task, including filling a missing definition of done |
 | `claim_factory_task` | Claim a Factory task and start a local workflow |
+| `start_task` (claim view) | Before you commit to a task, reports which tasks other live sessions currently hold, so two sessions do not compete for the same one. Own, idle and stale (older than 15 minutes) claims are excluded. |
 | `sync_task_status` | Report a status change back to Factory |
 
 ### Central MCP Ecosystem Index (`recommend_mcp_tools`)

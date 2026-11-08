@@ -24,8 +24,40 @@ import { pinSessionProject, resolveHistoryFile } from "../../workflow-state.js";
 import { assignWorkflowIdentity, validateZettlyTaskArguments } from '../../zettly-workflow.js';
 import { recommendMcpTools, formatMcpRecommendations, formatFullMcpCatalog } from "../../mcp-index.js";
 import { normalizeBuildState, formatBuildStatusBlock } from "../../build-monitor.js";
+import { claimReportBlock } from "../../claim-view.js";
+import { fetchActiveSessions, monitorUrl } from "../../monitor.js";
 import os from 'node:os';
 import {flowGraph,syncZettlyDrawing} from '../../zettly-drawing.js';
+
+/**
+ * Ask the monitor which tasks other sessions hold, and render the warning block.
+ *
+ * Never throws and never delays `start_task` much: a missing monitor or a slow
+ * network simply produces no block, exactly like the other monitor reports.
+ */
+async function describeActiveClaims({ sessionKey = "" } = {}) {
+  try {
+    if (!monitorUrl()) return "";
+    const result = await fetchActiveSessions({ limit: 50, timeoutMs: 1500 });
+    if (!result.ok) return "";
+
+    const claims = (result.sessions || []).map((session) => ({
+      machine: session.machine,
+      projectName: session.project_name,
+      task: session.task || session.session_title,
+      agent: session.agent_tool,
+      sessionKey: session.session_key,
+      phase: session.phase,
+      updatedAt: session.updated_at,
+      ownerPid: session.owner_pid,
+    }));
+
+    const block = claimReportBlock({ claims, ownSessionKey: sessionKey });
+    return block ? `\n\n${block}` : "";
+  } catch {
+    return "";
+  }
+}
 
 export function generateDefaultFlow(description, planItems = []) {
   const clean = (s, max = 36) => String(s || '').replace(/["\n\r]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
@@ -447,8 +479,15 @@ export async function handleStartTask(args, workflowState, git, zettlyOptions = 
   });
   const mcpBlock = mcpRecommendations ? `${mcpRecommendations}\n\n` : "";
 
+  // Which tasks are other sessions holding right now? The agent only learns
+  // this after choosing, so report it here, before it commits to the task.
+  const ownSessionKey = (typeof workflowState._sessionKey === "function" ? workflowState._sessionKey()?.key : "")
+    || workflowState.sessionId
+    || "";
+  const claimBlock = await describeActiveClaims({sessionKey: ownSessionKey});
+
   return textResponse(
-    `✅ Task Started: ${args.description}\n\n${project.message}${warningBlock}${factoryNote}${drawNote}\n\n` +
+    `✅ Task Started: ${args.description}\n\n${project.message}${warningBlock}${claimBlock}${factoryNote}${drawNote}\n\n` +
       `📋 Definition of Done (${workflowState.state.definitionOfDone.length} item, semua masih terbuka):\n${dodLines}\n` +
       `   Buktikan tiap item dengan 'mark_dod_item' { id, evidence } setelah benar-benar terbukti,\n` +
       `   atau kecualikan dengan 'waive_dod_item' { id, reason } bila memang tidak relevan.\n\n` +

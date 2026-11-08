@@ -24,7 +24,7 @@ const MANAGED_RULE_BLOCK = `<!-- managed-development-workflow:start -->
 OpenCode, Codex and AGY (Antigravity CLI and IDE) use the same centrally managed Dev Workflow MCP release and Zettly owner account.
 - Before development work, call dev-workflow start_task with an English task description, type, projectDir, a concrete definitionOfDone and an ordered plan. Reuse the canonical task ID and existing Zettly Todo when continuing work. Do not start coding before registration succeeds.
 - **Mandatory Mermaid Flow Design Gate (Token & Scope Lock):** Immediately after \`start_task\` and BEFORE writing or modifying any implementation code or tests, you MUST call \`create_feature_flow\` with a connected Mermaid flowchart (\`flowchart TD\` / \`graph TD\`) and an English description. This generates and syncs the visual architecture canvas in Zettly Draw (\`https://zettly.programinglive.com/draw/{id}\`) linked to the canonical Zettly Todo. AI MUST NOT deviate from the recorded flow or write code before this gate succeeds, preventing hallucinations and token waste.
-- **Multi-Device & Multi-AI Consistency:** Whenever updating dev-workflow MCP or workflow rules, the change MUST be published and promoted centrally to docker-alma/n8n-instance and synchronized across all three AI CLIs (Codex, OpenCode, AGY) on all three devices (HELLOWORLD, Mac, MMCH) via \`node managed/rollout.cjs\`.
+- **Multi-Device & Multi-AI Consistency:** Whenever updating dev-workflow MCP or workflow rules, the change MUST be published and promoted centrally to the release host on \`bw-tools\` and synchronized across all three AI CLIs (Codex, OpenCode, AGY) on all three devices (HELLOWORLD, Mac, MMCH) via \`node managed/rollout.cjs\`.
 - Verify the task appears on the central monitor at http://100.107.65.21:3100. A connected MCP process without a registered task does not prove that work is being tracked. If the tool is unavailable, report the failed registration and reload the MCP connection rather than claiming the session is tracked.
 - Write new identifiers, comments, docstrings, test descriptions, developer documentation and commit messages in English. User conversation and explicitly localized product text may use the requested language.
 - Update plan and definition-of-done evidence during execution. Use automatic Zettly synchronization and sync_zettly_task retries; do not create duplicate Todos or write to the retired Daily Activity Journal/PocketBase store.
@@ -167,15 +167,21 @@ function syncRules() {
 
   // 2. Mac
   try {
-    const pythonScript = `import os, re
-block = '''${MANAGED_RULE_BLOCK}'''
+    // The block contains backticks and `{id}`. Passing it through `ssh "..."`
+    // lets the remote shell expand those, which silently emptied every
+    // backticked token (measured 8 Nov 2026: "to the release host on  and
+    // synchronized"). Embed the block as base64 instead, so the script that
+    // travels over the wire contains no character a shell would touch.
+    const payload = Buffer.from(MANAGED_RULE_BLOCK, 'utf8').toString('base64');
+    const pythonScript = `import base64, os, re
+block = base64.b64decode('${payload}').decode('utf-8')
 pattern = re.compile(r'(?ms)<!-- managed-development-workflow:start -->.*?<!-- managed-development-workflow:end -->')
 home = os.path.expanduser('~')
 for rel in ['.gemini/GEMINI.md', '.codex/AGENTS.md', '.config/opencode/AGENTS.md']:
     p = os.path.join(home, rel)
     if os.path.exists(p):
         txt = open(p, 'r', encoding='utf-8').read()
-        new_txt = pattern.sub(block, txt) if pattern.search(txt) else txt.strip() + '\\n\\n' + block + '\\n'
+        new_txt = pattern.sub(lambda m: block, txt) if pattern.search(txt) else txt.strip() + '\\n\\n' + block + '\\n'
         open(p, 'w', encoding='utf-8').write(new_txt)
 `;
     run('ssh', ['-o', 'BatchMode=yes', 'mac', `python3 -c "${pythonScript.replace(/"/g, '\\"')}"`]);
@@ -186,15 +192,19 @@ for rel in ['.gemini/GEMINI.md', '.codex/AGENTS.md', '.config/opencode/AGENTS.md
 
   // 3. MMCH
   try {
-    const pythonScriptMMCH = `import os, re
-block = '''${MANAGED_RULE_BLOCK}'''
+    // Same base64 treatment as Mac: the Windows shell would also eat backticks,
+    // and the home directory must be resolved on the device instead of being
+    // hard-coded (it was wrong: MMCH runs as DHIKA, not mahardhika).
+    const payloadMMCH = Buffer.from(MANAGED_RULE_BLOCK, 'utf8').toString('base64');
+    const pythonScriptMMCH = `import base64, os, re
+block = base64.b64decode('${payloadMMCH}').decode('utf-8')
 pattern = re.compile(r'(?ms)<!-- managed-development-workflow:start -->.*?<!-- managed-development-workflow:end -->')
-home = 'C:/Users/mahardhika'
+home = os.path.expanduser('~')
 for rel in ['.gemini/GEMINI.md', '.codex/AGENTS.md', '.config/opencode/AGENTS.md']:
     p = os.path.join(home, rel)
     if os.path.exists(p):
         txt = open(p, 'r', encoding='utf-8').read()
-        new_txt = pattern.sub(block, txt) if pattern.search(txt) else txt.strip() + '\\n\\n' + block + '\\n'
+        new_txt = pattern.sub(lambda m: block, txt) if pattern.search(txt) else txt.strip() + '\\n\\n' + block + '\\n'
         open(p, 'w', encoding='utf-8').write(new_txt)
 `;
     run('ssh', ['-o', 'BatchMode=yes', 'mmch', `python -c "${pythonScriptMMCH.replace(/"/g, '\\"')}"`]);
