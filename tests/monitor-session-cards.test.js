@@ -81,6 +81,31 @@ test("history cards expose chain identity and their successor", () => {
   assert.match(sql, /parent_task_title/);
 });
 
+test("the upsert ignores task-metadata fields from the f2ac45d monitor model", () => {
+  // The deployed monitor on bw-server-clean tracks a different card model
+  // (workflow_task_id, task_origin_json, task_relations_json, repo_path,
+  // repo_remote). Those fields must stay out of this upsert: accepting them
+  // silently would mix two identity models in one table.
+  const { sql, params } = buildSessionUpsert({
+    ...CARD,
+    workflowTaskId: "task-x",
+    taskOrigin: { system: "factory" },
+    taskRelations: [{ id: "42", kind: "factory" }],
+    repositoryPath: "/code/x",
+    repositoryRemote: "git@github.com:x.git",
+  });
+  for (const forbidden of [
+    "workflow_task_id",
+    "task_origin_json",
+    "task_relations_json",
+    "repo_path",
+    "repo_remote",
+  ]) {
+    assert.ok(!sql.includes(forbidden), `${forbidden} must not enter the upsert`);
+  }
+  assert.equal(params.length, 20, "unknown fields must not add params (17 base + task_id + parent pair)");
+});
+
 test("the migration adds columns before swapping the primary key", () => {
   const sql = readFileSync(new URL("../monitor-server/migrations/001-card-chaining.sql", import.meta.url), "utf8");
   const addTaskId = sql.indexOf("ADD COLUMN IF NOT EXISTS task_id");

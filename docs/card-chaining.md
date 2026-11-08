@@ -70,3 +70,26 @@ upsert has no matching unique constraint to conflict on.
 - `tests/monitor-dashboard-chain.test.js` — dashboard wiring.
 - `tests/monitor-card-chain-behavior.test.js` — real PostgreSQL: two cards in
   one session, hand-off, legacy row, and a twice-applied migration.
+
+## Rollout status (as of 8 November 2026, release v1.24.1)
+
+- Client and managed release: promoted on bw-tools (`/var/lib/devwf-releases/
+  current.json` = revision `02542e1`); workstations pick it up on the next
+  MCP reconnect.
+- Monitor database: the three card-chaining columns were added to
+  `devwf_monitor.sessions` (a `pg_dump` of the table is kept under
+  `/opt/devwf-monitor/backups/`). The primary-key swap and the unified monitor
+  code deploy are **deliberately not applied yet**, because the deployed
+  monitor on bw-server-clean tracks a different implementation of the same
+  task: `origin/feat/zettelkasten-card-chaining` (commit `f2ac45d`, 7 Nov),
+  a task-metadata model (`workflow_task_id`, `task_origin_json`,
+  `task_relations_json`, `task-metadata.cjs`, Zettly drawing thumbnails) that
+  is not in this repository's main line. Swapping the primary key before that
+  branch is reconciled would leave the deployed upsert failing on every
+  ingest.
+- This branch was therefore pushed under a separate ref
+  (`feat/zettelkasten-card-chaining-v1241`) to keep both implementations
+  intact.
+- Follow-up: reconcile `f2ac45d` with the composite-key model, add migration
+  `002` for the primary-key swap, then run the full migration and restart
+  `devwf-monitor`.
