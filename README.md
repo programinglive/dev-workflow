@@ -81,7 +81,7 @@ finished.
 
 | Path | Single responsibility |
 |---|---|
-| `index.js` | MCP entry point: registers the 52 tools, English implementation instructions and handlers |
+| `index.js` | MCP entry point: registers the 56 tools, English implementation instructions and handlers |
 | `mcp-index.js` | Central MCP ecosystem index & context-aware recommender for all 12 ecosystem MCP servers |
 | `build-monitor.js`, `monitor-server/build-monitor.cjs` | Real-time build & execution status tracker (`report_build_status`) shared between MCP and the live monitor dashboard |
 | `mobile-app/build-view.js` | Android build tab presentation and truthful build host labeling |
@@ -148,7 +148,7 @@ See [MCP client configuration](#mcp-client-configuration).
 
 ## Available Tools
 
-52 tools. See [service connections and proactive Zettly direction](docs/service-integrations.md) and [focus-first development](docs/focus-workflow.md).
+56 tools. See [service connections and proactive Zettly direction](docs/service-integrations.md) and [focus-first development](docs/focus-workflow.md).
 
 | Tool | Purpose |
 |---|---|
@@ -232,6 +232,28 @@ When a session runs a build, test suite, container image build, security scan, o
 - **MCP Status Visibility**: `get_workflow_status`, `continue_workflow`, and `list_active_sessions` render a `🏗️ Active Build / Execution Monitor` section with an ASCII progress bar, elapsed duration, command, and recent build history.
 - **Mission-Control Web Dashboard (`monitor-server/dashboard.cjs`)**: Displays a top KPI strip, a dedicated **🏗️ Live Build & Execution Monitor** hero radar with animated progress bars and 1-second live ticking timers, plus a 6-step Workflow Pipeline Stepper on every session card and detail modal.
 - **Zettelkasten card chaining**: starting a new task in the same session creates its own card and marks the previous one `handed-off`, so the board links "continued from" / "continued to" instead of overwriting the topic. See [docs/card-chaining.md](docs/card-chaining.md) and the migration command `node scripts/migrate-monitor-db.cjs`.
+
+### Build duration report and ETA (`build_report`, `build_estimate`)
+
+`report_build_status` already records every build, test suite and deployment; those events are
+now also the history that prediction is built from, so no extra table or migration is needed.
+
+- **`GET /api/builds/report?days=30[&project=&host=]`** pairs `build_started` with its terminal
+  event and returns totals, per-project and per-target count/p50/p90/max, stage breakdown, the
+  slowest runs and the runs left unclosed. Percentiles use nearest-rank on a 1..30 day window.
+- **`build_report`** answers the same question for agents, and **`build_estimate`** predicts how
+  long a running build still needs: a p50-p90 range from that target's own successful runs, or
+  from its project when the target has no history yet. Fewer than five completed builds never
+  produce a number - the answer says there is no baseline instead of inventing one.
+- **Trouble changes the number.** A build whose progress has not moved for two minutes is
+  `stalled`, one past its own p90 is `overdue` and stops showing a remaining number, and a failed
+  build reports no ETA. Each revision carries the reason so the dashboard can say why.
+- **Build tab** on the live dashboard lists the durations and the trend, and every session card
+  with an active build shows the same estimate the tools give, so a human and an agent never see
+  two different answers.
+
+The first estimate for a target appears after its fifth completed build; until then the card
+says there is no baseline yet.
 
 ### Searching the active project
 
