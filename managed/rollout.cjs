@@ -163,55 +163,74 @@ function syncRules() {
       fs.writeFileSync(f, updated, 'utf8');
     }
   }
-  console.log('      ✅ HELLOWORLD rules synchronized (GEMINI.md, Codex, OpenCode)');
+  console.log(`      ✅ HELLOWORLD rules synchronized (${hwFiles.filter((f) => fs.existsSync(f)).length}/3 files)`);
 
   // 2. Mac
   try {
-    // The block contains backticks and `{id}`. Passing it through `ssh "..."`
-    // lets the remote shell expand those, which silently emptied every
-    // backticked token (measured 8 Nov 2026: "to the release host on  and
-    // synchronized"). Embed the block as base64 instead, so the script that
-    // travels over the wire contains no character a shell would touch.
-    const payload = Buffer.from(MANAGED_RULE_BLOCK, 'utf8').toString('base64');
-    const pythonScript = `import base64, os, re
-block = base64.b64decode('${payload}').decode('utf-8')
-pattern = re.compile(r'(?ms)<!-- managed-development-workflow:start -->.*?<!-- managed-development-workflow:end -->')
-home = os.path.expanduser('~')
-for rel in ['.gemini/GEMINI.md', '.codex/AGENTS.md', '.config/opencode/AGENTS.md']:
-    p = os.path.join(home, rel)
-    if os.path.exists(p):
-        txt = open(p, 'r', encoding='utf-8').read()
-        new_txt = pattern.sub(lambda m: block, txt) if pattern.search(txt) else txt.strip() + '\\n\\n' + block + '\\n'
-        open(p, 'w', encoding='utf-8').write(new_txt)
-`;
-    run('ssh', ['-o', 'BatchMode=yes', 'mac', `python3 -c "${pythonScript.replace(/"/g, '\\"')}"`]);
-    console.log('      ✅ Mac rules synchronized (GEMINI.md, Codex, OpenCode)');
+    syncRulesOnDevice({ host: 'mac', python: 'python3', label: 'Mac' });
   } catch (err) {
     console.error(`      ⚠️ Mac rule sync failed: ${err.message}`);
   }
 
   // 3. MMCH
   try {
-    // Same base64 treatment as Mac: the Windows shell would also eat backticks,
-    // and the home directory must be resolved on the device instead of being
-    // hard-coded (it was wrong: MMCH runs as DHIKA, not mahardhika).
-    const payloadMMCH = Buffer.from(MANAGED_RULE_BLOCK, 'utf8').toString('base64');
-    const pythonScriptMMCH = `import base64, os, re
-block = base64.b64decode('${payloadMMCH}').decode('utf-8')
-pattern = re.compile(r'(?ms)<!-- managed-development-workflow:start -->.*?<!-- managed-development-workflow:end -->')
-home = os.path.expanduser('~')
-for rel in ['.gemini/GEMINI.md', '.codex/AGENTS.md', '.config/opencode/AGENTS.md']:
-    p = os.path.join(home, rel)
-    if os.path.exists(p):
-        txt = open(p, 'r', encoding='utf-8').read()
-        new_txt = pattern.sub(lambda m: block, txt) if pattern.search(txt) else txt.strip() + '\\n\\n' + block + '\\n'
-        open(p, 'w', encoding='utf-8').write(new_txt)
-`;
-    run('ssh', ['-o', 'BatchMode=yes', 'mmch', `python -c "${pythonScriptMMCH.replace(/"/g, '\\"')}"`]);
-    console.log('      ✅ MMCH rules synchronized (GEMINI.md, Codex, OpenCode)');
+    syncRulesOnDevice({ host: 'mmch', python: 'python', label: 'MMCH' });
   } catch (err) {
     console.error(`      ⚠️ MMCH rule sync failed: ${err.message}`);
   }
+}
+
+/**
+ * Rewrite the rule block in every AI CLI file on one device.
+ *
+ * TWO BUGS THIS REPLACES (measured 8 November 2026)
+ * -------------------------------------------------
+ * 1. Passing the block inside `ssh "... python -c \"...\""` let the remote
+ *    shell expand the backticks, so `bw-tools` and `node managed/rollout.cjs`
+ *    arrived empty ("promoted centrally to the release host on  and...").
+ *    The block is now base64-encoded inside the script.
+ * 2. A multi-line script passed with `python -c "..."` is truncated at the
+ *    first newline by cmd.exe. The command still exits 0, so the rollout
+ *    printed "✅ synchronized" while nothing was written. The script now
+ *    travels over stdin (`python -`), and the device prints which files it
+ *    actually changed. A device with no change is reported as a warning.
+ */
+function syncRulesOnDevice({host, python, label}) {
+  const payload = Buffer.from(MANAGED_RULE_BLOCK, 'utf8').toString('base64');
+  const script = [
+    'import base64, os, re, sys',
+    `block = base64.b64decode('${payload}').decode('utf-8')`,
+    "pattern = re.compile(r'(?ms)<!-- managed-development-workflow:start -->.*?<!-- managed-development-workflow:end -->')",
+    "home = os.path.expanduser('~')",
+    "changed = []",
+    "missing = []",
+    "for rel in ['.gemini/GEMINI.md', '.codex/AGENTS.md', '.config/opencode/AGENTS.md']:",
+    '    p = os.path.join(home, rel)',
+    '    if not os.path.exists(p):',
+    '        missing.append(rel)',
+    '        continue',
+    '    txt = open(p, "r", encoding="utf-8").read()',
+    '    new_txt = pattern.sub(lambda m: block, txt) if pattern.search(txt) else txt.strip() + "\\n\\n" + block + "\\n"',
+    '    if new_txt == txt:',
+    '        continue',
+    '    open(p, "w", encoding="utf-8").write(new_txt)',
+    '    back = open(p, "r", encoding="utf-8").read()',
+    '    if block not in back:',
+    '        sys.exit("write did not stick: " + rel)',
+    '    changed.append(rel)',
+    'print("CHANGED=" + ",".join(changed))',
+    'print("MISSING=" + ",".join(missing))',
+  ].join('\n');
+
+  const output = run('ssh', ['-o', 'BatchMode=yes', host, `${python} -`], {input: `${script}\n`});
+  const changed = (/CHANGED=(.*)/.exec(output) || [])[1] || '';
+  const missing = (/MISSING=(.*)/.exec(output) || [])[1] || '';
+
+  if (!changed) {
+    console.error(`      ⚠️ ${label} rules unchanged${missing ? ` (missing: ${missing})` : ''}`);
+    return;
+  }
+  console.log(`      ✅ ${label} rules synchronized (${changed})`);
 }
 
 function main() {
