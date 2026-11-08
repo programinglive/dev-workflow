@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.27.0](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.26.0...v1.27.0) (2026-11-08)
+
+
+### 📝 Documentation
+
+* **monitor:** dedupe Zettly Draw preview section and guard against section duplicates ([1742a6a](https://github.com/programinglive/dev-workflow-mcp-server/commit/1742a6a912bb7bfa7459ee3d27ae850abea91906))
+* **release:** add 1.26.0 release notes entry ([0a21873](https://github.com/programinglive/dev-workflow-mcp-server/commit/0a21873c996a62d4ff95a059c7d50b5a79811f5d))
+
+
+### ✨ Features
+
+* **managed:** enforce forward-only rotation of the central release store ([dbb6bfa](https://github.com/programinglive/dev-workflow-mcp-server/commit/dbb6bfa24d312260649b3c251613d7f14ca800bc))
+
 ## [1.26.0](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.25.0...v1.26.0) (2026-11-08)
 
 
