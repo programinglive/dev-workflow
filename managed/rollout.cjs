@@ -16,8 +16,7 @@ const MANAGED_DIR = __dirname;
 const STAGING_DIR = path.join(REPO_ROOT, '.managed-publish');
 
 const RELEASE_HOSTS = [
-  { name: 'docker-alma', ip: '100.117.87.66', port: 3101, isPrimary: true },
-  { name: 'n8n-instance', ip: '100.78.134.44', port: 3101, isPrimary: false },
+  { name: 'bw-tools', ip: '100.77.138.14', port: 3101, isPrimary: true },
 ];
 
 const MANAGED_RULE_BLOCK = `<!-- managed-development-workflow:start -->
@@ -62,7 +61,7 @@ function promoteToServers(manifest) {
         `sudo chmod 644 /var/lib/devwf-releases/releases/${manifest.sha256}.tar.gz`,
         `sudo cp /var/lib/devwf-releases/current.json /var/lib/devwf-releases/previous.json 2>/dev/null || true`,
         `sudo mv /tmp/current.json /var/lib/devwf-releases/current.json`,
-        `sudo chown root:root /var/lib/devwf-releases/current.json`,
+        `sudo chown devwf-releases:devwf-releases /var/lib/devwf-releases/current.json`,
         `sudo chmod 644 /var/lib/devwf-releases/current.json`,
       ].join(' && ');
 
