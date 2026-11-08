@@ -36,6 +36,7 @@ const {
 const { classifySession, LABELS, DEFAULT_LIVE_MS, DEFAULT_STUCK_MS } = require('./status.cjs');
 const { buildSessionUpsert, buildParentHandoff } = require('./session-upsert.cjs');
 const { chainLabels, buildForCard, cardKey } = require('./card-chain.cjs');
+const { normalizeTaskMetadata, renderTaskMetadata } = require('./task-metadata.cjs');
 const {
   shareGuard,
   handleCreateShare,
@@ -137,6 +138,20 @@ const IDLE_TTL = process.env.IDLE_TTL || '30 minutes';
 const EMPTY_IDLE_TTL = process.env.EMPTY_IDLE_TTL || '1 minute';
 
 const pool = DB_URL ? new pg.Pool({ connectionString: DB_URL, max: 4 }) : null;
+const ZETTLY_DB_URL = process.env.ZETTLY_DATABASE_URL || (DB_URL ? DB_URL.replace(/\/devwf_monitor(\?|$)/, '/prod_zettly$1') : '');
+const zettlyPool = ZETTLY_DB_URL ? new pg.Pool({ connectionString: ZETTLY_DB_URL, max: 2 }) : null;
+
+async function fetchDrawing(id) {
+  if (zettlyPool) {
+    try {
+      const res = await zettlyPool.query('SELECT id, title, thumbnail FROM drawings WHERE id = $1', [id]);
+      if (res.rows && res.rows[0]) return res.rows[0];
+    } catch (e) {
+      console.error('fetchDrawing error:', e.message);
+    }
+  }
+  return null;
+}
 
 const PAGE = `<!doctype html>
 <html lang="id"><head><meta charset="utf-8">
@@ -170,9 +185,9 @@ const PAGE = `<!doctype html>
   .build-hero { margin-bottom:18px; border-radius:12px; padding:14px 16px;
                 background:linear-gradient(135deg,#121d2f 0%,#0d131d 100%);
                 border:1px solid #2f81f766; box-shadow:0 8px 24px rgba(0,0,0,.35); }
-  .build-hero-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:12px; }
+  .build-hero-head { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; margin-bottom:12px; }
   .build-hero-title { font-size:14px; font-weight:700; color:#79c0ff; display:flex; align-items:center; gap:8px; }
-  .build-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:12px; }
+  .build-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr)); gap:12px; }
   .build-card { background:#090d13; border:1px solid #263345; border-radius:10px; padding:12px 14px;
                 cursor:pointer; transition:border-color .15s, transform .15s; }
   .build-card:hover { border-color:#58a6ff; transform:translateY(-1px); }
@@ -189,6 +204,7 @@ const PAGE = `<!doctype html>
   .build-badge.succeeded { background:#2ea04326; color:#3fb950; border:1px solid #2ea04366; }
   .build-badge.failed { background:#f8514926; color:#ff7b72; border:1px solid #f8514966; }
   .build-target { font-weight:700; font-size:14px; color:#f0f6fc; margin-top:6px; }
+  .build-location { color:#a5d6ff; font-size:12px; font-weight:600; margin-top:7px; overflow-wrap:anywhere; }
   .build-stage { font-size:12px; color:#a5d6ff; margin-top:3px; }
   .build-cmd { margin-top:8px; padding:7px 9px; background:#05080c; border:1px solid #1b222c;
                border-radius:7px; font:11px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace;
@@ -221,6 +237,16 @@ const PAGE = `<!doctype html>
   .row { display:flex; gap:8px; align-items:baseline; flex-wrap:wrap; }
   .task { font-weight:600; color:#f0f6fc; }
   .meta { color:#7d8590; font-size:12px; }
+  .task-metadata { margin-top:6px; overflow-wrap:anywhere; }
+  .task-metadata a { color:#79c0ff; }
+  .task-relation-list { display:flex; align-items:center; flex-wrap:wrap; gap:5px; margin-top:4px; }
+  .task-relation { display:inline-flex; align-items:center; max-width:100%; padding:2px 8px; border:1px solid #2d3b50; border-radius:999px; background:#101a2a; overflow-wrap:anywhere; }
+  .task-relation-factory { border-color:#9e6a2266; background:#2a1c0e; }
+  .task-relation-zettly_draw { border-color:#8b5cf666; background:#201630; }
+  .flow-preview { margin-top:8px; }
+  .flow-thumb-box { transition:border-color .15s ease, box-shadow .15s ease; }
+  .flow-thumb-box:hover { border-color:#58a6ff !important; box-shadow:0 0 0 1px #58a6ff44; }
+  .flow-thumb-box:hover .flow-thumb-hint { background:#1f6febdd !important; color:#fff !important; }
   .proj-pill { display:inline-block; background:#1f6feb1a; color:#58a6ff; border:1px solid #1f6feb44;
                padding:1px 8px; border-radius:6px; font-weight:600; font-size:11px; }
   .phase { background:#1f6feb22; color:#79c0ff; border:1px solid #1f6feb55;
@@ -236,6 +262,29 @@ const PAGE = `<!doctype html>
   .events b { color:#c9d1d9; font-weight:500; }
   .event-row { padding:7px 10px; border-bottom:1px solid #161b22; display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; }
   .event-row:last-child { border-bottom:none; }
+
+  /* Activity Box & Build Event Cards */
+  .activity-box { background:#0d131d; border:1px solid #212d3d; }
+  .events-scroll-container { max-height:360px; overflow-y:auto; padding-right:4px; scrollbar-width:thin; scrollbar-color:#30363d #090d13; }
+  .events-scroll-container::-webkit-scrollbar { width:6px; }
+  .events-scroll-container::-webkit-scrollbar-track { background:#090d13; border-radius:4px; }
+  .events-scroll-container::-webkit-scrollbar-thumb { background:#30363d; border-radius:4px; }
+  .event-card { background:#090d13; border:1px solid #21262d; border-radius:8px; padding:10px 12px; margin-bottom:8px; font-size:12px; transition:border-color .15s; }
+  .event-card:hover { border-color:#388bfd55; }
+  .event-card.build.succeeded { border-left:4px solid #2ea043; background:linear-gradient(90deg, rgba(46,160,67,0.06) 0%, #090d13 25%); }
+  .event-card.build.building, .event-card.build.testing, .event-card.build.scanning, .event-card.build.deploying { border-left:4px solid #d29922; background:linear-gradient(90deg, rgba(210,153,34,0.06) 0%, #090d13 25%); }
+  .event-card.build.failed { border-left:4px solid #f85149; background:linear-gradient(90deg, rgba(248,81,73,0.08) 0%, #090d13 25%); }
+  .event-card.generic { border-left:4px solid #388bfd; }
+  .event-head { display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:4px; }
+  .event-title-line { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .event-target-text { font-weight:700; color:#f0f6fc; font-size:13px; }
+  .event-meta-line { font-size:11px; color:#7d8590; display:flex; align-items:center; gap:6px; margin-left:auto; }
+  .event-host-pill { background:#161b22; border:1px solid #30363d; border-radius:4px; padding:1px 6px; color:#a5d6ff; font-size:11px; }
+  .event-stage-line { color:#79c0ff; font-size:12px; margin:4px 0 2px; font-weight:500; display:flex; align-items:center; gap:6px; }
+  .event-cmd-box { font:11px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace; background:#05080c; border:1px solid #1b222c; border-radius:6px; padding:5px 8px; color:#8b949e; margin-top:6px; word-break:break-all; }
+  .event-out-box { font-size:12px; line-height:1.5; color:#e6edf3; background:#101620; border-radius:6px; padding:8px 10px; margin-top:6px; border:1px solid #1f2937; white-space:pre-wrap; word-break:break-word; }
+  .event-kind-tag { background:#1f6feb22; color:#79c0ff; border:1px solid #1f6feb44; border-radius:4px; padding:1px 6px; font-weight:600; font-size:10px; text-transform:uppercase; }
+  .event-detail-text { color:#c9d1d9; font-weight:500; }
   .warn { border:1px solid #d2992255; background:#d299221a; color:#e3b341;
           border-radius:10px; padding:10px 12px; margin-bottom:12px; font-size:13px; }
   .warn b { color:#f0c674; }
@@ -328,9 +377,29 @@ const PAGE = `<!doctype html>
   <div id="warn"></div>
   <div id="alerts"></div>
   <div id="build-monitor"></div>
+
+  <!-- AKTIVITAS & BUILD LOG TERAKHIR (HIGH VISIBILITY: ABOVE ACTIVE SESSIONS) -->
+  <div class="card activity-box" id="activity-section" style="padding:12px 14px;margin-bottom:18px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <h1 style="font-size:14px;margin:0;color:#f0f6fc;display:flex;align-items:center;gap:6px">
+          <span>⚡ Aktivitas &amp; Build Log Terakhir</span>
+        </h1>
+        <span class="meta" id="events-count-badge" style="font-size:11px;background:#21262d;padding:1px 7px;border-radius:999px;color:#a5d6ff"></span>
+      </div>
+      <div style="display:flex;gap:6px;align-items:center">
+        <button id="filter-all-events" class="filter-chip active" style="padding:2px 8px;font-size:11px" onclick="setEventFilter('all')">Semua</button>
+        <button id="filter-build-events" class="filter-chip" style="padding:2px 8px;font-size:11px" onclick="setEventFilter('build')">Build saja</button>
+        <button id="btn-toggle-events" class="btn" style="padding:2px 8px;font-size:11px" onclick="toggleEventsCollapse()">Sembunyikan</button>
+      </div>
+    </div>
+    <div id="events-scroll-container" class="events-scroll-container">
+      <div id="events" class="events"></div>
+    </div>
+  </div>
+
+  <h1 style="font-size:14px;margin:20px 0 10px;color:#f0f6fc">Sesi Aktif</h1>
   <div id="list"><div class="empty">memuat…</div></div>
-  <h1 style="font-size:14px;margin:24px 0 10px">Aktivitas &amp; Build Log Terakhir</h1>
-  <div id="events" class="card events" style="padding:8px 12px"></div>
 </div>
 
 <!-- TAB 2: RIWAYAT -->
@@ -396,6 +465,7 @@ const PAGE = `<!doctype html>
     </div>
     <div class="modal-body">
       <div class="modal-task" id="modal-task"></div>
+      <div id="modal-task-metadata"></div>
       <div class="modal-session-title" id="modal-session-title"></div>
       <div class="modal-project" id="modal-project"></div>
       <div class="meta" id="modal-meta"></div>
@@ -414,8 +484,41 @@ const PAGE = `<!doctype html>
   </div>
 </div>
 
+<!-- MODAL FLOW PREVIEW -->
+<div id="modal-flow" class="modal" style="display:none;z-index:1100">
+  <div class="modal-backdrop" id="modal-flow-backdrop"></div>
+  <div class="modal-box" style="max-width:920px;width:95vw;">
+    <div class="modal-header">
+      <div class="row">
+        <span class="phase" style="background:#8b5cf622;color:#a78bfa;border-color:#8b5cf655">📐 FLOW DIAGRAM</span>
+        <span id="modal-flow-title" style="font-weight:600;font-size:14px;color:#f0f6fc"></span>
+      </div>
+      <button class="modal-close" id="modal-flow-close-btn">&times;</button>
+    </div>
+    <div class="modal-body" style="text-align:center;padding:16px;">
+      <div id="modal-flow-loading" style="padding:40px;color:#8b949e">Memuat diagram flow...</div>
+      <div id="modal-flow-container" style="background:#0b1020;border:1px solid #30363d;border-radius:8px;padding:12px;overflow:auto;max-height:70vh;display:flex;align-items:center;justify-content:center;">
+        <img id="modal-flow-img" src="" alt="Flow Diagram" style="max-width:100%;height:auto;object-fit:contain;display:none;" />
+      </div>
+    </div>
+    <div class="modal-footer" style="display:flex;justify-content:space-between;align-items:center;">
+      <a id="modal-flow-link" href="#" target="_blank" rel="noopener noreferrer" class="btn" style="text-decoration:none;display:inline-flex;align-items:center;gap:6px;">
+        Buka di Zettly Draw ↗
+      </a>
+      <div style="display:flex;gap:8px;">
+        <button class="btn" id="modal-flow-png-btn" style="background:#238636;color:#fff;border-color:#2ea043">
+          💾 Download PNG
+        </button>
+        <button class="btn" id="modal-flow-tutup-btn">Tutup</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
 const visibleTaskSessions = ${visibleTaskSessions.toString()};
+const normalizeTaskMetadata = ${normalizeTaskMetadata.toString()};
+const renderTaskMetadata = ${renderTaskMetadata.toString()};
 const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 function renderChain(s) {
   const from = String((s && s.chain_from) || '').trim();
@@ -485,7 +588,19 @@ function renderPipeline(s) {
     return '<span class="' + cls + '">' + (idx < curIdx ? '✓ ' : '') + esc(step.lbl) + '</span>';
   }).join('') + '</div>';
 }
-function renderBuildBox(ab, jNow) {
+function renderBuildLocation(ab, machine) {
+  const host = ab.buildHost || machine || '';
+  if (host) {
+    const isRemoteVm = machine && host.toLowerCase() !== machine.toLowerCase();
+    const tag = isRemoteVm
+      ? ' <span class="badge" style="background:#4338ca;color:#fff;font-size:10px;padding:1px 6px;border-radius:4px;margin-left:4px">Remote VM</span>'
+      : ' <span class="badge" style="background:#0284c7;color:#fff;font-size:10px;padding:1px 6px;border-radius:4px;margin-left:4px">Lokal</span>';
+    const reporter = isRemoteVm ? ' <span class="meta" style="font-size:11px;opacity:0.8">· Pelapor ' + esc(machine) + '</span>' : '';
+    return '<div class="build-location">🏗️ Mesin Builder: <strong>' + esc(host) + '</strong>' + tag + reporter + '</div>';
+  }
+  return '<div class="build-location">🏗️ Mesin Builder: <strong>Lokal</strong>' + (machine ? ' <span class="meta">(' + esc(machine) + ')</span>' : '') + '</div>';
+}
+function renderBuildBox(ab, jNow, machine) {
   if (!ab || !ab.target) return '';
   const st = String(ab.status || 'building').toLowerCase();
   const isRunning = st === 'building' || st === 'testing' || st === 'scanning' || st === 'deploying';
@@ -500,10 +615,11 @@ function renderBuildBox(ab, jNow) {
       (elapsed ? '<span class="meta"' + liveAttr + '>⏱ ' + esc(elapsed) + '</span>' : '') +
     '</div>' +
     '<div class="build-target">🏗️ ' + esc(ab.target) + '</div>' +
+    renderBuildLocation(ab, machine) +
     (ab.stage ? '<div class="build-stage">▸ ' + esc(ab.stage) + (hasPct ? ' (' + pct + '%)' : '') + '</div>' : '') +
     '<div class="' + barCls + '"><i style="width:' + pct + '%"></i></div>' +
-    (ab.command ? '<div class="build-cmd">$ ' + esc(ab.command) + (ab.output ? '\\n' + esc(ab.output) : '') + '</div>' :
-      (ab.output ? '<div class="build-cmd">' + esc(ab.output) + '</div>' : '')) +
+    (ab.command ? '<div class="build-cmd">$ ' + esc(ab.command) + '</div>' : '') +
+    (ab.output ? '<div class="event-out-box" style="margin-top:6px">' + esc(ab.output) + '</div>' : '') +
   '</div>';
 }
 function renderBuildMonitor(activeSessions, jNow) {
@@ -542,12 +658,11 @@ function renderBuildMonitor(activeSessions, jNow) {
             '<span class="proj-pill">' + esc(s.machine) + ' · ' + esc(s.project_name || 'proyek') + '</span>' +
           '</div>' +
           '<div class="build-target">' + esc(ab.target) + '</div>' +
+          renderBuildLocation(ab, s.machine) +
           (ab.stage ? '<div class="build-stage">▸ ' + esc(ab.stage) + (hasPct ? ' (' + pct + '%)' : '') + '</div>' : '') +
           '<div class="' + barCls + '"><i style="width:' + pct + '%"></i></div>' +
-          (ab.command || ab.output
-            ? '<div class="build-cmd">' + (ab.command ? '$ ' + esc(ab.command) : '') +
-              (ab.command && ab.output ? '\\n' : '') + (ab.output ? esc(ab.output) : '') + '</div>'
-            : '') +
+          (ab.command ? '<div class="build-cmd">$ ' + esc(ab.command) + '</div>' : '') +
+          (ab.output ? '<div class="event-out-box" style="margin-top:6px">' + esc(ab.output) + '</div>' : '') +
           '<div class="row" style="justify-content:space-between;margin-top:6px">' +
             '<span class="meta">' + esc(s.task || '') + '</span>' +
             (elapsed ? '<span class="meta" style="color:#79c0ff;font-weight:600"' + liveAttr + '>⏱ ' + esc(elapsed) + '</span>' : '') +
@@ -562,6 +677,127 @@ let lastData = null;
 let currentTab = 'aktif';
 let currentFilter = 'semua';
 let activeDetailKey = null;
+let eventFilter = 'all';
+let eventsCollapsed = false;
+
+function setEventFilter(filter) {
+  eventFilter = filter;
+  const btnAll = document.getElementById('filter-all-events');
+  const btnBuild = document.getElementById('filter-build-events');
+  if (btnAll) btnAll.classList.toggle('active', filter === 'all');
+  if (btnBuild) btnBuild.classList.toggle('active', filter === 'build');
+  if (lastData) {
+    const jNow = lastData.now ? new Date(lastData.now).getTime() : Date.now();
+    renderEventsList(lastData.events || [], jNow);
+  }
+}
+
+function toggleEventsCollapse() {
+  eventsCollapsed = !eventsCollapsed;
+  const c = document.getElementById('events-scroll-container');
+  const btn = document.getElementById('btn-toggle-events');
+  if (c) c.style.display = eventsCollapsed ? 'none' : 'block';
+  if (btn) btn.textContent = eventsCollapsed ? 'Tampilkan' : 'Sembunyikan';
+}
+
+function parseClientEventDetail(detail) {
+  if (!detail) return { isBuild: false, data: null, text: '' };
+  if (typeof detail === 'object') {
+    const isBuild = Boolean(detail.target || detail.command || detail.stage || detail.buildHost || detail.status || detail.progress !== undefined || detail.output);
+    return { isBuild, data: isBuild ? detail : null, text: detail.output || detail.stage || detail.target || JSON.stringify(detail) };
+  }
+  const str = String(detail).trim();
+  if (str.startsWith('{') && str.endsWith('}')) {
+    try {
+      const obj = JSON.parse(str);
+      if (obj && typeof obj === 'object') {
+        const isBuild = Boolean(obj.target || obj.command || obj.stage || obj.buildHost || obj.status || obj.progress !== undefined || obj.output);
+        return { isBuild, data: isBuild ? obj : null, text: obj.output || obj.stage || obj.target || str };
+      }
+    } catch (_) {}
+  }
+  return { isBuild: false, data: null, text: str };
+}
+
+function renderEventCard(e, jNow) {
+  const parsed = parseClientEventDetail(e.detail);
+  const timeStr = e.at ? ago(e.at, jNow) : '';
+  const proj = esc(e.project_name || 'proyek');
+  const kind = esc(e.kind || 'event');
+
+  if (parsed.isBuild && parsed.data) {
+    const b = parsed.data;
+    const rawSt = String(b.status || (e.kind.includes('succeeded') ? 'succeeded' : e.kind.includes('failed') ? 'failed' : 'building')).toLowerCase();
+    const st = (rawSt === 'building' || rawSt === 'testing' || rawSt === 'scanning' || rawSt === 'deploying' || rawSt === 'succeeded' || rawSt === 'failed') ? rawSt : 'building';
+    const stLabel = st === 'succeeded' ? 'BERHASIL' : st === 'failed' ? 'GAGAL' : st === 'building' ? 'BUILDING' : st === 'testing' ? 'TESTING' : st.toUpperCase();
+    const host = b.buildHost ? esc(b.buildHost) : (e.machine ? esc(e.machine) : '');
+    const target = esc(b.target || e.project_name || 'Build Target');
+    const stage = b.stage ? esc(b.stage) : '';
+    const progress = (typeof b.progress === 'number' && isFinite(b.progress)) ? Math.max(0, Math.min(100, Math.round(b.progress))) : null;
+    const cmd = b.command ? esc(b.command) : '';
+    const out = b.output ? esc(b.output) : '';
+
+    return '<div class="event-card build ' + esc(st) + '">' +
+      '<div class="event-head">' +
+        '<div class="event-title-line">' +
+          '<span class="build-badge ' + esc(st) + '" style="font-size:10px;padding:1px 7px">' + stLabel + '</span>' +
+          '<span class="event-target-text">' + target + '</span>' +
+        '</div>' +
+        '<div class="event-meta-line">' +
+          (host ? '<span class="event-host-pill">🖥️ ' + host + '</span>' : '') +
+          '<span style="color:#c9d1d9">' + proj + '</span>' +
+          (timeStr ? '<span>· ' + timeStr + '</span>' : '') +
+        '</div>' +
+      '</div>' +
+      (stage ? '<div class="event-stage-line">▸ ' + stage + (progress !== null ? ' (' + progress + '%)' : '') + '</div>' : '') +
+      (progress !== null ? '<div class="build-bar" style="margin:4px 0 6px;height:4px"><i style="width:' + progress + '%"></i></div>' : '') +
+      (cmd ? '<div class="event-cmd-box">$ ' + cmd + '</div>' : '') +
+      (out ? '<div class="event-out-box">' + out + '</div>' : '') +
+    '</div>';
+  }
+
+  // Non-build or generic events
+  return '<div class="event-card generic">' +
+    '<div class="event-head">' +
+      '<div class="event-title-line">' +
+        '<span class="event-kind-tag">' + kind + '</span>' +
+        '<span class="event-detail-text">' + esc(parsed.text) + '</span>' +
+      '</div>' +
+      '<div class="event-meta-line">' +
+        (e.machine ? '<span>' + esc(e.machine) + ' · </span>' : '') +
+        '<span style="color:#c9d1d9">' + proj + '</span>' +
+        (timeStr ? '<span>· ' + timeStr + '</span>' : '') +
+      '</div>' +
+    '</div>' +
+  '</div>';
+}
+
+function renderEventsList(events, jNow) {
+  const el = document.getElementById('events');
+  if (!el) return;
+  const badgeEl = document.getElementById('events-count-badge');
+
+  const allEvents = events || [];
+  const buildEvents = allEvents.filter(function(e) {
+    const k = String(e.kind || '');
+    if (k.startsWith('build_') || k === 'tests_passed' || k === 'tests_failed' || k === 'release') return true;
+    const p = parseClientEventDetail(e.detail);
+    return p.isBuild;
+  });
+
+  if (badgeEl) {
+    badgeEl.textContent = allEvents.length + ' aktivitas · ' + buildEvents.length + ' build';
+  }
+
+  const filtered = eventFilter === 'build' ? buildEvents : allEvents;
+  if (!filtered.length) {
+    el.innerHTML = '<div class="empty" style="padding:20px 0;font-size:12px">' +
+      (eventFilter === 'build' ? 'belum ada log build tercatat' : 'belum ada aktivitas tercatat') + '</div>';
+    return;
+  }
+
+  el.innerHTML = filtered.map(function(e) { return renderEventCard(e, jNow); }).join('');
+}
 
 function pilihTab(tabId) {
   currentTab = tabId;
@@ -599,6 +835,7 @@ function bukaDetail(sessionKey) {
     '<span class="phase" style="background:#a371f71a;color:#d2a8ff;border-color:#a371f755">' + agentText + '</span>';
 
   document.getElementById('modal-task').textContent = s.task || s.session_title || '(tanpa task)';
+  document.getElementById('modal-task-metadata').innerHTML = renderTaskMetadata(s);
   document.getElementById('modal-session-title').textContent = s.session_title ? '💬 ' + s.session_title : '';
   document.getElementById('modal-project').textContent = s.project_name || '';
   document.getElementById('modal-meta').textContent =
@@ -616,7 +853,7 @@ function bukaDetail(sessionKey) {
   const buildModalEl = document.getElementById('modal-build');
   if (buildModalEl) {
     buildModalEl.innerHTML = s.active_build
-      ? '<div class="modal-sec-title">Status Build &amp; Eksekusi</div>' + renderBuildBox(s.active_build, jNow)
+      ? '<div class="modal-sec-title">Status Build &amp; Eksekusi</div>' + renderBuildBox(s.active_build, jNow, s.machine)
       : '';
   }
 
@@ -682,6 +919,64 @@ function bukaDetail(sessionKey) {
 function tutupModal() {
   document.getElementById('modal-detail').style.display = 'none';
   activeDetailKey = null;
+}
+
+var currentFlowData = { id: '', title: '', url: '' };
+
+function openFlowModal(id, title, url) {
+  currentFlowData = { id: String(id || ''), title: title || ('Draw #' + id), url: url || '' };
+  var modal = document.getElementById('modal-flow');
+  var titleEl = document.getElementById('modal-flow-title');
+  var imgEl = document.getElementById('modal-flow-img');
+  var linkEl = document.getElementById('modal-flow-link');
+  var loadingEl = document.getElementById('modal-flow-loading');
+
+  if (titleEl) titleEl.textContent = currentFlowData.title;
+  if (linkEl) {
+    linkEl.href = currentFlowData.url || ('https://zettly.programinglive.com/draw/' + id);
+  }
+  if (loadingEl) {
+    loadingEl.style.display = 'block';
+    loadingEl.textContent = 'Memuat diagram flow...';
+  }
+  if (imgEl) {
+    imgEl.style.display = 'none';
+    imgEl.onload = function() {
+      if (loadingEl) loadingEl.style.display = 'none';
+      imgEl.style.display = 'block';
+    };
+    imgEl.onerror = function() {
+      if (loadingEl) loadingEl.textContent = 'Gagal memuat preview diagram.';
+    };
+    imgEl.src = '/api/drawings/' + encodeURIComponent(id) + '/thumbnail?t=' + Date.now();
+  }
+  if (modal) modal.style.display = 'flex';
+}
+
+function tutupFlowModal() {
+  var modal = document.getElementById('modal-flow');
+  if (modal) modal.style.display = 'none';
+}
+
+function unduhFlowPng() {
+  var imgEl = document.getElementById('modal-flow-img');
+  if (!imgEl || !imgEl.complete || !imgEl.naturalWidth) return;
+  try {
+    var canvas = document.createElement('canvas');
+    var w = imgEl.naturalWidth || 680;
+    var h = imgEl.naturalHeight || 600;
+    canvas.width = w * 2;
+    canvas.height = h * 2;
+    var ctx = canvas.getContext('2d');
+    ctx.scale(2, 2);
+    ctx.drawImage(imgEl, 0, 0, w, h);
+    var a = document.createElement('a');
+    a.download = (currentFlowData.title || 'flow-diagram').replace(/[^a-zA-Z0-9_-]/g, '_') + '.png';
+    a.href = canvas.toDataURL('image/png');
+    a.click();
+  } catch (err) {
+    console.error('Download PNG failed:', err);
+  }
 }
 
 /**
@@ -831,6 +1126,7 @@ function renderHistory(data) {
       '<span class="phase" style="background:#a371f71a;color:#d2a8ff;border-color:#a371f755">' +
       esc(String(h.agent_tool || 'unknown').toUpperCase()) + '</span>' +
       '<span class="task">' + esc(h.task || h.session_title || '(tanpa task)') + '</span></div>' +
+      renderTaskMetadata(h) +
       renderChain(h) +
       '<div class="meta" style="margin-top:4px">' + esc(h.machine) +
       (h.project_name ? ' · ' + esc(h.project_name) : '') +
@@ -930,13 +1226,14 @@ function render(data) {
         (durText ? '<span class="meta" style="margin-left:auto;color:#79c0ff">⏱ ' + esc(durText) + '</span>' : '') +
         '</div>' +
         '<div class="task" style="margin-top:6px">' + esc(s.task || s.session_title || '(tanpa task)') + '</div>' +
+        renderTaskMetadata(s) +
         renderChain(s) +
         (s.session_title ? '<div class="meta" style="color:#79c0ff;margin-top:2px">💬 ' + esc(s.session_title) + '</div>' : '') +
         note +
         '<div class="meta" style="margin-top:3px">' + esc(s.machine) + ' · ' + esc(s.project_name) +
         ' · ' + esc(s.task_type) + ' · ' + ago(s.updated_at, jNow) + '</div>' +
         renderPipeline(s) +
-        renderBuildBox(s.active_build, jNow) +
+        renderBuildBox(s.active_build, jNow, s.machine) +
         (total ? '<div class="bar"><i style="width:' + pct + '%"></i></div>' +
           '<div class="meta">rencana ' + done + '/' + total + ' · DoD ' + s.dod_done + '/' + s.dod_total +
           (s.dod_waived ? ' (' + s.dod_waived + ' dilewati)' : '') + '</div>' : '') +
@@ -970,10 +1267,7 @@ function render(data) {
   ).join('') || '<div class="empty">belum ada mesin terhubung</div>';
 
   // Events
-  document.getElementById('events').innerHTML = (data.events || []).map(e =>
-    '<div style="padding:4px 0"><b>' + esc(e.kind) + '</b> ' + esc(e.detail) +
-    '<span class="meta"> · ' + esc(e.project_name) + ' · ' + ago(e.at, jNow) + '</span></div>').join('')
-    || '<div>—</div>';
+  renderEventsList(data.events || [], jNow);
 
   // Info
   const serverEl = document.getElementById('serverInfo');
@@ -1060,6 +1354,12 @@ document.getElementById('build-monitor').addEventListener('click', function (e) 
   }
 });
 document.getElementById('list').addEventListener('click', function (e) {
+  if (e.target.closest('a[href]')) return;
+  var flowBtn = e.target.closest('[data-flow-id]');
+  if (flowBtn) {
+    openFlowModal(flowBtn.dataset.flowId, flowBtn.dataset.flowTitle, flowBtn.dataset.flowUrl);
+    return;
+  }
   var btn = e.target.closest('[data-share],[data-copy],[data-revoke]');
   if (btn) {
     if (btn.dataset.share) { void tombolBagikan(btn.dataset.share, btn); }
@@ -1074,6 +1374,12 @@ document.getElementById('list').addEventListener('click', function (e) {
 });
 
 document.getElementById('history').addEventListener('click', function (e) {
+  if (e.target.closest('a[href]')) return;
+  var flowBtn = e.target.closest('[data-flow-id]');
+  if (flowBtn) {
+    openFlowModal(flowBtn.dataset.flowId, flowBtn.dataset.flowTitle, flowBtn.dataset.flowUrl);
+    return;
+  }
   var card = e.target.closest('[data-session-key]');
   if (card) {
     bukaDetail(card.dataset.sessionKey);
@@ -1095,6 +1401,11 @@ document.querySelector('.tabbar').addEventListener('click', function (e) {
 });
 
 document.getElementById('modal-detail').addEventListener('click', function (e) {
+  var flowBtn = e.target.closest('[data-flow-id]');
+  if (flowBtn) {
+    openFlowModal(flowBtn.dataset.flowId, flowBtn.dataset.flowTitle, flowBtn.dataset.flowUrl);
+    return;
+  }
   var btn = e.target.closest('[data-share],[data-copy],[data-revoke]');
   if (btn) {
     if (btn.dataset.share) { void tombolBagikan(btn.dataset.share, btn); }
@@ -1107,6 +1418,19 @@ document.getElementById('modal-detail').addEventListener('click', function (e) {
   }
 });
 
+var modalFlow = document.getElementById('modal-flow');
+if (modalFlow) {
+  modalFlow.addEventListener('click', function (e) {
+    if (e.target.closest('#modal-flow-png-btn')) {
+      unduhFlowPng();
+      return;
+    }
+    if (e.target.matches('#modal-flow-backdrop') || e.target.closest('#modal-flow-close-btn') || e.target.closest('#modal-flow-tutup-btn')) {
+      tutupFlowModal();
+    }
+  });
+}
+
 document.getElementById('tautan').addEventListener('click', function (e) {
   var t = e.target.closest('[data-copy],[data-revoke],[data-revoke-orphans]');
   if (!t) return;
@@ -1116,7 +1440,10 @@ document.getElementById('tautan').addEventListener('click', function (e) {
 });
 
 document.addEventListener('keydown', function (e) {
-  if (e.key === 'Escape') tutupModal();
+  if (e.key === 'Escape') {
+    tutupModal();
+    tutupFlowModal();
+  }
 });
 
 // Handler tombol "Tutup Sesi" (force-close sesi macet dari dashboard)
@@ -1262,16 +1589,18 @@ async function upsertSession(body) {
   // tampil "berjalan" selamanya di tab Aktif.
   const handoff = buildParentHandoff(body);
   if (handoff) await query(handoff.sql, handoff.params);
-  const key = str(body.sessionKey, 200);
+  const key = str(body.cardKey || body.sessionKey, 200);
   const taskId = str(body.taskId, 200);
   // Kunci build per KARTU, bukan per sesi. Sebelumnya satu build bocor ke
-  // topik berikutnya di sesi yang sama dan membuat kartu baru tampak bekerja.
+  // topik berikutnya di sesi yang sama dan membuat kartu baru tampak bekerja
+  // padahal tidak pernah memulainya.
   const buildKey = cardKey(key, taskId);
   if (body && body.activeBuild && typeof body.activeBuild === 'object') {
     liveBuildsBySession.set(buildKey, { taskId, build: normalizeBuildState(body.activeBuild) });
   } else if (body && (body.phase === 'idle' || body.phase === 'closed' || body.phase === 'done' || body.phase === 'handed-off')) {
     liveBuildsBySession.delete(buildKey);
   }
+
   return key;
 }
 
@@ -1279,11 +1608,17 @@ async function insertEvent(body) {
   const kind = str(body.kind, 80);
   if (!kind) throw new Error('kind wajib');
   const sessionKey = str(body.sessionKey, 200);
+  let storedDetail = str(body.detail, 1000);
   if (kind.startsWith('build_') && body.detail) {
     try {
       const parsed = JSON.parse(String(body.detail));
-      if (parsed && typeof parsed === 'object' && sessionKey) {
-        liveBuildsBySession.set(sessionKey, normalizeBuildState(parsed));
+      if (parsed && typeof parsed === 'object') {
+        const normalized = normalizeBuildState(parsed);
+        const completeDetail = JSON.stringify(normalized);
+        if (completeDetail.length <= 12000) {
+          storedDetail = completeDetail;
+          if (sessionKey) liveBuildsBySession.set(sessionKey, normalized);
+        }
       }
     } catch {}
   }
@@ -1291,7 +1626,7 @@ async function insertEvent(body) {
     `INSERT INTO events (session_key, machine, project_name, kind, detail)
      VALUES ($1,$2,$3,$4,$5)`,
     [sessionKey, str(body.machine, 120), str(body.projectName, 160),
-     kind, str(body.detail, 1000)]);
+     kind, storedDetail]);
   return true;
 }
 
@@ -1434,6 +1769,36 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'content-type': 'application/json' });
       return res.end(JSON.stringify({ ok: true, closed: true, sessionKey: row.session_key }));
     }
+    const drawingMatch = /^\/api\/drawings\/(\d+)\/thumbnail$/.exec(url.pathname);
+    if (drawingMatch && (req.method === 'GET' || req.method === 'HEAD')) {
+      const drawingId = Number(drawingMatch[1]);
+      if (!Number.isSafeInteger(drawingId) || drawingId < 1) {
+        res.writeHead(400, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: 'invalid drawing id' }));
+      }
+      try {
+        const row = await fetchDrawing(drawingId);
+        if (!row || !row.thumbnail) {
+          res.writeHead(404, { 'content-type': 'application/json' });
+          return res.end(JSON.stringify({ ok: false, error: 'drawing thumbnail not found' }));
+        }
+        let svg = String(row.thumbnail);
+        if (svg.startsWith('data:image/svg+xml;charset=utf-8,')) {
+          svg = decodeURIComponent(svg.slice('data:image/svg+xml;charset=utf-8,'.length));
+        } else if (svg.startsWith('data:image/svg+xml;base64,')) {
+          svg = Buffer.from(svg.slice('data:image/svg+xml;base64,'.length), 'base64').toString('utf8');
+        }
+        res.writeHead(200, {
+          'content-type': 'image/svg+xml; charset=utf-8',
+          'cache-control': 'public, max-age=3600',
+        });
+        if (req.method === 'HEAD') return res.end();
+        return res.end(svg);
+      } catch (err) {
+        res.writeHead(500, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: 'failed to fetch drawing: ' + err.message }));
+      }
+    }
     if (url.pathname === '/api/sessions') {
       const limit = Math.min(50, Number(url.searchParams.get('limit') || 20));
       // Sesi `idle` yang sudah lama tidak melapor disembunyikan: proses MCP
@@ -1469,7 +1834,17 @@ const server = http.createServer(async (req, res) => {
       // Waktu acuan untuk menurunkan status, dipakai kartu aktif DAN riwayat.
       const nowMs = Date.now();
       const historyRows = await query(hq.sql, hq.params);
-      const riwayatDasar = historyRows.rows.map((r) => {
+      const historyKeys = historyRows.rows.map((r) => r.session_key).filter(Boolean);
+      const historyBuildRows = historyKeys.length ? await query(
+        `SELECT DISTINCT ON (session_key) at, session_key, kind, detail, project_name, machine
+           FROM events
+          WHERE session_key = ANY($1::text[])
+            AND (kind LIKE 'build_%' OR kind IN ('tests_passed', 'tests_failed', 'release'))
+          ORDER BY session_key, at DESC`,
+        [historyKeys],
+      ) : { rows: [] };
+      const historyBuilds = extractActiveBuildFromEvents(historyBuildRows.rows);
+      const historyBase = historyRows.rows.map((r) => {
         // Status memakai fungsi yang SAMA dengan kartu aktif, supaya riwayat
         // dan kartu tidak pernah berbeda pendapat soal sesi yang sama.
         const st = classifySession({
@@ -1486,11 +1861,23 @@ const server = http.createServer(async (req, res) => {
           state_label: LABELS[st.status] || st.status,
         };
       });
+      // Peristiwa build tidak membawa task id, jadi build dari riwayat hanya
+      // boleh melekat ke kartu TERBARU sebuah sesi (baris pertama, karena
+      // query mengurutkan updated_at DESC). Kalau tidak, build kartu baru
+      // bocor ke kartu lama yang sudah handed-off.
       // Rantai Zettelkasten: kartu lama jarang masih ada di tab Aktif, jadi
       // arah "dilanjutkan ke" dibaca dari daftar riwayat yang memuat keduanya.
-      const history = riwayatDasar.map((row) => {
-        const { from, to } = chainLabels(row, riwayatDasar);
-        return from || to ? { ...row, chain_from: from, chain_to: to } : row;
+      const sesiTerlihatRiwayat = new Set();
+      const history = historyBase.map((row) => {
+        const kartuTerbaru = !sesiTerlihatRiwayat.has(row.session_key);
+        sesiTerlihatRiwayat.add(row.session_key);
+        const { from, to } = chainLabels(row, historyBase);
+        return {
+          ...row,
+          active_build: kartuTerbaru ? (historyBuilds.get(row.session_key) || null) : null,
+          chain_from: from,
+          chain_to: to,
+        };
       });
       // Waktu acuan SERVER, dikirim ke klien.
       //
@@ -1506,7 +1893,8 @@ const server = http.createServer(async (req, res) => {
       // Kartu-kartu dikelompokkan per sesi saat menentukan pemilik build.
       const sesiTerlihat = new Set();
       const rows = sessions.rows.map((row) => {
-        const s = classifySession({          phase: row.phase,
+        const s = classifySession({
+          phase: row.phase,
           updatedAt: row.updated_at,
           now: nowMs,
           liveMs: LIVE_MS,
@@ -1524,6 +1912,11 @@ const server = http.createServer(async (req, res) => {
             eventBuilds.get(row.session_key) ||
             (row.machine && row.project_name ? eventBuilds.get(`${row.machine}::${row.project_name}`) : null) ||
             null;
+        }
+        if (activeBuild && row.started_at) {
+          const buildTime = new Date(activeBuild.updatedAt || activeBuild.startedAt).getTime();
+          const taskTime = new Date(row.started_at).getTime();
+          if (buildTime < taskTime) activeBuild = null;
         }
         if (!activeBuild && s.status === 'live' && (row.phase === 'testing' || row.phase === 'release')) {
           const rencana = Array.isArray(row.plan_json) ? row.plan_json : [];
@@ -1600,6 +1993,34 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+/**
+ * Repository identity columns.
+ *
+ * Added after the first deployment, so the running database needs a migration.
+ * `IF NOT EXISTS` keeps the boot idempotent. A database user without ALTER
+ * rights prints the SQL instead of taking the dashboard down.
+ */
+const ensureSessionRepositoryColumnsSql = `
+  ALTER TABLE sessions ADD COLUMN IF NOT EXISTS repo_path text NOT NULL DEFAULT '';
+  ALTER TABLE sessions ADD COLUMN IF NOT EXISTS repo_remote text NOT NULL DEFAULT '';
+`;
+
+/**
+ * Apply the repository columns only when they are missing.
+ *
+ * The dashboard runs as the application user, which does not own the table.
+ * Checking first keeps a healthy deployment quiet; only a real gap prints the
+ * SQL the operator must run as the table owner.
+ */
+async function ensureSessionRepositoryColumns() {
+  const existing = await query(
+    `SELECT column_name FROM information_schema.columns
+      WHERE table_name = 'sessions' AND column_name IN ('repo_path', 'repo_remote')`,
+  );
+  if (existing.rows.length >= 2) return;
+  await query(ensureSessionRepositoryColumnsSql);
+}
+
 server.listen(PORT, HOST, () => {
   console.log(`devwf-monitor listening on ${HOST}:${PORT}`);
   if (!WRITE_TOKEN) {
@@ -1615,6 +2036,12 @@ server.listen(PORT, HOST, () => {
     } catch (error) {
       console.error('GAGAL menyiapkan tabel share_links:', String((error && error.message) || error));
       console.error('Jalankan sekali sebagai user database aplikasi:\n' + ensureTableSql);
+    }
+    try {
+      await ensureSessionRepositoryColumns();
+    } catch (error) {
+      console.error('GAGAL menyiapkan kolom repository:', String((error && error.message) || error));
+      console.error('Jalankan sekali sebagai user database aplikasi:\n' + ensureSessionRepositoryColumnsSql);
     }
   })();
   // Penghapusan otomatis MATI kecuali PRUNE_ENABLED diisi eksplisit.

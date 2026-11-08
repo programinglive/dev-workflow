@@ -20,6 +20,43 @@ function cleanStr(val, maxLen = 400) {
   return String(val).trim().slice(0, maxLen);
 }
 
+function extractHostFromCommand(cmd) {
+  if (typeof cmd !== 'string' || !cmd.trim()) return '';
+  const cleanCmd = cmd.trim();
+
+  const gcloudMatch = cleanCmd.match(/gcloud\s+compute\s+ssh\s+([a-zA-Z0-9_.-]+)/i);
+  if (gcloudMatch && gcloudMatch[1]) {
+    return gcloudMatch[1];
+  }
+
+  const sshIdx = cleanCmd.search(/(?:^|\s)ssh(?:\.exe)?\s+/i);
+  if (sshIdx !== -1) {
+    const afterSsh = cleanCmd.slice(sshIdx).replace(/^(?:\s*)ssh(?:\.exe)?\s+/i, '');
+    const tokens = afterSsh.split(/\s+/);
+    let skipNext = false;
+    for (let i = 0; i < tokens.length; i++) {
+      const tok = tokens[i];
+      if (skipNext) {
+        skipNext = false;
+        continue;
+      }
+      if (tok.startsWith('-')) {
+        if (['-o', '-p', '-i', '-l', '-F', '-c'].includes(tok)) {
+          skipNext = true;
+        }
+        continue;
+      }
+      const host = tok.split('@').pop().split(':')[0];
+      if (host && /^[a-zA-Z0-9_.-]+$/.test(host)) {
+        return host;
+      }
+      break;
+    }
+  }
+
+  return '';
+}
+
 /**
  * Normalize and merge a build status update with any previous activeBuild state.
  *
@@ -44,10 +81,24 @@ function normalizeBuildState(input = {}, existing = null) {
     input.target !== undefined ? input.target : prev.target || input.command || 'project build',
     200,
   );
+  const sameRunningBuild = prev.target === target &&
+    !['succeeded', 'failed', 'idle'].includes(prev.status) &&
+    (prev.status === status || ['succeeded', 'failed', 'idle'].includes(status));
   const command = cleanStr(
     input.command !== undefined ? input.command : prev.command || '',
     300,
   );
+  let resolvedBuildHost = cleanStr(
+    input.buildHost !== undefined ? input.buildHost : sameRunningBuild ? prev.buildHost : '',
+    120,
+  );
+  if (!resolvedBuildHost && command) {
+    resolvedBuildHost = extractHostFromCommand(command);
+  }
+  if (!resolvedBuildHost && typeof input.machine === 'string' && input.machine.trim()) {
+    resolvedBuildHost = cleanStr(input.machine, 120);
+  }
+  const buildHost = resolvedBuildHost;
   const stage = cleanStr(
     input.stage !== undefined ? input.stage : prev.stage || '',
     240,
@@ -79,6 +130,7 @@ function normalizeBuildState(input = {}, existing = null) {
   return {
     status,
     target,
+    buildHost,
     command,
     stage,
     progress,
@@ -145,6 +197,7 @@ function formatBuildStatusBlock(activeBuild, buildHistory = []) {
     `- **Status**: ${statusBadge(activeBuild.status)}${elapsed ? ` (⏱ ${elapsed})` : ''}`,
     `- **Target**: \`${activeBuild.target}\``,
   ];
+  if (activeBuild.buildHost) lines.push(`- **Build host**: ${activeBuild.buildHost}`);
 
   if (activeBuild.stage) {
     lines.push(`- **Current Stage**: ${activeBuild.stage}`);
@@ -173,6 +226,45 @@ function formatBuildStatusBlock(activeBuild, buildHistory = []) {
 }
 
 /**
+ * Safely parse event detail which may be a JSON-encoded build payload or plain text.
+ *
+ * @param {string|any} detail
+ * @returns {{ isBuild: boolean, data: object|null, text: string }}
+ */
+function parseEventDetail(detail) {
+  if (detail === null || detail === undefined) return { isBuild: false, data: null, text: '' };
+  if (typeof detail === 'object') {
+    const isBuild = Boolean(
+      detail.target || detail.command || detail.stage || detail.buildHost || detail.status || detail.progress !== undefined || detail.output
+    );
+    return {
+      isBuild,
+      data: isBuild ? detail : null,
+      text: detail.output || detail.stage || detail.target || JSON.stringify(detail),
+    };
+  }
+  const str = String(detail).trim();
+  if (str.startsWith('{') && str.endsWith('}')) {
+    try {
+      const obj = JSON.parse(str);
+      if (obj && typeof obj === 'object') {
+        const isBuild = Boolean(
+          obj.target || obj.command || obj.stage || obj.buildHost || obj.status || obj.progress !== undefined || obj.output
+        );
+        return {
+          isBuild,
+          data: isBuild ? obj : null,
+          text: obj.output || obj.stage || obj.target || str,
+        };
+      }
+    } catch {
+      // not JSON
+    }
+  }
+  return { isBuild: false, data: null, text: str };
+}
+
+/**
  * Reconstruct the latest active build per session_key (or project_name fallback)
  * from recent monitor events (`build_started`, `build_progress`, `build_succeeded`,
  * `build_failed`, `tests_passed`, `tests_failed`, `release`).
@@ -195,21 +287,13 @@ function extractActiveBuildFromEvents(events = []) {
     if (!key || bySession.has(key)) continue;
 
     const rawDetail = String(ev.detail || '').trim();
-    let parsed = null;
-    if (rawDetail.startsWith('{') && rawDetail.endsWith('}')) {
-      try {
-        parsed = JSON.parse(rawDetail);
-      } catch {
-        parsed = null;
-      }
-    }
-
-    if (parsed && typeof parsed === 'object') {
+    const parsedEvent = parseEventDetail(rawDetail);
+    if (parsedEvent.isBuild && parsedEvent.data) {
       bySession.set(
         key,
         normalizeBuildState({
-          ...parsed,
-          updatedAt: ev.at || parsed.updatedAt,
+          ...parsedEvent.data,
+          updatedAt: ev.at || parsedEvent.data.updatedAt,
         }),
       );
       continue;
@@ -245,6 +329,7 @@ module.exports = {
   normalizeBuildState,
   formatBuildStatusBlock,
   extractActiveBuildFromEvents,
+  parseEventDetail,
   formatElapsedShort,
   statusBadge,
 };

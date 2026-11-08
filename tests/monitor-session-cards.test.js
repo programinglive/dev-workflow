@@ -81,29 +81,60 @@ test("history cards expose chain identity and their successor", () => {
   assert.match(sql, /parent_task_title/);
 });
 
-test("the upsert ignores task-metadata fields from the f2ac45d monitor model", () => {
-  // The deployed monitor on bw-server-clean tracks a different card model
-  // (workflow_task_id, task_origin_json, task_relations_json, repo_path,
-  // repo_remote). Those fields must stay out of this upsert: accepting them
-  // silently would mix two identity models in one table.
+test("the upsert unifies the task-metadata and the card-chain models", () => {
+  // The deployed monitor on bw-server-clean kept one row per session with a
+  // task-metadata model (workflow_task_id, task_origin_json, task_relations_json,
+  // repo_path, repo_remote). The reconciled upsert carries BOTH models: the
+  // metadata describes the task a card tracks, and the chain columns describe
+  // the card's place inside its session.
   const { sql, params } = buildSessionUpsert({
     ...CARD,
     workflowTaskId: "task-x",
-    taskOrigin: { system: "factory" },
-    taskRelations: [{ id: "42", kind: "factory" }],
+    taskOrigin: { system: "factory", id: "45489f0d" },
+    taskRelations: [{ system: "factory", id: "45489f0d", relation: "tracks", label: "Factory 45489f0d" }],
     repositoryPath: "/code/x",
     repositoryRemote: "git@github.com:x.git",
   });
-  for (const forbidden of [
+  for (const expected of [
     "workflow_task_id",
     "task_origin_json",
     "task_relations_json",
     "repo_path",
     "repo_remote",
   ]) {
-    assert.ok(!sql.includes(forbidden), `${forbidden} must not enter the upsert`);
+    assert.ok(sql.includes(expected), `${expected} must enter the upsert`);
   }
-  assert.equal(params.length, 20, "unknown fields must not add params (17 base + task_id + parent pair)");
+  // The f2ac45d "new task" semantics stay: a changed identity or title must
+  // not inherit the old task's service links.
+  assert.match(sql, /workflow_task_id=CASE WHEN \(/);
+  assert.match(sql, /task_relations_json=CASE/);
+  assert.match(sql, /repo_path=COALESCE\(NULLIF\(EXCLUDED\.repo_path, ''\), sessions\.repo_path\)/);
+  // 17 base + 5 metadata + 3 chain = 25.
+  assert.equal(params.length, 25, "the unified upsert takes 25 params");
+  assert.equal(params.at(17), "task-x");
+  assert.equal(params.at(18), JSON.stringify({ system: "factory", id: "45489f0d", url: "", label: "" }));
+  assert.equal(params.at(20), "/code/x");
+  assert.equal(params.at(21), "git@github.com:x.git");
+  assert.equal(params.at(-3), "task-b");
+});
+
+test("the upsert fills metadata defaults when no metadata is sent", () => {
+  const { params } = buildSessionUpsert(CARD);
+  assert.equal(params.at(17), "", "workflow_task_id defaults to empty");
+  assert.equal(params.at(18), "{}", "task_origin_json defaults to an empty record");
+  assert.equal(params.at(19), "[]", "task_relations_json defaults to an empty list");
+  assert.equal(params.at(20), "", "repo_path defaults to empty");
+  assert.equal(params.at(21), "", "repo_remote defaults to empty");
+});
+
+test("the upsert rejects task metadata that does not match the model", () => {
+  const { params } = buildSessionUpsert({
+    ...CARD,
+    taskOrigin: { system: "nonsense" },
+    taskRelations: [{ system: "nonsense", id: "x" }],
+  });
+  assert.equal(params.at(18), "{}", "an unknown origin system is dropped");
+  assert.equal(params.at(19), "[]", "relations from an unknown system are dropped");
 });
 
 test("the migration adds columns before swapping the primary key", () => {
@@ -121,4 +152,33 @@ test("the migration adds columns before swapping the primary key", () => {
   assert.ok(addPk > dropPk, "the composite primary key must be added after the drop");
   assert.match(sql, /IF EXISTS/, "the primary key drop must be safe on a migrated database");
   assert.match(sql, /current_schema\(\)/, "the primary key lookup must stay inside the current schema");
+});
+
+test("002-pk-swap performs the key swap as a standalone idempotent step", () => {
+  const sql = readFileSync(new URL("../monitor-server/migrations/002-pk-swap.sql", import.meta.url), "utf8");
+  const addTaskId = sql.indexOf("ADD COLUMN IF NOT EXISTS task_id");
+  const dropPk = sql.indexOf("DROP CONSTRAINT");
+  const addPk = sql.indexOf("ADD PRIMARY KEY (session_key, task_id)");
+  assert.ok(addTaskId >= 0, "the chain columns are guaranteed even when 001 was skipped");
+  assert.ok(dropPk > addTaskId, "the swap only happens after the columns exist");
+  assert.ok(addPk > dropPk, "the composite key is added after the drop");
+  assert.match(sql, /IS DISTINCT FROM 'PRIMARY KEY \(session_key, task_id\)'/,
+    "an already-swapped database must stay untouched (second run is a no-op)");
+  assert.match(sql, /current_schema\(\)/, "the key lookup must stay inside the current schema");
+  assert.match(sql, /sessions_parent_task_idx/, "the parent lookup index is part of the swap");
+});
+
+test("003-task-metadata brings the f2ac45d columns into fresh installs", () => {
+  const sql = readFileSync(new URL("../monitor-server/migrations/003-task-metadata.sql", import.meta.url), "utf8");
+  for (const column of [
+    "workflow_task_id",
+    "task_origin_json",
+    "task_relations_json",
+    "repo_path",
+    "repo_remote",
+  ]) {
+    assert.match(sql, new RegExp(`ADD COLUMN IF NOT EXISTS ${column}`), `${column} is required`);
+  }
+  assert.ok(!/^\s*(BEGIN|COMMIT);/m.test(sql),
+    "no transaction statements: the runner applies files inside one transaction of its own");
 });

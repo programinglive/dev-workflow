@@ -11,6 +11,7 @@ it continued from, and the old card is marked `handed-off`.
 | `workflow_state` (SQLite) | `parentTask` | `{ taskId, title, startedAt }` or `null`. Written by `start_task` from the identity captured before `reset()`. |
 | Snapshot (`monitor.js`) | `taskId`, `parentTask` | `taskId` is `state.workflowTaskId`. A parent without an id is dropped. |
 | `sessions` (PostgreSQL) | `task_id`, `parent_task_id`, `parent_task_title` | Primary key is `(session_key, task_id)`. |
+| `sessions` (PostgreSQL) | `workflow_task_id`, `task_origin_json`, `task_relations_json`, `repo_path`, `repo_remote` | Task-metadata model (rendered by `task-metadata.cjs`, Zettly drawing thumbnails). The reconciled upsert carries both models: metadata describes the task a card tracks, chain columns describe the card's place inside its session. |
 | Dashboard | `chain_from`, `chain_to` | Derived per request from the rows already loaded. |
 
 ## Behaviour
@@ -39,11 +40,32 @@ The script applies `monitor-server/migrations/*.sql` inside one transaction,
 prints the resulting primary key, and rolls back on failure. Running it twice
 is a no-op. Preview without touching the database with `--dry-run`.
 
-Order of operations on deploy:
+The migrations:
 
-1. Run the migration (adds columns, swaps the primary key).
-2. Start the new monitor build.
-3. The dashboard shows the chain links; old rows keep `task_id = ''`.
+- `001-card-chaining.sql` — adds the three chain columns and swaps the
+  primary key.
+- `002-pk-swap.sql` — the same swap, standalone: it only acts when the key
+  is NOT already composite, so it is safe to run on any database state
+  (001 applied, skipped, or partial).
+- `003-task-metadata.sql` — adds the five task-metadata columns for fresh
+  installs. The running dashboard also self-heals the two repository columns
+  at boot; on the running database this file is usually a quiet no-op.
+
+Order of operations on the production deploy (`/opt/devwf-monitor`,
+service `devwf-monitor`):
+
+1. `pg_dump` the `sessions` table into `/opt/devwf-monitor/backups/`.
+2. Stop the service.
+3. Copy the unified monitor files in (owner `.bak` convention; on the server
+   the entry point is `monitor.cjs`, in the repository it is `dashboard.cjs`).
+4. Apply the migrations as the table owner, one transaction:
+   `psql -v ON_ERROR_STOP=1 -d devwf_monitor` with `001` + `002` + `003`.
+5. Start the service and verify `/api/sessions` returns the chain and
+   metadata columns.
+
+Steps 2-5 keep the old upsert and the new primary key from ever meeting: the
+old code stops before the key swap, and the new code (whose upsert conflicts
+on `(session_key, task_id)`) starts only after the composite key exists.
 
 ## Rollback
 
@@ -69,7 +91,11 @@ upsert has no matching unique constraint to conflict on.
   — label and build ownership helpers.
 - `tests/monitor-dashboard-chain.test.js` — dashboard wiring.
 - `tests/monitor-card-chain-behavior.test.js` — real PostgreSQL: two cards in
-  one session, hand-off, legacy row, and a twice-applied migration.
+  one session, hand-off, legacy row, metadata next to the chain identity,
+  and a twice-applied migration.
+- `tests/monitor-upsert-behavior.test.js` — real PostgreSQL against the full
+  production table shape: empty reports must not erase task identity,
+  repository, or the agent-tool label.
 
 ## Rollout status (as of 8 November 2026, release v1.24.1)
 
@@ -93,3 +119,32 @@ upsert has no matching unique constraint to conflict on.
 - Follow-up: reconcile `f2ac45d` with the composite-key model, add migration
   `002` for the primary-key swap, then run the full migration and restart
   `devwf-monitor`.
+
+## Reconciliation with the f2ac45d task-metadata model (release v1.24.2,
+8 November 2026)
+
+The deployed monitor on bw-server-clean tracked `f2ac45d`'s task-metadata
+model, which lived outside the repository. It was reconciled into
+`monitor-server/` and the two card models were unified:
+
+- `monitor-server/task-metadata.cjs`, `task-metadata.md`, and
+  `task-metadata-migration.sql` came into the repository.
+- `session-upsert.cjs` now writes BOTH models: the five metadata columns keep
+  the f2ac45d "new task" inheritance rules, and the three chain columns plus
+  `buildParentHandoff` carry the composite-key model.
+- `dashboard.cjs` is the server lineage (Zettly drawing thumbnails,
+  activity box, boot self-heal of the repository columns) with the chain
+  layer re-applied: per-card build boxes, `handed-off` hand-off on ingest,
+  and `chain_from` / `chain_to` labels on both tabs.
+- Migrations `002-pk-swap.sql` (standalone key swap) and
+  `003-task-metadata.sql` (metadata columns for fresh installs) joined
+  `001-card-chaining.sql` in the runner.
+- The compatibility lock of v1.24.1 (the upsert must IGNORE the metadata
+  fields) was replaced by the opposite guarantee: the unified upsert carries
+  both models, proven on real PostgreSQL by
+  `tests/monitor-card-chain-behavior.test.js` and
+  `tests/monitor-upsert-behavior.test.js`.
+
+Deploy order on bw-server-clean: stop `devwf-monitor` → copy the unified
+files (with the owner `.bak` convention) → apply `001`+`002`+`003` in one
+transaction after a fresh `pg_dump` → start → verify `/api/sessions`.
