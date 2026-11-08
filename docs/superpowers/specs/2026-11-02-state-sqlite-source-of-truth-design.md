@@ -102,7 +102,11 @@ bisa `start_task`, tidak bisa `commit_and_push`.
 | Postgres `devwf_monitor` | salinan untuk dashboard | replika, best-effort | workflow jalan, dashboard basi |
 | JSON di `.state/` | ekspor cadangan, ditulis atomik | keluaran saja | dicatat, tidak menggagalkan simpan |
 
-Prinsipnya satu kalimat: **tidak ada operasi workflow yang menunggu jaringan.**
+Keberhasilan commit state lokal tidak bergantung pada jaringan. Setelah commit,
+`save()` boleh menunggu pengiriman replika. Tiap permintaan monitor punya timeout
+sekitar 1,2 detik; anggaran pengurasan antrean diperiksa sebelum permintaan
+berikutnya dimulai, sehingga total waktu dapat lebih panjang. Kegagalan
+pengiriman tidak membatalkan state yang sudah tersimpan.
 
 ### Skema
 
@@ -206,9 +210,16 @@ Dua perubahan penting dibanding sekarang:
 8. COMMIT
 9. tulis ekspor JSON secara atomik (tmp + rename); gagal -> dicatat, tidak melempar
 10. enqueue baris replika ke sync_queue
-11. kuras antrean, berbatas waktu ~1,2 detik, gagal -> dibiarkan mengantre
+11. kuras antrean dengan anggaran memulai permintaan ~1,2 detik;
+    tiap HTTP punya timeout sendiri, gagal -> dibiarkan mengantre
 12. verifyPersisted: baca ulang dari SQLite dan bandingkan
 ```
+
+Langkah 10 terjadi **setelah** commit state. Jika proses berhenti di antara
+langkah 8 dan 10, snapshot terakhir belum masuk antrean. State lokal tetap utuh,
+tetapi dashboard dapat tertinggal sampai `save()` berikutnya membuat snapshot
+penuh yang baru. Karena itu antrean menjamin percobaan ulang untuk snapshot
+yang sudah berhasil di-enqueue, bukan pengiriman atomik untuk setiap commit.
 
 Yang **hilang** dari jalur ini, dan itu tujuannya: `reconcileWithDisk`,
 `detectStaleOverwrite`, `adoptDiskState`. Ketiganya ada untuk menambal berkas
@@ -241,9 +252,11 @@ dibuang karena umur; yang `attempts > 20` dilaporkan sebagai peringatan di
 `get_workflow_status`. Membuang diam-diam berarti dashboard kehilangan data
 tanpa ada yang tahu.
 
-`drain` dipanggil di akhir `save()` dengan batas waktu keras. Kalau Postgres
-mati, setiap `save()` menambah paling banyak ~1,2 detik — angka yang sama
-dengan laporan monitor sekarang, yang sudah terbukti tidak mengganggu.
+`drain` dipanggil di akhir `save()`. Anggarannya diperiksa sebelum mengambil
+baris berikutnya, bukan sebagai deadline untuk permintaan yang sedang berjalan.
+Kalau Postgres mati, satu permintaan monitor dapat menunggu timeout ~1,2 detik;
+lebih dari satu percobaan atau laporan monitor tambahan dapat membuat `save()`
+menunggu lebih lama. State yang sudah di-commit tetap berhasil.
 
 ### Kalau SQLite gagal
 
@@ -361,6 +374,7 @@ Tes perilaku terhadap SQLite sungguhan (berkas sementara), bukan tiruan:
 | `better-sqlite3` sinkron; COMMIT bisa memblokir | operasi per simpan kecil (satu baris + beberapa entri); diukur sebelum dan sesudah |
 | WAL antar-proses di Windows | `busy_timeout = 5000`, `BEGIN IMMEDIATE`; diuji dengan dua proses sungguhan, bukan dua promise |
 | Dashboard membaca Postgres yang kini bisa tertinggal | dashboard sudah punya "terakhir melapor" per mesin, yang membesar bila replika tertinggal; jumlah antrean ditampilkan di `get_workflow_status`, bukan di dashboard, karena antrean tinggal di mesin klien yang mungkin tidak bisa menjangkau server |
+| Proses berhenti setelah commit tetapi sebelum enqueue replika | state lokal tetap benar; snapshot penuh pada `save()` berikutnya menyusul, sementara dashboard dapat tertinggal dan waktu "terakhir melapor" menunjukkan keterlambatan |
 | Alat lain yang membaca `.state/workflow-state.json` langsung akan melihat data beku | disebut di CHANGELOG sebagai perubahan yang memutus; berkas tetap ditulis sebagai ekspor |
 | Migrasi salah dan kehilangan task | langkah 4 gagal keras; berkas lama tidak pernah dihapus |
 
