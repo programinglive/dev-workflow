@@ -75,3 +75,7 @@ web/lib/version.generated.ts
 # Next.js static export output (built by CI, published from web/out)
 web/out/
 tmp-probe.db
+
+# Python bytecode from managed/install-device.py
+__pycache__/
+*.pyc
