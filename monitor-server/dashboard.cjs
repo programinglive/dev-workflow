@@ -22,7 +22,7 @@ const {
 const { buildHealth, DEFAULT_STALE_AFTER_MS } = require('./health.cjs');
 const { buildMachinesQuery, DEFAULT_STALE_AFTER_DAYS } = require('./machines-query.cjs');
 const { dedupeSessions } = require('./dedupe-sessions.cjs');
-const { buildReportQuery, buildReportPayload } = require('./build-report.cjs');
+const { buildReportQuery, buildReportPayload, estimateBuild, MIN_SAMPLES, STALL_MS, toMs, numberOrNull, clamp0, minutes, isRevised } = require('./build-report.cjs');
 const { withRepoLink } = require('./repo-link.cjs');
 const { buildHistoryQuery, formatDuration, DEFAULT_HISTORY_DAYS } = require('./history-query.cjs');
 const {
@@ -236,6 +236,8 @@ const PAGE = `<!doctype html>
   .clickable-card:hover { border-color:#58a6ff88; background:#131a24; transform:translateY(-1px); }
   .repo-link { color:#2f81f7; text-decoration:none; font-size:12px; word-break:break-all; }
   .repo-link:hover { text-decoration:underline; color:#58a6ff; }
+  .build-eta { margin-top:6px; color:#3fb950; font-weight:600; font-size:12px; }
+  .build-eta.warn { color:#d29922; }
   .phase.stuck { background:#d2992222; color:#e3b341; border-color:#d2992255; }
   .phase.ended { background:#6e768122; color:#8b949e; border-color:#6e768155; }
   .row { display:flex; gap:8px; align-items:baseline; flex-wrap:wrap; }
@@ -431,6 +433,10 @@ const PAGE = `<!doctype html>
 </div>
 
 <!-- TAB 5: INFO -->
+<div id="tab-build" class="tab-pane">
+  <div class="grid" id="build-report"></div>
+  <div class="meta" style="margin-top:8px">Durasi dari build lokal yang dilaporkan report_build_status; jendela 30 hari (batas retensi event).</div>
+</div>
 <div id="tab-info" class="tab-pane">
   <div class="card">
     <div style="font-weight:600;margin-bottom:6px">Tentang</div>
@@ -456,6 +462,7 @@ const PAGE = `<!doctype html>
   <button class="tab-btn" data-tab="riwayat"><span class="tab-icon">☰</span><span class="tab-lbl">Riwayat</span></button>
   <button class="tab-btn" data-tab="rekap"><span class="tab-icon">Σ</span><span class="tab-lbl">Rekap</span></button>
   <button class="tab-btn" data-tab="mesin"><span class="tab-icon">▣</span><span class="tab-lbl">Mesin</span></button>
+  <button class="tab-btn" data-tab="build"><span class="tab-icon">⏳</span><span class="tab-lbl">Build</span></button>
   <button class="tab-btn" data-tab="info"><span class="tab-icon">ⓘ</span><span class="tab-lbl">Info</span></button>
 </nav>
 
@@ -626,6 +633,7 @@ function renderBuildBox(ab, jNow, machine) {
   const barCls = (!hasPct && isRunning) ? 'build-bar indeterminate' : 'build-bar';
   const elapsed = ab.startedAt ? durasiDetik(ab.startedAt, ab.finishedAt ? new Date(ab.finishedAt).getTime() : jNow) : '';
   const liveAttr = (isRunning && ab.startedAt) ? ' data-live-start="' + esc(ab.startedAt) + '"' : '';
+  const eta = renderEta(ab, jNow);
   return '<div class="build-card ' + esc(st) + '" style="margin-top:10px">' +
     '<div class="row" style="justify-content:space-between;align-items:center">' +
       '<span class="build-badge ' + esc(st) + '">' + labelBuildStatus(st) + '</span>' +
@@ -633,12 +641,113 @@ function renderBuildBox(ab, jNow, machine) {
     '</div>' +
     '<div class="build-target">🏗️ ' + esc(ab.target) + '</div>' +
     renderBuildLocation(ab, machine) +
+    eta +
     (ab.stage ? '<div class="build-stage">▸ ' + esc(ab.stage) + (hasPct ? ' (' + pct + '%)' : '') + '</div>' : '') +
     '<div class="' + barCls + '"><i style="width:' + pct + '%"></i></div>' +
     (ab.command ? '<div class="build-cmd">$ ' + esc(ab.command) + '</div>' : '') +
     (ab.output ? '<div class="event-out-box" style="margin-top:6px">' + esc(ab.output) + '</div>' : '') +
   '</div>';
 }
+const MIN_SAMPLES = ${MIN_SAMPLES};
+const STALL_MS = ${STALL_MS};
+const toMs = ${toMs.toString()};
+const numberOrNull = ${numberOrNull.toString()};
+const clamp0 = ${clamp0.toString()};
+const minutes = ${minutes.toString()};
+const isRevised = ${isRevised.toString()};
+const estimateBuild = ${estimateBuild.toString()};
+
+function buildSummaryFor(ab) {
+  const report = window.__buildReport;
+  if (!report || !Array.isArray(report.projects)) return null;
+  for (let i = 0; i < report.projects.length; i++) {
+    const project = report.projects[i];
+    const targets = Array.isArray(project.targets) ? project.targets : [];
+    const target = targets.find(function (entry) { return entry.target === ab.target; });
+    if (target) {
+      return {
+        count: target.count,
+        p50Ms: target.p50Ms,
+        p90Ms: target.p90Ms,
+        stages: project.stages || [],
+        stageOrder: project.stageOrder || [],
+      };
+    }
+  }
+  return null;
+}
+
+function buildMinutes(ms) {
+  if (typeof ms !== 'number' || !isFinite(ms)) return '?';
+  return Math.max(0, Math.round(ms / 60000)) + 'm';
+}
+
+function buildRangeLabel(low, high) {
+  if (typeof low !== 'number' || typeof high !== 'number') return '';
+  return low === high ? buildMinutes(low) : buildMinutes(low) + '–' + buildMinutes(high);
+}
+
+/**
+ * One line that always says what it knows and why it changed. The states match
+ * the MCP tool exactly, because both call the same estimateBuild implementation.
+ */
+function etaText(est) {
+  if (!est) return '';
+  const n = est.sampleCount;
+  if (est.state === 'failed') return 'gagal setelah ' + buildMinutes(est.elapsedMs) + ' (tanpa ETA)';
+  if (est.state === 'succeeded') return 'selesai ' + buildMinutes(est.elapsedMs);
+  if (est.state === 'no-baseline') return 'belum ada baseline (' + n + ' build)';
+  if (est.state === 'overdue') return 'lewat p90: sudah ' + buildMinutes(est.elapsedMs) + ', angka sisa tidak ditampilkan';
+  if (est.state === 'stalled') {
+    return 'tidak ada kemajuan ' + buildMinutes(est.elapsedMs) + ' — ' +
+      buildRangeLabel(est.remainingLowMs, est.remainingHighMs) + ' (tidak dapat diandalkan)';
+  }
+  const basis = est.basis === 'progress' ? 'dari progress' : est.basis === 'stage' ? 'dari stage' : 'p50–p90, n=' + n;
+  return '≈' + buildRangeLabel(est.remainingLowMs, est.remainingHighMs) + ' lagi (' + basis + ')';
+}
+
+function renderEta(ab, jNow) {
+  if (!ab || !ab.startedAt) return '';
+  const summary = buildSummaryFor(ab);
+  if (!summary) return '';
+  const est = estimateBuild({
+    summary: summary,
+    run: {
+      status: ab.status,
+      startedAt: ab.startedAt,
+      progress: ab.progress,
+      progressUpdatedAt: ab.progressUpdatedAt || ab.updatedAt,
+      stage: ab.stage,
+      stageStartedAt: ab.stageStartedAt,
+    },
+    now: jNow,
+  });
+  const warn = est.state === 'stalled' || est.state === 'overdue' || est.state === 'failed';
+  return '<div class="build-eta' + (warn ? ' warn' : '') + '" data-eta-state="' + esc(est.state) + '">⏳ ' +
+    esc(etaText(est)) + '</div>';
+}
+
+function renderBuildTab(report) {
+  const el = document.getElementById('build-report');
+  if (!el) return;
+  const projects = report && Array.isArray(report.projects) ? report.projects : [];
+  if (!projects.length) {
+    el.innerHTML = '<div class="empty">belum ada build selesai dalam ' + ((report && report.window_days) || 30) + ' hari</div>';
+    return;
+  }
+  el.innerHTML = projects.map(function (project) {
+    const stages = (project.stages || []).slice(0, 4).map(function (stage) {
+      return esc(stage.stage) + ' ' + buildMinutes(stage.p50Ms);
+    }).join(' · ');
+    return '<div class="card"><div class="row"><b style="color:#79c0ff">' + esc(project.project) + '</b>' +
+      '<span class="meta" style="margin-left:auto">' + project.count + ' build</span></div>' +
+      '<div class="meta" style="margin-top:4px">p50 ' + buildMinutes(project.p50Ms) + ' · p90 ' + buildMinutes(project.p90Ms) +
+      ' · max ' + buildMinutes(project.maxMs) + '</div>' +
+      (stages ? '<div class="meta" style="margin-top:2px">stage: ' + stages + '</div>' : '') +
+      '</div>';
+  }).join('');
+}
+
 function renderBuildMonitor(activeSessions, jNow) {
   const el = document.getElementById('build-monitor');
   if (!el) return;
@@ -691,6 +800,8 @@ function renderBuildMonitor(activeSessions, jNow) {
 }
 
 let lastData = null;
+let lastSessions = [];
+let lastNow = Date.now();
 let currentTab = 'aktif';
 let currentFilter = 'semua';
 let activeDetailKey = null;
@@ -1158,6 +1269,8 @@ function renderHistory(data) {
 
 function render(data) {
   lastData = data;
+  lastSessions = visibleTaskSessions(data.sessions);
+  lastNow = data.now ? new Date(data.now).getTime() : Date.now();
   const activeSessions = visibleTaskSessions(data.sessions);
   const jNow = data.now ? new Date(data.now).getTime() : Date.now();
   document.getElementById('sub').textContent =
@@ -1311,6 +1424,17 @@ async function tick() {
   } catch (e) {
     document.getElementById('sub').textContent = 'terputus: ' + e.message;
   }
+  // The ETA and the Build tab read the same report the MCP tool reads, so a
+  // human and an agent never see different numbers. Failure here must not stop
+  // the session view: the previous report simply stays on screen.
+  try {
+    const br = await fetch('/api/builds/report?days=30', { cache: 'no-store' });
+    if (br.ok) {
+      window.__buildReport = await br.json();
+      renderBuildTab(window.__buildReport);
+      renderBuildMonitor(lastSessions, lastNow);
+    }
+  } catch (e) { /* keep the last known report */ }
 }
 
 async function muatTautan() {

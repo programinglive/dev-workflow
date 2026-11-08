@@ -12,7 +12,7 @@ import { handleStartTask, handleMarkBugFixed, handleCreateTests, handleSkipTests
 import { handleSkipRelease, handlePerformRelease } from "./release-handlers.js";
 import { handleCommitAndPush, handleCompleteTask, handleForceCompleteTask, handleDropTask } from "./commit-handlers.js";
 import { handleProjectSummary, handleProjectSummaryData, handleProjectSummaryDb, handleViewHistory } from "./summary-handlers.js";
-import { handleGetWorkflowStatus, handleReadyCheck, handleContinueWorkflow, handleRerunWorkflow, handleListActiveSessions } from "./status-handlers.js";
+import { handleGetWorkflowStatus, handleReadyCheck, handleContinueWorkflow, handleRerunWorkflow, handleListActiveSessions, handleBuildReport, handleBuildEstimate } from "./status-handlers.js";
 import { handleSetDefinitionOfDone, handleMarkDodItem, handleWaiveDodItem } from "./dod-handlers.js";
 import { handleNextSteps } from "./next-steps-handlers.js";
 import { handleResumeSession } from "./resume-handlers.js";
@@ -443,6 +443,10 @@ async function dispatchToolCall({
         return handleProjectSummaryDb(workflowState);
       case "list_active_sessions":
         return await handleListActiveSessions(args, { workflowState });
+      case "build_report":
+        return await handleBuildReport(args, { workflowState });
+      case "build_estimate":
+        return await handleBuildEstimate(args, { workflowState });
       case "continue_workflow":
         return handleContinueWorkflow(workflowState, { workflowState, exec, git, utils });
       case "rerun_workflow":
@@ -493,7 +497,7 @@ export async function handleToolCall(context) {
     if (context.workflowState) context.workflowState.lastConflict = null;
     let response=await dispatchToolCall({...context,request:{...context.request,params:{...context.request.params,arguments:args}}});
     const name=context.request.params.name;
-    const syncTools=new Set(['start_task','set_plan','mark_plan_step','set_definition_of_done','mark_dod_item','waive_dod_item','mark_bug_fixed','create_tests','skip_tests','run_tests','create_documentation','waive_documentation','check_ready_to_commit','commit_and_push','perform_release','skip_release','get_workflow_status','continue_workflow','resume_session','claim_factory_task','link_sentry_issue','report_build_status']);
+    const syncTools=new Set(['start_task','set_plan','mark_plan_step','set_definition_of_done','mark_dod_item','waive_dod_item','mark_bug_fixed','create_tests','skip_tests','run_tests','create_documentation','waive_documentation','check_ready_to_commit','commit_and_push','perform_release','skip_release','get_workflow_status','continue_workflow','resume_session','claim_factory_task','link_sentry_issue','report_build_status','build_report','build_estimate']);
     syncTools.add('link_factory_task');
     syncTools.add('link_zettly_drawing');
     if(context.workflowState&&!response?.isError&&!isErrorResponse(response)&&!context.workflowState.lastConflict&&syncTools.has(name)){
