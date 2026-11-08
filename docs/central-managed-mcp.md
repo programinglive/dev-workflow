@@ -38,6 +38,8 @@ The service runs as `devwf-releases` under `devwf-managed.service`, with a 128 M
 
 `managed/rollout.cjs` enforces that the central store only moves forward. Before any transfer, `promoteToServers` reads the host's `/var/lib/devwf-releases/current.json` and classifies the candidate revision against it (`same`, `forward`, `regression`, `divergent`, `unknown`). Idempotent and forward moves proceed; rotating to an older or divergent revision hard-stops the rollout before a single file moves. A missing or unreadable pointer warns and allows the promotion, to be verified afterwards. Each rotation keeps `previous.json` and an immutable `rollback-<old-revision>.json` pointer, so a rollback is an atomic restore of the previously verified manifest without discarding any archive.
 
+The ancestry probe checks object existence with `git cat-file -e`, not `git rev-parse --verify` (which accepts any well-formed 40-hex string even when the object is absent). A commit that is unreachable locally and still missing after one best-effort `git fetch origin` therefore classifies as `unknown` and is refused: the rollout treats unverifiable lineage as unverifiable instead of guessing it is divergent.
+
 ## Meaningful monitoring
 
 Connection heartbeats update device last-seen information. Active task cards require a real task description or a known session title. Anonymous idle connections are excluded; they cannot prove any work is in progress. MCP instructions require `start_task` with project, DoD and plan before development. This does not automatically infer an unregistered task from a running process.
