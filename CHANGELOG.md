@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.24.2](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.24.1...v1.24.2) (2026-11-08)
+
+
+### 📝 Documentation
+
+* **monitor:** record card-chaining rollout status and upsert compatibility lock ([3b105ea](https://github.com/programinglive/dev-workflow-mcp-server/commit/3b105ead051d432f2b69437d4a8e9350ea035e5c))
+
+
+### ✨ Features
+
+* **monitor:** unify task-metadata and card-chain models into one upsert and dashboard ([6b3a0f8](https://github.com/programinglive/dev-workflow-mcp-server/commit/6b3a0f88a8dd59beafcc10c89483ea5820f0769f))
+
 ### [1.24.1](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.31...v1.24.1) (2026-11-08)
 
 
