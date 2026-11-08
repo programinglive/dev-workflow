@@ -53,7 +53,9 @@ test("kegagalan tabel share tidak menjatuhkan dashboard", () => {
 
 test("kode halaman dashboard tidak memakai template literal di dalam template literal", () => {
   // Halaman ini adalah template literal. Satu `${` di dalamnya akan
-  // diinterpolasi server dan merusak skrip klien.
+  // diinterpolasi server dan merusak skrip klien. Satu-satunya yang boleh
+  // diinterpolasi adalah literal dan fungsi statis yang disalin utuh
+  // ke browser (pattern yang sama untuk filter sesi dan metadata task).
   const mulai = src.indexOf("const PAGE = `");
   const akhir = src.indexOf("</html>`", mulai);
   assert.ok(mulai > 0 && akhir > mulai, "PAGE harus tetap berupa satu template literal");

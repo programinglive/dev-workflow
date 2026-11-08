@@ -95,6 +95,7 @@ test("menyimpan dua kali dengan expectedVersion yang benar menaikkan versi", asy
 
 test("project_path yang berbeda penulisannya menunjuk baris yang sama", async () => {
   await withAdapter(async (adapter) => {
+    const queryPath = process.platform === "win32" ? "d:/code/foo" : "D:/Code/Foo";
     await adapter.saveStateVersioned({
       userId: "u",
       projectPath: "D:\\Code\\Foo\\",
@@ -104,7 +105,7 @@ test("project_path yang berbeda penulisannya menunjuk baris yang sama", async ()
     });
     const loaded = await adapter.loadStateVersioned({
       userId: "u",
-      projectPath: "d:/code/foo",
+      projectPath: queryPath,
       sessionKey: "S",
     });
     assert.equal(loaded.state.n, 1, "satu proyek harus jadi satu baris");

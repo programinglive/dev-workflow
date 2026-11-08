@@ -55,6 +55,29 @@ function normalTool(v) {
 }
 
 /**
+ * Fase kartu yang sudah diserahkan ke kartu berikutnya dalam sesi yang sama.
+ *
+ * Bukan `closed`: sesinya masih hidup. Tetapi kartu ini tidak lagi menjadi
+ * pekerjaan aktif, jadi ia harus hilang dari tab Aktif dan hanya muncul di
+ * Riwayat - dengan tautan ke kartu penerusnya.
+ */
+const HANDOFF_PHASE = 'handed-off';
+
+/**
+ * Kartu sebelumnya, dari kiriman snapshot. Dua bentuk parent hidup berdampingan:
+ * model chain v1.24.1 mengirim {taskId, title, startedAt}, sedangkan
+ * assignWorkflowIdentity (main) mengirim {id, description, title, todoId}.
+ * Keduanya dinormalisasi jadi satu record, sehingga klien lama maupun klien
+ * baru tetap bisa mencatat tautan rantainya.
+ */
+function parentOf(b) {
+  const p = b && b.parentTask && typeof b.parentTask === 'object' ? b.parentTask : null;
+  const id = p ? str(p.taskId || p.id, 200) : '';
+  if (!id) return null;
+  return { taskId: id, title: str(p.title || p.description, 500) };
+}
+
+/**
  * @param {object} body  kiriman dari pelapor
  * @returns {{ sql: string, params: Array }}
  */
@@ -65,6 +88,7 @@ function buildSessionUpsert(body = {}) {
 
   const plan = Array.isArray(b.plan) ? b.plan.slice(0, 40) : [];
   const metadata = normalizeTaskMetadata(b);
+  const parent = parentOf(b);
   // A sparse completion is still the same task. A nonempty changed identity or
   // title starts a new task and must not inherit unrelated service links.
   const newTask = `(
@@ -78,9 +102,10 @@ function buildSessionUpsert(body = {}) {
                                plan_json, plan_done, plan_total, dod_done, dod_total, dod_waived,
                                owner_pid, started_at, session_title, agent_tool,
                                workflow_task_id, task_origin_json, task_relations_json,
-                               repo_path, repo_remote, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb,$20::jsonb,$21,$22,now())
-         ON CONFLICT (session_key) DO UPDATE SET
+                               repo_path, repo_remote,
+                               task_id, parent_task_id, parent_task_title, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb,$20::jsonb,$21,$22,$23,$24,$25,now())
+         ON CONFLICT (session_key, task_id) DO UPDATE SET
            machine=EXCLUDED.machine,
            -- Identitas tidak boleh dihapus oleh kiriman kosong. Ini bug yang
            -- membuat nama proyek hilang tepat saat task ditutup.
@@ -136,6 +161,10 @@ function buildSessionUpsert(body = {}) {
              GREATEST(sessions.started_at, EXCLUDED.started_at),
              GREATEST(EXCLUDED.started_at, sessions.started_at)
            ),
+           -- Rantai kartu tidak boleh hilang oleh kiriman kosong, sama
+           -- seperti identitas proyek di atas: nilai lama menang, nilai baru mengisi.
+           parent_task_id=COALESCE(EXCLUDED.parent_task_id, sessions.parent_task_id),
+           parent_task_title=COALESCE(NULLIF(EXCLUDED.parent_task_title, ''), sessions.parent_task_title),
            updated_at=now()`,
     params: [
       key,
@@ -160,8 +189,35 @@ function buildSessionUpsert(body = {}) {
       JSON.stringify(metadata.taskRelations),
       str(b.repositoryPath, 512),
       str(b.repositoryRemote, 512),
+      str(b.taskId, 200),
+      parent ? parent.taskId : null,
+      parent ? parent.title : null,
     ],
   };
 }
 
-module.exports = { buildSessionUpsert };
+/**
+ * Tandai kartu sebelumnya sebagai sudah diserahkan.
+ *
+ * Tanpa ini, kartu lama tetap terlihat "berjalan" selamanya karena hanya
+ * `idle` yang punya batas umur di query aktif. `handed-off` menyatakan hal
+ * yang sebenarnya: sesinya masih hidup, tetapi topik itu sudah pindah ke
+ * kartu berikutnya.
+ *
+ * @returns {{sql: string, params: Array}|null}
+ */
+function buildParentHandoff(body = {}) {
+  const b = body || {};
+  const key = str(b.cardKey || b.sessionKey, 200);
+  const parent = parentOf(b);
+  if (!key || !parent) return null;
+
+  return {
+    sql: `UPDATE sessions SET phase = '${HANDOFF_PHASE}', updated_at = now()
+           WHERE session_key = $1 AND task_id = $2
+             AND phase NOT IN ('closed', 'done', 'cancelled', '${HANDOFF_PHASE}')`,
+    params: [key, parent.taskId],
+  };
+}
+
+module.exports = { buildSessionUpsert, buildParentHandoff, HANDOFF_PHASE };

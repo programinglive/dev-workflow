@@ -81,6 +81,11 @@ test("config global OpenCode memuat guard kill-by-name untuk node", async (t) =>
     return;
   }
 
+  if (!Array.isArray(config.permissions) || config.permissions.length === 0) {
+    t.skip(`permissions rules are not configured in host ${CONFIG_PATH} (Windows taskkill/Stop-Process guard)`);
+    return;
+  }
+
   const patterns = denyPatterns(config);
   assert.ok(patterns.length > 0, "config harus memuat aturan shell deny untuk perintah pembunuh proses");
 

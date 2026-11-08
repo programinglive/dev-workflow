@@ -34,7 +34,8 @@ const {
   DEFAULT_SUMMARY_DAYS,
 } = require('./project-summary.cjs');
 const { classifySession, LABELS, DEFAULT_LIVE_MS, DEFAULT_STUCK_MS } = require('./status.cjs');
-const { buildSessionUpsert } = require('./session-upsert.cjs');
+const { buildSessionUpsert, buildParentHandoff } = require('./session-upsert.cjs');
+const { chainLabels, buildForCard, cardKey } = require('./card-chain.cjs');
 const { normalizeTaskMetadata, renderTaskMetadata } = require('./task-metadata.cjs');
 const {
   shareGuard,
@@ -519,6 +520,16 @@ const visibleTaskSessions = ${visibleTaskSessions.toString()};
 const normalizeTaskMetadata = ${normalizeTaskMetadata.toString()};
 const renderTaskMetadata = ${renderTaskMetadata.toString()};
 const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function renderChain(s) {
+  const from = String((s && s.chain_from) || '').trim();
+  const to = String((s && s.chain_to) || '').trim();
+  if (!from && !to) return '';
+  return '<div class="meta" style="color:#d2a8ff;margin-top:2px">' +
+    (from ? '↩ lanjutan dari "' + esc(from) + '"' : '') +
+    (from && to ? ' · ' : '') +
+    (to ? '↪ dilanjutkan ke "' + esc(to) + '"' : '') +
+    '</div>';
+}
 function ago(iso, nowMs) {
   if (!iso) return '';
   const d = ((nowMs || Date.now()) - new Date(iso).getTime()) / 1000;
@@ -1116,6 +1127,7 @@ function renderHistory(data) {
       esc(String(h.agent_tool || 'unknown').toUpperCase()) + '</span>' +
       '<span class="task">' + esc(h.task || h.session_title || '(tanpa task)') + '</span></div>' +
       renderTaskMetadata(h) +
+      renderChain(h) +
       '<div class="meta" style="margin-top:4px">' + esc(h.machine) +
       (h.project_name ? ' · ' + esc(h.project_name) : '') +
       (h.duration_label ? ' · ⏱ ' + esc(h.duration_label) : ' · durasi tidak tercatat') +
@@ -1215,6 +1227,7 @@ function render(data) {
         '</div>' +
         '<div class="task" style="margin-top:6px">' + esc(s.task || s.session_title || '(tanpa task)') + '</div>' +
         renderTaskMetadata(s) +
+        renderChain(s) +
         (s.session_title ? '<div class="meta" style="color:#79c0ff;margin-top:2px">💬 ' + esc(s.session_title) + '</div>' : '') +
         note +
         '<div class="meta" style="margin-top:3px">' + esc(s.machine) + ' · ' + esc(s.project_name) +
@@ -1571,25 +1584,21 @@ async function pruneOldRows() {
 async function upsertSession(body) {
   const { sql, params } = buildSessionUpsert(body);
   await query(sql, params);
+  // Kartu yang digantikan oleh kartu baru dalam sesi yang sama dihentikan:
+  // sesinya masih hidup, tetapi topik itu sudah pindah. Tanpa ini kartu lama
+  // tampil "berjalan" selamanya di tab Aktif.
+  const handoff = buildParentHandoff(body);
+  if (handoff) await query(handoff.sql, handoff.params);
   const key = str(body.cardKey || body.sessionKey, 200);
+  const taskId = str(body.taskId, 200);
+  // Kunci build per KARTU, bukan per sesi. Sebelumnya satu build bocor ke
+  // topik berikutnya di sesi yang sama dan membuat kartu baru tampak bekerja
+  // padahal tidak pernah memulainya.
+  const buildKey = cardKey(key, taskId);
   if (body && body.activeBuild && typeof body.activeBuild === 'object') {
-    liveBuildsBySession.set(key, normalizeBuildState(body.activeBuild));
-  } else {
-    liveBuildsBySession.delete(key);
-  }
-
-  // Zettelkasten Chaining: bila ada parentCardKey dan berbeda dari kartu ini,
-  // arsipkan kartu induk agar tidak ganda di tab Sesi Aktif
-  if (body && body.parentCardKey && body.parentCardKey !== key) {
-    try {
-      await query(
-        `UPDATE sessions
-            SET phase = CASE WHEN phase NOT IN ('done', 'closed', 'cancelled') THEN 'archived' ELSE phase END,
-                updated_at = now()
-          WHERE session_key = $1`,
-        [str(body.parentCardKey, 200)]
-      );
-    } catch {}
+    liveBuildsBySession.set(buildKey, { taskId, build: normalizeBuildState(body.activeBuild) });
+  } else if (body && (body.phase === 'idle' || body.phase === 'closed' || body.phase === 'done' || body.phase === 'handed-off')) {
+    liveBuildsBySession.delete(buildKey);
   }
 
   return key;
@@ -1835,7 +1844,7 @@ const server = http.createServer(async (req, res) => {
         [historyKeys],
       ) : { rows: [] };
       const historyBuilds = extractActiveBuildFromEvents(historyBuildRows.rows);
-      const history = historyRows.rows.map((r) => {
+      const historyBase = historyRows.rows.map((r) => {
         // Status memakai fungsi yang SAMA dengan kartu aktif, supaya riwayat
         // dan kartu tidak pernah berbeda pendapat soal sesi yang sama.
         const st = classifySession({
@@ -1850,7 +1859,24 @@ const server = http.createServer(async (req, res) => {
           duration_label: formatDuration(r.duration_seconds),
           state: st.status,
           state_label: LABELS[st.status] || st.status,
-          active_build: historyBuilds.get(r.session_key) || null,
+        };
+      });
+      // Peristiwa build tidak membawa task id, jadi build dari riwayat hanya
+      // boleh melekat ke kartu TERBARU sebuah sesi (baris pertama, karena
+      // query mengurutkan updated_at DESC). Kalau tidak, build kartu baru
+      // bocor ke kartu lama yang sudah handed-off.
+      // Rantai Zettelkasten: kartu lama jarang masih ada di tab Aktif, jadi
+      // arah "dilanjutkan ke" dibaca dari daftar riwayat yang memuat keduanya.
+      const sesiTerlihatRiwayat = new Set();
+      const history = historyBase.map((row) => {
+        const kartuTerbaru = !sesiTerlihatRiwayat.has(row.session_key);
+        sesiTerlihatRiwayat.add(row.session_key);
+        const { from, to } = chainLabels(row, historyBase);
+        return {
+          ...row,
+          active_build: kartuTerbaru ? (historyBuilds.get(row.session_key) || null) : null,
+          chain_from: from,
+          chain_to: to,
         };
       });
       // Waktu acuan SERVER, dikirim ke klien.
@@ -1864,6 +1890,8 @@ const server = http.createServer(async (req, res) => {
       // Status diturunkan dari umur laporan, bukan diklaim dari `phase`.
       // Task yang selesai tanpa mengubah phase menjadi idle akan tampak
       // "mungkin macet" atau "berakhir", bukan "aktif" selamanya.
+      // Kartu-kartu dikelompokkan per sesi saat menentukan pemilik build.
+      const sesiTerlihat = new Set();
       const rows = sessions.rows.map((row) => {
         const s = classifySession({
           phase: row.phase,
@@ -1872,11 +1900,19 @@ const server = http.createServer(async (req, res) => {
           liveMs: LIVE_MS,
           stuckMs: STUCK_MS,
         });
-        let activeBuild =
-          liveBuildsBySession.get(row.session_key) ||
-          eventBuilds.get(row.session_key) ||
-          (row.machine && row.project_name ? eventBuilds.get(`${row.machine}::${row.project_name}`) : null) ||
-          null;
+        // Kartu terbaru sebuah sesi = baris pertama, karena query mengurutkan
+        // updated_at DESC. Build dari event tidak membawa task id, jadi hanya
+        // kartu terbaru yang boleh memakainya; kalau tidak, build lama bocor
+        // ke kartu berikutnya.
+        const terbaru = !sesiTerlihat.has(row.session_key);
+        sesiTerlihat.add(row.session_key);
+        let activeBuild = buildForCard(liveBuildsBySession.get(cardKey(row.session_key, row.task_id)), row);
+        if (!activeBuild && terbaru) {
+          activeBuild =
+            eventBuilds.get(row.session_key) ||
+            (row.machine && row.project_name ? eventBuilds.get(`${row.machine}::${row.project_name}`) : null) ||
+            null;
+        }
         if (activeBuild && row.started_at) {
           const buildTime = new Date(activeBuild.updatedAt || activeBuild.startedAt).getTime();
           const taskTime = new Date(row.started_at).getTime();
@@ -1896,8 +1932,14 @@ const server = http.createServer(async (req, res) => {
         }
         return { ...row, state: s.status, state_label: LABELS[s.status] || s.status, active_build: activeBuild };
       });
+      // Tautan rantai untuk kartu aktif. Arah "dilanjutkan ke" biasanya kosong
+      // di sini karena kartu lama sudah handed-off dan hanya ada di riwayat.
+      const bersambung = rows.map((row) => {
+        const { from, to } = chainLabels(row, rows);
+        return from || to ? { ...row, chain_from: from, chain_to: to } : row;
+      });
       // Buang kartu kembar (mesin + task sama) sebelum dikirim ke layar.
-      const tampil = dedupeSessions(rows);
+      const tampil = dedupeSessions(bersambung);
       // Rekap durasi per proyek. Hanya sesi yang SUDAH DITUTUP, karena durasi
       // sesi berjalan masih bertambah dan tidak bisa dibandingkan antar hari.
       const sq = buildProjectSummaryQuery({ days: SUMMARY_DAYS });

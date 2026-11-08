@@ -57,11 +57,11 @@ export function fallbackConfigDir({ home = os.homedir(), platform = process.plat
  * Resolves the OpenCode config directory, preferring what OpenCode itself
  * reports over any platform guess.
  */
-export function resolveConfigDir({ probe, home = os.homedir() } = {}) {
+export function resolveConfigDir({ probe, home = os.homedir(), platform = process.platform } = {}) {
   const probed = typeof probe === 'function' ? probe() : null;
   if (probed) return probed;
 
-  return fallbackConfigDir({ home });
+  return fallbackConfigDir({ home, platform });
 }
 
 export function ensureSchema(config) {
@@ -96,7 +96,8 @@ export function mergeMcpServer(config, { name = MCP_SERVER_NAME, command }) {
 }
 
 export function backupPathFor(configDir, filename, stamp) {
-  return path.join(configDir, 'secrets', `opencode-backup-${stamp}.json`);
+  const join = /^[A-Za-z]:\\/.test(String(configDir || '')) ? path.win32.join : path.join;
+  return join(configDir, 'secrets', `opencode-backup-${stamp}.json`);
 }
 
 function timestamp() {

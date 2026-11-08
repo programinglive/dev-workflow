@@ -98,18 +98,31 @@ export function buildSnapshot({ state, sessionKey = "", projectPath = "", sessio
     .pop() || "";
 
   const cleanTitle = sessionTitle(sessionKey, env) || String(s.taskDescription || "").slice(0, 200);
-  const cardKey = cardKeyFor(sessionKey, cleanTitle, s.workflowTaskId);
-  let parentCardKey = '';
-  if (s.parentTask && (s.parentTask.cardKey || s.parentTask.description || s.parentTask.title)) {
-    parentCardKey = s.parentTask.cardKey || cardKeyFor(sessionKey, s.parentTask.description || s.parentTask.title, s.parentTask.id);
-  }
+
+  // Zettelkasten chaining: one card per task, so the server needs the task's
+  // identity and, when this card continues a previous one, the identity of
+  // the previous card. A parent without an id is treated as absent so it can
+  // never create a false link.
+  //
+  // Two parent shapes coexist after the merge: this lineage captured
+  // {taskId, title, startedAt}; main's assignWorkflowIdentity captures
+  // {id, description, title, todoId}. Both normalize to one record.
+  const taskId = String(s.workflowTaskId || "");
+  const parent = s.parentTask && typeof s.parentTask === "object" ? s.parentTask : null;
+  const parentId = parent ? String(parent.taskId || parent.id || "") : "";
+  const parentTask = parentId
+    ? {
+        taskId: parentId,
+        title: String(parent.title || parent.description || ""),
+        startedAt: String(parent.startedAt || ""),
+      }
+    : null;
 
   return {
     ...buildTaskProvenance(s),
     sessionKey,
-    cardKey,
-    parentCardKey,
-    parentTask: s.parentTask || null,
+    taskId,
+    parentTask,
     machine: machineName(env),
     projectPath: String(projectPath || ""),
     projectName,

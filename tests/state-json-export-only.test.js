@@ -72,8 +72,9 @@ test("berkas JSON dihapus tidak menghilangkan state", async () => {
 
 test("gagal menulis ekspor tidak menggagalkan save", async () => {
   await withState(async ({ ws }) => {
-    // Direktori yang tidak bisa dibuat di Windows: huruf drive tidak ada.
-    ws.stateFile = "Z:\\tidak\\ada\\state.json";
+    // Direktori yang tidak bisa dibuat: huruf drive tidak ada di Windows, atau
+    // di bawah berkas /dev/null di POSIX.
+    ws.stateFile = process.platform === "win32" ? "Z:\\tidak\\ada\\state.json" : "/dev/null/tidak/ada/state.json";
     ws.state.currentPhase = "coding";
     ws.state.taskDescription = "tetap tersimpan";
 

@@ -95,8 +95,8 @@ test("resolveStateFile prefers current working directory when multiple project m
 
     const state = new TempWorkflowState();
     const resolvedStateFile = state.stateFile;
-    const resolvedProjectA = path.resolve(projectA);
-    const resolvedProjectB = path.resolve(projectB);
+    const resolvedProjectA = await realpath(projectA);
+    const resolvedProjectB = await realpath(projectB);
 
     assert.ok(
       resolvedStateFile.startsWith(path.join(resolvedProjectB, ".state", "users")),
@@ -206,7 +206,7 @@ test("WorkflowState avoids filesystem root when no project markers found", async
     process.env.INIT_CWD = cwdWithoutMarkers;
 
     const state = new TempWorkflowState();
-    const resolvedTempRoot = path.resolve(tempRoot);
+    const resolvedTempRoot = await realpath(tempRoot);
 
     assert.ok(
       state.stateFile.startsWith(resolvedTempRoot),
@@ -370,7 +370,7 @@ test("WorkflowState resolves state file relative to project root", async () => {
     if (devStateWasSet) {
       delete process.env.DEV_WORKFLOW_STATE_FILE;
     }
-    const resolvedProjectRoot = path.resolve(projectRoot);
+    const resolvedProjectRoot = await realpath(projectRoot);
 
     const state = new WorkflowState();
     assert.ok(
