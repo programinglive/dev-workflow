@@ -6,7 +6,7 @@ import { reportEventSafe } from "../../monitor.js";
 import { validateAiSuggestions, collectSignals, buildRecommendations, renderRecommendations } from "./next-steps.js";
 import { resolveProjectDir, setActiveProjectDir, getActiveProjectDir } from "../../exec.js";
 import path from "path";
-import { updateTaskStatus, isConfigured } from "../../factory-client.js";
+import { updateTaskStatus, isConfigured, readFactoryConfig } from "../../factory-client.js";
 
 /**
  * Tutup task Factory yang di-claim saat workflow berakhir, supaya board tidak

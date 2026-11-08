@@ -18,12 +18,36 @@ import {
   MAX_WAIVER_REASON,
 } from "./docs.js";
 import { activeForeignLock, projectLockDir, currentIsAlive, DEFAULT_LOCK_STALE_MS } from "../../process-lock.js";
-import { reportEventSafe } from "../../monitor.js";
+import { reportEventSafe, updateSessionTitle, buildSnapshot, reportSnapshot } from "../../monitor.js";
 import { resolveProjectDir, setActiveProjectDir } from "../../exec.js";
 import { pinSessionProject, resolveHistoryFile } from "../../workflow-state.js";
 import { assignWorkflowIdentity, validateZettlyTaskArguments } from '../../zettly-workflow.js';
 import { recommendMcpTools, formatMcpRecommendations, formatFullMcpCatalog } from "../../mcp-index.js";
 import { normalizeBuildState, formatBuildStatusBlock } from "../../build-monitor.js";
+import os from 'node:os';
+import {flowGraph,syncZettlyDrawing} from '../../zettly-drawing.js';
+
+export function generateDefaultFlow(description, planItems = []) {
+  const clean = (s, max = 36) => String(s || '').replace(/["\n\r]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
+  const taskText = clean(description, 32) || 'Start Task';
+  const nodes = [`A["Start: ${taskText}"]`];
+  const items = (Array.isArray(planItems) && planItems.length > 0 ? planItems : ['Analyze & Plan', 'Implement Changes', 'Verify Evidence'])
+    .slice(0, 4);
+  items.forEach((item, idx) => {
+    const letter = String.fromCharCode(66 + idx);
+    const label = clean(typeof item === 'string' ? item : item?.text, 36);
+    nodes.push(`${letter}["${label || `Step ${idx + 1}`}"]`);
+  });
+  const finalLetter = String.fromCharCode(66 + items.length);
+  nodes.push(`${finalLetter}["Verify & Complete"]`);
+  const arrows = [];
+  for (let i = 0; i < nodes.length - 1; i++) {
+    const from = nodes[i].split('[')[0].trim();
+    const to = nodes[i + 1].split('[')[0].trim();
+    arrows.push(`  ${from} --> ${to}`);
+  }
+  return `flowchart TD\n  ${nodes.join('\n  ')}\n${arrows.join('\n')}`;
+}
 
 /**
  * Catat repo proyek untuk sesi ini.
@@ -109,7 +133,7 @@ async function captureDirtyAtStart(git) {
   }
 }
 
-export async function handleStartTask(args, workflowState, git) {
+export async function handleStartTask(args, workflowState, git, zettlyOptions = {}) {
   const zettlyArgumentError=validateZettlyTaskArguments(args);
   if(zettlyArgumentError)return textResponse(`⚠️ ${zettlyArgumentError} The existing task was not changed.`);
   // Satu penulis per repo.
@@ -239,7 +263,7 @@ export async function handleStartTask(args, workflowState, git) {
   //   1. Proses MCP LAIN menulis berkas state setelah kita memuatnya.
   //   2. Task kita sendiri yang belum selesai lalu diganti task baru.
   const preservedBeforeSave = await workflowState.reconcileWithDisk();
-  const previousTaskIdentity = {taskDescription:workflowState.state.taskDescription,projectDir:workflowState.state.projectDir,workflowTaskId:workflowState.state.workflowTaskId,zettly:workflowState.state.zettly};
+  const previousTaskIdentity = {taskDescription:workflowState.state.taskDescription,projectDir:workflowState.state.projectDir,workflowTaskId:workflowState.state.workflowTaskId,zettly:workflowState.state.zettly,taskOrigin:workflowState.state.taskOrigin};
   const { archivedTask } = workflowState.reset({ archive: true });
 
   workflowState.state.currentPhase = "coding";
@@ -309,6 +333,35 @@ export async function handleStartTask(args, workflowState, git) {
   workflowState.state.dirtyAtStart = await captureDirtyAtStart(git);
   assignWorkflowIdentity(workflowState.state,previousTaskIdentity,args);
 
+  // Sinkronkan judul sesi AI (OpenCode / Monitor) ke deskripsi task baru
+  try {
+    const sKey = (typeof workflowState._sessionKey === "function" ? workflowState._sessionKey()?.key : "") || workflowState.sessionId || "";
+    if (sKey && typeof updateSessionTitle === "function") {
+      updateSessionTitle(sKey, args.description);
+    }
+  } catch {
+    // Best effort: kegagalan penamaan sesi tidak boleh mengganggu start_task
+  }
+
+  const warnings = [];
+
+  let initialFlow = typeof args.mermaidFlow === 'string' ? args.mermaidFlow.trim() : (typeof args.mermaidCode === 'string' ? args.mermaidCode.trim() : '');
+  let flowValid = false;
+  if (initialFlow) {
+    try {
+      flowGraph(initialFlow);
+      flowValid = true;
+    } catch (err) {
+      warnings.push(`⚠️ Provided mermaidFlow is invalid (${err.message}); falling back to auto-generated architecture flow.`);
+    }
+  }
+  if (!flowValid) {
+    initialFlow = generateDefaultFlow(args.description, workflowState.state.plan);
+  }
+  workflowState.state.featureFlowCreated = true;
+  workflowState.state.mermaidCode = initialFlow;
+  workflowState.state.featureFlowDescription = args.description;
+
   // start_task memang bermaksud MENGGANTI task, jadi ia boleh menang atas
   // task berjalan. Task yang diganti tetap diarsipkan oleh reconcileWithDisk,
   // bukan dihapus.
@@ -320,7 +373,6 @@ export async function handleStartTask(args, workflowState, git) {
     `${workflowState.state.taskDescription} (${workflowState.state.taskType}, ${workflowState.state.plan.length} langkah)`,
   );
 
-  const warnings = [];
   const preservedForeign = reconciled?.preservedTask || preservedBeforeSave?.preservedTask;
   if (preservedForeign) {
     warnings.push(
@@ -342,8 +394,6 @@ export async function handleStartTask(args, workflowState, git) {
     );
   }
 
-  const warningBlock = warnings.length > 0 ? `\n\n${warnings.join("\n\n")}` : "";
-
   // Catat ke board Factory bila diminta. Tidak pernah menggagalkan start_task,
   // tetapi kegagalannya DITAMPILKAN - kegagalan tak terlihat adalah persis yang
   // membuat board diam dua hari tanpa ada yang tahu.
@@ -352,15 +402,33 @@ export async function handleStartTask(args, workflowState, git) {
     const { createRequire } = await import("node:module");
     const req = createRequire(import.meta.url);
     const { recordToFactory } = req("../../factory-auto-task.cjs");
-    const hasil = await recordToFactory({ state: workflowState.state });    if (hasil.ok) {
+    const hasil = await recordToFactory({ state: workflowState.state });
+    if (hasil.ok) {
       workflowState.state.dodFactoryTaskId = hasil.id;
-      factoryNote = `\n\n🏭 Tercatat di Factory: ${hasil.id}`;
-    } else if (hasil.reason && hasil.reason !== "dimatikan") {
+      workflowState.state.zettly.externalLinks={...workflowState.state.zettly.externalLinks,factory:{id:hasil.id,taskKey:''}};
+      const persisted=await workflowState.save();
+      if(persisted?.verified===false||persisted?.conflict)throw Error('Factory link persistence was not verified');
+      factoryNote = `\n\n🏭 ${hasil.reused?'Linked existing':'Recorded in'} Factory: ${hasil.id}`;
+    } else if (hasil.reason) {
       factoryNote = `\n\n⚠️ Factory TIDAK mencatat task ini: ${hasil.reason}`;
     }
   } catch (e) {
     factoryNote = `\n\n⚠️ Factory TIDAK mencatat task ini: ${String(e && e.message).slice(0, 160)}`;
   }
+
+  let drawNote = "";
+  try {
+    const drawing = await syncZettlyDrawing(workflowState, zettlyOptions);
+    if (drawing.ok) {
+      drawNote = `\n\n🎨 Zettly Draw #${drawing.id}: ${drawing.url || `https://zettly.programinglive.com/draw/${drawing.id}`}`;
+    } else if (drawing.note) {
+      drawNote = `\n\n⚠️ Zettly Draw: ${drawing.note}`;
+    }
+  } catch (e) {
+    drawNote = `\n\n⚠️ Zettly Draw sync error: ${String(e && e.message).slice(0, 120)}`;
+  }
+
+  const warningBlock = warnings.length > 0 ? `\n\n${warnings.join("\n\n")}` : "";
 
   const dodLines = workflowState.state.definitionOfDone
     .map((item) => `   ${item.id}: ${item.text}`)
@@ -375,7 +443,7 @@ export async function handleStartTask(args, workflowState, git) {
   const mcpBlock = mcpRecommendations ? `${mcpRecommendations}\n\n` : "";
 
   return textResponse(
-    `✅ Task Started: ${args.description}\n\n${project.message}${warningBlock}${factoryNote}\n\n` +
+    `✅ Task Started: ${args.description}\n\n${project.message}${warningBlock}${factoryNote}${drawNote}\n\n` +
       `📋 Definition of Done (${workflowState.state.definitionOfDone.length} item, semua masih terbuka):\n${dodLines}\n` +
       `   Buktikan tiap item dengan 'mark_dod_item' { id, evidence } setelah benar-benar terbukti,\n` +
       `   atau kecualikan dengan 'waive_dod_item' { id, reason } bila memang tidak relevan.\n\n` +
@@ -385,13 +453,17 @@ export async function handleStartTask(args, workflowState, git) {
           `   atau susun ulang sekarang dengan 'set_plan' { steps: [...] }.\n\n`
         : `${renderPlanFull(workflowState.state.plan)}\n\n`) +
       mcpBlock +
-      `🎯 Be conscious about what you're coding!\n\nWorkflow Steps:\n1. ✓ Start task (current)\n2. ⏳ Describe feature flow with Mermaid\n3. ⏳ Fix/implement the feature\n4. ⏳ Prove each definition-of-done item\n5. ⏳ Create tests\n6. ⏳ Run tests (must pass!)\n7. ⏳ Create documentation\n8. ⏳ Run 'check_ready_to_commit'\n9. ⏳ Run 'commit_and_push' (commits and pushes)\n10. ⏳ Run 'perform_release' or 'skip_release' (when no release is needed)\n11. ⏳ Complete task\n12. ✓ Workflow closed\n\nReminder: Focus on writing clean, maintainable code!`
+      `🎯 Be conscious about what you're coding!\n\nWorkflow Steps:\n1. ✓ Start task & Zettly Draw flow recorded (current)\n2. ⏳ Refine feature flow with 'create_feature_flow' if needed\n3. ⏳ Fix/implement the feature\n4. ⏳ Prove each definition-of-done item\n5. ⏳ Create tests\n6. ⏳ Run tests (must pass!)\n7. ⏳ Create documentation\n8. ⏳ Run 'check_ready_to_commit'\n9. ⏳ Run 'commit_and_push' (commits and pushes)\n10. ⏳ Run 'perform_release' or 'skip_release' (when no release is needed)\n11. ⏳ Complete task\n12. ✓ Workflow closed\n\nReminder: Focus on writing clean, maintainable code!`
   );
 }
 
 export async function handleMarkBugFixed(args, workflowState) {
   if (workflowState.state.currentPhase === "idle") {
     return textResponse("⚠️ Please start a task first using 'start_task'!");
+  }
+
+  if (!workflowState.state.featureFlowCreated) {
+    return textResponse("⚠️ Record the issue-solving plan with create_feature_flow before marking implementation complete.");
   }
 
   if (workflowState.state.bugFixed) {
@@ -437,7 +509,7 @@ export async function handleMarkBugFixed(args, workflowState) {
   );
 }
 
-export async function handleCreateFeatureFlow(args, workflowState) {
+export async function handleCreateFeatureFlow(args, workflowState, zettlyOptions={}) {
   if (workflowState.state.currentPhase === "idle") {
     return textResponse("⚠️ Please start a task first using 'start_task'!");
   }
@@ -448,19 +520,42 @@ export async function handleCreateFeatureFlow(args, workflowState) {
   if (!mermaidCode || !description) {
     return textResponse("⚠️ Please provide both 'mermaidCode' and 'description' when creating a feature flow.");
   }
+  try{flowGraph(mermaidCode);}catch(error){return textResponse(`⚠️ Invalid Mermaid flow: ${error.message}`);}
 
   workflowState.state.featureFlowCreated = true;
   workflowState.state.mermaidCode = mermaidCode;
   workflowState.state.featureFlowDescription = description;
   workflowState.state.readyCheckCompleted = false;
   await workflowState.save();
+  const drawing=await syncZettlyDrawing(workflowState,zettlyOptions);
+
+  // The drawing relation is added AFTER the save above. Report once more so the
+  // card shows the flow immediately instead of waiting for an unrelated save.
+  try {
+    const sessionKey = typeof workflowState._sessionKey === 'function'
+      ? workflowState._sessionKey().key
+      : '';
+    await reportSnapshot({
+      snapshot: buildSnapshot({
+        state: workflowState.state,
+        sessionKey,
+        projectPath: workflowState.state.projectDir || '',
+        sessionStartedAt: workflowState.state.taskStartedAt || '',
+      }),
+    });
+  } catch {
+    // Reporting is best-effort; the flow itself is already recorded.
+  }
 
   return textResponse(
-    `✅ Feature flow recorded!\n\nDescription: ${description}\n\nNext Steps:\n1. ✓ Start task\n2. ✓ Describe feature flow\n3. ⏳ Fix/implement the feature\n4. ⏳ Create tests\n5. ⏳ Run tests\n6. ⏳ Create documentation\n7. ⏳ Run 'check_ready_to_commit'\n8. ⏳ Run 'commit_and_push'\n9. ⏳ Run 'perform_release'\n10. ⏳ Complete task`
+    `✅ Feature flow recorded!\n\nDescription: ${description}\n${drawing.ok?`Zettly Draw #${drawing.id}: ${drawing.url||''}`:drawing.note}\n\nNext Steps:\n1. ✓ Start task\n2. ✓ Describe feature flow\n3. ⏳ Fix/implement the feature\n4. ⏳ Create tests\n5. ⏳ Run tests\n6. ⏳ Create documentation\n7. ⏳ Run 'check_ready_to_commit'\n8. ⏳ Run 'commit_and_push'\n9. ⏳ Run 'perform_release'\n10. ⏳ Complete task`
   );
 }
 
 export async function handleCreateTests(workflowState) {
+  if (!workflowState.state.featureFlowCreated) {
+    return textResponse("⚠️ Record the feature flow with 'create_feature_flow' before creating tests!");
+  }
   if (!workflowState.state.bugFixed) {
     return textResponse("⚠️ Please mark your feature/bug as fixed first using 'mark_bug_fixed'!");
   }
@@ -556,6 +651,7 @@ export async function handleRunTests(args, workflowState) {
       status: args.passed ? "succeeded" : "failed",
       target: workflowState.state.activeBuild?.target || "Test Suite Execution",
       command: args.testCommand,
+      machine: workflowState.state.machine || process.env.DEVWF_BUILD_HOST || os.hostname(),
       stage: args.passed ? "All tests passed" : "Tests failed",
       progress: args.passed ? 100 : workflowState.state.activeBuild?.progress ?? null,
       output: typeof args.details === "string" ? args.details : "",
@@ -584,7 +680,7 @@ export async function handleRunTests(args, workflowState) {
   workflowState.state.currentPhase = "documentation";
   await workflowState.save();
 
-  await reportEventSafe(workflowState.state, "tests_passed", args.testCommand);
+  await reportEventSafe(workflowState.state, "tests_passed", args.testCommand, workflowState._sessionKey().key);
 
   return textResponse(
     `✅ All tests passed! 🎉\n\nTest command: ${args.testCommand}\n\n📝 Now create or update documentation using 'create_documentation' with:\n- documentationType: "PRD", "README", "RELEASE_NOTES", "inline-comments", "API-docs", "changelog", or "other"\n- summary: Brief description of what was documented\n\nNext Steps:\n1. ✓ Fix/implement feature\n2. ✓ Create tests\n3. ✓ Run tests (GREEN!)\n4. ⏳ Create/update documentation\n5. ⏳ Run 'check_ready_to_commit'\n6. ⏳ Run 'commit_and_push'\n7. ⏳ Run 'perform_release' (or use 'skip_release' if no release is needed)\n8. ⏳ Complete task`
@@ -853,7 +949,11 @@ export async function handleReportBuildStatus(args = {}, workflowState) {
   }
 
   const prev = workflowState.state.activeBuild || null;
-  const next = normalizeBuildState(args, prev);
+  const buildInput = {
+    ...args,
+    machine: args.machine || workflowState.state.machine || process.env.DEVWF_BUILD_HOST || os.hostname(),
+  };
+  const next = normalizeBuildState(buildInput, prev);
   workflowState.state.activeBuild = next;
 
   if (!Array.isArray(workflowState.state.buildHistory)) {
@@ -877,7 +977,7 @@ export async function handleReportBuildStatus(args = {}, workflowState) {
           ? "build_progress"
           : "build_started";
 
-  await reportEventSafe(workflowState.state, eventKind, JSON.stringify(next));
+  await reportEventSafe(workflowState.state, eventKind, JSON.stringify(next), workflowState._sessionKey().key);
 
   const block = formatBuildStatusBlock(next, workflowState.state.buildHistory);
   return textResponse(`✅ Build status recorded!\n\n${block}`);

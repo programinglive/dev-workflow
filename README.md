@@ -51,20 +51,22 @@ external tools, runtime authentication stores, historical Git and backups still
 require operational controls. A credential already pasted into a model cannot be
 removed by this server.
 
-An MCP server that enforces development workflow discipline: **tests → documentation → commit → release**, with no way to skip a step.
+An MCP server that enforces development workflow discipline: **start (mandatory visual flow gate) → tests → documentation → commit → release**, with no way to skip a step.
 
 ```mermaid
 graph LR
-    A[start_task] --> S[Optional search_project discovery] --> B[Implement]
+    A[start_task] --> F[Auto Zettly Draw Canvas & Flow Gate]
+    F --> S[Optional search_project discovery]
+    S --> B[Implement]
     B --> C[mark_bug_fixed]
     C --> D[create_tests]
     D --> E[run_tests]
     E -- FAIL --> B
-    E -- PASS --> F[create_documentation]
-    F --> G[check_ready_to_commit]
-    G --> H[commit_and_push]
-    H --> I[perform_release / skip_release]
-    I --> J[complete_task]
+    E -- PASS --> G[create_documentation]
+    G --> H[check_ready_to_commit]
+    H --> I[commit_and_push]
+    I --> J[perform_release / skip_release]
+    J --> K[complete_task]
 ```
 
 ---
@@ -79,20 +81,26 @@ finished.
 
 | Path | Single responsibility |
 |---|---|
-| `index.js` | MCP entry point: registers the 42 tools, English implementation instructions and handlers |
+| `index.js` | MCP entry point: registers the 52 tools, English implementation instructions and handlers |
 | `mcp-index.js` | Central MCP ecosystem index & context-aware recommender for all 12 ecosystem MCP servers |
 | `build-monitor.js`, `monitor-server/build-monitor.cjs` | Real-time build & execution status tracker (`report_build_status`) shared between MCP and the live monitor dashboard |
+| `mobile-app/build-view.js` | Android build tab presentation and truthful build host labeling |
 | `workflow-state.js` | The state machine and its persistence (phase, DoD, plan, history, activeBuild) |
 | `workflow-guidance.js` | English implementation instructions delivered at connection and workflow checkpoints |
 | `zettly-client.js` | Device-local owner credentials, account checks and bounded authenticated Zettly requests |
 | `zettly-workflow.js` | Canonical Todo links, progress synchronization and durable linked-outcome retries |
+| `sentry-client.js` | Bounded read-only Sentry cloud issue queries with private device credentials |
+| `task-provenance.js` | True initial task origin and verified service/context relation metadata |
+| `zettly-context.js` | Bounded incoming/outgoing Zettelkasten task and note context with explicit coverage |
+| `tools/handler-modules/integration-handlers.js` | Verified service connection states and canonical Zettly/Factory/Sentry links |
 | `db/` | Storage adapters: SQLite (default), PostgreSQL, MySQL, plus migration and replication |
 | `monitor.js` | Best-effort reporting of workflow changes to the live dashboard; the MCP process also sends a small heartbeat while its client session stays connected |
-| `monitor-server/` | The dashboard process (`dashboard.cjs`), the public share process (`share-server.cjs`), their SQL builders, and their systemd units. Includes responsive bottom navigation bar (Aktif, Riwayat, Rekap, Mesin, Info) and interactive session detail modals. |
+| `monitor-server/` | The dashboard process (`dashboard.cjs`), the public share process (`share-server.cjs`), their SQL builders, and their systemd units. Includes responsive bottom navigation bar (Aktif, Riwayat, Rekap, Mesin, Info) and interactive session detail modals. Session cards show the repository (`repo_path` plus `repo_remote`) and warn when a task has no Mermaid flow yet. |
 | `web/` | The public marketing site: Next.js static export published to `devworkflow.programinglive.com` |
 | `mobile-app/` | The tablet client (Expo/React Native) that shows the same sessions on a wall screen. Includes a **"Buka di Browser"** button (Info tab) and a tappable header URL that open the dashboard in the device browser via `Linking.openURL`. |
 | `security/` | Secret references, output scanning, and the audit |
 | `factory-*.js`, `db/` | Software Factory integration: claiming board tasks, pushing results |
+| `managed/` | Central release distribution, bootstrap launcher, protocol validation, and automated multi-device rollout (`managed/rollout.cjs`) |
 | `scripts/` | Release, build, verification, and server setup helpers |
 | `tests/` | One file per behaviour; `monitor-*` covers the dashboard, `web-*` the site |
 | `docs/` | Deployment guides, architecture notes, and the specs/plans this project was built from |
@@ -140,11 +148,21 @@ See [MCP client configuration](#mcp-client-configuration).
 
 ## Available Tools
 
-42 tools.
+52 tools. See [service connections and proactive Zettly direction](docs/service-integrations.md) and [focus-first development](docs/focus-workflow.md).
 
 | Tool | Purpose |
 |---|---|
-| `start_task` | Begin a task; requires `definitionOfDone` and `plan`; automatically creates or links its Zettly Todo and recommends relevant MCP tools |
+| `get_current_focus` | Read the configured owner and single active Zettly focus |
+| `set_focus` | Set one focus without replacing unfinished work |
+| `link_task_to_focus` | Associate the active canonical task while preserving its source |
+| `complete_focus` | Close focus only after linked work is complete and evidence is recorded |
+| `get_integration_status` | Verify authenticated access to Zettly, Factory and Sentry without exposing credentials |
+| `get_zettly_task_context` | Read bounded linked task/note context, cycles and incoming/outgoing coverage |
+| `list_sentry_issues` | Read bounded Sentry issue summaries in the configured organization |
+| `inventory_sentry_issues` | Scan all accessible projects and issue pages in an explicit window; save a private coverage snapshot |
+| `get_sentry_issue` | Retrieve one bounded issue summary without raw event payloads |
+| `link_sentry_issue` | Link a verified issue and optional existing Factory task to the current canonical Zettly Todo |
+| `start_task` | Begin a task; requires `definitionOfDone` and `plan`; automatically creates or links its Zettly Todo |
 | `recommend_mcp_tools` | Central discovery index and context-aware recommender for all MCP servers and tools (`central-gateway`, `pocketbase`, `infra-knowledge`, `notify`, `factory`, `zettly`, `clinic-helper`, `playwright`, `gcp`, `cloudflare`, `netlify`, `mermaid`) |
 | `report_build_status` | Report live build, test, security scan, or deployment progress (`building`, `testing`, `scanning`, `deploying`, `succeeded`, `failed`, `idle`) with target, command, stage, progress percentage, and output snippet |
 | `sync_zettly_task` | Retry pending Zettly task/outcome synchronization or link an existing Todo |
@@ -155,7 +173,9 @@ See [MCP client configuration](#mcp-client-configuration).
 | `set_definition_of_done` | Add or replace the checklist of the current task |
 | `mark_dod_item` | Prove one item, with evidence |
 | `waive_dod_item` | Exclude one item, with a reason |
-| `create_feature_flow` | Record the feature flow as Mermaid |
+| `create_feature_flow` | Record the Mermaid plan and publish an editable Zettly Draw linked to the canonical Todo (tldraw v4 store schema, fractional indexing, and ProseMirror richText compliant) |
+| `link_factory_task` | Verify and link an existing Factory task to the active Todo and monitor session |
+| `link_zettly_drawing` | Verify and link an existing Zettly Draw to the active Todo |
 | `mark_bug_fixed` | Mark the implementation done |
 | `create_tests` | Mark tests as written |
 | `skip_tests` | Skip tests with a justification |
@@ -170,6 +190,8 @@ See [MCP client configuration](#mcp-client-configuration).
 | `next_steps` | Show the follow-ups stored by the last completed task |
 | `get_workflow_status` | Show the current phase |
 | `continue_workflow` | Get guidance on the next step |
+
+Development tasks are recorded in Factory by default when the configured account and a matching Git repository project are available. The original request, Zettly Todo, Sentry issue if applicable, Factory task, and visual plan remain separate linked records. `start_task` reports a visible warning when Factory recording fails; it never chooses an unrelated project. Existing Factory links are reused. `create_feature_flow` publishes editable shapes and a preview in Zettly Draw, while `mark_bug_fixed` requires that flow first. The monitor shows the source and linked records. An explicit `FACTORY_AUTO_TASK=false` is reserved for isolated test environments.
 | `view_history` | List completed tasks |
 | `run_full_workflow` | Run every step in one call (requires `dodEvidence` for open items) |
 | `rerun_workflow` | Restart the current task from the beginning |
@@ -531,14 +553,18 @@ the endpoint that actually supports it:
 | Requested status | Endpoint used | Result |
 |---|---|---|
 | `review`, `blocked`, `paused` | `POST /api/work {action:finish}` | Session closes, task changes accordingly |
-| `backlog`, `queued`, `cancelled` | `POST /api/factory {action:move_task}` | Board column changes |
+| `backlog`, `queued`, `cancelled`, `done` | `POST /api/factory {action:move_task}` | Board column changes; `done` requires the task to be in review with its checklist satisfied |
 | `running` | — rejected | Point the caller at `claim_factory_task` |
-| `done` | — rejected | A human approves the work in Factory |
 
 `review` requires an active work session. Asking for it without one fails with
 "no active work session" instead of silently doing nothing - the task must be
 claimed first. Full behaviour, limits (summary 2000 chars, step 240 chars) and
 troubleshooting live in [docs/factory-integration.md](docs/factory-integration.md).
+
+For a linked development task, claim the Factory task, report it for review, and
+then call `complete_task` after the workflow checks pass. `complete_task` moves
+the matching Factory task to `done` through the configured Factory client and
+reports an actionable warning if Factory rejects that transition.
 
 #### Review is reported once, not twice
 
@@ -907,17 +933,26 @@ captured stderr before the build test asserts on it.
 
 ## CI
 
-`.github/workflows/ci.yml` runs on the **self-hosted runner on MMCH**, not on
+`.github/workflows/ci.yml` is a thin caller for the organisation-wide standard
+`programinglive/ci-cd@v1`. It runs on the **self-hosted runner on MMCH**, not on
 GitHub-hosted minutes:
 
 ```yaml
-runs-on: [self-hosted, windows, mmch]
+jobs:
+  ci:
+    uses: programinglive/ci-cd/.github/workflows/ci-node.yml@v1
+    with:
+      runner: '["self-hosted","windows","mmch"]'
 ```
 
 | Job | Steps |
 |---|---|
-| `test` | `npm ci` → `npm test` → `build:server` → **verify the bundle starts** → `npm audit --omit=dev --audit-level=high` → setup-stack suite |
-| `web` | `npm ci` in `web/` → static export build → verify `out/index.html` and CSS size → `npm audit --audit-level=high` |
+| `ci` (test/lint/build) | `npm ci` → `npm test` → security boundaries → setup-stack suite → `npm run lint` → `build:server` → **verify the bundle starts** → `npm audit --omit=dev --audit-level=high` |
+| `ci` (web) | `npm ci` in `web/` → static export build → `npm audit --omit=dev --audit-level=high` |
+
+The workflow definition lives in `programinglive/ci-cd`, so every repository
+runs the same steps. Changing this repository's checks means changing the
+caller's `with:` block, not copying pipeline code.
 
 The bundle verification step exists because a successful build does not mean
 the artefact runs. `dist/index.mjs` is the published package entry, and a
