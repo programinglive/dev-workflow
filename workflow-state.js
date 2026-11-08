@@ -2579,6 +2579,9 @@ export class WorkflowState {
       history,
       taskType: "",
       workflowTaskId: "",
+      // Kartu sebelumnya dalam sesi ini, untuk rantai Zettelkasten.
+      // Diisi start_task sebelum reset() menghapus identitas task lama.
+      parentTask: null,
       zettly: null,
       zettlyOutbox: Array.isArray(previous.zettlyOutbox) ? previous.zettlyOutbox : [],
       activeBuild: null,
