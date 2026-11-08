@@ -145,7 +145,10 @@ test("lock diletakkan di .state proyek, bukan di direktori user", () => {
     "workflow-state.ses_x.json"
   );
 
-  assert.equal(projectLockDir(stateFile), path.resolve("C:", "proyek", ".state"));
+  // path.resolve("C:") is DRIVE-RELATIVE on Windows: it resolves against the
+  // current directory of drive C:, so the expectation built itself from the
+  // checkout path and never matched. An absolute segment pins the drive root.
+  assert.equal(projectLockDir(stateFile), path.resolve("C:/proyek", ".state"));
 });
 
 test("dua sesi berbeda di proyek yang sama memakai lock yang SAMA", () => {
