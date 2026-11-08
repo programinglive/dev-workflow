@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 
 const ci = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
+const pkg = readFileSync(new URL('../package.json', import.meta.url), 'utf8');
 
 test('CI calls the shared ci-cd workflow', () => {
   assert.match(ci, /uses:\s*programinglive\/ci-cd\/\.github\/workflows\/ci-node\.yml@v1/);
@@ -22,8 +23,12 @@ test('CI keeps the self-hosted MMCH runner', () => {
 });
 
 test('CI preserves the quality gates that existed before', () => {
-  assert.match(ci, /npm run test:security/);
-  assert.match(ci, /npm run lint/);
-  assert.match(ci, /verify-bundle/);
+  // The chains live in npm scripts so the caller works in any runner shell:
+  // Windows runners use Windows PowerShell 5.1, where `&&` is invalid.
+  assert.match(ci, /test-command:\s*npm run ci:test/);
+  assert.match(ci, /lint-command:\s*npm run lint/);
+  assert.match(ci, /build-command:\s*npm run ci:build/);
   assert.match(ci, /web-build-command/);
+  assert.match(pkg, /"ci:test":\s*"[^"]*npm run test:security/);
+  assert.match(pkg, /"ci:build":\s*"[^"]*verify:bundle/);
 });

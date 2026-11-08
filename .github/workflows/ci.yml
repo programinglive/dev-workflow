@@ -26,8 +26,8 @@ jobs:
       # The MMCH runner has no npm cache directory, so caching stays off. Each
       # runner uses its own default shell (pwsh on Windows, bash on Linux).
       cache: ""
-      test-command: npm test && npm run test:security && node --test tests/setup-stack.test.js
+      test-command: npm run ci:test
       lint-command: npm run lint
-      build-command: npm run build:server && node scripts/verify-bundle.mjs
+      build-command: npm run ci:build
       web-build-command: npm run build
       web-dir: web
