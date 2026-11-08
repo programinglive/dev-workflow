@@ -103,6 +103,7 @@ test('dashboard renders explicit origin separately from every relation with IDs 
   vm.createContext(context);
   // Execute the real renderer embedded in the browser script without a DOM or server.
   const { normalizeTaskMetadata, renderTaskMetadata } = require('../monitor-server/task-metadata.cjs');
+  const { estimateBuild } = require('../monitor-server/build-report.cjs');
   vm.runInContext(normalizeTaskMetadata.toString() + '\n' + renderTaskMetadata.toString(), context);
   const html = context.renderTaskMetadata({ workflow_task_id: 'wf-1', task_origin_json: origin, task_relations_json: relations });
   assert.match(html.replace(/<[^>]*>/g, ''), /Source: Factory/);
@@ -126,8 +127,9 @@ test('dashboard renders explicit origin separately from every relation with IDs 
 
 test('served browser script displays metadata on cards, history and detail and anchor clicks bypass the modal', () => {
   const { normalizeTaskMetadata, renderTaskMetadata } = require('../monitor-server/task-metadata.cjs');
+  const { estimateBuild } = require('../monitor-server/build-report.cjs');
   const { visibleTaskSessions } = require('../monitor-server/visible-task-sessions.cjs');
-  const pageContext = vm.createContext({ normalizeTaskMetadata, renderTaskMetadata, visibleTaskSessions, POLL_MS: 3000 });
+  const pageContext = vm.createContext({ normalizeTaskMetadata, renderTaskMetadata, visibleTaskSessions, estimateBuild, POLL_MS: 3000 });
   const pageExpression = dashboard.slice(dashboard.indexOf('const PAGE = '), dashboard.indexOf('async function query('));
   const page = vm.runInContext(pageExpression + '\nPAGE', pageContext);
   const script = page.match(/<script>([\s\S]*?)<\/script>/)[1];

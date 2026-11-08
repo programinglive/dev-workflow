@@ -7,6 +7,7 @@ import vm from 'node:vm';
 const require = createRequire(import.meta.url);
 const dashboard = readFileSync(new URL('../monitor-server/dashboard.cjs', import.meta.url), 'utf8');
 const { normalizeTaskMetadata, renderTaskMetadata } = require('../monitor-server/task-metadata.cjs');
+  const { estimateBuild } = require('../monitor-server/build-report.cjs');
 const { visibleTaskSessions } = require('../monitor-server/visible-task-sessions.cjs');
 
 test('renderTaskMetadata outputs flow preview container and thumbnail for zettly_draw relation', () => {
@@ -35,7 +36,7 @@ test('dashboard PAGE HTML contains modal-flow dialog with preview and PNG export
 });
 
 test('served browser script contains openFlowModal, tutupFlowModal and unduhFlowPng functions', () => {
-  const pageContext = vm.createContext({ normalizeTaskMetadata, renderTaskMetadata, visibleTaskSessions, POLL_MS: 3000 });
+  const pageContext = vm.createContext({ normalizeTaskMetadata, renderTaskMetadata, visibleTaskSessions, estimateBuild, POLL_MS: 3000 });
   const pageExpression = dashboard.slice(dashboard.indexOf('const PAGE = '), dashboard.indexOf('async function query('));
   const page = vm.runInContext(pageExpression + '\nPAGE', pageContext);
   const script = page.match(/<script>([\s\S]*?)<\/script>/)[1];

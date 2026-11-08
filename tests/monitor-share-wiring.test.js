@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { createRequire } from 'node:module';
 const {visibleTaskSessions}=createRequire(import.meta.url)('../monitor-server/visible-task-sessions.cjs');
 const { normalizeTaskMetadata, renderTaskMetadata } = createRequire(import.meta.url)('../monitor-server/task-metadata.cjs');
+const { estimateBuild } = createRequire(import.meta.url)('../monitor-server/build-report.cjs');
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const src = readFileSync(path.join(ROOT, "monitor-server", "dashboard.cjs"), "utf8");
@@ -60,7 +61,7 @@ test("kode halaman dashboard tidak memakai template literal di dalam template li
   const akhir = src.indexOf("</html>`", mulai);
   assert.ok(mulai > 0 && akhir > mulai, "PAGE harus tetap berupa satu template literal");
   const halaman = src.slice(mulai, akhir);
-  const terlarang = halaman.match(/\$\{(?!POLL_MS\}|visibleTaskSessions\.toString\(\)\}|normalizeTaskMetadata\.toString\(\)\}|renderTaskMetadata\.toString\(\)\})/g) || [];
+  const terlarang = halaman.match(/\$\{(?!POLL_MS\}|visibleTaskSessions\.toString\(\)\}|normalizeTaskMetadata\.toString\(\)\}|renderTaskMetadata\.toString\(\)\}|estimateBuild\.toString\(\)\})/g) || [];
   assert.deepEqual(terlarang, [], "only the interval and named static filter/metadata helpers may be interpolated");
 });
 
@@ -71,8 +72,8 @@ test("skrip halaman dashboard benar-benar bisa di-parse", () => {
   const mulai = src.indexOf("const PAGE = `");
   const akhir = src.indexOf("</html>`", mulai);
   const template = src.slice(mulai + "const PAGE = `".length, akhir);
-  const halaman = new Function("POLL_MS", 'visibleTaskSessions', 'normalizeTaskMetadata', 'renderTaskMetadata', `return \`${template}\`;`)(
-    3000, visibleTaskSessions, normalizeTaskMetadata, renderTaskMetadata,
+  const halaman = new Function("POLL_MS", 'visibleTaskSessions', 'normalizeTaskMetadata', 'renderTaskMetadata', 'estimateBuild', `return \`${template}\`;`)(
+    3000, visibleTaskSessions, normalizeTaskMetadata, renderTaskMetadata, estimateBuild,
   );
   const skrip = halaman.slice(halaman.indexOf("<script>") + 8, halaman.lastIndexOf("</script>"));
   assert.ok(skrip.length > 500, "skrip halaman tidak boleh kosong");

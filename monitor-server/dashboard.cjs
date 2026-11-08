@@ -22,7 +22,7 @@ const {
 const { buildHealth, DEFAULT_STALE_AFTER_MS } = require('./health.cjs');
 const { buildMachinesQuery, DEFAULT_STALE_AFTER_DAYS } = require('./machines-query.cjs');
 const { dedupeSessions } = require('./dedupe-sessions.cjs');
-const { buildReportQuery, buildReportPayload, estimateBuild, MIN_SAMPLES, STALL_MS, toMs, numberOrNull, clamp0, minutes, isRevised } = require('./build-report.cjs');
+const { buildReportQuery, buildReportPayload, estimateBuild } = require('./build-report.cjs');
 const { withRepoLink } = require('./repo-link.cjs');
 const { buildHistoryQuery, formatDuration, DEFAULT_HISTORY_DAYS } = require('./history-query.cjs');
 const {
@@ -648,13 +648,6 @@ function renderBuildBox(ab, jNow, machine) {
     (ab.output ? '<div class="event-out-box" style="margin-top:6px">' + esc(ab.output) + '</div>' : '') +
   '</div>';
 }
-const MIN_SAMPLES = ${MIN_SAMPLES};
-const STALL_MS = ${STALL_MS};
-const toMs = ${toMs.toString()};
-const numberOrNull = ${numberOrNull.toString()};
-const clamp0 = ${clamp0.toString()};
-const minutes = ${minutes.toString()};
-const isRevised = ${isRevised.toString()};
 const estimateBuild = ${estimateBuild.toString()};
 
 function buildSummaryFor(ab) {

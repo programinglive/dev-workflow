@@ -309,9 +309,34 @@ function estimateBuild({
   run = {},
   now = Date.now(),
   previous = null,
-  minSamples = MIN_SAMPLES,
-  stallMs = STALL_MS,
+  minSamples = 5,
+  stallMs = 120000,
 } = {}) {
+  // Self-contained on purpose: the dashboard page inlines this function with
+  // toString(), so every helper it needs is defined here rather than reached
+  // through module scope.
+  const toMs = (value) => {
+    const parsed = Date.parse(String(value == null ? '' : value));
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  const numberOrNull = (value) => {
+    if (value === null || value === undefined || value === '') return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  const clamp0 = (value) => (Number.isFinite(value) ? Math.max(0, Math.round(value)) : null);
+  const minutes = (ms) => Math.round((Number(ms) || 0) / 60000);
+  const isRevised = (before, after) => {
+    if (!before || typeof before !== 'object') return false;
+    if (String(before.state || '') !== String(after.state || '')) return true;
+    for (const key of ['remainingLowMs', 'remainingHighMs']) {
+      const first = before[key];
+      const second = after[key];
+      if (!Number.isFinite(first) || !Number.isFinite(second)) continue;
+      if (Math.abs(second - first) / Math.max(1, Math.abs(first)) > 0.2) return true;
+    }
+    return false;
+  };
   const nowMs = typeof now === 'number' ? now : toMs(now) ?? Date.now();
   const startedMs = toMs(run.startedAt) ?? nowMs;
   const elapsed = Math.max(0, nowMs - startedMs);
