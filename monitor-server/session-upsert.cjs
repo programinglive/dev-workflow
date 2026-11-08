@@ -53,6 +53,23 @@ function normalTool(v) {
 }
 
 /**
+ * Fase kartu yang sudah diserahkan ke kartu berikutnya dalam sesi yang sama.
+ *
+ * Bukan `closed`: sesinya masih hidup. Tetapi kartu ini tidak lagi menjadi
+ * pekerjaan aktif, jadi ia harus hilang dari tab Aktif dan hanya muncul di
+ * Riwayat - dengan tautan ke kartu penerusnya.
+ */
+const HANDOFF_PHASE = 'handed-off';
+
+/** Kartu sebelumnya, dari kiriman snapshot. */
+function parentOf(b) {
+  const p = b && b.parentTask && typeof b.parentTask === 'object' ? b.parentTask : null;
+  const id = p ? str(p.taskId, 200) : '';
+  if (!id) return null;
+  return { taskId: id, title: str(p.title, 500) };
+}
+
+/**
  * @param {object} body  kiriman dari pelapor
  * @returns {{ sql: string, params: Array }}
  */
@@ -62,13 +79,15 @@ function buildSessionUpsert(body = {}) {
   if (!key) throw new Error('sessionKey wajib');
 
   const plan = Array.isArray(b.plan) ? b.plan.slice(0, 40) : [];
+  const parent = parentOf(b);
 
   return {
     sql: `INSERT INTO sessions (session_key, machine, project_path, project_name, task, task_type, phase,
                                plan_json, plan_done, plan_total, dod_done, dod_total, dod_waived,
-                               owner_pid, started_at, session_title, agent_tool, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,now())
-         ON CONFLICT (session_key) DO UPDATE SET
+                               owner_pid, started_at, session_title, agent_tool,
+                               task_id, parent_task_id, parent_task_title, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,now())
+         ON CONFLICT (session_key, task_id) DO UPDATE SET
            machine=EXCLUDED.machine,
            -- Identitas tidak boleh dihapus oleh kiriman kosong. Ini bug yang
            -- membuat nama proyek hilang tepat saat task ditutup.
@@ -110,6 +129,10 @@ function buildSessionUpsert(body = {}) {
              GREATEST(sessions.started_at, EXCLUDED.started_at),
              GREATEST(EXCLUDED.started_at, sessions.started_at)
            ),
+           -- Identitas rantai tidak boleh hilang oleh kiriman kosong, sama
+           -- seperti identitas proyek di atas.
+           parent_task_id=COALESCE(EXCLUDED.parent_task_id, sessions.parent_task_id),
+           parent_task_title=COALESCE(NULLIF(EXCLUDED.parent_task_title, ''), sessions.parent_task_title),
            updated_at=now()`,
     params: [
       key,
@@ -129,8 +152,35 @@ function buildSessionUpsert(body = {}) {
       b.startedAt || null,
       str(b.sessionTitle, 200),
       normalTool(b.agentTool),
+      str(b.taskId, 200),
+      parent ? parent.taskId : null,
+      parent ? parent.title : null,
     ],
   };
 }
 
-module.exports = { buildSessionUpsert };
+/**
+ * Tandai kartu sebelumnya sebagai sudah diserahkan.
+ *
+ * Tanpa ini, kartu lama tetap terlihat "berjalan" selamanya karena hanya
+ * `idle` yang punya batas umur di query aktif. `handed-off` menyatakan hal
+ * yang sebenarnya: sesinya masih hidup, tetapi topik itu sudah pindah ke kartu
+ * berikutnya.
+ *
+ * @returns {{sql: string, params: Array}|null}
+ */
+function buildParentHandoff(body = {}) {
+  const b = body || {};
+  const key = str(b.sessionKey, 200);
+  const parent = parentOf(b);
+  if (!key || !parent) return null;
+
+  return {
+    sql: `UPDATE sessions SET phase = '${HANDOFF_PHASE}', updated_at = now()
+           WHERE session_key = $1 AND task_id = $2
+             AND phase NOT IN ('closed', 'done', 'cancelled', '${HANDOFF_PHASE}')`,
+    params: [key, parent.taskId],
+  };
+}
+
+module.exports = { buildSessionUpsert, buildParentHandoff, HANDOFF_PHASE };
