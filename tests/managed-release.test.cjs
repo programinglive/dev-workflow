@@ -10,6 +10,83 @@ const {once} = require('node:events');
 const {createReleaseServer} = require('../managed/release-server.cjs');
 const {tarExecutable} = require('../managed/protocol.cjs');
 const {resolveRelease, validateManifest, validateArchiveEntries,acquireInstallLock} = require('../managed/launcher.cjs');
+const {classifyLineage, enforceForwardOnly, readHostCurrentRevision} = require('../managed/rollout.cjs');
+
+const rev = (c) => c.repeat(40);
+
+test('forward-only lineage guard classifies same, forward, regression, divergent, and unknown', () => {
+  const cur = rev('a'), forward = rev('b'), older = rev('c');
+  const isAncestor = (parent, child) => parent === cur && child === forward;
+  assert.equal(classifyLineage(cur, cur, isAncestor), 'same');
+  assert.equal(classifyLineage(cur, forward, isAncestor), 'forward');
+  assert.equal(classifyLineage(forward, cur, isAncestor), 'regression');
+  assert.equal(classifyLineage(rev('x'), rev('y'), isAncestor), 'divergent');
+  assert.equal(classifyLineage('', cur, isAncestor), 'unknown');
+});
+
+test('enforceForwardOnly refuses regression, divergence, and unverifiable lineage', () => {
+  const manifest = { revision: rev('a'), sha256: rev('1'), size: 10 };
+  const isAncestor = (parent, child) => parent === rev('b') && child === rev('a');
+  assert.doesNotThrow(() => enforceForwardOnly(manifest, { currentRevision: rev('b'), isAncestor }));
+  assert.doesNotThrow(() => enforceForwardOnly(manifest, { currentRevision: rev('a'), isAncestor }));
+  assert.throws(
+    () => enforceForwardOnly({ revision: rev('b'), sha256: rev('1'), size: 10 }, { currentRevision: rev('a'), isAncestor }),
+    /refus/i,
+  );
+  assert.throws(
+    () => enforceForwardOnly({ revision: rev('z'), sha256: rev('1'), size: 10 }, { currentRevision: rev('a'), isAncestor }),
+    /divergent/i,
+  );
+  assert.throws(
+    () => enforceForwardOnly({ revision: rev('c'), sha256: rev('1'), size: 10 }, { currentRevision: rev('a'), isAncestor: () => null }),
+    /verify the lineage/i,
+  );
+});
+
+test('readHostCurrentRevision parses, fails open on empty or corrupt pointer files', () => {
+  const host = { name: 'test-host' };
+  assert.equal(readHostCurrentRevision(host, { runImpl: () => JSON.stringify({ revision: rev('a') }) }), rev('a'));
+  assert.equal(readHostCurrentRevision(host, { runImpl: () => '' }), null);
+  assert.equal(readHostCurrentRevision(host, { runImpl: () => '{broken' }), null);
+  let threw = 0;
+  assert.equal(readHostCurrentRevision(host, { runImpl: () => { threw++; throw new Error('ssh down'); } }), null);
+  assert.equal(threw, 1);
+});
+
+test('promoteToServers runs the lineage guard before any transfer and stops the rollout on regression', () => {
+  const {promoteToServers} = require('../managed/rollout.cjs');
+  const current = rev('a');
+  const manifest = { revision: rev('b'), sha256: rev('1'), size: 10 };
+  const calls = [];
+  assert.throws(
+    () =>
+      promoteToServers(manifest, {
+        hosts: [{ name: 'test-host' }],
+        readHostCurrentRevision: () => current, // host is at 'a'
+        isAncestor: (parent, child) => parent === rev('b') && child === rev('a'), // 'b' ancestor of 'a' => candidate 'b' is OLDER
+        runImpl: (cmd, args) => { calls.push(cmd); return ''; },
+      }),
+    /refus/i,
+  );
+  assert.deepEqual(calls, [], 'no transfer may happen once the guard rejects');
+});
+
+test('promoteToServers allows an idempotent same-revision rotation and records the rollback pointer', () => {
+  const {promoteToServers} = require('../managed/rollout.cjs');
+  const current = rev('a');
+  const manifest = { revision: rev('a'), sha256: rev('1'), size: 10 };
+  const calls = [];
+  promoteToServers(manifest, {
+    hosts: [{ name: 'test-host' }],
+    readHostCurrentRevision: () => current,
+    isAncestor: () => false,
+    runImpl: (cmd, args) => { calls.push(cmd + ' ' + args.join(' ')); return ''; },
+  });
+  const all = calls.join('\n');
+  assert.match(all, /scp .*test-host:\/tmp\//);
+  assert.match(all, /rollback-a+\.json/, 'the replaced revision is kept as a rollback pointer');
+  assert.ok(calls.filter((entry) => entry.startsWith('ssh ')).length === 1);
+});
 
 const token = 'test-only-managed-release-token';
 async function fixture(t) {
