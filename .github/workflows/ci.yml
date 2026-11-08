@@ -23,6 +23,10 @@ jobs:
     with:
       node-version: "24"
       runner: '["self-hosted","windows","mmch"]'
+      # The MMCH runner is Windows: cmd supports the && chains below and the
+      # runner has no npm cache directory, so caching stays off.
+      shell: cmd
+      cache: ""
       test-command: npm test && npm run test:security && node --test tests/setup-stack.test.js
       lint-command: npm run lint
       build-command: npm run build:server && node scripts/verify-bundle.mjs
