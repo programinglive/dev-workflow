@@ -25,8 +25,14 @@ Two repository secrets are required, once:
 
 ```bash
 gh secret set NETLIFY_AUTH_TOKEN    # Netlify personal access token
-gh secret set NETLIFY_SITE_ID --body 3b9966e4-43e6-45a8-bafc-8dd0a35aacf2
+gh secret set NETLIFY_SITE_ID --body 0c56970f-de8a-4b92-8a36-9b7d23ba1345
 ```
+
+`0c56970f-de8a-4b92-8a36-9b7d23ba1345` is the `devworkflow` project, recreated on
+2026-11-08 after the previous site was removed. The earlier id
+`3b9966e4-…` no longer resolves, which is why the deploy failed with
+`Project not found`. The custom domain `devworkflow.programinglive.com` points at
+Netlify through a DNS-only A record (`75.2.60.5`) in Cloudflare.
 
 The workflow fails on purpose when `web/out/docs/index.html` does not contain the
 version from `package.json`. A hard-coded version string is what let the site
