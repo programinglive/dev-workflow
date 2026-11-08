@@ -115,6 +115,33 @@ With a baseline:
 - Every rendering names the basis: "dari progress" or "dari riwayat", so the
   number is never presented as measured truth.
 
+### 4.3.1 The estimate must react to trouble
+
+A frozen number is worse than no number: it tells the owner everything is fine
+while the build is stuck. The estimate is therefore recomputed on every poll from
+the current `activeBuild`, and it changes state when any of these signals appear:
+
+| Signal | Detection | What the estimate becomes |
+| --- | --- | --- |
+| Overdue | `elapsed > p90` | `lewat p90 (n)`; remaining is no longer shown as a range, instead `sudah Xm, biasanya p50 Y p90 Z` |
+| Stalled | status running, `progress` unchanged for `>= STALL_MS` (120 s) | `tidak ada kemajuan Xm` + the last known range marked `tidak dapat diandalkan` |
+| Progress regression | new `progress` < previous `progress` | treat as stalled immediately; never re-derive a smaller elapsed |
+| Stage change | `stage` differs from the previous event | re-estimate from stage baselines: `remaining = sum(p50 of stages not yet started) + current stage p50 - time already spent in the current stage` |
+| Failed | terminal status `failed` | no ETA; show `gagal setelah Xm (p50 Y)` and the failed stage |
+| Recovered | progress advances again after a stall | clear the stall flag and resume the range, with `diperbarui` next to it |
+
+Rules that keep it honest:
+
+- A revised estimate is always labelled with the reason (`lewat p90`,
+  `tidak ada kemajuan 3m`, `gagal`), so a change is visible rather than silent.
+- When the state changes materially (crossing p90, entering or leaving a stall, or
+  a new range differing by more than 20% from the previous one), the dashboard
+  marks the line `diperbarui` for one poll so the owner sees it move.
+- A stalled or overdue build is never presented as "on track"; the ETA line uses
+  the same warning colour as the existing stuck-session state.
+- The same revision rules apply to `build_estimate` when it is asked about the
+  running build, so the agent and the dashboard never disagree.
+
 ### 4.4 API
 
 `GET /api/builds/report?days=30&project=<optional>&host=<optional>`
@@ -165,8 +192,10 @@ contents.
 - New **Build** tab next to the existing tabs: report table, a 20-point sparkline
   per project, and the unclosed list.
 - The existing build box (`renderBuildBox(s.active_build, jNow, s.machine)` in
-  `dashboard.cjs`) gains an ETA line: `≈3–5m lagi (p50–p90, n=12)`; without a
-  baseline it says `belum ada baseline (n)`.
+  `dashboard.cjs`) gains an ETA line that is recomputed every poll and changes
+  state with trouble: `≈3–5m lagi (p50–p90, n=12)`, `lewat p90 (n=12)`,
+  `tidak ada kemajuan 3m`, `gagal setelah 4m (p50 6m)`; without a baseline it says
+  `belum ada baseline (n)`.
 - The tab is rendered from the same `/api/builds/report` payload as the tool, so
   the human and the agent read the same numbers.
 
@@ -191,6 +220,9 @@ monitor, and no clock: `now` is always a parameter.
   - percentile: odd/even counts, single sample, nearest-rank honesty;
   - estimate: cold start at 4 samples returns `available:false`; at 5 returns a
     range; progress signal vs history signal; progress 0/100 edge cases;
+  - trouble: overdue past p90, stall after 120 s without progress, progress
+    regression treated as a stall, recovery after a stall clears the flag, failed
+    build produces no ETA, stage change re-estimates from stage baselines;
   - grouping: project fallback to host then target;
   - SQL builder: window clamp, optional filters, parameter order.
 - One dashboard test asserting the page contains the Build tab and the ETA hook
