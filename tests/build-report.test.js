@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const { pairBuildRuns, percentile, summarizeRuns } = require('../monitor-server/build-report.cjs');
+const { pairBuildRuns, percentile, summarizeRuns, estimateBuild } = require('../monitor-server/build-report.cjs');
 
 const T0 = '2026-11-08T10:00:00.000Z';
 const at = (minutes) => new Date(Date.parse(T0) + minutes * 60000).toISOString();
@@ -136,4 +136,101 @@ test('stage baseline ignores zero-length stages and keeps p50', () => {
   assert.equal(composer.count, 2);
   assert.equal(composer.p50Ms, 60000); // nearest-rank at p50 picks the lower middle
   assert.equal(summary.projects[0].stages.some((stage) => stage.stage === 'pint'), false);
+  assert.deepEqual(summary.projects[0].stageOrder, ['composer']);
+});
+
+// --- estimator -----------------------------------------------------------
+
+const NOW = Date.parse("2026-11-08T12:00:00.000Z");
+const base = (over = {}) => ({ count: 5, p50Ms: 240000, p90Ms: 360000, maxMs: 600000, stages: [], stageOrder: [], ...over });
+const live = (over = {}) => ({ status: "running", startedAt: new Date(NOW - 60000).toISOString(), progress: null, progressUpdatedAt: new Date(NOW - 10000).toISOString(), stage: "", ...over });
+
+test("four completed builds produce no estimate", () => {
+  const est = estimateBuild({ summary: base({ count: 4 }), run: live(), now: NOW });
+  assert.equal(est.available, false);
+  assert.equal(est.state, "no-baseline");
+  assert.equal(est.sampleCount, 4);
+});
+
+test("five completed builds produce a p50-p90 range", () => {
+  const est = estimateBuild({ summary: base(), run: live(), now: NOW });
+  assert.equal(est.available, true);
+  assert.equal(est.state, "on-track");
+  assert.equal(est.basis, "history");
+  assert.equal(est.remainingLowMs, 180000);
+  assert.equal(est.remainingHighMs, 300000);
+});
+
+test("progress produces the progress basis", () => {
+  const est = estimateBuild({
+    summary: base(),
+    run: live({ startedAt: new Date(NOW - 120000).toISOString(), progress: 50, progressUpdatedAt: new Date(NOW - 30000).toISOString() }),
+    now: NOW,
+  });
+  assert.equal(est.basis, "progress");
+  assert.equal(est.state, "on-track");
+  assert.ok(est.remainingLowMs <= 120000);
+  assert.ok(est.remainingHighMs >= 120000);
+});
+
+test("progress of exactly 0 falls back to history without dividing by zero", () => {
+  const est = estimateBuild({ summary: base(), run: live({ progress: 0 }), now: NOW });
+  assert.equal(est.basis, "history");
+  assert.ok(Number.isFinite(est.remainingLowMs));
+});
+
+test("crossing p90 flips the estimate to overdue and drops the number", () => {
+  const est = estimateBuild({ summary: base(), run: live({ startedAt: new Date(NOW - 420000).toISOString() }), now: NOW });
+  assert.equal(est.state, "overdue");
+  assert.equal(est.available, true);
+  assert.equal(est.remainingLowMs, null);
+  assert.match(est.reason, /p90/);
+});
+
+test("unchanged progress for 120s flips it to stalled", () => {
+  const est = estimateBuild({
+    summary: base(),
+    run: live({ startedAt: new Date(NOW - 180000).toISOString(), progress: 40, progressUpdatedAt: new Date(NOW - 130000).toISOString() }),
+    now: NOW,
+  });
+  assert.equal(est.state, "stalled");
+  assert.match(est.reason, /no progress/);
+});
+
+test("progress going backwards is treated as stalled", () => {
+  const est = estimateBuild({ summary: base(), run: live({ progress: 40, previousProgress: 60 }), now: NOW });
+  assert.equal(est.state, "stalled");
+  assert.match(est.reason, /regressed/);
+});
+
+test("progress advancing after a stall clears it and marks revised", () => {
+  const est = estimateBuild({
+    summary: base(),
+    run: live({ startedAt: new Date(NOW - 200000).toISOString(), progress: 55, progressUpdatedAt: new Date(NOW).toISOString() }),
+    previous: { state: "stalled", remainingLowMs: 100000, remainingHighMs: 200000 },
+    now: NOW,
+  });
+  assert.equal(est.state, "on-track");
+  assert.equal(est.revised, true);
+});
+
+test("a failed build produces no ETA and reports the failed duration", () => {
+  const est = estimateBuild({
+    summary: base(),
+    run: live({ status: "failed", startedAt: new Date(NOW - 360000).toISOString() }),
+    now: NOW,
+  });
+  assert.equal(est.available, false);
+  assert.equal(est.state, "failed");
+  assert.match(est.reason, /failed after 6m/);
+});
+
+test("a stage change re-estimates from stage baselines", () => {
+  const est = estimateBuild({
+    summary: base({ p90Ms: 900000, stages: [{ stage: "composer", p50Ms: 60000, count: 5 }, { stage: "pint", p50Ms: 120000, count: 5 }], stageOrder: ["composer", "pint"] }),
+    run: live({ startedAt: new Date(NOW - 300000).toISOString(), stage: "pint", stageStartedAt: new Date(NOW - 30000).toISOString() }),
+    now: NOW,
+  });
+  assert.equal(est.basis, "stage");
+  assert.equal(est.remainingLowMs, 90000);
 });
