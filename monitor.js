@@ -306,6 +306,58 @@ export async function fetchActiveSessions({
   }
 }
 
+/**
+ * Ambil laporan durasi build dari monitor.
+ *
+ * Sama seperti fetchActiveSessions: tidak pernah melempar, timeout 3 detik, dan
+ * kegagalan jaringan dikembalikan sebagai { ok: false, error }.
+ */
+export async function fetchBuildReport({
+  env = process.env,
+  days = 30,
+  project = "",
+  host = "",
+  fetchImpl = fetch,
+  timeoutMs = 3000,
+} = {}) {
+  const base = monitorUrl(env);
+  if (!base) {
+    return { ok: false, error: "DEVWF_MONITOR_URL tidak dikonfigurasi.", report: null };
+  }
+
+  const controller = typeof AbortController === "function" ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+
+  const headers = { "content-type": "application/json" };
+  const token = monitorToken(env);
+  if (token) headers.authorization = `Bearer ${token}`;
+
+  try {
+    const params = new URLSearchParams({ days: String(Math.min(30, Math.max(1, Number(days) || 30))) });
+    if (project) params.set("project", String(project));
+    if (host) params.set("host", String(host));
+    const url = `${base.replace(/\/+$/, "")}/api/builds/report?${params.toString()}`;
+    const response = await fetchImpl(url, {
+      method: "GET",
+      headers,
+      signal: controller ? controller.signal : undefined,
+    });
+    if (!response || !response.ok) {
+      return {
+        ok: false,
+        error: `monitor menjawab HTTP ${response ? response.status : "tidak diketahui"}`,
+        report: null,
+      };
+    }
+    const data = await response.json();
+    return { ok: true, error: "", report: data || null };
+  } catch (err) {
+    return { ok: false, error: String(err && err.message ? err.message : err), report: null };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export { sessionTitle, updateSessionTitle };
 
 

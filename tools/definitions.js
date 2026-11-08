@@ -768,6 +768,51 @@ export function getToolList() {
       },
     },
     {
+      name: "build_report",
+      description:
+        "Build duration report from the monitor: per-project count, p50, p90, max and the slowest targets, derived from the build events of the last 30 days. Use it to see where build time goes before optimising.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          days: {
+            type: "number",
+            description: "Window in days (1-30, default 30; 30 is the event retention limit).",
+          },
+          project: {
+            type: "string",
+            description: "Optional project name filter, e.g. 'clinic'.",
+          },
+          host: {
+            type: "string",
+            description: "Optional build host filter, e.g. 'mmch'.",
+          },
+        },
+      },
+    },
+    {
+      name: "build_estimate",
+      description:
+        "Estimate how many minutes a build needs, before starting or while it runs. Answers from at least five successful builds; below that it says there is no baseline instead of guessing. While running it revises itself on stall, overdue past p90, progress regression or failure.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          project: {
+            type: "string",
+            description: "Project whose build history is the baseline, e.g. 'clinic'.",
+          },
+          target: {
+            type: "string",
+            description: "Optional build target, e.g. 'npm run verify', for a per-target baseline.",
+          },
+          days: {
+            type: "number",
+            description: "Baseline window in days (1-30, default 30).",
+          },
+        },
+        required: ["project"],
+      },
+    },
+    {
       name: "list_factory_tasks",
       description:
         "List tasks from the Factory board (factory.programinglive.com), newest activity first. Defaults to work that still needs attention: running, queued, backlog, review and blocked. Requires FACTORY_URL plus FACTORY_TOKEN, or FACTORY_EMAIL and FACTORY_PASSWORD.",

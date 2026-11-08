@@ -332,6 +332,7 @@ function estimateBuild({
       basis: 'none',
       reason: '',
       revised: false,
+      elapsedMs: clamp0(elapsed),
       ...patch,
     };
     estimate.revised = isRevised(previous, estimate);
@@ -501,4 +502,13 @@ module.exports = {
   estimateBuild,
   buildReportQuery,
   buildReportPayload,
+  // Exported so the dashboard page can inline the exact same estimator instead
+  // of growing a second implementation that drifts from the tool's answer.
+  MIN_SAMPLES,
+  STALL_MS,
+  toMs,
+  numberOrNull,
+  clamp0,
+  minutes,
+  isRevised,
 };
