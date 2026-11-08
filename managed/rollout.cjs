@@ -36,6 +36,110 @@ function run(cmd, args, opts = {}) {
   return execFileSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...opts }).trim();
 }
 
+/**
+ * Forward-only lineage guard for the central release store.
+ *
+ * The store used to accept whatever the publishing checkout had at HEAD, so a
+ * stale or divergent checkout could rotate /var/lib/devwf-releases/current.json
+ * backwards (measured 8 Nov 2026: a v1.25.0 pointer was orphaned by two
+ * pre-monitor revisions). These helpers classify the relationship between the
+ * host's current revision and the candidate and let callers refuse any move
+ * that is not idempotent or forward.
+ */
+
+// `same` | `forward` | `regression` | `divergent` | `unknown`
+function classifyLineage(currentRevision, candidateRevision, isAncestor) {
+  if (!currentRevision || !candidateRevision) return 'unknown';
+  if (currentRevision === candidateRevision) return 'same';
+  const isAncestorFn = typeof isAncestor === 'function' ? isAncestor : () => false;
+  const forward = isAncestorFn(currentRevision, candidateRevision);
+  if (forward === true) return 'forward';
+  const regression = isAncestorFn(candidateRevision, currentRevision);
+  if (regression === true) return 'regression';
+  // A null answer means the git object was missing locally: fail closed.
+  if (forward === null || regression === null) return 'unknown';
+  return 'divergent';
+}
+
+/**
+ * Build a git-based `isAncestor(a, b)` answerer rooted at `cwd`.
+ * Missing objects trigger one best-effort `git fetch origin` before giving up,
+ * and an unresolvable object reports `null` so callers fail closed.
+ */
+function makeGitIsAncestor(cwd) {
+  function objectPresent(revision) {
+    try {
+      run('git', ['-C', cwd, 'rev-parse', '--verify', '--quiet', revision], {});
+      return true;
+    } catch {
+      try {
+        run('git', ['-C', cwd, 'fetch', '--quiet', 'origin'], {});
+        run('git', ['-C', cwd, 'rev-parse', '--verify', '--quiet', revision], {});
+        return true;
+      } catch {
+        return false;
+      }
+    }
+  }
+  return function isAncestor(a, b) {
+    if (!objectPresent(a) || !objectPresent(b)) return null;
+    try {
+      run('git', ['-C', cwd, 'merge-base', '--is-ancestor', a, b], {});
+      return true;
+    } catch {
+      return false;
+    }
+  };
+}
+
+// Refuse rotations that move the store backwards or to an unrelated lineage.
+function enforceForwardOnly(manifest, { currentRevision, isAncestor }) {
+  const decision = classifyLineage(currentRevision, manifest.revision, isAncestor);
+  const short = (rev) => (rev || '').slice(0, 12);
+  if (decision === 'regression') {
+    throw new Error(
+      `Forward-only guard: the release host is at ${short(currentRevision)} and the candidate ` +
+      `${short(manifest.revision)} is an ancestor of it. Refusing to rotate the store backwards. ` +
+      `Cut the release from a newer revision instead.`,
+    );
+  }
+  if (decision === 'divergent') {
+    throw new Error(
+      `Forward-only guard: candidate ${short(manifest.revision)} is divergent from the host's ` +
+      `current ${short(currentRevision)} (neither is an ancestor of the other). Refusing to rotate. ` +
+      `Merge the lineages on main, cut the release from the merged tip, and retry.`,
+    );
+  }
+  if (decision === 'unknown') {
+    throw new Error(
+      `Forward-only guard: cannot verify the lineage of ${short(manifest.revision)} against ` +
+      `${short(currentRevision)} (commit object missing locally). Refusing to rotate; ` +
+      `fetch the history first or re-cut the release.`,
+    );
+  }
+  return decision;
+}
+
+// Read the host's current revision without sudo-able access to arbitrary paths.
+function readHostCurrentRevision(host, { runImpl } = {}) {
+  const runner = runImpl || function (args) {
+    return run('ssh', ['-o', 'BatchMode=yes', host.name, args], {});
+  };
+  let raw = '';
+  try {
+    raw = runner('sudo -n cat /var/lib/devwf-releases/current.json').trim();
+  } catch {
+    return null;
+  }
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return typeof parsed.revision === 'string' && parsed.revision ? parsed.revision : null;
+  } catch {
+    return null; // corrupt pointer file: fail open with a warning at the call site
+  }
+}
+
 function publishRelease() {
   console.log('[1/5] Publishing release archive from reviewed Git tree...');
   const publishScript = path.join(MANAGED_DIR, 'publish.cjs');
@@ -45,27 +149,55 @@ function publishRelease() {
   return manifest;
 }
 
-function promoteToServers(manifest) {
+function promoteToServers(manifest, deps = {}) {
   console.log('[2/5] Promoting release to central release servers...');
+  const hosts = deps.hosts || RELEASE_HOSTS;
+  const reader = deps.readHostCurrentRevision || ((host, d) => readHostCurrentRevision(host, d));
+  const runner = deps.runImpl || run;
   const archivePath = path.join(STAGING_DIR, 'releases', `${manifest.sha256}.tar.gz`);
   const manifestPath = path.join(STAGING_DIR, 'current.json');
 
-  for (const host of RELEASE_HOSTS) {
+  // Pre-flight: the forward-only guard runs BEFORE any transfer. A guard
+  // failure must hard-stop the rollout, never degrade to a warning.
+  for (const host of hosts) {
+    const currentRevision = reader(host, deps);
+    if (currentRevision) {
+      const decision = enforceForwardOnly(manifest, {
+        currentRevision,
+        isAncestor: deps.isAncestor || makeGitIsAncestor(REPO_ROOT),
+      });
+      console.log(
+        decision === 'same'
+          ? `      ✅ ${host.name} already serves this revision (idempotent no-op)`
+          : `      ✅ ${host.name} rotation is forward-only (current ${currentRevision.slice(0, 12)} -> ${manifest.revision.slice(0, 12)})`,
+      );
+    } else {
+      console.warn(
+        `      ⚠️ Warning: ${host.name} current.json is unreadable; promoting without the lineage check. Verify the store afterwards.`,
+      );
+    }
+  }
+
+  for (const host of hosts) {
     try {
       console.log(`      Deploying to ${host.name} (${host.ip}:${host.port})...`);
-      run('scp', ['-o', 'BatchMode=yes', manifestPath, archivePath, `${host.name}:/tmp/`]);
+      runner('scp', ['-o', 'BatchMode=yes', manifestPath, archivePath, `${host.name}:/tmp/`]);
 
+      const oldRevision = reader(host, deps) || '';
+      const oldShort = oldRevision.slice(0, 7);
       const installCommands = [
         `sudo mv /tmp/${manifest.sha256}.tar.gz /var/lib/devwf-releases/releases/`,
         `sudo chown devwf-releases:devwf-releases /var/lib/devwf-releases/releases/${manifest.sha256}.tar.gz`,
         `sudo chmod 644 /var/lib/devwf-releases/releases/${manifest.sha256}.tar.gz`,
         `sudo cp /var/lib/devwf-releases/current.json /var/lib/devwf-releases/previous.json 2>/dev/null || true`,
+        oldShort ? `sudo cp /var/lib/devwf-releases/current.json /var/lib/devwf-releases/rollback-${oldShort}.json` : 'true',
+        `sudo chown -R devwf-releases:devwf-releases /var/lib/devwf-releases/rollback-${oldShort}.json 2>/dev/null || true`,
         `sudo mv /tmp/current.json /var/lib/devwf-releases/current.json`,
         `sudo chown devwf-releases:devwf-releases /var/lib/devwf-releases/current.json`,
         `sudo chmod 644 /var/lib/devwf-releases/current.json`,
       ].join(' && ');
 
-      run('ssh', ['-o', 'BatchMode=yes', host.name, installCommands]);
+      runner('ssh', ['-o', 'BatchMode=yes', host.name, installCommands]);
       console.log(`      ✅ Promoted on ${host.name}`);
     } catch (err) {
       console.error(`      ⚠️ Warning: Failed promoting to ${host.name}: ${err.message}`);
@@ -235,4 +367,13 @@ if (require.main === module) {
   }
 }
 
-module.exports = { publishRelease, syncRuleText, MANAGED_RULE_BLOCK };
+module.exports = {
+  publishRelease,
+  syncRuleText,
+  MANAGED_RULE_BLOCK,
+  classifyLineage,
+  makeGitIsAncestor,
+  enforceForwardOnly,
+  readHostCurrentRevision,
+  promoteToServers,
+};
