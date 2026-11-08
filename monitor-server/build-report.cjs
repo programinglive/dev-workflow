@@ -236,6 +236,9 @@ function summarizeRuns(runs = [], { trendLimit = 20, unclosed = [] } = {}) {
           .map(([target, values]) => ({ target, ...groupCount(values) }))
           .sort((a, b) => b.count - a.count || a.target.localeCompare(b.target)),
         stages: stageAggregates(ok),
+        // The estimator needs the stage sequence to project what is still ahead;
+        // the latest successful run is the best available order.
+        stageOrder: ok.length ? ok[ok.length - 1].stages.map((stage) => stage.stage) : [],
       };
     })
     .sort((a, b) => b.count - a.count || a.project.localeCompare(b.project));
@@ -264,4 +267,170 @@ function summarizeRuns(runs = [], { trendLimit = 20, unclosed = [] } = {}) {
   };
 }
 
-module.exports = { pairBuildRuns, percentile, summarizeRuns };
+const MIN_SAMPLES = 5;
+const STALL_MS = 120000;
+
+const clamp0 = (value) => (Number.isFinite(value) ? Math.max(0, Math.round(value)) : null);
+const minutes = (ms) => Math.round((Number(ms) || 0) / 60000);
+
+function isRevised(previous, next) {
+  if (!previous || typeof previous !== 'object') return false;
+  if (String(previous.state || '') !== String(next.state || '')) return true;
+  const pairs = [
+    ['remainingLowMs', previous.remainingLowMs, next.remainingLowMs],
+    ['remainingHighMs', previous.remainingHighMs, next.remainingHighMs],
+  ];
+  for (const [, before, after] of pairs) {
+    if (!Number.isFinite(before) || !Number.isFinite(after)) continue;
+    const base = Math.max(1, Math.abs(before));
+    if (Math.abs(after - before) / base > 0.2) return true;
+  }
+  return false;
+}
+
+/**
+ * Estimate how long a build still needs, and revise that estimate when the
+ * build gets into trouble.
+ *
+ * A frozen number is worse than no number: it says everything is fine while the
+ * build is stuck. The decision order is therefore failure, missing baseline,
+ * stall, overdue, stage baseline, progress, history — the first condition that
+ * matches wins, and the reason is always carried so the UI can show why the
+ * number changed.
+ *
+ * @param {object} input
+ * @param {object} input.summary project/target summary with p50Ms, p90Ms, stages
+ * @param {object} input.run live build state (status, startedAt, progress, stage)
+ * @param {number|string} input.now explicit clock, so tests never wait
+ * @param {object|null} [input.previous] last estimate, to mark a revision
+ */
+function estimateBuild({
+  summary = {},
+  run = {},
+  now = Date.now(),
+  previous = null,
+  minSamples = MIN_SAMPLES,
+  stallMs = STALL_MS,
+} = {}) {
+  const nowMs = typeof now === 'number' ? now : toMs(now) ?? Date.now();
+  const startedMs = toMs(run.startedAt) ?? nowMs;
+  const elapsed = Math.max(0, nowMs - startedMs);
+  const status = String(run.status || 'running');
+  const count = Number(summary.count) || 0;
+  const p50 = Number.isFinite(summary.p50Ms) ? summary.p50Ms : null;
+  const p90 = Number.isFinite(summary.p90Ms) ? summary.p90Ms : null;
+
+  const finish = (patch) => {
+    const estimate = {
+      available: false,
+      state: 'no-baseline',
+      sampleCount: count,
+      remainingLowMs: null,
+      remainingHighMs: null,
+      totalLowMs: null,
+      totalHighMs: null,
+      basis: 'none',
+      reason: '',
+      revised: false,
+      ...patch,
+    };
+    estimate.revised = isRevised(previous, estimate);
+    return estimate;
+  };
+
+  if (status === 'failed') {
+    return finish({ state: 'failed', reason: `failed after ${minutes(elapsed)}m` });
+  }
+  if (status === 'succeeded') {
+    return finish({ state: 'succeeded', reason: `finished in ${minutes(elapsed)}m` });
+  }
+  if (count < minSamples || p50 === null || p90 === null) {
+    return finish({ state: 'no-baseline', reason: `belum ada baseline (${count} build)` });
+  }
+
+  const progress = numberOrNull(run.progress);
+  const previousProgress = numberOrNull(run.previousProgress);
+  const progressChangedAt = toMs(run.progressUpdatedAt) ?? startedMs;
+  const sinceProgress = Math.max(0, nowMs - progressChangedAt);
+  const historyRange = {
+    remainingLowMs: clamp0(p50 - elapsed),
+    remainingHighMs: clamp0(p90 - elapsed),
+  };
+
+  if (progress !== null && previousProgress !== null && progress < previousProgress) {
+    return finish({ available: true, state: 'stalled', basis: 'history', reason: 'progress regressed', ...historyRange });
+  }
+  if (progress !== null && sinceProgress >= stallMs && elapsed >= stallMs) {
+    return finish({
+      available: true,
+      state: 'stalled',
+      basis: 'history',
+      reason: `no progress for ${minutes(sinceProgress)}m`,
+      ...historyRange,
+    });
+  }
+  if (elapsed > p90) {
+    return finish({
+      available: true,
+      state: 'overdue',
+      basis: 'history',
+      reason: `lewat p90 (${minutes(elapsed)}m > ${minutes(p90)}m, p50 ${minutes(p50)}m)`,
+    });
+  }
+
+  const stage = String(run.stage || '');
+  const stageOrder = Array.isArray(summary.stageOrder) ? summary.stageOrder.map(String) : [];
+  const stageP50 = new Map(
+    (Array.isArray(summary.stages) ? summary.stages : [])
+      .filter((entry) => entry && entry.stage && Number.isFinite(entry.p50Ms))
+      .map((entry) => [String(entry.stage), entry.p50Ms])
+  );
+  if (stage && stageP50.has(stage) && stageOrder.includes(stage)) {
+    const stageStartedMs = toMs(run.stageStartedAt) ?? startedMs;
+    const timeInStage = Math.max(0, nowMs - stageStartedMs);
+    const currentRemaining = clamp0(stageP50.get(stage) - timeInStage) ?? 0;
+    const notStarted = stageOrder
+      .slice(stageOrder.indexOf(stage) + 1)
+      .reduce((sum, name) => sum + (stageP50.get(name) || 0), 0);
+    const remainingLow = currentRemaining + notStarted;
+    const remainingHigh = Math.max(remainingLow, p90 - elapsed);
+    return finish({
+      available: true,
+      state: 'on-track',
+      basis: 'stage',
+      reason: `stage ${stage}`,
+      remainingLowMs: clamp0(remainingLow),
+      remainingHighMs: clamp0(remainingHigh),
+      totalLowMs: clamp0(elapsed + remainingLow),
+      totalHighMs: clamp0(elapsed + remainingHigh),
+    });
+  }
+
+  if (progress !== null && progress > 0 && progress < 100) {
+    const projectedTotal = elapsed / (progress / 100);
+    const remaining = Math.max(0, projectedTotal - elapsed);
+    return finish({
+      available: true,
+      state: 'on-track',
+      basis: 'progress',
+      reason: `progress ${Math.round(progress)}%`,
+      remainingLowMs: clamp0(Math.min(remaining, p50 - elapsed)),
+      remainingHighMs: clamp0(Math.max(remaining, p90 - elapsed)),
+      totalLowMs: clamp0(elapsed + Math.min(remaining, p50 - elapsed)),
+      totalHighMs: clamp0(elapsed + Math.max(remaining, p90 - elapsed)),
+    });
+  }
+
+  return finish({
+    available: true,
+    state: 'on-track',
+    basis: 'history',
+    reason: `p50 ${minutes(p50)}m, p90 ${minutes(p90)}m`,
+    remainingLowMs: historyRange.remainingLowMs,
+    remainingHighMs: historyRange.remainingHighMs,
+    totalLowMs: p50,
+    totalHighMs: p90,
+  });
+}
+
+module.exports = { pairBuildRuns, percentile, summarizeRuns, estimateBuild };
