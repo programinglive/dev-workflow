@@ -38,6 +38,10 @@ const KONEKSI =
   process.env.DEVWF_TEST_PG ||
   "postgresql://postgres@127.0.0.1:5599/postgres";
 
+// Skema sendiri supaya `sessions` di sini tidak bertabrakan dengan berkas tes
+// database lain yang memakai bentuk tabel berbeda.
+const SKEMA = "devwf_upsert";
+
 let pg = null;
 let pool = null;
 let siap = false;
@@ -45,13 +49,17 @@ let alasanLewat = "";
 
 const DDL = `
 CREATE TABLE IF NOT EXISTS sessions (
-  session_key text PRIMARY KEY,
+  session_key text NOT NULL,
+  task_id text NOT NULL DEFAULT '',
+  parent_task_id text,
+  parent_task_title text,
   machine text, project_path text, project_name text,
   task text, task_type text, phase text,
   plan_json jsonb, plan_done integer, plan_total integer,
   dod_done integer, dod_total integer, dod_waived integer,
   owner_pid integer, started_at timestamptz, updated_at timestamptz,
-  session_title text, agent_tool text
+  session_title text, agent_tool text,
+  PRIMARY KEY (session_key, task_id)
 );`;
 
 before(async () => {
@@ -62,8 +70,9 @@ before(async () => {
     return;
   }
   try {
-    pool = new pg.Pool({ connectionString: KONEKSI, max: 2, connectionTimeoutMillis: 3000 });
+    pool = new pg.Pool({ connectionString: KONEKSI, max: 2, connectionTimeoutMillis: 3000, options: `-c search_path=${SKEMA},public` });
     await pool.query("SELECT 1");
+    await pool.query(`CREATE SCHEMA IF NOT EXISTS ${SKEMA}`);
     await pool.query(DDL);
     siap = true;
   } catch (e) {

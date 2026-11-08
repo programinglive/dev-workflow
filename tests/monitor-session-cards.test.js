@@ -95,4 +95,5 @@ test("the migration adds columns before swapping the primary key", () => {
   assert.ok(dropPk > addTaskId, "the old primary key must be dropped after the columns exist");
   assert.ok(addPk > dropPk, "the composite primary key must be added after the drop");
   assert.match(sql, /IF EXISTS/, "the primary key drop must be safe on a migrated database");
+  assert.match(sql, /current_schema\(\)/, "the primary key lookup must stay inside the current schema");
 });

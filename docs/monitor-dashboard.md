@@ -819,3 +819,17 @@ cukup untuk membuktikan tombolnya bekerja tanpa membuka WhatsApp.
 **Xiaomi Pad 6 bisa terkunci pola** dan menampilkan "Draw pattern" di atas
 aplikasi. Itu kunci perangkat, bukan kerusakan aplikasi - jangan coba
 menembusnya; verifikasi di tablet lain atau minta pemilik membukanya.
+
+## Rantai kartu per topik (Zettelkasten)
+
+Sejak 8 November 2026 satu sesi agen bisa memuat lebih dari satu kartu. Setiap
+`start_task` membuat kartu baru yang menyimpan identitas kartu sebelumnya;
+kartu lama ditandai `handed-off` sehingga pindah dari tab Aktif ke Riwayat.
+Kartu penerus menampilkan `↩ lanjutan dari "..."` dan kartu lama menampilkan
+`↪ dilanjutkan ke "..."`. Kotak build hanya muncul pada kartu yang benar-benar
+memilikinya.
+
+Skema `sessions` berubah (kolom `task_id`, `parent_task_id`,
+`parent_task_title`, primary key komposit) dan harus dimigrasikan dengan
+`node scripts/migrate-monitor-db.cjs`. Rincian alur, rollback, dan daftar
+tesnya ada di [card-chaining.md](card-chaining.md).

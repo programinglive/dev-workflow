@@ -19,6 +19,11 @@ const KONEKSI =
   process.env.DEVWF_TEST_PG ||
   "postgresql://postgres@127.0.0.1:5599/postgres";
 
+// Setiap berkas tes database memakai skema sendiri. Tanpa itu `sessions` milik
+// satu tes (PK tunggal) bertabrakan dengan `sessions` milik tes lain (PK
+// komposit), dan kegagalannya muncul di berkas yang tidak diubah.
+const SKEMA = "devwf_chain";
+
 const PREFIX = "ses_uji_chain_";
 
 let pg = null;
@@ -39,8 +44,14 @@ before(async () => {
     return;
   }
   try {
-    pool = new pg.Pool({ connectionString: KONEKSI, max: 2, connectionTimeoutMillis: 3000 });
+    pool = new pg.Pool({
+      connectionString: KONEKSI,
+      max: 2,
+      connectionTimeoutMillis: 3000,
+      options: `-c search_path=${SKEMA},public`,
+    });
     await pool.query("SELECT 1");
+    await pool.query(`CREATE SCHEMA IF NOT EXISTS ${SKEMA}`);
     await pool.query(`
       CREATE TABLE IF NOT EXISTS sessions (
         session_key text PRIMARY KEY,
@@ -153,8 +164,10 @@ test("the migration can run twice without failing", async (t) => {
   await terapkanMigrasi();
   const r = await pool.query(
     `SELECT pg_get_constraintdef(con.oid) AS definition
-       FROM pg_constraint con JOIN pg_class rel ON rel.oid = con.conrelid
-      WHERE rel.relname = 'sessions' AND con.contype = 'p'`,
+       FROM pg_constraint con
+       JOIN pg_class rel ON rel.oid = con.conrelid
+       JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+      WHERE rel.relname = 'sessions' AND nsp.nspname = current_schema() AND con.contype = 'p'`,
   );
   assert.equal(r.rows[0].definition, "PRIMARY KEY (session_key, task_id)");
 });
