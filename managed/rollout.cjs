@@ -67,14 +67,17 @@ function classifyLineage(currentRevision, candidateRevision, isAncestor) {
  * and an unresolvable object reports `null` so callers fail closed.
  */
 function makeGitIsAncestor(cwd) {
+  // `git cat-file -e` exits non-zero when the object is absent from the
+  // object database. `git rev-parse --verify` must NOT be used here: it
+  // accepts any well-formed 40-hex string without checking the database.
   function objectPresent(revision) {
     try {
-      run('git', ['-C', cwd, 'rev-parse', '--verify', '--quiet', revision], {});
+      run('git', ['-C', cwd, 'cat-file', '-e', revision], {});
       return true;
     } catch {
       try {
         run('git', ['-C', cwd, 'fetch', '--quiet', 'origin'], {});
-        run('git', ['-C', cwd, 'rev-parse', '--verify', '--quiet', revision], {});
+        run('git', ['-C', cwd, 'cat-file', '-e', revision], {});
         return true;
       } catch {
         return false;
