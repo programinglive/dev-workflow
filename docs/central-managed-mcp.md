@@ -16,6 +16,26 @@ To publish, promote, and propagate rules to all three devices (**HELLOWORLD**, *
 
 Running processes keep their original release until reconnect. A release that adds tools may also require the client to refresh its tool list. Do not kill unrelated active sessions to update them.
 
+### Rule sync over SSH: two shell traps
+
+`managed/rollout.cjs` rewrites the managed rule block in `.gemini/GEMINI.md`,
+`.codex/AGENTS.md` and `.config/opencode/AGENTS.md` on every device. Two failure
+modes were measured on 8 November 2026 and are now guarded:
+
+1. **Backticks are shell syntax.** Sending the block inside
+   `ssh "... python -c \"...\""` made the remote shell execute every backticked
+   token, so `` `bw-tools` `` and `` `node managed/rollout.cjs` `` arrived empty
+   ("promoted centrally to the release host on  and synchronized"). The block is
+   now base64-encoded inside the script.
+2. **`cmd.exe` truncates multi-line `-c` scripts.** On Windows the script was cut
+   at the first newline, exited 0, and the rollout printed
+   `✅ synchronized` while two of three files kept the old text. The script now
+   travels over stdin (`python -`), reads each file back, and the device prints
+   `CHANGED=<files>`. An empty change list is reported as a warning, not a
+   success.
+
+`tests/rollout-rule-sync.test.cjs` pins both properties.
+
 ## Initial device setup
 
 Copy `managed/launcher.cjs`, `managed/protocol.cjs` and, when needed, `managed/device-entry.cjs` to a stable per-user directory. Keep credential-loading wrappers; replace only the old `index.js` entry with the managed launcher. Direct clients can use `node <managed>/device-entry.cjs codex` or `opencode`, preserving their original environment settings.
