@@ -2,6 +2,133 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.24.1](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.19.31...v1.24.1) (2026-11-08)
+
+
+### ♻️ Refactors
+
+* **state:** jadikan berkas json ekspor saja ([bb44b94](https://github.com/programinglive/dev-workflow-mcp-server/commit/bb44b94fbaecc5bb127237b61ed277595e878d04))
+
+
+### ✅ Tests
+
+* align race stat identity with initial lstat ([bd62d2c](https://github.com/programinglive/dev-workflow-mcp-server/commit/bd62d2c61bd630a9edc90f21cffaceead9388fce))
+* isolate oversized handle checks from OS path ops ([21a0208](https://github.com/programinglive/dev-workflow-mcp-server/commit/21a020866cc6c4e76d445b80ac412748b8742c04))
+* make search size race deterministic on Windows ([6c933fb](https://github.com/programinglive/dev-workflow-mcp-server/commit/6c933fb1146fe955d11a44da4a69b38644103254))
+* **state:** uji konkurensi dengan dua proses sungguhan ([0643f83](https://github.com/programinglive/dev-workflow-mcp-server/commit/0643f834a9c7efb34f7f4c77673862f571f44eaa))
+* update README.md, mobile-app/App.js, monitor-server/dashboard.cjs +1 more ([df21d2c](https://github.com/programinglive/dev-workflow-mcp-server/commit/df21d2c404beabcf671b124f6bda113ffbd6d32f))
+* update README.md, monitor.js, tests/monitor-active-sessions.test.js +1 more ([47cbb0f](https://github.com/programinglive/dev-workflow-mcp-server/commit/47cbb0fa20e566c0cf4884ca62267e328afc1e89))
+* use plain stat data for Windows size race ([f5ae8da](https://github.com/programinglive/dev-workflow-mcp-server/commit/f5ae8da00cff111261aa263a262d38737a01aa0a))
+
+
+### 🐛 Bug Fixes
+
+* **db:** jangkar lokasi database ke .state proyek, bukan akar drive ([f5f6f6d](https://github.com/programinglive/dev-workflow-mcp-server/commit/f5f6f6d9c598914b8d90645d6481f8e2dc2c9d1e))
+* **factory:** complete_task/force_complete_task/drop_task sekarang menutup task Factory otomatis ([70e33aa](https://github.com/programinglive/dev-workflow-mcp-server/commit/70e33aab6fc7c95a4b1ffc35c4fbc92d2f0c1661))
+* **factory:** send Cloudflare Access service token headers ([f86ffed](https://github.com/programinglive/dev-workflow-mcp-server/commit/f86ffed66dae8f5be228a5722a10c73e1c44f793))
+* **factory:** send Cloudflare Access service token headers to Factory ([6a0c36b](https://github.com/programinglive/dev-workflow-mcp-server/commit/6a0c36b7d9ded9c501745da8c552c5c41e6d6021))
+* **factory:** truncate the auto-task title instead of silently skipping the card ([647f43e](https://github.com/programinglive/dev-workflow-mcp-server/commit/647f43e3406771af920c695c5639d9a2a2b34d9f))
+* **factory:** truncate the auto-task title to the API limit ([d37788d](https://github.com/programinglive/dev-workflow-mcp-server/commit/d37788db766c414c4c45516a96977420b59e44e8))
+* **mcp:** preserve tool schemas and harden managed startup ([0cb7df2](https://github.com/programinglive/dev-workflow-mcp-server/commit/0cb7df2361d77288fc66c5aa77904501e2c3beb3))
+* **monitor:** close session api and button, fix closed filter ([c3483eb](https://github.com/programinglive/dev-workflow-mcp-server/commit/c3483ebace0b222b722946c7ffafdf70f1ed45d3))
+* **monitor:** embed poll interval in dashboard client ([#52](https://github.com/programinglive/dev-workflow-mcp-server/issues/52)) ([c767ab7](https://github.com/programinglive/dev-workflow-mcp-server/commit/c767ab7b0a8491f1a751caaf2ba515cf95d59e04))
+* preserve escaped newlines in monitor page script ([b73d10e](https://github.com/programinglive/dev-workflow-mcp-server/commit/b73d10e455a6a3e3bc014a1f4a4ce64a1fbf5f79))
+* **release:** record existing HEAD releases idempotently and fix clean-worktree git checks ([1fd0154](https://github.com/programinglive/dev-workflow-mcp-server/commit/1fd015487562d55cc5791038c4aefd387894b778))
+* report connected MCP session heartbeats ([4292fae](https://github.com/programinglive/dev-workflow-mcp-server/commit/4292fae601a176e521e0e48721b05206edea5c89))
+* **share:** cap the rate-limit map and leak-test the HTTP path ([98f3695](https://github.com/programinglive/dev-workflow-mcp-server/commit/98f3695f998ee5aaf878aa91bb39738e4fd598cc))
+* **share:** key the rate limit per reader, not per proxy ([10fef70](https://github.com/programinglive/dev-workflow-mcp-server/commit/10fef70354ddc69ec587baf0d865ca272b20fd4b))
+* **share:** raise rate limit and explain 429 to readers ([dc0bd66](https://github.com/programinglive/dev-workflow-mcp-server/commit/dc0bd669bba15e3ea8d3fe43e1cfed827a8d7781))
+* **share:** return 400/409 instead of 500 on bad body and races ([725d489](https://github.com/programinglive/dev-workflow-mcp-server/commit/725d4898ab1cf11ad88cc9546a1d2e0e0bec7366))
+* **share:** stop counting HEAD as a view and count orphans in SQL ([b4ecefd](https://github.com/programinglive/dev-workflow-mcp-server/commit/b4ecefdc48ec3cd92405accb24e4387b8a286312))
+* **state:** adapter lokal memakai stateFile sesi sebagai jangkar ([fda2890](https://github.com/programinglive/dev-workflow-mcp-server/commit/fda289023ae69ab20e19a1c9b412eb88af6bbc45))
+* **state:** bereskan enam temuan sisa penyimpanan sqlite ([4ae8b0b](https://github.com/programinglive/dev-workflow-mcp-server/commit/4ae8b0b8e8529ea2d973c04421a43897c8e581d8))
+* **state:** gagal membaca tidak lagi dianggap "kosong" ([870d495](https://github.com/programinglive/dev-workflow-mcp-server/commit/870d495a161a75e93cc29716415d8b3812f33a39))
+* **state:** perbaiki temuan review penyimpanan sqlite ([ecfda98](https://github.com/programinglive/dev-workflow-mcp-server/commit/ecfda98224cf94c4645ee9dd8965228f9ae8fda8))
+* **state:** riwayat keluar dari state_json dan tes tidak boleh menulis ke state asli ([6712ac5](https://github.com/programinglive/dev-workflow-mcp-server/commit/6712ac5ac547de76027f0b5988e2f32f6625d452))
+* **test:** close SQLite adapters before deleting temp dirs ([95d3c7b](https://github.com/programinglive/dev-workflow-mcp-server/commit/95d3c7b736378be7cd3ed5a8eaae121dc27490b7))
+* **tests:** resolve 23 POSIX test failures and dist bundle require path ([c12ec39](https://github.com/programinglive/dev-workflow-mcp-server/commit/c12ec39d0db97693756cf9a789e5aa08b92859e2))
+* **web:** ignore netlify build artifacts in eslint ([56abe4e](https://github.com/programinglive/dev-workflow-mcp-server/commit/56abe4e8704a76bb218c72982bbb4689baa0e968))
+* **workflow:** enforce English guidance and track owner Zettly tasks ([4d70aa5](https://github.com/programinglive/dev-workflow-mcp-server/commit/4d70aa5cd031024be20133288d5fccbb3eadc8c0))
+
+
+### ✨ Features
+
+* add bounded local project search ([161eaf1](https://github.com/programinglive/dev-workflow-mcp-server/commit/161eaf1179744ab7f4e6b210c39c8c99e8c9c6ad))
+* **db:** antrean replika dengan backoff dan klaim baris ([9a67b94](https://github.com/programinglive/dev-workflow-mcp-server/commit/9a67b948156fdf483768b2276ebdb02e361accde))
+* **db:** kelas error state dan normalisasi kunci sesi ([fec2db0](https://github.com/programinglive/dev-workflow-mcp-server/commit/fec2db046341f27ce201ecd5c1fdeaadfc0850c2))
+* **db:** migrasi JSON lama ke SQLite dan arsip baris state proyek ([803dff3](https://github.com/programinglive/dev-workflow-mcp-server/commit/803dff3c5887a5e2cba43b75465505d24c9870c6))
+* **db:** skema v1 dan state berversi per sesi ([b00747b](https://github.com/programinglive/dev-workflow-mcp-server/commit/b00747b17e7a2e35acceaa81029911107f59e554))
+* **handlers:** bedakan konflik state dan penyimpanan tidak tersedia ([82cdba9](https://github.com/programinglive/dev-workflow-mcp-server/commit/82cdba92db53b9fcf2fa5ba7ddf02420beb9963e))
+* **managed:** point the release service at bw-tools after the VM move ([11f4d7a](https://github.com/programinglive/dev-workflow-mcp-server/commit/11f4d7a5eb91e278b549ecad4518bda03c0fb66f))
+* **mcp-index:** add central MCP ecosystem index and context-aware recommender ([a0c53fb](https://github.com/programinglive/dev-workflow-mcp-server/commit/a0c53fb8906f6852d07650662d44a12fc93a02c7))
+* **mcp:** distribute approved releases to managed device launchers ([2aa0049](https://github.com/programinglive/dev-workflow-mcp-server/commit/2aa0049c5f9c1622a3538f3532bbd58b2cde7fe3))
+* **monitor:** add chain label and build ownership helpers ([7632282](https://github.com/programinglive/dev-workflow-mcp-server/commit/7632282a2101f7adf8a9d672cba0265d4efd34d7))
+* **monitor:** add live build status tracking and redesign dashboard UI/UX ([f2a29bf](https://github.com/programinglive/dev-workflow-mcp-server/commit/f2a29bfa9d768ffc83093b6555ac273c6ebbf660))
+* **monitor:** antrean menampung laporan dashboard yang gagal terkirim ([917664e](https://github.com/programinglive/dev-workflow-mcp-server/commit/917664eb36559bfb8dde501b95b83fa332cca2be))
+* **monitor:** render card chain links and isolate live build boxes ([49ca850](https://github.com/programinglive/dev-workflow-mcp-server/commit/49ca850e279aad0603171f51c6dc4e8c2dafd081))
+* **monitor:** send task identity and parent task in the snapshot ([896286e](https://github.com/programinglive/dev-workflow-mcp-server/commit/896286e956b4033fc3b76826040f81166c81cedb))
+* **monitor:** store one card per task with parent hand-off ([6e877c8](https://github.com/programinglive/dev-workflow-mcp-server/commit/6e877c89a6f29832078b54177777d2f1d9ab1b04))
+* **share:** add live share panel and drop dead tunnel configs ([ca5fae1](https://github.com/programinglive/dev-workflow-mcp-server/commit/ca5fae140614e9f9b8e7b1f32d361c3f86690f3a))
+* **share:** add revocable public share link per session ([cbcf0d0](https://github.com/programinglive/dev-workflow-mcp-server/commit/cbcf0d05234d8fb0ca9c38684666bfd1fbbde4ce))
+* **share:** revoke orphaned links instead of expiring them ([773c38a](https://github.com/programinglive/dev-workflow-mcp-server/commit/773c38a4a13aba783ae3825ce999d9e2cca93946))
+* **state:** load() dan history membaca dari SQLite ([b16fc4a](https://github.com/programinglive/dev-workflow-mcp-server/commit/b16fc4a96493e78894f9cb56a620c4b20937645f))
+* **state:** save() menulis state hidup ke SQLite berversi ([2392d3e](https://github.com/programinglive/dev-workflow-mcp-server/commit/2392d3e219cb98f163818eb867d0e05ccf4f2f52))
+* **state:** simpan state workflow di sqlite, postgres jadi replika ([d6925bd](https://github.com/programinglive/dev-workflow-mcp-server/commit/d6925bdd24291fdc9c87ebbabe98fc2a54c2e075))
+* **status:** laporkan antrean replika dan pertikaian penulis ([a3b6211](https://github.com/programinglive/dev-workflow-mcp-server/commit/a3b62119c574521e7383a4f83b9ea544e45d3fad))
+* tambahkan tool list_active_sessions untuk membaca monitor dashboard ([225bb45](https://github.com/programinglive/dev-workflow-mcp-server/commit/225bb4524bc05e2873b6f529afb77c428ab069b8))
+* **workflow:** record the parent task when chaining cards ([ed314d6](https://github.com/programinglive/dev-workflow-mcp-server/commit/ed314d67f924bf180281a1f537961524b1720a5e))
+
+
+### 📝 Documentation
+
+* catat uji dua proses dan batas yang belum terbukti ([a481ed3](https://github.com/programinglive/dev-workflow-mcp-server/commit/a481ed3e1a3a33093e116928c4c700a309346490))
+* jelaskan penyimpanan sqlite di readme dan situs developer ([4e42b41](https://github.com/programinglive/dev-workflow-mcp-server/commit/4e42b416b6f48f7fdc7fdb2c73df9ec4b6e9f08f))
+* **managed:** describe bw-tools as the release host ([efc9c27](https://github.com/programinglive/dev-workflow-mcp-server/commit/efc9c274bbf20b4404407e0d25e990b242e32948))
+* **mcp:** record verified central release rollout on three devices ([2ab95d5](https://github.com/programinglive/dev-workflow-mcp-server/commit/2ab95d597448a3abd7648884cabc7f1eee047304))
+* **monitor:** document Zettelkasten card chaining and isolate database test schemas ([a9b9aa2](https://github.com/programinglive/dev-workflow-mcp-server/commit/a9b9aa23bb9799b435c2f24b37baf98fc988d275))
+* **plan:** rencana implementasi state SQLite dalam 10 tugas ([a01be37](https://github.com/programinglive/dev-workflow-mcp-server/commit/a01be37ef04547dccec779a485742080d967cc3c))
+* **release:** record 1.24.0 release scope ([d741a6e](https://github.com/programinglive/dev-workflow-mcp-server/commit/d741a6e0944191ceb5130659c947213ead2ff682))
+* **release:** record v1.24.0 publication evidence ([e66b78b](https://github.com/programinglive/dev-workflow-mcp-server/commit/e66b78b9ae77f50a7cf9ef8a97f4e7e57f556f2f))
+* **share:** correct stale spec and add final verification script ([8b2c7ab](https://github.com/programinglive/dev-workflow-mcp-server/commit/8b2c7abc62cb85e563e549fb2c1ac0e175c2a3f4))
+* **share:** note that share origins need a restart ([b0a2c22](https://github.com/programinglive/dev-workflow-mcp-server/commit/b0a2c228d05d7b4bec0115e1b1ec6a1a246df7ae))
+* **spec:** putuskan identitas sesi cadangan, antrean, dan penanganan baris state lama ([e58c1bc](https://github.com/programinglive/dev-workflow-mcp-server/commit/e58c1bcb17034afbd5efc2ee09d1f4375d862c13))
+* **spec:** state hidup pindah ke SQLite sebagai sumber kebenaran, Postgres jadi replika ([204ac2b](https://github.com/programinglive/dev-workflow-mcp-server/commit/204ac2bc1433a82cf9d49e6b6036bc2a202cd4f0))
+* **state:** tandai SHARED-STATE.md tidak berlaku ([7000781](https://github.com/programinglive/dev-workflow-mcp-server/commit/700078170ea67cc17e8ed52dda1c22697af6556b))
+* **state:** tata letak penyimpanan state di sqlite ([5b4e98d](https://github.com/programinglive/dev-workflow-mcp-server/commit/5b4e98db6cf15e5c047821c2c3a2d24a6810f0f4))
+
+
+### 🧹 Chores
+
+* abaikan tmp-probe.db ([4c68d0d](https://github.com/programinglive/dev-workflow-mcp-server/commit/4c68d0dc52c1f8de24a8c741e85b9b9d93b3573c))
+* gitignore project-summary.json, tmp-test-state.json, user-id ([8542933](https://github.com/programinglive/dev-workflow-mcp-server/commit/85429330ae1000e7696145d0da04a608aecd4fd8))
+* **managed:** ignore Python bytecode produced by the device installer ([1bf6612](https://github.com/programinglive/dev-workflow-mcp-server/commit/1bf66123101624f6a80de2607e264d72c2cd2a87))
+* **release:** 1.19.32 🚀 ([f991994](https://github.com/programinglive/dev-workflow-mcp-server/commit/f99199457415154592f5686d890f96de79048feb))
+* **release:** 1.20.0 🚀 ([f44f5d7](https://github.com/programinglive/dev-workflow-mcp-server/commit/f44f5d7bea666590f72a61189801310588b0316e))
+* **release:** 1.20.1 🚀 ([639d831](https://github.com/programinglive/dev-workflow-mcp-server/commit/639d8318c51edad9bc6da6b4fc4fbbed9c97283b))
+* **release:** 1.20.2 🚀 ([e40d079](https://github.com/programinglive/dev-workflow-mcp-server/commit/e40d0795e1a30113ffa783a4a260e533a2f93baa))
+* **release:** 1.20.3 🚀 ([a34857c](https://github.com/programinglive/dev-workflow-mcp-server/commit/a34857c367d154a68d876b715b5ced45c4d43402))
+* **release:** 1.20.4 🚀 ([195a7f0](https://github.com/programinglive/dev-workflow-mcp-server/commit/195a7f0881a23ffb796325fbcaa2c5045f351155))
+* **release:** 1.21.0 🚀 ([05e3672](https://github.com/programinglive/dev-workflow-mcp-server/commit/05e36724cb36e5df4bf00c7d1f1f272021cd92c0))
+* **release:** 1.21.1 🚀 ([da4b5e1](https://github.com/programinglive/dev-workflow-mcp-server/commit/da4b5e11d2b51a1d8d2c60ce50cb10db76d67075))
+* **release:** 1.22.0 🚀 ([9a0a9b7](https://github.com/programinglive/dev-workflow-mcp-server/commit/9a0a9b7c1cc98476b9e926bcfe6c1e5bba98b5b0))
+* **release:** 1.23.0 🚀 ([bc76141](https://github.com/programinglive/dev-workflow-mcp-server/commit/bc761415cba181347fa9ad6aa3c61695a0e45b33))
+* **release:** 1.23.1 🚀 ([fc1b4c7](https://github.com/programinglive/dev-workflow-mcp-server/commit/fc1b4c7dffa7d2657f8437e3bb8174b5e6aedb08))
+* **release:** 1.23.10 🚀 ([034b83b](https://github.com/programinglive/dev-workflow-mcp-server/commit/034b83b0bce8568126b0159a15c07bc9aa3693e4))
+* **release:** 1.23.11 🚀 ([74ad769](https://github.com/programinglive/dev-workflow-mcp-server/commit/74ad7699a52eae6b17046f6f7744aa928d0c28db))
+* **release:** 1.23.12 🚀 ([c2d5f19](https://github.com/programinglive/dev-workflow-mcp-server/commit/c2d5f19c40cb1395b376b0fdd0f6c7691bd06d99))
+* **release:** 1.23.13 🚀 ([fcefbdf](https://github.com/programinglive/dev-workflow-mcp-server/commit/fcefbdf12d8de45007a648b4b14d87ae69245de8))
+* **release:** 1.23.14 🚀 ([2836572](https://github.com/programinglive/dev-workflow-mcp-server/commit/2836572e1b48873b30485aabdec59091521c5432))
+* **release:** 1.23.2 🚀 ([33ea400](https://github.com/programinglive/dev-workflow-mcp-server/commit/33ea4001a5460726623afc07f4ce976b006df1d4))
+* **release:** 1.23.3 🚀 ([efb948e](https://github.com/programinglive/dev-workflow-mcp-server/commit/efb948e50ee6fce704643ff773e5e461a7610010))
+* **release:** 1.23.4 🚀 ([6f96440](https://github.com/programinglive/dev-workflow-mcp-server/commit/6f96440060ce9a1aba8a4298004b8aef2a871f49))
+* **release:** 1.23.5 🚀 ([9ebfd2e](https://github.com/programinglive/dev-workflow-mcp-server/commit/9ebfd2e9de36b216e309e8e3c8b084503ee2a703))
+* **release:** 1.23.6 🚀 ([3e6d92c](https://github.com/programinglive/dev-workflow-mcp-server/commit/3e6d92c50a8f85a13b023804d35388891b6b0e3a))
+* **release:** 1.23.7 🚀 ([9f0c859](https://github.com/programinglive/dev-workflow-mcp-server/commit/9f0c85960a4267ca6a5b55ce26aa5ce24605c38d))
+* **release:** 1.23.8 🚀 ([b44f3d7](https://github.com/programinglive/dev-workflow-mcp-server/commit/b44f3d793452ce1bcdc5a3994e39e8f11148db7a))
+* **release:** 1.23.9 🚀 ([9c3df87](https://github.com/programinglive/dev-workflow-mcp-server/commit/9c3df8771e2e77132bbe349e819578c297c44848))
+* **release:** 1.24.0 🚀 ([422e5e0](https://github.com/programinglive/dev-workflow-mcp-server/commit/422e5e0b76ce0bac2fc76c910382ce17ba25b87c))
+* **share:** add scripts to audit and clear probe links ([d9425b2](https://github.com/programinglive/dev-workflow-mcp-server/commit/d9425b2155307c12c9066e1490dbedb68abcbe09))
+
 ## [1.24.0](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.23.14...v1.24.0) (2026-11-03)
 
 
