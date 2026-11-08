@@ -15,7 +15,10 @@ ALTER TABLE sessions ADD COLUMN IF NOT EXISTS parent_task_id text;
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS parent_task_title text;
 
 -- The old primary key is discovered rather than assumed: it is named
--- sessions_pkey on a fresh database but may differ on a restored one.
+-- sessions_pkey on a fresh database but may differ on a restored one. The
+-- lookup is scoped to the current schema: the same database can hold a
+-- `sessions` table for another purpose, and dropping that one instead would
+-- leave this table without any key.
 DO $$
 DECLARE
   pk_name text;
@@ -25,6 +28,7 @@ BEGIN
     JOIN pg_class rel ON rel.oid = con.conrelid
     JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
    WHERE rel.relname = 'sessions'
+     AND nsp.nspname = current_schema()
      AND con.contype = 'p'
    LIMIT 1;
 
@@ -41,7 +45,9 @@ BEGIN
     SELECT 1
       FROM pg_constraint con
       JOIN pg_class rel ON rel.oid = con.conrelid
+      JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
      WHERE rel.relname = 'sessions'
+       AND nsp.nspname = current_schema()
        AND con.contype = 'p'
        AND pg_get_constraintdef(con.oid) = 'PRIMARY KEY (session_key, task_id)'
   ) THEN

@@ -32,6 +32,10 @@ let pool = null;
 let siap = false;
 let alasanLewat = "";
 
+// Skema sendiri: berkas ini menyimpan `sessions` berbentuk lama (PK tunggal)
+// dan tidak boleh bertemu tabel berbentuk baru milik berkas tes lain.
+const SKEMA = "devwf_share";
+
 const DDL_SESI = `
 CREATE TABLE IF NOT EXISTS sessions (
   session_key text PRIMARY KEY,
@@ -54,9 +58,10 @@ before(async () => {
     alasanLewat = "modul pg tidak tersedia";
     return;
   }
-  const p = new pool({ connectionString: KONEKSI, max: 2, connectionTimeoutMillis: 5000 });
+  const p = new pool({ connectionString: KONEKSI, max: 2, connectionTimeoutMillis: 5000, options: `-c search_path=${SKEMA},public` });
   try {
     await p.query("SELECT 1");
+    await p.query(`CREATE SCHEMA IF NOT EXISTS ${SKEMA}`);
     await p.query(DDL_SESI);
     await p.query(ensureTableSql);
     pool = p;

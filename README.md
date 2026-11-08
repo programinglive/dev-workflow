@@ -209,6 +209,7 @@ When a session runs a build, test suite, container image build, security scan, o
 
 - **MCP Status Visibility**: `get_workflow_status`, `continue_workflow`, and `list_active_sessions` render a `🏗️ Active Build / Execution Monitor` section with an ASCII progress bar, elapsed duration, command, and recent build history.
 - **Mission-Control Web Dashboard (`monitor-server/dashboard.cjs`)**: Displays a top KPI strip, a dedicated **🏗️ Live Build & Execution Monitor** hero radar with animated progress bars and 1-second live ticking timers, plus a 6-step Workflow Pipeline Stepper on every session card and detail modal.
+- **Zettelkasten card chaining**: starting a new task in the same session creates its own card and marks the previous one `handed-off`, so the board links "continued from" / "continued to" instead of overwriting the topic. See [docs/card-chaining.md](docs/card-chaining.md) and the migration command `node scripts/migrate-monitor-db.cjs`.
 
 ### Searching the active project
 
