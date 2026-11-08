@@ -53,6 +53,9 @@ function classifySession({
   const ageMs = ageOf(updatedAt, now);
 
   if (fase === 'idle') return { status: 'idle', ageMs };
+  // Kartu yang sudah diserahkan ke kartu berikutnya dalam sesi yang sama
+  // bukan pekerjaan aktif: sesinya hidup, topiknya sudah pindah.
+  if (fase === 'handed-off') return { status: 'ended', ageMs };
   // Tanpa waktu laporan yang sah, tidak ada dasar untuk menyebutnya hidup.
   if (ageMs === null) return { status: 'ended', ageMs: null };
   if (ageMs <= liveMs) return { status: 'live', ageMs };
