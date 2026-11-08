@@ -59,6 +59,11 @@ CREATE TABLE IF NOT EXISTS sessions (
   dod_done integer, dod_total integer, dod_waived integer,
   owner_pid integer, started_at timestamptz, updated_at timestamptz,
   session_title text, agent_tool text,
+  workflow_task_id text NOT NULL DEFAULT '',
+  task_origin_json jsonb NOT NULL DEFAULT '{}',
+  task_relations_json jsonb NOT NULL DEFAULT '[]',
+  repo_path text NOT NULL DEFAULT '',
+  repo_remote text NOT NULL DEFAULT '',
   PRIMARY KEY (session_key, task_id)
 );`;
 

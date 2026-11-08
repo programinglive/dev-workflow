@@ -32,8 +32,18 @@ let siap = false;
 let alasanLewat = "";
 
 async function terapkanMigrasi() {
-  const sql = readFileSync(new URL("../monitor-server/migrations/001-card-chaining.sql", import.meta.url), "utf8");
-  await pool.query(sql);
+  // Full runner order: 001 guarantees the chain columns and the key swap,
+  // 002 proves the standalone swap is a no-op on a swapped database, and 003
+  // brings in the task-metadata columns a fresh install needs for the
+  // unified upsert.
+  for (const nama of [
+    "001-card-chaining.sql",
+    "002-pk-swap.sql",
+    "003-task-metadata.sql",
+  ]) {
+    const sql = readFileSync(new URL(`../monitor-server/migrations/${nama}`, import.meta.url), "utf8");
+    await pool.query(sql);
+  }
 }
 
 before(async () => {
@@ -170,4 +180,69 @@ test("the migration can run twice without failing", async (t) => {
       WHERE rel.relname = 'sessions' AND nsp.nspname = current_schema() AND con.contype = 'p'`,
   );
   assert.equal(r.rows[0].definition, "PRIMARY KEY (session_key, task_id)");
+});
+
+test("the unified upsert stores task metadata next to the chain identity", async (t) => {
+  if (lewati(t)) return;
+  const sessionKey = PREFIX + "meta";
+
+  await simpan({
+    sessionKey,
+    taskId: "task-a",
+    machine: "HELLOWORLD",
+    projectName: "proyek",
+    task: "one task",
+    taskType: "feature",
+    phase: "coding",
+    workflowTaskId: "wfk-1",
+    taskOrigin: { system: "factory", id: "45489f0d" },
+    taskRelations: [{ system: "factory", id: "45489f0d", relation: "tracks", label: "Factory 45489f0d" }],
+    repositoryPath: "/code/dev-workflow-mcp-server",
+    repositoryRemote: "git@github.com:programinglive/dev-workflow-mcp-server.git",
+  });
+
+  const r = await pool.query(
+    `SELECT workflow_task_id, task_origin_json, task_relations_json, repo_path, repo_remote, task_id
+       FROM sessions WHERE session_key = $1`,
+    [sessionKey],
+  );
+  assert.equal(r.rows[0].workflow_task_id, "wfk-1");
+  assert.deepEqual(r.rows[0].task_origin_json, { system: "factory", id: "45489f0d", url: "", label: "" });
+  assert.equal(r.rows[0].task_relations_json.length, 1);
+  assert.equal(r.rows[0].task_relations_json[0].id, "45489f0d");
+  assert.equal(r.rows[0].repo_path, "/code/dev-workflow-mcp-server");
+  assert.equal(r.rows[0].task_id, "task-a");
+});
+
+test("a sparse completion keeps the task metadata of the same card", async (t) => {
+  if (lewati(t)) return;
+  const sessionKey = PREFIX + "meta-sparse";
+
+  await simpan({
+    sessionKey,
+    taskId: "task-a",
+    machine: "HELLOWORLD",
+    projectName: "proyek",
+    task: "one task",
+    phase: "coding",
+    workflowTaskId: "wfk-2",
+    repositoryPath: "/code/dev-workflow-mcp-server",
+  });
+  //complete_task style report: task cleared, no identity fields at all.
+  await simpan({
+    sessionKey,
+    taskId: "task-a",
+    machine: "HELLOWORLD",
+    projectName: "proyek",
+    task: "",
+    phase: "idle",
+  });
+
+  const r = await pool.query(
+    `SELECT workflow_task_id, repo_path
+       FROM sessions WHERE session_key = $1`,
+    [sessionKey],
+  );
+  assert.equal(r.rows[0].workflow_task_id, "wfk-2", "an empty report must not erase the task identity");
+  assert.equal(r.rows[0].repo_path, "/code/dev-workflow-mcp-server", "an empty report must not erase the repository");
 });

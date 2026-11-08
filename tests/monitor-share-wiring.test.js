@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from 'node:module';
 const {visibleTaskSessions}=createRequire(import.meta.url)('../monitor-server/visible-task-sessions.cjs');
+const taskMetadataMod = createRequire(import.meta.url)('../monitor-server/task-metadata.cjs');
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const src = readFileSync(path.join(ROOT, "monitor-server", "dashboard.cjs"), "utf8");
@@ -52,13 +53,15 @@ test("kegagalan tabel share tidak menjatuhkan dashboard", () => {
 
 test("kode halaman dashboard tidak memakai template literal di dalam template literal", () => {
   // Halaman ini adalah template literal. Satu `${` di dalamnya akan
-  // diinterpolasi server dan merusak skrip klien.
+  // diinterpolasi server dan merusak skrip klien. Satu-satunya yang boleh
+  // diinterpolasi adalah literal dan fungsi statis yang disalin utuh
+  // ke browser (pattern yang sama untuk filter sesi dan metadata task).
   const mulai = src.indexOf("const PAGE = `");
   const akhir = src.indexOf("</html>`", mulai);
   assert.ok(mulai > 0 && akhir > mulai, "PAGE harus tetap berupa satu template literal");
   const halaman = src.slice(mulai, akhir);
-  const terlarang = halaman.match(/\$\{(?!POLL_MS\}|visibleTaskSessions\.toString\(\)\})/g) || [];
-  assert.deepEqual(terlarang, [], "hanya interval dan fungsi filter statis yang boleh diinterpolasi");
+  const terlarang = halaman.match(/\$\{(?!POLL_MS\}|visibleTaskSessions\.toString\(\)\}|normalizeTaskMetadata\.toString\(\)\}|renderTaskMetadata\.toString\(\)\})/g) || [];
+  assert.deepEqual(terlarang, [], "hanya interval dan fungsi filter/metadata statis yang boleh diinterpolasi");
 });
 
 test("skrip halaman dashboard benar-benar bisa di-parse", () => {
@@ -68,7 +71,18 @@ test("skrip halaman dashboard benar-benar bisa di-parse", () => {
   const mulai = src.indexOf("const PAGE = `");
   const akhir = src.indexOf("</html>`", mulai);
   const template = src.slice(mulai + "const PAGE = `".length, akhir);
-  const halaman = new Function("POLL_MS", 'visibleTaskSessions', `return \`${template}\`;`)(3000,visibleTaskSessions);
+  const halaman = new Function(
+    "POLL_MS",
+    "visibleTaskSessions",
+    "normalizeTaskMetadata",
+    "renderTaskMetadata",
+    `return \`${template}\`;`,
+  )(
+    3000,
+    visibleTaskSessions,
+    taskMetadataMod.normalizeTaskMetadata,
+    taskMetadataMod.renderTaskMetadata,
+  );
   const skrip = halaman.slice(halaman.indexOf("<script>") + 8, halaman.lastIndexOf("</script>"));
   assert.ok(skrip.length > 500, "skrip halaman tidak boleh kosong");
   assert.doesNotThrow(() => new Function(skrip), "skrip halaman harus valid JavaScript");
