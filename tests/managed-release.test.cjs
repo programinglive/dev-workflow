@@ -10,9 +10,44 @@ const {once} = require('node:events');
 const {createReleaseServer} = require('../managed/release-server.cjs');
 const {tarExecutable} = require('../managed/protocol.cjs');
 const {resolveRelease, validateManifest, validateArchiveEntries,acquireInstallLock} = require('../managed/launcher.cjs');
-const {classifyLineage, enforceForwardOnly, readHostCurrentRevision} = require('../managed/rollout.cjs');
+const {classifyLineage, enforceForwardOnly, readHostCurrentRevision, makeGitIsAncestor} = require('../managed/rollout.cjs');
 
 const rev = (c) => c.repeat(40);
+
+async function tempGitRepo(t) {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(),'lineage-guard-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const git = (arg) => execFileSync('git', ['-C', dir, ...arg], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  git(['init', '-q']);
+  git(['config', 'user.email', 'guard-test@example.com']);
+  git(['config', 'user.name', 'Guard Test']);
+  await fs.writeFile(path.join(dir, 'a.txt'), 'a\n');
+  git(['add', 'a.txt']);
+  git(['commit', '-q', '-m', 'first']);
+  const first = git(['rev-parse', 'HEAD']).trim();
+  await fs.writeFile(path.join(dir, 'a.txt'), 'b\n');
+  git(['add', 'a.txt']);
+  git(['commit', '-q', '-m', 'second']);
+  const second = git(['rev-parse', 'HEAD']).trim();
+  return { dir, first, second };
+}
+
+test('makeGitIsAncestor answers forward/ancestor correctly on a real repo', (t) => {
+  return tempGitRepo(t).then(({ dir, first, second }) => {
+    const isAncestor = makeGitIsAncestor(dir);
+    assert.equal(isAncestor(first, second), true, 'first is an ancestor of second');
+    assert.equal(isAncestor(second, first), false, 'second is not an ancestor of first');
+  });
+});
+
+test('makeGitIsAncestor reports null (unknown) for a commit object that is missing locally', (t) => {
+  return tempGitRepo(t).then(({ dir, second }) => {
+    const isAncestor = makeGitIsAncestor(dir);
+    const missing = 'ffffffffffffffffffffffffffffffffffffffff'; // well-formed full SHA, absent object
+    assert.equal(isAncestor(missing, second), null, 'missing parent object is unverifiable, not divergent');
+    assert.equal(classifyLineage(missing, second, isAncestor), 'unknown');
+  });
+});
 
 test('forward-only lineage guard classifies same, forward, regression, divergent, and unknown', () => {
   const cur = rev('a'), forward = rev('b'), older = rev('c');
