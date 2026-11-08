@@ -2,6 +2,43 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.28.0](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.27.1...v1.28.0) (2026-11-08)
+
+
+### 🐛 Bug Fixes
+
+* **managed:** send the rule sync script over stdin so it survives cmd.exe ([734afe9](https://github.com/programinglive/dev-workflow-mcp-server/commit/734afe968fc574917f5f6d0d3e2cda84d5fcf1e7))
+* **managed:** send the rule sync script over stdin so it survives cmd.exe ([5b266ff](https://github.com/programinglive/dev-workflow-mcp-server/commit/5b266ff96dee532fa4ebcde8697c69d409a7d4cc))
+
+
+### 🧹 Chores
+
+* **release:** merge pre-rebase rule-sync lineage ([9ec5c5f](https://github.com/programinglive/dev-workflow-mcp-server/commit/9ec5c5f97573880cd7da579d362377a3d42dcdd6))
+
+
+### ✅ Tests
+
+* **monitor:** pass the inlined estimator into the page harnesses ([b166cab](https://github.com/programinglive/dev-workflow-mcp-server/commit/b166cabcd414fcdd78e2a458e4115e2f2e6776d2))
+* **process-lock:** pin the lock directory with an absolute drive path ([3200f05](https://github.com/programinglive/dev-workflow-mcp-server/commit/3200f05515ec0046168884b5b674389867b9d9e1))
+
+
+### ✨ Features
+
+* **builds:** aggregate build durations with nearest-rank percentiles ([23a2a5b](https://github.com/programinglive/dev-workflow-mcp-server/commit/23a2a5b9907ffc3300f25bf515179e2f1ac416c2))
+* **builds:** estimate minutes and revise on stall, overdue or failure ([28c8cb5](https://github.com/programinglive/dev-workflow-mcp-server/commit/28c8cb5e4f1e08b224515e282fb3cb953c0886cf))
+* **builds:** pair build events into runs with stage durations ([0dbb5d7](https://github.com/programinglive/dev-workflow-mcp-server/commit/0dbb5d76cc642bc3ed27dba54633aadd350d5449))
+* **builds:** show the cold-start ETA state instead of nothing ([1e00726](https://github.com/programinglive/dev-workflow-mcp-server/commit/1e00726352109eda50fef24531190e60e6c4c400))
+* **monitor:** add the Build tab and a live, trouble-aware ETA ([a245617](https://github.com/programinglive/dev-workflow-mcp-server/commit/a245617e2b62b94fd54723e9b91f828a5dbaa572))
+* **monitor:** expose /api/builds/report for build durations ([da052b9](https://github.com/programinglive/dev-workflow-mcp-server/commit/da052b90e530abb47d488867481282b307820557))
+* **monitor:** show a repository link on the session card and modal ([d36b5f7](https://github.com/programinglive/dev-workflow-mcp-server/commit/d36b5f77b4dd4b1d95c3c59c789efd65f8b58c26))
+
+
+### 📝 Documentation
+
+* **plan:** make the build estimate react to trouble ([44f5fc8](https://github.com/programinglive/dev-workflow-mcp-server/commit/44f5fc8c7e1c274fcf418c32bb1e428e32267dc5))
+* **readme:** document the build report, the estimator and the build tab ([8b8f03d](https://github.com/programinglive/dev-workflow-mcp-server/commit/8b8f03db5d3a7b34ca3413435ea9bb88aba0103e))
+* **spec:** design the build duration report and minute estimate ([2abefe4](https://github.com/programinglive/dev-workflow-mcp-server/commit/2abefe415188b8e1de361b2881fa041a8bc833fd))
+
 ### [1.27.1](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.27.0...v1.27.1) (2026-11-08)
 
 
