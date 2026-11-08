@@ -305,7 +305,7 @@ function isRevised(previous, next) {
  * @param {object|null} [input.previous] last estimate, to mark a revision
  */
 function estimateBuild({
-  summary = {},
+  summary: rawSummary = {},
   run = {},
   now = Date.now(),
   previous = null,
@@ -315,6 +315,7 @@ function estimateBuild({
   // Self-contained on purpose: the dashboard page inlines this function with
   // toString(), so every helper it needs is defined here rather than reached
   // through module scope.
+  const summary = rawSummary && typeof rawSummary === 'object' ? rawSummary : {};
   const toMs = (value) => {
     const parsed = Date.parse(String(value == null ? '' : value));
     return Number.isFinite(parsed) ? parsed : null;

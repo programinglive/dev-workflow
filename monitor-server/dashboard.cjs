@@ -701,8 +701,9 @@ function etaText(est) {
 
 function renderEta(ab, jNow) {
   if (!ab || !ab.startedAt) return '';
-  const summary = buildSummaryFor(ab);
-  if (!summary) return '';
+  // A target without history still gets a line: saying "no baseline yet" is
+  // information, staying silent looks like the feature is broken.
+  const summary = buildSummaryFor(ab) || { count: 0 };
   const est = estimateBuild({
     summary: summary,
     run: {
