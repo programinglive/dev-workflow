@@ -112,3 +112,24 @@ test("fase terminal selalu berakhir, walau baru saja ditutup", () => {
     assert.equal(s.terminal, true, `${phase} harus ditandai terminal`);
   }
 });
+
+test("fase hand-off juga terminal, bukan sesi yang masih bekerja", () => {
+  // Measured 9 November 2026: a session that starts a new task hands the
+  // previous card over with phase `handed-off`. That card is finished work -
+  // the agent moved on - so it must leave the Active tab immediately instead
+  // of waiting out the two-hour window as "possibly stuck".
+  const s = classifySession({ phase: "handed-off", updatedAt: menitLalu(1), now: NOW });
+  assert.equal(s.status, "ended");
+  assert.equal(s.terminal, true);
+});
+
+test("a finished task that only ever reported coding still ends eventually", () => {
+  // This is the exact shape the closure-identity bug produced: a row stuck at
+  // `coding` whose task was already done in Factory. The classifier cannot
+  // read Factory, but it must never call that row active forever. The
+  // closure-identity fix stops new rows from being created; this guards the
+  // ageing path for rows that already exist.
+  const ancient = classifySession({ phase: "coding", updatedAt: menitLalu(300), now: NOW });
+  assert.equal(ancient.status, "ended");
+  assert.notEqual(ancient.status, "live");
+});
