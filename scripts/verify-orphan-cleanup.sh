@@ -2,7 +2,7 @@
 # Membuktikan aksi "cabut yang yatim": hanya tautan tanpa sesi yang kena,
 # sesi idle tidak tersentuh, dan endpoint-nya tetap terlindungi guard.
 set -euo pipefail
-BASE=http://100.107.65.21:3100
+BASE=http://100.77.138.14:3100
 Q() { sudo -u postgres psql -d devwf_monitor -tAc "$1"; }
 
 HIDUP="ses_uji_bersih_hidup_$(date +%s)"

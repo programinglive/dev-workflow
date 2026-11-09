@@ -1,6 +1,6 @@
 # One release for HELLOWORLD, MMCH and Mac
 
-The managed deployment has one approved source release on `bw-tools`, reachable only through Tailscale at `http://100.77.138.14:3101`. It distributes immutable, authenticated archives. The existing monitor remains at `http://100.107.65.21:3100`.
+The managed deployment has one approved source release on `bw-tools`, reachable only through Tailscale at `http://100.77.138.14:3101`. It distributes immutable, authenticated archives. The existing monitor remains at `http://100.77.138.14:3100`.
 
 This is centrally managed distribution with local execution. Git, files, tests, Factory credentials and repository paths remain on the device. It does not move development repositories onto a production server. There is no remote command-execution API.
 
