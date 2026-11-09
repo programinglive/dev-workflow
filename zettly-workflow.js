@@ -153,7 +153,9 @@ async function syncState(workflowState,state,status,args,options) {
 }
 
 export async function syncZettlyTask(workflowState,options={}) {
-  if(!zettlySyncEnabled(options.env||process.env))return {ok:true,disabled:true,note:''};
+  // An explicitly injected client already chose its transport; only the
+  // self-resolving path is gated by the sync flag and the test context.
+  if(!options.client&&!zettlySyncEnabled(options.env||process.env))return {ok:true,disabled:true,note:''};
   if(options.todoId!==undefined&&(!Number.isSafeInteger(options.todoId)||options.todoId<1))return {ok:false,note:'Invalid Zettly Todo ID: a positive integer is required.'};
   const state=workflowState.state;
   if(!state.taskDescription)return {ok:true,note:''};

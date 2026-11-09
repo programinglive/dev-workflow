@@ -267,6 +267,29 @@ export function getToolList() {
       },
     },
     {
+      name: "checkpoint_task",
+      description:
+        "Write an authoritative checkpoint of the current task into its Zettly Todo and prove the " +
+        "write landed by reading the Todo back. Records which machine owns the task, the summary of " +
+        "what is done, the base commit, and every commit this session made since the base. Use it at " +
+        "phase transitions and before handing a task to another machine, or whenever the owner asks " +
+        "for a checkpoint. The result reports confirmed=true only after the read-back matched; " +
+        "confirmed=false means the checkpoint may exist but could not be verified, and another " +
+        "machine must not rely on it. Refuses when no task has been started.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          summary: {
+            type: "string",
+            description:
+              "One or two sentences on what is done and what remains. Recorded in the checkpoint " +
+              "and visible to the machine that picks the task up.",
+          },
+        },
+        required: [],
+      },
+    },
+    {
       name: "mark_bug_fixed",
       description:
         "Mark that the bug/feature is fixed. Reminder: Now you MUST create tests!",
