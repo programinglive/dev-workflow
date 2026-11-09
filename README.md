@@ -213,6 +213,28 @@ See [MCP client configuration](#mcp-client-configuration).
 
 Development tasks are recorded in Factory by default when the configured account and a matching Git repository project are available. The original request, Zettly Todo, Sentry issue if applicable, Factory task, and visual plan remain separate linked records. `start_task` reports a visible warning when Factory recording fails; it never chooses an unrelated project. Existing Factory links are reused. `create_feature_flow` publishes editable shapes and a preview in Zettly Draw, while `mark_bug_fixed` requires that flow first. The monitor shows the source and linked records. An explicit `FACTORY_AUTO_TASK=false` is reserved for isolated test environments.
 
+#### Junk sessions are not recorded
+
+A session with **no task and no session title** carries no information: it can
+appear in no recap, no history entry and no report. The owner's rule (10
+November 2026) is to treat it as junk, clean it up, and stop it coming back.
+
+Three things enforce it:
+
+- `monitor-server/empty-session.cjs` holds the one definition. Recap and history
+  both filter on it, so a session cannot be counted in one and hidden in the
+  other.
+- Ingestion refuses to **create** such a row. A sparse report for an existing
+  session is still accepted, because closing a task sends an empty task on
+  purpose to keep its identity and relations.
+- `node monitor-server/cleanup-empty-sessions.cjs --dry-run` lists existing junk
+  rows, and running it without `--dry-run` deletes at most `--limit` of them.
+  Only rows with an empty `task_id` are matched, so a real card whose task text
+  was cleared when it closed is never touched.
+
+A session with **either** a task **or** a title is real work and is kept: a card
+that only has a title is still something a human can recognise.
+
 #### Why a card says "Flow belum ada"
 
 The `sessions` table is keyed by `(session_key, task_id)`, so one session owns

@@ -50,6 +50,7 @@ const {
 } = require('./share-route.cjs');
 const { ensureTableSql } = require('./share-links.cjs');
 const { normalizeBuildState, extractActiveBuildFromEvents } = require('./build-monitor.cjs');
+const { shouldSkipCreate } = require('./empty-session.cjs');
 
 const liveBuildsBySession = new Map();
 
@@ -1786,6 +1787,38 @@ async function pruneOldRows() {
 }
 
 async function upsertSession(body) {
+  /*
+   * Junk sessions are never CREATED.
+   *
+   * OWNER INSTRUCTION (10 November 2026): a session with no title cannot be
+   * used in a report, so treat it as junk and make sure it does not happen
+   * again.
+   *
+   * WHY THIS CHECK IS HERE AND NOT IN buildSessionUpsert
+   * ----------------------------------------------------
+   * A sparse report for an ALREADY EXISTING session is legitimate: closing a
+   * task sends an empty task on purpose so the row keeps its identity and its
+   * relations (see the COALESCE guards in the upsert). Refusing that shape in
+   * the SQL builder would break closing a task. The junk case is specifically a
+   * row that would be CREATED with nothing in it, so this asks whether the row
+   * already exists first.
+   *
+   * A report with a task, a title OR a project still creates a row: a card that
+   * only has a title is something a human can recognise.
+   */
+  const key = str(body.cardKey || body.sessionKey, 200);
+  const taskId = str(body.taskId, 200);
+  if (key) {
+    const existing = await query(
+      `SELECT 1 FROM sessions WHERE session_key = $1 AND task_id = $2 LIMIT 1`,
+      [key, taskId],
+    );
+    if (shouldSkipCreate(body, existing.rowCount > 0)) {
+      // Nothing to report and no row to preserve: do not create one.
+      return key;
+    }
+  }
+
   const { sql, params } = buildSessionUpsert(body);
   await query(sql, params);
   // Kartu yang digantikan oleh kartu baru dalam sesi yang sama dihentikan:
@@ -1793,8 +1826,6 @@ async function upsertSession(body) {
   // tampil "berjalan" selamanya di tab Aktif.
   const handoff = buildParentHandoff(body);
   if (handoff) await query(handoff.sql, handoff.params);
-  const key = str(body.cardKey || body.sessionKey, 200);
-  const taskId = str(body.taskId, 200);
   // Kunci build per KARTU, bukan per sesi. Sebelumnya satu build bocor ke
   // topik berikutnya di sesi yang sama dan membuat kartu baru tampak bekerja
   // padahal tidak pernah memulainya.
