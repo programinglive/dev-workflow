@@ -644,8 +644,74 @@ function renderBuildBox(ab, jNow, machine) {
     eta +
     (ab.stage ? '<div class="build-stage">▸ ' + esc(ab.stage) + (hasPct ? ' (' + pct + '%)' : '') + '</div>' : '') +
     '<div class="' + barCls + '"><i style="width:' + pct + '%"></i></div>' +
+    renderTestCases(ab.testCases) +
     (ab.command ? '<div class="build-cmd">$ ' + esc(ab.command) + '</div>' : '') +
     (ab.output ? '<div class="event-out-box" style="margin-top:6px">' + esc(ab.output) + '</div>' : '') +
+  '</div>';
+}
+
+/**
+ * Per-test-case progress on a card.
+ *
+ * OWNER REQUEST (10 November 2026): "I want output about test cases on the
+ * monitor, so we know tests are running and how far they have got." Without
+ * this, a card reads "npm test (100%)" for five minutes and looks frozen.
+ *
+ * This function lives INSIDE the page template, so it is browser code: no
+ * backticks, no template interpolation, no require(). The counts are computed
+ * here rather than from the server helper for that reason.
+ *
+ * Only a bounded window is drawn: the running case first (that is the one
+ * somebody is waiting for), then the most recent settled ones. A suite with
+ * thousands of cases must not push the rest of the card off the screen.
+ */
+function renderTestCases(testCases) {
+  if (!Array.isArray(testCases) || testCases.length === 0) return '';
+  const counts = { passed: 0, failed: 0, skipped: 0, running: 0 };
+  for (let i = 0; i < testCases.length; i++) {
+    const entry = testCases[i];
+    if (!entry) continue;
+    if (entry.status === 'passed') counts.passed++;
+    else if (entry.status === 'failed') counts.failed++;
+    else if (entry.status === 'skipped') counts.skipped++;
+    else if (entry.status === 'running') counts.running++;
+  }
+  const icon = function (status) {
+    if (status === 'passed') return '✅';
+    if (status === 'failed') return '❌';
+    if (status === 'skipped') return '⏭️';
+    if (status === 'running') return '▶️';
+    return '❔';
+  };
+  const running = testCases.filter(function (entry) { return entry && entry.status === 'running'; });
+  const failed = testCases.filter(function (entry) { return entry && entry.status === 'failed'; });
+  const settled = testCases.filter(function (entry) { return entry && entry.status !== 'running'; });
+  const recent = settled.slice(-6);
+
+  const parts = [];
+  if (running.length) {
+    parts.push('<div class="build-stage">▶️ ' + running.slice(-2).map(function (entry) {
+      return esc(entry.name);
+    }).join(' · ') + '</div>');
+  }
+  if (recent.length) {
+    parts.push('<div class="meta" style="margin-top:3px;line-height:1.55">' +
+      recent.map(function (entry) {
+        return icon(entry.status) + ' ' + esc(entry.name);
+      }).join('<br>') + '</div>');
+  }
+  const failuresShown = recent.filter(function (entry) { return entry.status === 'failed'; }).length;
+  if (counts.failed > failuresShown) {
+    parts.push('<div class="meta" style="margin-top:3px">… and ' +
+      (counts.failed - failuresShown) + ' more failed</div>');
+  }
+
+  return '<div class="test-cases" style="margin-top:6px">' +
+    '<div class="meta" style="font-weight:600">🧪 Test cases: ' +
+      counts.passed + ' passed · ' + counts.failed + ' failed · ' +
+      counts.skipped + ' skipped · ' + counts.running + ' running (' + testCases.length + ')' +
+    '</div>' +
+    parts.join('') +
   '</div>';
 }
 const estimateBuild = ${estimateBuild.toString()};
