@@ -10,7 +10,8 @@
     "node": ">=20"
   },
   "bin": {
-    "dev-workflow-mcp": "index.js"
+    "dev-workflow-mcp": "index.js",
+    "devwf": "bin/cli.js"
   },
   "scripts": {
     "build": "npm run build:server && npm run build:web",
