@@ -8,7 +8,7 @@ const {
   handleListShares, listLiveShares, shareErrorStatus,
 } = require("../monitor-server/share-route.cjs");
 
-const ORIGINS = ["http://100.107.65.21:3100", "http://localhost:3100"];
+const ORIGINS = ["http://100.77.138.14:3100", "http://localhost:3100"];
 const TOKEN = "T".repeat(43);
 
 /** Query palsu: mencatat panggilan dan menjawab dari skrip per pola. */
@@ -23,10 +23,10 @@ function fakeQuery(handler) {
 }
 
 test("origin asing ditolak, origin dashboard diterima", () => {
-  assert.equal(isOriginAllowed("http://100.107.65.21:3100", ORIGINS), true);
+  assert.equal(isOriginAllowed("http://100.77.138.14:3100", ORIGINS), true);
   assert.equal(isOriginAllowed("http://localhost:3100", ORIGINS), true);
   assert.equal(isOriginAllowed("https://evil.example", ORIGINS), false);
-  assert.equal(isOriginAllowed("http://100.107.65.21:3100.evil.example", ORIGINS), false);
+  assert.equal(isOriginAllowed("http://100.77.138.14:3100.evil.example", ORIGINS), false);
   assert.equal(isOriginAllowed("null", ORIGINS), false);
 });
 

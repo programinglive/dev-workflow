@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Body rusak pada endpoint tulis: dengan token yang SAH, harus 400 (bukan 500).
 set -uo pipefail
-BASE=http://100.107.65.21:3100
+BASE=http://100.77.138.14:3100
 TOK=$(grep '^DEVWF_MONITOR_TOKEN=' /etc/devwf-monitor.env | cut -d= -f2-)
 
 echo "token terbaca: $([ -n "$TOK" ] && echo ya || echo TIDAK)"

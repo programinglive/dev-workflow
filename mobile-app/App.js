@@ -40,7 +40,7 @@ import { buildLocation, buildStatusLabel, isRunningBuild, parseEventDetail, visi
 const MONITOR_URL =
   process.env.EXPO_PUBLIC_MONITOR_URL ||
   (Constants.expoConfig && Constants.expoConfig.extra && Constants.expoConfig.extra.monitorUrl) ||
-  "http://100.107.65.21:3100";
+  "http://100.77.138.14:3100";
 
 const POLL_MS = 3000;
 
