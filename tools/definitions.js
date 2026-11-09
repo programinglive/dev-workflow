@@ -327,6 +327,36 @@ export function getToolList() {
       },
     },
     {
+      name: "fetch_task",
+      description:
+        "Take a task over from another machine by refreshing that machine's checkpoint over SSH and " +
+        "adopting it into this session. With no 'from' (or 'from' equal to this machine) it is a " +
+        "plain local checkpoint. With 'from' naming another machine, a 'reason' is required: it " +
+        "becomes the handover marker the source machine will read and must stop working from. If the " +
+        "remote refresh fails, the last readable Zettly checkpoint is adopted instead and the result " +
+        "is flagged confirmed:false. An unresolvable machine name is refused, never guessed.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          from: {
+            type: "string",
+            description: "Machine to take the task over from (e.g. 'Mac'). Omit for a local checkpoint.",
+          },
+          reason: {
+            type: "string",
+            description: "Why this machine is taking the task over. Required when 'from' names another machine.",
+          },
+          sessionKey: {
+            type: "string",
+            description:
+              "Optional remote session key to checkpoint explicitly (e.g. 'ses_e69e5134...'). " +
+              "Omit to let the remote process use its default session context.",
+          },
+        },
+        required: [],
+      },
+    },
+    {
       name: "mark_bug_fixed",
       description:
         "Mark that the bug/feature is fixed. Reminder: Now you MUST create tests!",
