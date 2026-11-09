@@ -54,10 +54,21 @@ test("the same timestamp in any driver representation is filtered", () => {
 });
 
 test("the deploy publishes every module the changed artifacts require", () => {
-  // dashboard.cjs requires machines-query.cjs, and machines-query.cjs is the
-  // only file that changed. Both must be in the install allowlist.
-  assert.match(SCRIPT, /machines\.devwf|machines-query\.cjs/);
+  // dashboard.cjs requires machines-query.cjs and task-metadata.cjs; the card
+  // fixes live in those modules, so a deploy that silently skips one of them
+  // ships a half-updated monitor.
+  assert.match(SCRIPT, /machines-query\.cjs/);
+  assert.match(SCRIPT, /task-metadata\.cjs/);
   assert.match(SCRIPT, /monitor-server\/dashboard\.cjs/);
+});
+
+test("the artifact table drives install, snapshot and rollback", () => {
+  // Hardcoded file lists are how task-metadata.cjs was left out. Every new
+  // artifact must be handled by the same loop, not a second copy-pasted line.
+  const installLoop = SCRIPT.match(/foreach \(\$artifact in \$artifacts\) \{[\s\S]*?\n    \}/g) || [];
+  assert.ok(installLoop.length >= 3, "install, snapshot and rollback must all loop over the table");
+  assert.doesNotMatch(SCRIPT, /install -m 644 \$incoming\/monitor\.cjs /);
+  assert.doesNotMatch(SCRIPT, /install -m 644 \$incoming\/machines-query\.cjs /);
 });
 
 test("verification fails when the deployed artifacts did not change", () => {

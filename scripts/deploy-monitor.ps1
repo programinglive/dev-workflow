@@ -19,6 +19,7 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $dashboard = Join-Path $repoRoot 'monitor-server/dashboard.cjs'
 $machines = Join-Path $repoRoot 'monitor-server/machines-query.cjs'
+$taskMetadata = Join-Path $repoRoot 'monitor-server/task-metadata.cjs'
 $knownHosts = Join-Path $repoRoot 'monitor-server/bw-tools-known-hosts'
 $keyPath = Join-Path $env:RUNNER_TEMP 'devwf-monitor-deploy.key'
 $target = 'devwf-monitor-deploy@100.77.138.14'
@@ -29,10 +30,14 @@ $sshOptions = @('-n', '-i', $keyPath, '-o', 'IdentitiesOnly=yes', '-o', 'BatchMo
 # way a captured ssh call does, so the copy gets its own guarded option list.
 $scpOptions = @('-q', '-i', $keyPath, '-o', 'IdentitiesOnly=yes', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=20', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=4', '-o', 'StrictHostKeyChecking=yes', '-o', "UserKnownHostsFile=$knownHosts")
 # Staged names are the ones the sudo allowlist names exactly. `monitor` is the
-# installed name of dashboard.cjs on the server.
+# installed name of dashboard.cjs on the server. Every artifact listed here must
+# also exist in /etc/sudoers.d/devwf-monitor-deploy; the job fails loudly when a
+# reviewed file is missing from the allowlist instead of silently shipping a
+# half-updated monitor.
 $artifacts = @(
-    [pscustomobject]@{ Local = $dashboard; Staged = 'monitor.cjs'; Installed = '/opt/devwf-monitor/monitor.cjs' },
-    [pscustomobject]@{ Local = $machines; Staged = 'machines-query.cjs'; Installed = '/opt/devwf-monitor/machines-query.cjs' }
+    [pscustomobject]@{ Local = $dashboard; Staged = 'monitor.cjs'; Installed = '/opt/devwf-monitor/monitor.cjs'; Previous = 'monitor.previous.cjs' },
+    [pscustomobject]@{ Local = $machines; Staged = 'machines-query.cjs'; Installed = '/opt/devwf-monitor/machines-query.cjs'; Previous = 'machines-query.previous.cjs' },
+    [pscustomobject]@{ Local = $taskMetadata; Staged = 'task-metadata.cjs'; Installed = '/opt/devwf-monitor/task-metadata.cjs'; Previous = 'task-metadata.previous.cjs' }
 )
 $deployed = $false
 
@@ -116,8 +121,9 @@ try {
     Invoke-DeploySsh "mkdir -p $incoming" | Out-Null
 
     # Snapshot the installed files before anything is replaced.
-    Invoke-DeploySsh "cp /opt/devwf-monitor/monitor.cjs $incoming/monitor.previous.cjs" | Out-Null
-    Invoke-DeploySsh "cp /opt/devwf-monitor/machines-query.cjs $incoming/machines-query.previous.cjs" | Out-Null
+    foreach ($artifact in $artifacts) {
+        Invoke-DeploySsh "cp $($artifact.Installed) $incoming/$($artifact.Previous)" | Out-Null
+    }
 
     foreach ($artifact in $artifacts) {
         Send-DeployFile $artifact.Local "$incoming/$($artifact.Staged)"
@@ -165,8 +171,9 @@ try {
 } catch {
     if ($deployed) {
         try {
-            Invoke-DeploySsh "sudo -n /usr/bin/install -m 644 $incoming/monitor.previous.cjs /opt/devwf-monitor/monitor.cjs" | Out-Null
-            Invoke-DeploySsh "sudo -n /usr/bin/install -m 644 $incoming/machines-query.previous.cjs /opt/devwf-monitor/machines-query.cjs" | Out-Null
+            foreach ($artifact in $artifacts) {
+                Invoke-DeploySsh "sudo -n /usr/bin/install -m 644 $incoming/$($artifact.Previous) $($artifact.Installed)" | Out-Null
+            }
             Invoke-DeploySsh 'sudo -n /usr/bin/systemctl restart devwf-monitor.service' | Out-Null
             Write-Warning 'Restored the previous monitor files after the deployment check failed.'
         } catch {
