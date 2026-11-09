@@ -22,3 +22,12 @@ test("the README documents the backfill command and its dry run", () => {
   assert.match(readme, /zettly:backfill-tags/);
   assert.match(readme, /--dry-run/);
 });
+
+test("the README documents normalising legacy tags onto the axes", () => {
+  const readme = readFileSync("README.md", "utf8");
+  assert.match(readme, /zettly:normalise-tags/);
+  // The delete order is the safety property: canonical first, legacy second.
+  assert.match(readme, /deleted only after every record/i);
+  // Tags are per owner, so a repeated name under two users is not a duplicate.
+  assert.match(readme, /per owner/i);
+});
