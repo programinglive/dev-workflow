@@ -14,6 +14,7 @@ import { resolveZettlyConfig, createZettlyClient, zettlySyncEnabled } from "../.
 import { syncZettlyTask } from "../../zettly-workflow.js";
 import { parseCheckpointElement } from "./checkpoint-block.js";
 import { exec } from "../../exec.js";
+import { createGitFacade } from "../../git-facade.js";
 
 export async function resolveClient(context = {}) {
   if (context.client) return context.client;
@@ -88,9 +89,33 @@ export async function handleCheckpointTask(args = {}, context = {}) {
     return { ok: true, confirmed: false, note: "Checkpoint written but no Zettly Todo is linked; not confirmed." };
   }
 
+  // When asked, produce the bounded revert record too. Read-only: it lists what
+  // could be unwound and why each refusal happened, and changes nothing. The
+  // facade resolves the active project dir, which start_task already pinned.
+  let revertNote = "";
+  if (args.showRevertPlan === true) {
+    const git = createGitFacade();
+    const plan = await planRevert({ state, git });
+    const parts = [];
+    parts.push(
+      plan.candidates.length
+        ? `Revert candidates (${plan.candidates.length}): ${plan.candidates.map((s) => s.slice(0, 10)).join(", ")}`
+        : "No revert candidates: nothing this session made is eligible to unwind."
+    );
+    if (plan.refused.length) {
+      parts.push(
+        `Refused: ${plan.refused.map((r) => `${r.sha.slice(0, 10)} (${r.why})`).join("; ")}`
+      );
+    }
+    if (plan.dirty.length) {
+      parts.push(`Dirty working tree (${plan.dirty.length}): ${plan.dirty.slice(0, 10).join(", ")}`);
+    }
+    revertNote = ` ${parts.join(". ")}. Revert is recorded only; nothing is executed.`;
+  }
+
   const client = await resolveClient(context);
   if (!client) {
-    return { ok: true, confirmed: false, note: "Checkpoint written but Zettly is not configured; not confirmed." };
+    return { ok: true, confirmed: false, note: `Checkpoint written but Zettly is not configured; not confirmed.${revertNote}` };
   }
 
   let stored = null;
@@ -105,7 +130,7 @@ export async function handleCheckpointTask(args = {}, context = {}) {
     return {
       ok: true,
       confirmed: false,
-      note: `Checkpoint written to Todo #${todoId} but not confirmed: the element was not readable back.`,
+      note: `Checkpoint written to Todo #${todoId} but not confirmed: the element was not readable back.${revertNote}`,
     };
   }
 
@@ -113,14 +138,14 @@ export async function handleCheckpointTask(args = {}, context = {}) {
     return {
       ok: true,
       confirmed: false,
-      note: `Checkpoint written to Todo #${todoId} but not confirmed: stored timestamp ${stored.checkpointedAt} does not match ${checkpointedAt}.`,
+      note: `Checkpoint written to Todo #${todoId} but not confirmed: stored timestamp ${stored.checkpointedAt} does not match ${checkpointedAt}.${revertNote}`,
     };
   }
 
   return {
     ok: true,
     confirmed: true,
-    note: `Checkpoint confirmed in Zettly Todo #${todoId} at ${checkpointedAt}.`,
+    note: `Checkpoint confirmed in Zettly Todo #${todoId} at ${checkpointedAt}.${revertNote}`,
   };
 }
 
@@ -249,4 +274,47 @@ export async function handleAcknowledgeHandover(args = {}, context = {}) {
     confirmed: result.confirmed,
     note: `Handover from ${guard.from} acknowledged. ${result.note}`,
   };
+}
+
+/**
+ * Revert record: which of this session's commits COULD be unwound.
+ *
+ * WHY A RECORD, NEVER AN ACTION (9 November 2026)
+ * ------------------------------------------------
+ * When a machine returns after a handoff, the owner may want to undo what that
+ * session did. Undoing automatically is how tasks get stranded: a pushed
+ * commit, or a commit that is not this session's, would be erased without
+ * consent. So planRevert only PRODUCES a bounded plan -- candidates, refusals
+ * with a reason, and the dirty files -- and leaves every action to a human.
+ *
+ * The `git` object is the shared git facade (or a test fake mirroring it), so
+ * the scoping rules stay unit-testable while production reuses the same
+ * helpers the commit and release handlers already rely on.
+ */
+export async function planRevert({ state, git }) {
+  const commits = state?.checkpoint?.commits || [];
+  const candidates = [];
+  const refused = [];
+
+  const defaultBranch = await git.defaultBranch();
+  for (const sha of commits) {
+    const remoteBranches = await git.remoteBranchesContaining(sha);
+    if (remoteBranches.includes(defaultBranch)) {
+      refused.push({ sha, why: "already on the remote default branch" });
+      continue;
+    }
+    const author = await git.authorEmail(sha);
+    const session = await git.sessionEmail();
+    if (author && session && author !== session) {
+      refused.push({
+        sha,
+        why: `author ${author} is not this session's identity ${session}`,
+      });
+      continue;
+    }
+    candidates.push(sha);
+  }
+
+  const dirty = await git.statusPorcelain();
+  return { candidates, refused, dirty };
 }
