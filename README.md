@@ -235,8 +235,44 @@ Three things enforce it:
 A session with **either** a task **or** a title is real work and is kept: a card
 that only has a title is still something a human can recognise.
 
-#### Why a card says "Flow belum ada"
+#### Zettly tags for zettelkasten relations
 
+Every record the workflow writes into Zettly carries tags, because the
+zettelkasten method depends on being able to walk relations: when you need
+something, you should already know what it is connected to.
+
+Four axes, so a card can be reached from several directions:
+
+```
+proyek:<repository>   which codebase the work belongs to
+tipe:<type>           feature, bugfix, refactor, infra, other
+area:<subsystem>      monitor, cli, checkpoint, zettly, erp, deploy, ...
+sumber:<origin>       manual, sentry, factory, codex, mcp
+```
+
+`zettly-tags.js` derives the names and resolves them to ids. A tag is created
+once per owner and reused after that, so the same name never appears twice. Tag
+resolution is deliberately **not** allowed to fail the task: if Zettly refuses a
+tag call, the task is still created and only the label is lost.
+
+Two details that bit us and are now handled explicitly:
+
+- `GET /api/v1/tags` answers `{ tags, deletedTags }` at the top level, with no
+  `data` wrapper. Reading only `data.tags` returned nothing against production,
+  which made the client try to create tags that already existed.
+- That attempt came back `409`, and treating `409` as a failure silently dropped
+  half the tags. A conflict now means "it already exists": the list is re-read
+  and the existing id is used.
+
+Drawings and journal entries had no tag relation in Zettly at all, so the
+schema now includes `drawing_tag` and `journal_entry_tag` pivots, and
+`POST/PATCH /api/v1/drawings` accepts `tag_ids` restricted to the caller's own
+tags. Existing records were backfilled with
+`php artisan zettly:backfill-tags`, which is idempotent and supports
+`--dry-run`; it attached tags to 320 todos, 129 drawings and 318 journal
+entries, leaving none without a tag.
+
+#### Why a card says "Flow belum ada"
 The `sessions` table is keyed by `(session_key, task_id)`, so one session owns
 an **identity row** (both fields empty) plus one row per task. Only the card row
 carries the relations, including the Zettly Draw link.
