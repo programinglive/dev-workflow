@@ -81,7 +81,7 @@ finished.
 
 | Path | Single responsibility |
 |---|---|
-| `index.js` | MCP entry point: registers the 56 tools, English implementation instructions and handlers |
+| `index.js` | MCP entry point: registers the 60 tools, English implementation instructions and handlers |
 | `mcp-index.js` | Central MCP ecosystem index & context-aware recommender for all 12 ecosystem MCP servers |
 | `build-monitor.js`, `monitor-server/build-monitor.cjs` | Real-time build & execution status tracker (`report_build_status`) shared between MCP and the live monitor dashboard |
 | `mobile-app/build-view.js` | Android build tab presentation and truthful build host labeling |
@@ -148,7 +148,7 @@ See [MCP client configuration](#mcp-client-configuration).
 
 ## Available Tools
 
-56 tools. See [service connections and proactive Zettly direction](docs/service-integrations.md) and [focus-first development](docs/focus-workflow.md).
+60 tools. See [service connections and proactive Zettly direction](docs/service-integrations.md) and [focus-first development](docs/focus-workflow.md).
 
 | Tool | Purpose |
 |---|---|
@@ -170,6 +170,10 @@ See [MCP client configuration](#mcp-client-configuration).
 | `search_project` | Search bounded local text in the active repo; returns sanitized path:line citations |
 | `mark_plan_step` | Mark one plan step done (or reopen it) |
 | `resume_session` | Reconnect to state left behind by another session in this project |
+| `checkpoint_task` | Write a checkpoint into the linked Zettly Todo and report `confirmed` only after reading it back; `showRevertPlan` adds a read-only revert record |
+| `handoff_task` | Mark the task as leaving this machine for another one; a reason is mandatory |
+| `fetch_task` | Refresh another machine's checkpoint over its own dev-workflow process and adopt it here |
+| `acknowledge_handover` | Explicitly take a handed-off task back on this machine and clear the marker |
 | `set_definition_of_done` | Add or replace the checklist of the current task |
 | `mark_dod_item` | Prove one item, with evidence |
 | `waive_dod_item` | Exclude one item, with a reason |
@@ -190,8 +194,6 @@ See [MCP client configuration](#mcp-client-configuration).
 | `next_steps` | Show the follow-ups stored by the last completed task |
 | `get_workflow_status` | Show the current phase |
 | `continue_workflow` | Get guidance on the next step |
-
-Development tasks are recorded in Factory by default when the configured account and a matching Git repository project are available. The original request, Zettly Todo, Sentry issue if applicable, Factory task, and visual plan remain separate linked records. `start_task` reports a visible warning when Factory recording fails; it never chooses an unrelated project. Existing Factory links are reused. `create_feature_flow` publishes editable shapes and a preview in Zettly Draw, while `mark_bug_fixed` requires that flow first. The monitor shows the source and linked records. An explicit `FACTORY_AUTO_TASK=false` is reserved for isolated test environments.
 | `view_history` | List completed tasks |
 | `run_full_workflow` | Run every step in one call (requires `dodEvidence` for open items) |
 | `rerun_workflow` | Restart the current task from the beginning |
@@ -200,12 +202,16 @@ Development tasks are recorded in Factory by default when the configured account
 | `project_summary` | Aggregate activity for the project |
 | `project_summary_data` | Read the persisted `project-summary.json` |
 | `project_summary_db` | Read the per-user summary from SQLite |
-| `list_active_sessions` | List active workflow sessions across all machines from the central monitor (`DEVWF_MONITOR_URL`). Output includes a 🔗 clickable dashboard URL. || `list_factory_tasks` | List your Factory task queue (requires config) |
+| `list_active_sessions` | List active workflow sessions across all machines from the central monitor (`DEVWF_MONITOR_URL`). Output includes a 🔗 clickable dashboard URL. |
+| `list_factory_tasks` | List your Factory task queue (requires config) |
+| `list_factory_projects` | List Factory projects available to the configured account |
 | `create_factory_task` | Record a new task with a required definition of done |
 | `update_factory_task` | Edit a task, including filling a missing definition of done |
 | `claim_factory_task` | Claim a Factory task and start a local workflow |
 | `start_task` (claim view) | Before you commit to a task, reports which tasks other live sessions currently hold, so two sessions do not compete for the same one. Own, idle and stale (older than 15 minutes) claims are excluded. |
 | `sync_task_status` | Report a status change back to Factory |
+
+Development tasks are recorded in Factory by default when the configured account and a matching Git repository project are available. The original request, Zettly Todo, Sentry issue if applicable, Factory task, and visual plan remain separate linked records. `start_task` reports a visible warning when Factory recording fails; it never chooses an unrelated project. Existing Factory links are reused. `create_feature_flow` publishes editable shapes and a preview in Zettly Draw, while `mark_bug_fixed` requires that flow first. The monitor shows the source and linked records. An explicit `FACTORY_AUTO_TASK=false` is reserved for isolated test environments.
 
 ### Central MCP Ecosystem Index (`recommend_mcp_tools`)
 
@@ -516,6 +522,47 @@ explanation instead of silently disappearing.
 
 Deployment (Cloudflare Tunnel, DNS, Netlify rewrite) is in
 [docs/monitor-dashboard.md](docs/monitor-dashboard.md).
+
+### Taking a task across machines
+
+A task can move between the owner's machines (Mac, MMCH, ...) without losing
+its Definition of Done, plan, or evidence. The Zettly Todo is the single
+record; the machines only *refresh* it over SSH. This is how "take the task
+from the Mac and work here on MMCH" works:
+
+```
+checkpoint_task                  # write + prove a checkpoint into the Zettly Todo
+handoff_task { to, reason }      # mark the task as leaving this machine (reason mandatory)
+fetch_task { from, reason }      # on the target: refresh the source's checkpoint, adopt it
+acknowledge_handover            # explicit: this machine takes the task back (clears the marker)
+```
+
+**When to checkpoint.** At phase transitions, before `complete_task`, and
+whenever the owner asks for one. A checkpoint is only `confirmed` after the
+machine reads the Zettly Todo back and finds its own element with a matching
+timestamp — `confirmed:false` means the write may exist but could not be
+verified, so another machine must not rely on it.
+
+**A handoff needs a reason.** `handoff_task` refuses an empty reason: the
+machine that picks the task up must know *why* it is taking over. After a
+handoff, the source machine's `start_task` and `get_current_focus` refuse to
+continue the task silently. Only `acknowledge_handover` (explicit, on the
+machine that takes it back) clears the marker, and it records the return in
+the checkpoint summary first.
+
+**Fetching from another machine.** `fetch_task` refreshes the source's
+checkpoint through that machine's own dev-workflow process with one fixed,
+non-interactive SSH command that carries an explicit session key — never a
+free-form shell string. An unresolvable machine name is refused, not guessed.
+If the remote refresh fails, the last readable Zettly checkpoint is adopted
+and the result is flagged `confirmed:false`, so the takeover never blocks.
+
+**Reverts are recorded, never executed.** `checkpoint_task { showRevertPlan:
+true }` produces a bounded record of which of this session's commits could be
+unwound: candidates, refusals with a reason (already on the remote default
+branch, or not authored by this session's identity), and the dirty files.
+Nothing runs `reset`, `clean`, or `checkout`; the record is read by the
+returning machine and acted on by a human.
 
 ### Checking for updates
 ```bash
