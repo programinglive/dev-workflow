@@ -1,6 +1,9 @@
 [Unit]
 Description=Dev Workflow live monitor
-After=network.target postgresql.service
+# The monitor runs on bw-tools and reaches PostgreSQL on bw-server-clean over the
+# tailnet, so it must not wait for a local postgresql.service.
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
@@ -10,7 +13,9 @@ WorkingDirectory=/opt/devwf-monitor
 # Contoh isinya ada di devwf-monitor.env.example.
 EnvironmentFile=/etc/devwf-monitor.env
 Environment=PORT=3100
-Environment=HOST=100.107.65.21
+Environment=HOST=100.77.138.14
+# Share origins are read once at start; keep this in sync with dashboard.cjs.
+Environment=DEVWF_SHARE_ORIGINS=http://100.77.138.14:3100,http://localhost:3100
 ExecStart=/usr/bin/env node /opt/devwf-monitor/monitor.cjs
 Restart=always
 RestartSec=3

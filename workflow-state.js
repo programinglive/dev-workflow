@@ -20,6 +20,25 @@ const __dirname = path.dirname(__filename);
 
 /** Satu laporan monitor berjalan dalam satu waktu; lihat reportToMonitorSafe. */
 let monitorInFlight = false;
+/**
+ * Identitas task yang sedang dilaporkan ke monitor, dipertahankan melewati
+ * `reset()`.
+ *
+ * MASALAH YANG DITUTUP (9 November 2026)
+ * --------------------------------------
+ * `complete_task`/`drop_task` memanggil `reset()` - yang mengosongkan
+ * `taskDescription` DAN `workflowTaskId` - lalu menyimpan. Laporan penutupan
+ * itu kehilangan identitas task, sedangkan tabel `sessions` berkunci
+ * (session_key, task_id). Jadi laporan penutupan tidak menutup baris task yang
+ * tadi dikerjakan: ia menulis baris BARU dengan task_id kosong, sementara baris
+ * aslinya tetap pada fase `coding` selamanya. Setelah 15 menit dashboard
+ * menyebutnya "mungkin macet" - padahal tasknya sudah selesai dan Factory sudah
+ * melaporkannya `done` (terukur pada 3 sesi sekaligus).
+ *
+ * Nilai ini sengaja disimpan di tingkat modul, bukan di state, karena state
+ * memang sudah di-reset saat laporan penutupan dibuat.
+ */
+let lastReportedTaskId = "";
 /** Berapa lama setelah boot laporan tidak ditunggu. */
 const BOOT_QUIET_MS = 3000;
 const processStartTime = Date.now();
@@ -1112,8 +1131,17 @@ export async function reportToMonitorSafe({ state, stateFile, createdAt }) {
       return false;
     }
     const mod = await import(pathToFileURL(monitorPath).href);
+    // Identitas task diambil dari state bila masih ada (laporan rutin), atau
+    // dari nilai terakhir yang kita laporkan (laporan penutupan sesudah reset).
+    // Tanpa ini, penutupan menulis baris baru dan kartu lamanya tertinggal.
+    const liveTaskId = String((state && state.workflowTaskId) || "");
+    if (liveTaskId) lastReportedTaskId = liveTaskId;
+    const reportedState =
+      liveTaskId || !lastReportedTaskId
+        ? state
+        : { ...(state || {}), workflowTaskId: lastReportedTaskId };
     const snapshot = mod.buildSnapshot({
-      state,
+      state: reportedState,
       sessionKey: match ? match[1] : "",
       projectPath: (state && state.projectDir) || "",
       // Waktu mulai TASK diambil dari state (`taskStartedAt`), yang bertahan
