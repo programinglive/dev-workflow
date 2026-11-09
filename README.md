@@ -272,6 +272,20 @@ tags. Existing records were backfilled with
 `--dry-run`; it attached tags to 320 todos, 129 drawings and 318 journal
 entries, leaving none without a tag.
 
+The backlog also held 33 free-form tags — `main`, `master`, `@journal`, `dev`,
+`—`, `codex/...` — that no reader could place on an axis. `php artisan
+zettly:normalise-tags` maps each one to its canonical equivalent and then
+deletes it, in that order: branch and session labels become `proyek:<repo>`,
+topics become `area:<topic>`, `@journal` becomes `tipe:journal`, and the literal
+dash becomes `tipe:todo`. A legacy tag is deleted only after every record that
+carried it still holds a schema tag, so normalising can never leave a record
+bare. Production ended at 51 tags, all on an axis, with zero records untagged.
+
+Two things to know when reading the result: tags are **per owner**, so the same
+name appearing under two users is correct and not a duplicate; and a record
+created before a deploy is tagged by the process that created it, which is why a
+`php-fpm` reload (and an MCP restart) is part of shipping a tag change.
+
 #### Why a card says "Flow belum ada"
 The `sessions` table is keyed by `(session_key, task_id)`, so one session owns
 an **identity row** (both fields empty) plus one row per task. Only the card row
