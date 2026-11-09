@@ -1149,6 +1149,33 @@ export function getToolList() {
             type: "string",
             description: "Optional sanitized log snippet or build output summary.",
           },
+          testCases: {
+            type: "array",
+            description:
+              "Optional per-test-case results so the card shows which case is running and how far the suite has got. Keep it bounded; only the last 100 are kept.",
+            items: {
+              type: "object",
+              properties: {
+                name: {
+                  type: "string",
+                  maxLength: 160,
+                  description: "Test case name as the runner prints it.",
+                },
+                status: {
+                  type: "string",
+                  enum: ["passed", "failed", "skipped", "running"],
+                  description: "Current state of this case.",
+                },
+                durationMs: {
+                  type: "number",
+                  minimum: 0,
+                  description: "How long this case took, when known.",
+                },
+              },
+              required: ["name", "status"],
+              additionalProperties: false,
+            },
+          },
         },
         required: ["status", "target"],
         additionalProperties: false,

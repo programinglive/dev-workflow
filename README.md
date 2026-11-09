@@ -449,9 +449,38 @@ mutation — break the code on purpose, watch the test fail, restore it.
 
 
 ### Watching the work happen
-
 `definitionOfDone` says what must be true before the task may close. It does not say *what you are doing right now*. `start_task` therefore also requires `plan`: 1-15 ordered steps, 3-200 characters each.
 
+#### Test case progress on the card
+
+A card that only says `npm test (100%)` cannot distinguish a slow suite from a
+frozen one. Pass `testCases` to `report_build_status` while a suite runs and the
+card shows the running case, the counts and a progress bar that moves:
+
+```
+report_build_status {
+  "status": "testing",
+  "target": "unit suite",
+  "stage": "tests/cli-commands.test.js",
+  "testCases": [
+    { "name": "close without --session is refused", "status": "passed", "durationMs": 4 },
+    { "name": "drop requires --reason", "status": "passed", "durationMs": 7 },
+    { "name": "the card renders the running case", "status": "running" }
+  ]
+}
+```
+
+`status` is one of `passed`, `failed`, `skipped` or `running`; anything else is
+recorded as `unknown` rather than guessed as a pass. If you omit `progress`, it
+is derived from how many cases have settled, so the bar moves without you having
+to compute a percentage. Only the last 100 cases are kept and each name is
+truncated to 160 characters, so a huge suite cannot flood every write and every
+dashboard poll. An explicit empty `testCases: []` clears the list; omitting the
+field keeps what the card already knows.
+
+The same counts also appear in the `report_build_status` answer itself, under
+**Test Cases** and **Running now**, so you see the progress without opening the
+dashboard.
 ```
 start_task {
   "description": "Tambah endpoint retry",
