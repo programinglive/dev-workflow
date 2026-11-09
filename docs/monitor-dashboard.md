@@ -85,6 +85,50 @@ Dua jebakan yang ditemui 1 November 2026:
    tersangkut di atas aplikasi lain, `am force-stop com.miui.securitycenter`
    setelah dua `KEYCODE_BACK` mengembalikan fokus ke launcher.
 
+## Baris `coding` yang tasknya sudah selesai
+
+Kunci tabel `sessions` adalah `(session_key, task_id)`. Sebelum perbaikan
+9 November 2026, laporan penutupan tidak membawa `task_id` sehingga menulis
+baris baru dan meninggalkan baris aslinya di fase `coding`. Baris itu lalu
+tampil sebagai `mungkin macet` walaupun Factory sudah melaporkan task `done`.
+
+Cara memeriksa dan membersihkannya:
+
+```bash
+# 1. Lihat baris yang fasenya belum terminal
+curl -s http://100.77.138.14:3100/api/sessions | jq '[.sessions[] | select(.state=="possibly_stuck")]'
+
+# 2. Pastikan task-nya memang selesai di Factory sebelum menutup apa pun
+#    (tools.factory.factory_get_task). Task yang masih berjalan TIDAK boleh
+#    ditutup - monitor akan kehilangan pekerjaan yang benar-benar hidup.
+
+# 3. Tutup lewat endpoint resmi, satu per satu
+curl -s -X POST http://100.77.138.14:3100/api/session/close \
+  -H "content-type: application/json" \
+  -H "Authorization: Bearer $DEVWF_MONITOR_TOKEN" \
+  -d '{"sessionKey":"ses_...::card","reason":"Task finished in Factory"}'
+```
+
+Perbaikan pada pelapor (`workflow-state.js`) mencegah baris baru terbentuk.
+Untuk baris lama, langkah di atas adalah satu-satunya jalur yang benar;
+mengubah `phase` langsung di database akan melewati kolom turunan lain.
+
+### Membandingkan berkas yang terpasang dengan `main`
+
+`/opt/devwf-monitor/monitor.cjs` ditulis di server dengan **CRLF**, sedangkan
+repo memakai **LF**. Selisih ukuran berkas karena itu normal - pada 9 November
+2026 jarak 2.212 byte ternyata persis sama dengan jumlah barisnya. Jangan
+menyimpulkan ada kode yang hilang dari ukuran saja; bandingkan setelah
+normalisasi:
+
+```bash
+ssh bw-tools "cd /opt/devwf-monitor && tr -d '\r' < monitor.cjs | sha256sum"
+# lalu bandingkan dengan sha256 berkas repo yang sudah di-LF-kan
+```
+
+Pada 9 November 2026 hasil keduanya `7e870e32…`, jadi tidak pernah ada drift
+kode - satu-satunya perbedaan semantik adalah baris `DEVWF_SHARE_ORIGINS`.
+
 ## Mengapa hanya menyimak IP Tailscale
 
 `HOST=100.77.138.14` mengikat server ke alamat Tailscale saja. Bind ke
