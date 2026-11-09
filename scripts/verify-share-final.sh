@@ -2,7 +2,7 @@
 # Verifikasi akhir: semua jalur share hidup, tidak ada sisa data uji,
 # dan guard masih menolak yang seharusnya ditolak.
 set -uo pipefail
-BASE=http://100.107.65.21:3100
+BASE=http://100.77.138.14:3100
 PUB=https://devwfshare.programinglive.com
 MAIN=https://devworkflow.programinglive.com
 Q() { sudo -u postgres psql -d devwf_monitor -tAc "$1"; }
@@ -24,7 +24,7 @@ echo "== 3. guard =="
 cek "POST /api/share tanpa header" 403 "$(curl -sS -m 10 -o /dev/null -w '%{http_code}' -X POST $BASE/api/share -H 'content-type: application/json' -d '{}')"
 cek "GET ?all=1 tanpa header" 403 "$(curl -sS -m 10 -o /dev/null -w '%{http_code}' "$BASE/api/share?all=1")"
 cek "OPTIONS origin asing" 403 "$(curl -sS -m 10 -o /dev/null -w '%{http_code}' -X OPTIONS $BASE/api/share -H 'x-devwf-share: 1' -H 'origin: https://evil.example')"
-cek "OPTIONS origin sah" 204 "$(curl -sS -m 10 -o /dev/null -w '%{http_code}' -X OPTIONS $BASE/api/share -H 'x-devwf-share: 1' -H 'origin: http://100.107.65.21:3100')"
+cek "OPTIONS origin sah" 204 "$(curl -sS -m 10 -o /dev/null -w '%{http_code}' -X OPTIONS $BASE/api/share -H 'x-devwf-share: 1' -H 'origin: http://100.77.138.14:3100')"
 cek "body JSON rusak" 400 "$(curl -sS -m 10 -o /dev/null -w '%{http_code}' -X POST $BASE/api/share -H 'content-type: application/json' -H 'x-devwf-share: 1' -d '{bad}')"
 
 echo "== 4. port publik tidak bisa menulis =="
