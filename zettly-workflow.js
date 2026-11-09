@@ -6,6 +6,7 @@ import {createZettlyClient,resolveZettlyConfig,zettlySyncEnabled} from './zettly
 import {validateTaskSource,originForTask,buildTaskProvenance} from './task-provenance.js';
 import {renderAiSessions} from './ai-sessions.js';
 import {renderCheckpointElement} from './tools/handler-modules/checkpoint-block.js';
+import {deriveTags,ensureTags} from './zettly-tags.js';
 
 const escape=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 const hash=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -133,7 +134,11 @@ async function syncState(workflowState,state,status,args,options) {
         state.zettly.createAttempted=true;
         await persist(workflowState,guard);
         let created;
-        try {created=await client.request('POST','/todos',{type:'todo',title:String(sanitize(state.taskDescription)).slice(0,255),description:block});}
+        try {
+          const tagNames=deriveTags({taskDescription:state.taskDescription,taskType:state.taskType,projectDir:state.projectDir,taskOrigin:buildTaskProvenance(state)});
+          const tagIds=await ensureTags({client,names:tagNames});
+          created=await client.request('POST','/todos',{type:'todo',title:String(sanitize(state.taskDescription)).slice(0,255),description:block,...(tagIds.length?{tag_ids:tagIds}:{})});
+        }
         catch(error){if(error.status&&error.status<500)state.zettly.createAttempted=false;throw error;}
         todo=created.data;
         if(!Number.isSafeInteger(Number(todo?.id))||Number(todo.id)<1)throw Object.assign(new Error('Missing Todo ID'),{uncertain:true});
