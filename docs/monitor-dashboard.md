@@ -3,7 +3,13 @@
 Dashboard yang menampilkan sesi `dev-workflow` dari semua mesin secara
 langsung, tanpa login, di jaringan Tailscale.
 
-URL: `http://100.107.65.21:3100`
+URL: `http://100.77.138.14:3100`
+
+The monitor runs on **bw-tools**. It moved there from the database-only host
+`bw-server-clean` on 2026-11-09; PostgreSQL itself still lives on
+`bw-server-clean` (`100.107.65.21:5432`), so `DATABASE_URL` points across the
+tailnet. Any client still pointing at the old `bw-server-clean` monitor port
+reports to a host with no listener, so its sessions never appear here.
 
 ## Build execution location and Android visibility
 
@@ -83,7 +89,7 @@ Kedua tablet membuka adb TCP di port 5555 di alamat Tailscale-nya:
 ```powershell
 adb connect 100.81.240.34:5555    # Xiaomi Pad 6 (p1pa)
 adb connect 100.126.241.90:5555   # POCO Pad M1
-adb -s 100.81.240.34:5555 shell am start -n com.android.chrome/com.google.android.apps.chrome.Main -a android.intent.action.VIEW -d http://100.107.65.21:3100
+adb -s 100.81.240.34:5555 shell am start -n com.android.chrome/com.google.android.apps.chrome.Main -a android.intent.action.VIEW -d http://100.77.138.14:3100
 ```
 
 Baca isi layar tanpa screenshot (berguna untuk verifikasi otomatis):
@@ -105,7 +111,7 @@ Dua jebakan yang ditemui 1 November 2026:
 
 ## Mengapa hanya menyimak IP Tailscale
 
-`HOST=100.107.65.21` mengikat server ke alamat Tailscale saja. Bind ke
+`HOST=100.77.138.14` mengikat server ke alamat Tailscale saja. Bind ke
 `127.0.0.1` tidak bisa dijangkau tablet; bind ke `0.0.0.0` membuka dashboard ke
 internet publik tanpa autentikasi. Dengan cara ini dashboard terbuka untuk
 perangkat di tailnet dan tidak terlihat dari luar.
@@ -117,11 +123,15 @@ siapa pun yang punya akses baca ke unit. Kredensial ada di
 `/etc/devwf-monitor.env` dengan mode `600`:
 
 ```
-DATABASE_URL=postgres://devwf:SANDI@127.0.0.1:5432/devwf_monitor
+DATABASE_URL=postgres://devwf:SANDI@100.107.65.21:5432/devwf_monitor
 DEVWF_MONITOR_TOKEN=<token acak panjang>
 IDLE_TTL=30 minutes
 EMPTY_IDLE_TTL=1 minute
 ```
+
+`100.107.65.21` here is PostgreSQL on `bw-server-clean`, not the monitor host.
+The monitor process runs on `bw-tools` and reaches this database over the
+tailnet, which is why the unit no longer depends on a local `postgresql.service`.
 
 ## Menulis butuh token, membaca tidak
 
@@ -145,7 +155,7 @@ laporan dari siapa saja.
 Setiap mesin pengirim harus memakai token yang sama:
 
 ```
-DEVWF_MONITOR_URL=http://100.107.65.21:3100
+DEVWF_MONITOR_URL=http://100.77.138.14:3100
 DEVWF_MONITOR_TOKEN=<token yang sama>
 DEVWF_MACHINE=<nama mesin>
 ```
@@ -347,17 +357,17 @@ JavaScript browser; akibatnya server tetap menjawab HTTP 200 sementara polling
 dashboard tidak pernah berjalan.
 
 ```bash
-scp monitor-server/dashboard.cjs        root@100.107.65.21:/tmp/monitor.cjs
-scp monitor-server/build-monitor.cjs    root@100.107.65.21:/tmp/build-monitor.cjs
-scp monitor-server/sessions-query.cjs   root@100.107.65.21:/tmp/sessions-query.cjs
-scp monitor-server/devwf-monitor.service root@100.107.65.21:/tmp/devwf-monitor.service
-ssh root@100.107.65.21
+scp monitor-server/dashboard.cjs        root@100.77.138.14:/tmp/monitor.cjs
+scp monitor-server/build-monitor.cjs    root@100.77.138.14:/tmp/build-monitor.cjs
+scp monitor-server/sessions-query.cjs   root@100.77.138.14:/tmp/sessions-query.cjs
+scp monitor-server/devwf-monitor.service root@100.77.138.14:/tmp/devwf-monitor.service
+ssh root@100.77.138.14
 install -d -m 755 /opt/devwf-monitor
 install -m 644 /tmp/monitor.cjs /tmp/build-monitor.cjs /tmp/sessions-query.cjs /opt/devwf-monitor/
 install -m 644 /tmp/devwf-monitor.service /etc/systemd/system/devwf-monitor.service
 install -m 600 /dev/null /etc/devwf-monitor.env   # isi DATABASE_URL
 systemctl daemon-reload && systemctl restart devwf-monitor
-curl -s http://100.107.65.21:3100/health
+curl -s http://100.77.138.14:3100/health
 ```
 
 `dashboard.cjs` memerlukan paket `pg` di `/opt/devwf-monitor/node_modules`.
@@ -368,7 +378,7 @@ Setiap mesin mengirim laporan bila dua variabel ini diset di environment server
 MCP:
 
 ```
-DEVWF_MONITOR_URL=http://100.107.65.21:3100
+DEVWF_MONITOR_URL=http://100.77.138.14:3100
 DEVWF_MACHINE=<nama mesin>
 ```
 
@@ -750,7 +760,7 @@ siapa pun. Panel memakai `LEFT JOIN sessions`, jadi tautan yatim tetap muncul
 dan ditandai `sesinya sudah tidak tampil`, bukan dibuang.
 
 Ketiganya wajib header `X-Devwf-Share: 1`. Origin diperiksa **bila ada**:
-`DEVWF_SHARE_ORIGINS` (bawaan `http://100.107.65.21:3100,http://localhost:3100`).
+`DEVWF_SHARE_ORIGINS` (bawaan `http://100.77.138.14:3100,http://localhost:3100`).
 
 Nilai itu dibaca **sekali saat proses start**, bukan tiap permintaan. Mengubahnya
 berarti `systemctl restart devwf-monitor`; tanpa restart, origin baru tetap
@@ -800,8 +810,8 @@ supaya pencabutan tidak dipalsukan oleh pembersihan data.
 # 1. Berkas proses publik
 scp monitor-server/share-links.cjs monitor-server/share-page.cjs \
     monitor-server/share-route.cjs monitor-server/share-server.cjs \
-    root@100.107.65.21:/tmp/
-ssh root@100.107.65.21
+    root@100.77.138.14:/tmp/
+ssh root@100.77.138.14
 install -m 644 /tmp/share-*.cjs /opt/devwf-monitor/
 install -m 644 /tmp/devwf-share.service /etc/systemd/system/
 systemctl daemon-reload && systemctl enable --now devwf-share

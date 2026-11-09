@@ -23,10 +23,10 @@ Status diambil dari **server** (`state`), bukan disimpulkan sendiri dari
 
 ## Alamat server
 
-Bawaan `http://100.107.65.21:3100`, bisa ditimpa saat build:
+Bawaan `http://100.77.138.14:3100`, bisa ditimpa saat build:
 
 ```bash
-EXPO_PUBLIC_MONITOR_URL=http://100.107.65.21:3100 npx expo prebuild -p android
+EXPO_PUBLIC_MONITOR_URL=http://100.77.138.14:3100 npx expo prebuild -p android
 ```
 
 ## Membangun APK

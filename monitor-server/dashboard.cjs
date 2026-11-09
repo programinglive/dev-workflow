@@ -62,7 +62,7 @@ const POLL_MS = 3000;
  * alamat tailnet sendiri tidak perlu menambal berkas ini.
  */
 const SHARE_ORIGINS = String(
-  process.env.DEVWF_SHARE_ORIGINS || 'http://100.107.65.21:3100,http://localhost:3100',
+  process.env.DEVWF_SHARE_ORIGINS || 'http://100.77.138.14:3100,http://localhost:3100',
 )
   .split(',')
   .map((s) => s.trim())
