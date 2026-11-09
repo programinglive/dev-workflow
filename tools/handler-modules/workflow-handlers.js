@@ -19,7 +19,7 @@ import {
 } from "./docs.js";
 import { activeForeignLock, projectLockDir, currentIsAlive, DEFAULT_LOCK_STALE_MS } from "../../process-lock.js";
 import { reportEventSafe, updateSessionTitle, buildSnapshot, reportSnapshot } from "../../monitor.js";
-import { resolveProjectDir, setActiveProjectDir } from "../../exec.js";
+import { exec, resolveProjectDir, setActiveProjectDir } from "../../exec.js";
 import { pinSessionProject, resolveHistoryFile } from "../../workflow-state.js";
 import { assignWorkflowIdentity, validateZettlyTaskArguments } from '../../zettly-workflow.js';
 import { recommendMcpTools, formatMcpRecommendations, formatFullMcpCatalog } from "../../mcp-index.js";
@@ -166,6 +166,7 @@ async function captureDirtyAtStart(git) {
 }
 
 export async function handleStartTask(args, workflowState, git, zettlyOptions = {}) {
+  const env = zettlyOptions?.env || process.env;
   const zettlyArgumentError=validateZettlyTaskArguments(args);
   if(zettlyArgumentError)return textResponse(`⚠️ ${zettlyArgumentError} The existing task was not changed.`);
   // Satu penulis per repo.
@@ -311,6 +312,22 @@ export async function handleStartTask(args, workflowState, git, zettlyOptions = 
   workflowState.state.taskStartedAt = new Date().toISOString();
   workflowState.state.classification = classify(args);
   workflowState.state.taskDescription = args.description;
+  // The checkpoint needs to know which machine owns this task, and the commit
+  // the session started from -- without a base there is no bounded way to list
+  // the commits this session made, and a later revert could not be scoped.
+  workflowState.state.machine = String(
+    env.DEVWF_MACHINE || os.hostname() || "unknown"
+  );
+  // baseSha is filled in after reset() below, because reset() clears projectDir
+  // and reconcileWithDisk() can replace it from an idle state on disk. Reading it
+  // here would always yield null.
+  workflowState.state.checkpoint = {
+    checkpointedAt: null,
+    summary: "",
+    baseSha: null,
+    commits: [],
+    handover: null,
+  };
   // `state.parentTask` is written by assignWorkflowIdentity below: one card
   // per task, so the previous card's identity links the two cards.
   workflowState.state.taskType = args.type;
@@ -336,6 +353,10 @@ export async function handleStartTask(args, workflowState, git, zettlyOptions = 
   workflowState.state.lastPushBranch = "";
   // Setelah reset(), karena reset mengosongkan projectDir.
   const project = pinProjectDir(args, workflowState);
+
+  // Now that the directory is resolved for THIS task, record the commit the task
+  // started from. Everything a later revert may touch is measured from here.
+  workflowState.state.checkpoint.baseSha = await resolveBaseSha(workflowState.state.projectDir);
 
   // Catat proyek yang BENAR untuk sesi ini, lalu pindahkan state ke sana.
   //
@@ -1029,3 +1050,22 @@ export async function handleReportBuildStatus(args = {}, workflowState) {
 
 
 
+
+/**
+ * The commit this task started from.
+ *
+ * Recorded at start_task so the commits a session makes can be listed exactly
+ * (`rev-list base..HEAD`) instead of guessed from timestamps, which skip rebased
+ * commits. A directory that is not a git repo yields null -- the session still
+ * works, it simply has no revert record.
+ */
+async function resolveBaseSha(projectDir) {
+  if (!projectDir) return null;
+  try {
+    const { stdout } = await exec(`git -C ${JSON.stringify(projectDir)} rev-parse HEAD`);
+    const sha = stdout.trim();
+    return /^[a-f0-9]{40}$/.test(sha) ? sha : null;
+  } catch {
+    return null;
+  }
+}
