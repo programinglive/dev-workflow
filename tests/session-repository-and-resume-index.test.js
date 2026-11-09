@@ -161,7 +161,10 @@ test("task card shows the repository only when the task has one", () => {
     task_relations_json: [{ system: "zettly_draw", id: "66", url: "https://zettly.programinglive.com/draw/66", label: "Draw #66", relation: "visual_plan" }],
   });
   assert.match(withRepo, /D:\\code\\clinic/);
-  assert.match(withRepo, /github\.com\/programinglive\/clinic/);
+  // The remote is the clickable chip rendered next to this block (repoLinkHtml,
+  // covered by tests/repo-link.test.js). Printing it here as well showed the
+  // same address twice on one card, so the metadata line carries the path only.
+  assert.doesNotMatch(withRepo, /github\.com\/programinglive\/clinic/);
 
   const withoutRepo = renderTaskMetadata({ task: "Ship it", task_relations_json: [] });
   assert.doesNotMatch(withoutRepo, /📁/);
