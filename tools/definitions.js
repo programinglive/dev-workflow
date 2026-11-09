@@ -290,6 +290,43 @@ export function getToolList() {
       },
     },
     {
+      name: "handoff_task",
+      description:
+        "Record that the current task is handed from this machine to another one. Requires a target " +
+        "machine different from the current one and a non-empty reason: the receiving machine must " +
+        "know why it is taking over. Writing the marker also writes and confirms a checkpoint, so " +
+        "the target can read the marker even if this process dies. After this call, this machine's " +
+        "start_task refuses the task until acknowledge_handover is called on the machine that takes " +
+        "it back.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          to: {
+            type: "string",
+            description: "Name of the target machine, exactly as recorded in that machine's state (e.g. 'MMCH').",
+          },
+          reason: {
+            type: "string",
+            description: "Why the task is leaving this machine. Mandatory, shown to the receiving machine.",
+          },
+        },
+        required: ["to", "reason"],
+      },
+    },
+    {
+      name: "acknowledge_handover",
+      description:
+        "Explicitly take a handed-off task back on this machine. Only works when a handover marker " +
+        "is recorded; the acknowledgement is appended to the checkpoint summary first (so the fact " +
+        "of returning is itself recorded), then the marker is cleared and the write is confirmed. " +
+        "Never called implicitly: a silent return would let two machines believe they own the task.",
+      inputSchema: {
+        type: "object",
+        properties: {},
+        required: [],
+      },
+    },
+    {
       name: "mark_bug_fixed",
       description:
         "Mark that the bug/feature is fixed. Reminder: Now you MUST create tests!",

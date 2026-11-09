@@ -123,3 +123,123 @@ export async function handleCheckpointTask(args = {}, context = {}) {
     note: `Checkpoint confirmed in Zettly Todo #${todoId} at ${checkpointedAt}.`,
   };
 }
+
+/**
+ * Records that a task was handed from this machine to another one.
+ *
+ * The record is mandatory-reason: a handoff without a reason is useless to the
+ * machine that picks the task up, and silent continuation on the source machine
+ * is exactly what strands tasks. The marker lands in the checkpoint (not only
+ * in local state) so both machines can read it.
+ */
+export async function handleHandoffTask(args = {}, context = {}) {
+  const workflowState = context.workflowState;
+  const state = workflowState?.state;
+
+  if (!state || !state.taskDescription) {
+    return { ok: false, confirmed: false, note: "No task has been started; nothing to hand off." };
+  }
+
+  const to = typeof args.to === "string" ? args.to.trim() : "";
+  const reason = typeof args.reason === "string" ? args.reason.trim() : "";
+
+  if (!to) {
+    return { ok: false, confirmed: false, note: "A handoff needs a target machine ('to')." };
+  }
+  if (!reason) {
+    return {
+      ok: false,
+      confirmed: false,
+      note: "A handoff requires a non-empty reason: the machine that picks the task up must know why it is taking over.",
+    };
+  }
+  if (to === (state.machine || "")) {
+    return {
+      ok: false,
+      confirmed: false,
+      note: `The target is the same machine as the current one (${to}); nothing to hand off.`,
+    };
+  }
+
+  state.checkpoint = state.checkpoint || {};
+  state.checkpoint.handover = {
+    from: state.machine || "unknown",
+    to,
+    reason,
+    at: new Date().toISOString(),
+    sessionKey: workflowState?.sessionId || "",
+  };
+
+  // The handoff IS a checkpoint: write and prove it, so the target machine can
+  // read the marker even if this process dies before it does.
+  const result = await handleCheckpointTask(
+    { summary: `handed off to ${to}: ${reason}` },
+    context
+  );
+
+  return {
+    ok: result.ok,
+    confirmed: result.confirmed,
+    note: `Handoff to ${to} recorded. ${result.note}`,
+  };
+}
+
+/**
+ * Reads the handover marker without acting on it.
+ *
+ * The guard is the only thing allowed to stop a session from continuing work on
+ * a handed-off task; it must be cheap and side-effect free, so callers can run
+ * it at the top of start_task and get_current_focus on every invocation.
+ */
+export function handoffGuard(state = {}) {
+  const handover = state.checkpoint?.handover;
+  if (!handover || typeof handover !== "object" || !handover.to) {
+    return { handedOver: false };
+  }
+  return {
+    handedOver: true,
+    from: handover.from || "unknown",
+    to: handover.to,
+    reason: handover.reason || "",
+    at: handover.at || "",
+  };
+}
+
+/**
+ * Explicit acknowledgement that a machine returns and takes the task back.
+ *
+ * The acknowledgement is appended to the checkpoint summary first, so the fact
+ * of returning is itself recorded; only then is the marker cleared. Clearing it
+ * silently would let the original machine work while the other machine still
+ * believes it owns the task.
+ */
+export async function handleAcknowledgeHandover(args = {}, context = {}) {
+  const workflowState = context.workflowState;
+  const state = workflowState?.state;
+
+  const guard = handoffGuard(state || {});
+  if (!guard.handedOver) {
+    return { ok: false, confirmed: false, note: "No handover is recorded for this task; nothing to acknowledge." };
+  }
+
+  const acknowledgedAt = new Date().toISOString();
+  state.checkpoint = state.checkpoint || {};
+  state.checkpoint.summary = [
+    state.checkpoint.summary,
+    `Machine ${state.machine || "unknown"} acknowledged the handover from ${guard.from} on ${acknowledgedAt} and resumes the task locally.`,
+  ]
+    .filter(Boolean)
+    .join(" | ");
+  state.checkpoint.handover = null;
+
+  const result = await handleCheckpointTask(
+    { summary: state.checkpoint.summary },
+    context
+  );
+
+  return {
+    ok: result.ok,
+    confirmed: result.confirmed,
+    note: `Handover from ${guard.from} acknowledged. ${result.note}`,
+  };
+}

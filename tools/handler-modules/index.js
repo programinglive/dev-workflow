@@ -17,7 +17,7 @@ import { handleSetDefinitionOfDone, handleMarkDodItem, handleWaiveDodItem } from
 import { handleNextSteps } from "./next-steps-handlers.js";
 import { handleResumeSession } from "./resume-handlers.js";
 import { handleSetPlan, handleMarkPlanStep } from "./workflow-handlers.js";
-import { handleCheckpointTask } from "./checkpoint-handlers.js";
+import { handleCheckpointTask, handleHandoffTask, handleAcknowledgeHandover } from "./checkpoint-handlers.js";
 import { renderPlanShort } from "./plan.js";
 import { openItems, MIN_EVIDENCE } from "./dod.js";
 import { handleSearchProject } from "./search-handlers.js";
@@ -438,6 +438,26 @@ async function dispatchToolCall({
             })
           )
         );
+      case "handoff_task":
+        return textResponse(
+          JSON.stringify(
+            await handleHandoffTask(args, {
+              workflowState,
+              client: zettlyOptions?.client || integrationOptions?.zettly,
+              env: zettlyOptions?.env || integrationOptions?.env || process.env,
+            })
+          )
+        );
+      case "acknowledge_handover":
+        return textResponse(
+          JSON.stringify(
+            await handleAcknowledgeHandover(args, {
+              workflowState,
+              client: zettlyOptions?.client || integrationOptions?.zettly,
+              env: zettlyOptions?.env || integrationOptions?.env || process.env,
+            })
+          )
+        );
       case "force_complete_task":
         return handleForceCompleteTask(args, workflowState, { factory, zettlyOptions });
       case "drop_task":
@@ -514,6 +534,8 @@ export async function handleToolCall(context) {
     // checkpoint_task already forces its own write; the post-dispatch sync is a
     // cheap retry when that write landed in a pending state (Zettly was down).
     syncTools.add('checkpoint_task');
+    syncTools.add('handoff_task');
+    syncTools.add('acknowledge_handover');
     if(context.workflowState&&!response?.isError&&!isErrorResponse(response)&&!context.workflowState.lastConflict&&syncTools.has(name)){
       const notes=[];
       if(name==='get_workflow_status'&&context.workflowState.state.zettlyOutbox?.length){const result=await flushZettlyOutbox(context.workflowState,context.zettlyOptions);if(result.note)notes.push(result.note);}
