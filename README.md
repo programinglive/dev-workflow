@@ -523,6 +523,50 @@ explanation instead of silently disappearing.
 Deployment (Cloudflare Tunnel, DNS, Netlify rewrite) is in
 [docs/monitor-dashboard.md](docs/monitor-dashboard.md).
 
+### Closing sessions and cards from the terminal
+
+The dashboard is not always reachable — over SSH, in a script, or when the
+dashboard is the thing that is stuck. `devwf` does the same closings from a
+terminal:
+
+```bash
+devwf list                                      # sessions reported by the monitor
+devwf close --session ses_abc                   # mark one session closed
+devwf share list                                # every live share link
+devwf share revoke --token <t>                  # revoke one link
+devwf share revoke --orphans                    # clear links whose session is gone
+devwf drop --session ses_abc --reason "stale"    # abandon a task, recorded
+devwf complete --session ses_abc                 # close a task whose DoD is proven
+```
+
+Add `--dry-run` to any writing command to print what would change and write
+nothing.
+
+```bash
+DEVWF_MONITOR_URL=http://100.77.138.14:3100
+DEVWF_MONITOR_TOKEN=<same token the monitor was started with>
+```
+
+Both are required for `list`, `close` and `share`. `drop` and `complete` do not
+talk to the monitor at all: they load the target session's state on this machine
+and run the ordinary `drop_task` / `complete_task` handlers, so the Zettly Todo,
+the Factory task and the history are closed exactly as the MCP tool would close
+them. Point `DEVWF_STATE_ROOT` at a state tree if the default is wrong.
+
+Four rules matter more than the flags:
+
+- **`--session` is mandatory** for `close`, `drop` and `complete`. There is no
+  "current session" default, so a missing target is always a refusal instead of
+  a deleted task.
+- **`drop` requires `--reason`**, mirroring the MCP rule that abandoning a task
+  must say why.
+- **No process is ever signalled.** `close` only marks the session closed. The
+  monitor's owner pid is the MCP process, not the harness session, so killing it
+  can hit the wrong process.
+- **Exit code 0 means it really happened.** A refusal, an unknown session, a
+  missing token or a `complete` whose Definition of Done is still open all exit
+  non-zero, so a script can depend on the result rather than the wording.
+
 ### Taking a task across machines
 
 A task can move between the owner's machines (Mac, MMCH, ...) without losing
