@@ -2,7 +2,7 @@
 # Verifikasi perbaikan audit: views hanya dari GET, JSON rusak menjawab 400
 # di SEMUA endpoint tulis (bukan hanya /api/share).
 set -uo pipefail
-BASE=http://100.107.65.21:3100
+BASE=http://100.77.138.14:3100
 Q() { sudo -u postgres psql -d devwf_monitor -tAc "$1" | tr -d ' '; }
 TOKEN=$(node -e "process.stdout.write(require('crypto').randomBytes(32).toString('base64url'))")
 KEY=$(node -e "process.stdout.write(require('crypto').randomBytes(35).toString('base64url'))")

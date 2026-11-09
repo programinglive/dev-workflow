@@ -15,7 +15,7 @@ sudo -u postgres psql -d devwf_monitor -tAc \
 echo "dibuat: token=${TOKEN:0:10}... untuk sesi $KEY (tidak ada di tabel sessions)"
 
 echo "--- 1. muncul di panel? ---"
-curl -sS -H 'x-devwf-share: 1' 'http://100.107.65.21:3100/api/share?all=1' \
+curl -sS -H 'x-devwf-share: 1' 'http://100.77.138.14:3100/api/share?all=1' \
   | grep -o "\"token\":\"$TOKEN\"" && echo "YA: tautan yatim terlihat di panel"
 
 echo "--- 2. sesi benar-benar tidak ada? ---"
@@ -23,7 +23,7 @@ N=$(sudo -u postgres psql -d devwf_monitor -tAc "SELECT count(*) FROM sessions W
 echo "baris sessions: $N (harus 0)"
 
 echo "--- 3. bisa dicabut? ---"
-curl -sS -X DELETE "http://100.107.65.21:3100/api/share?token=$TOKEN" -H 'x-devwf-share: 1'
+curl -sS -X DELETE "http://100.77.138.14:3100/api/share?token=$TOKEN" -H 'x-devwf-share: 1'
 echo
 
 echo "--- 4. URL jadi 410? ---"

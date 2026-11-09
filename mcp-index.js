@@ -175,7 +175,7 @@ export const MCP_ECOSYSTEM_INDEX = Object.freeze([
         "ssh_vm",
         "bw-tools",
         "100.77.138.14",
-        "100.107.65.21",
+        "bw-server-clean",
         "tailscale",
         "systemd",
         "systemctl",

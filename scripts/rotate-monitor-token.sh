@@ -45,7 +45,7 @@ kode() {
   curl -s -o /dev/null -w '%{http_code}' -m 6 \
     -X POST -H 'content-type: application/json' -H "authorization: Bearer $1" \
     -d "{\"sessionKey\":\"rotasi-uji\",\"machine\":\"server\",\"phase\":\"idle\",\"task\":\"\"}" \
-    http://100.107.65.21:3100/api/session
+    http://100.77.138.14:3100/api/session
 }
 
 if [ "$(id -u)" -ne 0 ]; then
