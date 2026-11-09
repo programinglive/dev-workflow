@@ -285,6 +285,12 @@ export function getToolList() {
               "One or two sentences on what is done and what remains. Recorded in the checkpoint " +
               "and visible to the machine that picks the task up.",
           },
+          showRevertPlan: {
+            type: "boolean",
+            description:
+              "Also produce the bounded, read-only revert record: which of this session's commits " +
+              "could be unwound, which are refused and why, and the dirty files. Recorded, never executed.",
+          },
         },
         required: [],
       },

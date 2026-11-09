@@ -30,6 +30,11 @@ import {
   isCommitOnRemoteBranch,
   getCommittedFilesSince,
   getHeadChangedFiles,
+  defaultBranch,
+  remoteBranchesContaining,
+  authorEmail,
+  sessionEmail,
+  statusPorcelain,
 } from "./git-helpers.js";
 
 export function createGitFacade() {
@@ -55,5 +60,10 @@ export function createGitFacade() {
     isCommitOnRemoteBranch,
     getCommittedFilesSince,
     getHeadChangedFiles,
+    defaultBranch,
+    remoteBranchesContaining,
+    authorEmail,
+    sessionEmail,
+    statusPorcelain,
   };
 }

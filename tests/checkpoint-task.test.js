@@ -80,7 +80,7 @@ test("checkpoint_task reports confirmed only after reading the element back", as
   await withState(async (ws) => {
     const result = await handleCheckpointTask(
       { summary: "half done" },
-      { workflowState: taskState(ws), client: fakeZettly({ confirm: true }) }
+      { workflowState: taskState(ws), client: fakeZettly() }
     );
     assert.equal(result.confirmed, true);
     assert.equal(result.ok, true);
@@ -95,5 +95,20 @@ test("checkpoint_task reports unconfirmed when the element is not readable back"
     );
     assert.equal(result.confirmed, false);
     assert.match(result.note, /not confirmed/i);
+  });
+});
+
+test("showRevertPlan appends a read-only revert record to the checkpoint note", async () => {
+  await withState(async (ws) => {
+    const wst = taskState(ws);
+    // No real repo: the git adapter yields no candidates and no refusals, so
+    // the note must still say the record was produced and nothing was executed.
+    const result = await handleCheckpointTask(
+      { summary: "half done", showRevertPlan: true },
+      { workflowState: wst, client: fakeZettly() }
+    );
+    assert.equal(result.ok, true);
+    assert.match(result.note, /Revert candidates/i);
+    assert.match(result.note, /recorded only; nothing is executed/i);
   });
 });
