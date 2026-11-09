@@ -97,6 +97,17 @@ test("handoffGuard reports a recorded handover", async () => {
   });
 });
 
+test("a marker whose target is this machine does not block the target", async () => {
+  await withState(async (ws) => {
+    const state = taskState(ws).state;
+    // This machine is MMCH and the marker says the task was handed to MMCH:
+    // MMCH is the one allowed to continue; only the source (Mac) is refused.
+    state.machine = "MMCH";
+    state.checkpoint.handover = { from: "Mac", to: "MMCH", reason: "laptop left behind", at: "2026-11-09T10:00:00.000Z", sessionKey: "ses_x" };
+    assert.equal(handoffGuard(state).handedOver, false);
+  });
+});
+
 test("a session whose task was handed over refuses to continue", async () => {
   await withState(async (ws) => {
     const workflowState = taskState(ws);

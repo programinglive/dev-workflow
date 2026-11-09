@@ -15,7 +15,7 @@ import { syncZettlyTask } from "../../zettly-workflow.js";
 import { parseCheckpointElement } from "./checkpoint-block.js";
 import { exec } from "../../exec.js";
 
-async function resolveClient(context = {}) {
+export async function resolveClient(context = {}) {
   if (context.client) return context.client;
   const env = context.env || process.env;
   if (!zettlySyncEnabled(env)) return null;
@@ -195,6 +195,13 @@ export function handoffGuard(state = {}) {
   const handover = state.checkpoint?.handover;
   if (!handover || typeof handover !== "object" || !handover.to) {
     return { handedOver: false };
+  }
+  // The marker only binds the SOURCE machine: the target is the one allowed to
+  // continue, so a marker whose target is this machine is inert here. This is
+  // what lets the receiving machine adopt the payload and keep working while
+  // the source stays refused.
+  if (state.machine && handover.to === state.machine) {
+    return { handedOver: false, target: true };
   }
   return {
     handedOver: true,

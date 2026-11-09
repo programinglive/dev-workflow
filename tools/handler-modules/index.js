@@ -18,6 +18,7 @@ import { handleNextSteps } from "./next-steps-handlers.js";
 import { handleResumeSession } from "./resume-handlers.js";
 import { handleSetPlan, handleMarkPlanStep } from "./workflow-handlers.js";
 import { handleCheckpointTask, handleHandoffTask, handleAcknowledgeHandover } from "./checkpoint-handlers.js";
+import { handleFetchTask } from "./remote-checkpoint.js";
 import { renderPlanShort } from "./plan.js";
 import { openItems, MIN_EVIDENCE } from "./dod.js";
 import { handleSearchProject } from "./search-handlers.js";
@@ -458,6 +459,19 @@ async function dispatchToolCall({
             })
           )
         );
+      case "fetch_task":
+        return textResponse(
+          JSON.stringify(
+            await handleFetchTask(args, {
+              workflowState,
+              client: zettlyOptions?.client || integrationOptions?.zettly,
+              env: zettlyOptions?.env || integrationOptions?.env || process.env,
+              machineAliases: integrationOptions?.machineAliases || {},
+              nodePath: integrationOptions?.remoteNodePath,
+              scriptPath: integrationOptions?.remoteScriptPath,
+            })
+          )
+        );
       case "force_complete_task":
         return handleForceCompleteTask(args, workflowState, { factory, zettlyOptions });
       case "drop_task":
@@ -536,6 +550,7 @@ export async function handleToolCall(context) {
     syncTools.add('checkpoint_task');
     syncTools.add('handoff_task');
     syncTools.add('acknowledge_handover');
+    syncTools.add('fetch_task');
     if(context.workflowState&&!response?.isError&&!isErrorResponse(response)&&!context.workflowState.lastConflict&&syncTools.has(name)){
       const notes=[];
       if(name==='get_workflow_status'&&context.workflowState.state.zettlyOutbox?.length){const result=await flushZettlyOutbox(context.workflowState,context.zettlyOptions);if(result.note)notes.push(result.note);}
