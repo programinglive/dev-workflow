@@ -28,6 +28,7 @@ import { claimReportBlock } from "../../claim-view.js";
 import { fetchActiveSessions, monitorUrl } from "../../monitor.js";
 import os from 'node:os';
 import {flowGraph,syncZettlyDrawing} from '../../zettly-drawing.js';
+import { handoffGuard } from "./checkpoint-handlers.js";
 
 /**
  * Ask the monitor which tasks other sessions hold, and render the warning block.
@@ -169,6 +170,16 @@ export async function handleStartTask(args, workflowState, git, zettlyOptions = 
   const env = zettlyOptions?.env || process.env;
   const zettlyArgumentError=validateZettlyTaskArguments(args);
   if(zettlyArgumentError)return textResponse(`⚠️ ${zettlyArgumentError} The existing task was not changed.`);
+  // A task handed over to another machine must not be silently continued here:
+  // the marker names the target, and acknowledgement is an explicit step.
+  const handoff=handoffGuard(workflowState.state);
+  if(handoff.handedOver){
+    return textResponse(
+      `⚠️ This task was handed over to ${handoff.to} by ${handoff.from}${handoff.at ? ` at ${handoff.at}` : ''}. ` +
+      `Reason: ${handoff.reason}. The source machine must not keep working on it. ` +
+      `If this machine should resume locally, call 'acknowledge_handover' first.`
+    );
+  }
   // Satu penulis per repo.
   //
   // 31 Oktober 2026 dua sesi OpenCode menulis satu working tree yang sama. Satu
