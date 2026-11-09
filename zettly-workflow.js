@@ -5,6 +5,7 @@ import {StateConflict} from './db/errors.js';
 import {createZettlyClient,resolveZettlyConfig,zettlySyncEnabled} from './zettly-client.js';
 import {validateTaskSource,originForTask,buildTaskProvenance} from './task-provenance.js';
 import {renderAiSessions} from './ai-sessions.js';
+import {renderCheckpointElement} from './tools/handler-modules/checkpoint-block.js';
 
 const escape=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 const hash=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -85,7 +86,18 @@ function blockFor(state,status,args={}) {
   const dod=safe.dod.map(item=>`[${item.status==='done'?'x':item.status==='waived'?'-':' '}] ${item.text}${item.evidence?' — '+item.evidence:''}`).join('\n');
   const links=externalLinkSummary(state);
   const sessions=renderAiSessions(state);
-  return `<!-- dev-workflow:${id}:start --><section data-dev-workflow-id="${id}"><h3>Dev Workflow</h3><p>Task ID: <code>${id}</code></p><p>Project: ${escape(safe.project)}</p><p>Status: ${escape(status)}</p><p>Implementation language: English</p>${links?`<h4>Connected work</h4><pre>${escape(links)}</pre>`:''}${sessions.length?`<h4>AI sessions</h4><pre>${escape(sessions.join('\n'))}</pre>`:''}<h4>Plan</h4><pre>${escape(plan)}</pre><h4>Definition of done</h4><pre>${escape(dod)}</pre>${safe.commit?`<p>Commit: ${escape(safe.commit)}</p>`:''}${safe.reason?`<p>Reason: ${escape(safe.reason)}</p>`:''}${safe.next.length?`<h4>Next action</h4><pre>${escape(safe.next.join('\n'))}</pre>`:''}</section><!-- dev-workflow:${id}:end -->`;
+  // The checkpoint element travels inside the same block so mergeBlock keeps it.
+  // Its fields (machine, baseSha, commits, handover) are what another machine
+  // needs; the human-readable Plan/DoD above stay for people reading Zettly.
+  const checkpoint=renderCheckpointElement(state.workflowTaskId,{
+    machine:state.machine??null,
+    checkpointedAt:state.checkpoint?.checkpointedAt??null,
+    summary:state.checkpoint?.summary??'',
+    baseSha:state.checkpoint?.baseSha??null,
+    commits:state.checkpoint?.commits??[],
+    handover:state.checkpoint?.handover??null,
+  });
+  return `<!-- dev-workflow:${id}:start --><section data-dev-workflow-id="${id}"><h3>Dev Workflow</h3><p>Task ID: <code>${id}</code></p><p>Project: ${escape(safe.project)}</p><p>Status: ${escape(status)}</p><p>Implementation language: English</p>${links?`<h4>Connected work</h4><pre>${escape(links)}</pre>`:''}${sessions.length?`<h4>AI sessions</h4><pre>${escape(sessions.join('\n'))}</pre>`:''}<h4>Plan</h4><pre>${escape(plan)}</pre><h4>Definition of done</h4><pre>${escape(dod)}</pre>${safe.commit?`<p>Commit: ${escape(safe.commit)}</p>`:''}${safe.reason?`<p>Reason: ${escape(safe.reason)}</p>`:''}${safe.next.length?`<h4>Next action</h4><pre>${escape(safe.next.join('\n'))}</pre>`:''}${checkpoint}</section><!-- dev-workflow:${id}:end -->`;
 }
 function externalLinkSummary(state) {
   const links=sanitize(state.zettly?.externalLinks||{});
