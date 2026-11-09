@@ -25,6 +25,19 @@
 
 const DEFAULT_STALE_AFTER_DAYS = 3;
 
+// This one report came from a retired monitor test device. Keep the stored
+// session for history while allowing a newer report from that name to appear.
+const RETIRED_TEST_REPORT = {
+  machine: 'uji',
+  lastSeen: Date.parse('2026-11-03T10:10:45.095Z'),
+};
+
+function visibleMachines(rows) {
+  return (Array.isArray(rows) ? rows : []).filter((row) =>
+    !(row.machine === RETIRED_TEST_REPORT.machine &&
+      Date.parse(row.last_seen) === RETIRED_TEST_REPORT.lastSeen));
+}
+
 /**
  * Satu baris per mesin: kapan terakhir melapor, dan apakah sudah lama sekali.
  *
@@ -51,4 +64,4 @@ function buildMachinesQuery({ staleAfterDays = DEFAULT_STALE_AFTER_DAYS } = {}) 
   };
 }
 
-module.exports = { buildMachinesQuery, DEFAULT_STALE_AFTER_DAYS };
+module.exports = { buildMachinesQuery, DEFAULT_STALE_AFTER_DAYS, visibleMachines };

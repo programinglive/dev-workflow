@@ -20,7 +20,7 @@ const {
   DEFAULT_SESSION_RETENTION_DAYS,
 } = require('./retention.cjs');
 const { buildHealth, DEFAULT_STALE_AFTER_MS } = require('./health.cjs');
-const { buildMachinesQuery, DEFAULT_STALE_AFTER_DAYS } = require('./machines-query.cjs');
+const { buildMachinesQuery, DEFAULT_STALE_AFTER_DAYS, visibleMachines } = require('./machines-query.cjs');
 const { dedupeSessions } = require('./dedupe-sessions.cjs');
 const { buildReportQuery, buildReportPayload, estimateBuild } = require('./build-report.cjs');
 const { withRepoLink } = require('./repo-link.cjs');
@@ -1032,6 +1032,11 @@ function bukaDetail(sessionKey) {
   // Tampilkan tombol "Tutup Sesi" hanya untuk sesi yang masih bisa ditutup
   var closeBtn = document.getElementById('modal-close-session-btn');
   if (closeBtn) {
+    closeBtn.disabled = false;
+    closeBtn.textContent = '✕ Tutup Sesi';
+    closeBtn.style.background = '';
+    closeBtn.style.color = '';
+    closeBtn.style.borderColor = '';
     var isCloseable = st === 'live' || st === 'possibly_stuck' ||
       (s.phase && s.phase !== 'idle' && s.phase !== 'closed' &&
        s.phase !== 'done' && s.phase !== 'cancelled');
@@ -1966,6 +1971,7 @@ const server = http.createServer(async (req, res) => {
       // pekerjaan" tampak sama dengan "mesin tidak pernah terhubung".
       const mq = buildMachinesQuery({ staleAfterDays: STALE_AFTER_DAYS });
       const machineRows = await query(mq.sql, mq.params);
+      const machines = visibleMachines(machineRows.rows);
       // Riwayat sesi SELESAI. Durasi dihitung database supaya sama di semua
       // perangkat, dan tidak ada data yang dihapus.
       const hq = buildHistoryQuery({ historyDays: HISTORY_DAYS });
@@ -2091,7 +2097,7 @@ const server = http.createServer(async (req, res) => {
       // berbeda dengan yang dilihat pemilik di layar.
       const alerts = buildAlerts({
         sessions: tampil,
-        machines: machineRows.rows,
+        machines,
         now: nowMs,
         stuckAlertMs: STUCK_ALERT_MS,
         machineSilentMs: MACHINE_SILENT_MS,
@@ -2112,7 +2118,7 @@ const server = http.createServer(async (req, res) => {
       }
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       return res.end(
-        JSON.stringify({ now: serverNow, sessions: tampil, events: events.rows, health, machines: machineRows.rows, history, alerts, summary, shares, summary_days: SUMMARY_DAYS }),
+        JSON.stringify({ now: serverNow, sessions: tampil, events: events.rows, health, machines, history, alerts, summary, shares, summary_days: SUMMARY_DAYS }),
       );
     }
     if (url.pathname === '/api/builds/report') {

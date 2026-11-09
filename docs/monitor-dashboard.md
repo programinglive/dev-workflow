@@ -113,6 +113,18 @@ Perbaikan pada pelapor (`workflow-state.js`) mencegah baris baru terbentuk.
 Untuk baris lama, langkah di atas adalah satu-satunya jalur yang benar;
 mengubah `phase` langsung di database akan melewati kolom turunan lain.
 
+### Reopening the session close control
+
+After a successful manual close, the detail modal's button becomes disabled and
+shows a success state. Opening another session must reset that button before
+binding the next session key. Otherwise the next stale card cannot be closed
+from the dashboard even though its session is still active.
+
+The machine list omits the retired synthetic `uji` report from
+2026-11-03T10:10:45.095Z. The stored session remains in history. A newer
+report from a machine with the same name is shown normally; the filter does
+not use a broad age cutoff that could hide a real silent device.
+
 ### Membandingkan berkas yang terpasang dengan `main`
 
 `/opt/devwf-monitor/monitor.cjs` ditulis di server dengan **CRLF**, sedangkan
