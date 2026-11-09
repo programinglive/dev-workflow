@@ -213,6 +213,25 @@ See [MCP client configuration](#mcp-client-configuration).
 
 Development tasks are recorded in Factory by default when the configured account and a matching Git repository project are available. The original request, Zettly Todo, Sentry issue if applicable, Factory task, and visual plan remain separate linked records. `start_task` reports a visible warning when Factory recording fails; it never chooses an unrelated project. Existing Factory links are reused. `create_feature_flow` publishes editable shapes and a preview in Zettly Draw, while `mark_bug_fixed` requires that flow first. The monitor shows the source and linked records. An explicit `FACTORY_AUTO_TASK=false` is reserved for isolated test environments.
 
+#### Why a card says "Flow belum ada"
+
+The `sessions` table is keyed by `(session_key, task_id)`, so one session owns
+an **identity row** (both fields empty) plus one row per task. Only the card row
+carries the relations, including the Zettly Draw link.
+
+On 10 November 2026 the dashboard rendered the identity row as a second card
+for a session that already had a properly linked card. That second card has no
+relations, so it printed `⚠ Flow belum ada — jalankan create_feature_flow`
+while the real card next to it showed `Draw #126`. The flow was never missing;
+the duplicate was.
+
+`dedupeSessions` now drops the identity row when the same session has a card
+row. The test for "identity" is **both** `task_id` and `task` being empty, not
+just `task`: closing a task clears its text but keeps its `task_id` and its
+relations, and dropping those would erase the flow from a real card. A session
+with no card row keeps its own row, and two different `task_id` rows still
+render as two cards.
+
 ### Central MCP Ecosystem Index (`recommend_mcp_tools`)
 
 Because `dev-workflow` is always the first MCP server invoked in every coding session, it acts as the discovery index and smart recommender for all MCP servers in our ecosystem (`central-gateway`, `pocketbase`, `infra-knowledge`, `notify`, `factory`, `zettly`, `clinic-helper`, `playwright`, `gcp`, `cloudflare`, `netlify`, `mermaid`).
