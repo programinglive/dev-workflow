@@ -38,8 +38,24 @@ import {
   workingTreeSummary,
 } from "../index.js";
 
-async function withWorkflowState(callback) {
-  const tempDir = await mkdtemp(path.join(tmpdir(), "workflow-state-"));
+/**
+ * Case-insensitive prefix check for filesystem paths.
+ *
+ * Windows reports the same directory with different capitalisation depending on
+ * how it was reached: on the CI runner `os.tmpdir()` returns `C:\WINDOWS\TEMP`
+ * while `realpath` returns `C:\Windows\Temp`. The state file was resolved
+ * correctly in both cases; a case-sensitive comparison against `realpath` output
+ * reported a failure that did not exist.
+ */
+function samePathPrefix(candidate, prefix) {
+  const normalise = (value) => String(value).replace(/[\\/]+$/, "");
+  if (process.platform === "win32") {
+    return normalise(candidate).toLowerCase().startsWith(normalise(prefix).toLowerCase());
+  }
+  return normalise(candidate).startsWith(normalise(prefix));
+}
+
+async function withWorkflowState(callback) {  const tempDir = await mkdtemp(path.join(tmpdir(), "workflow-state-"));
   const stateFile = path.join(tempDir, "state.json");
   const state = new WorkflowState(stateFile);
   await state.load();
@@ -99,12 +115,14 @@ test("resolveStateFile prefers current working directory when multiple project m
     const resolvedProjectB = await realpath(projectB);
 
     assert.ok(
-      resolvedStateFile.startsWith(path.join(resolvedProjectB, ".state", "users")),
-      "State file should resolve under the current working directory's project"
+      samePathPrefix(resolvedStateFile, path.join(resolvedProjectB, ".state", "users")),
+      "State file should resolve under the current working directory's project " +
+        `(actual: ${resolvedStateFile}; expected prefix: ${path.join(resolvedProjectB, ".state", "users")}; ` +
+        `tmpdir: ${tmpdir()}; cwd: ${process.cwd()})`
     );
 
     assert.ok(
-      !resolvedStateFile.startsWith(path.join(resolvedProjectA, ".state")),
+      !samePathPrefix(resolvedStateFile, path.join(resolvedProjectA, ".state")),
       "State file should not use INIT_CWD project when cwd has its own markers"
     );
   } finally {
@@ -209,8 +227,9 @@ test("WorkflowState avoids filesystem root when no project markers found", async
     const resolvedTempRoot = await realpath(tempRoot);
 
     assert.ok(
-      state.stateFile.startsWith(resolvedTempRoot),
-      "state file should remain inside the temporary root when no project markers exist"
+      samePathPrefix(state.stateFile, resolvedTempRoot),
+      "state file should remain inside the temporary root when no project markers exist " +
+        `(actual: ${state.stateFile}; expected prefix: ${resolvedTempRoot}; cwd: ${process.cwd()})`
     );
     assert.ok(
       !state.stateFile.startsWith(path.join(path.sep, ".state")),
@@ -374,8 +393,9 @@ test("WorkflowState resolves state file relative to project root", async () => {
 
     const state = new WorkflowState();
     assert.ok(
-      state.stateFile.startsWith(path.join(resolvedProjectRoot, ".state", "users")),
-      "state file should resolve under project .state/users directory"
+      samePathPrefix(state.stateFile, path.join(resolvedProjectRoot, ".state", "users")),
+      "state file should resolve under project .state/users directory " +
+        `(actual: ${state.stateFile}; expected prefix: ${path.join(resolvedProjectRoot, ".state", "users")})`
     );
 
     process.chdir(nestedDir);
@@ -384,7 +404,7 @@ test("WorkflowState resolves state file relative to project root", async () => {
 
     const state2 = new WorkflowState();
     assert.ok(
-      state2.stateFile.startsWith(path.join(resolvedProjectRoot, ".state", "users")),
+      samePathPrefix(state2.stateFile, path.join(resolvedProjectRoot, ".state", "users")),
       "state file should resolve to project root"
     );
   } finally {

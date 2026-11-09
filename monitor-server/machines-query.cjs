@@ -25,6 +25,34 @@
 
 const DEFAULT_STALE_AFTER_DAYS = 3;
 
+// This one report came from a retired monitor test device. Keep the stored
+// session for history while allowing a newer report from that name to appear.
+const RETIRED_TEST_REPORT = {
+  machine: 'uji',
+  lastSeen: Date.parse('2026-11-03T10:10:45.095Z'),
+};
+
+/**
+ * Milliseconds for a timestamp in any shape the driver can hand over.
+ *
+ * The Postgres driver returns `timestamptz` as a `Date`. `Date.parse()` would
+ * stringify it first and DROP the milliseconds, so an equality check against a
+ * precise stored timestamp silently fails and the retired row stays visible.
+ */
+function toMs(value) {
+  if (value === null || value === undefined || value === '') return null;
+  if (value instanceof Date) return Number.isFinite(value.getTime()) ? value.getTime() : null;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  const parsed = Date.parse(String(value));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function visibleMachines(rows) {
+  return (Array.isArray(rows) ? rows : []).filter((row) =>
+    !(row.machine === RETIRED_TEST_REPORT.machine &&
+      toMs(row.last_seen) === RETIRED_TEST_REPORT.lastSeen));
+}
+
 /**
  * Satu baris per mesin: kapan terakhir melapor, dan apakah sudah lama sekali.
  *
@@ -51,4 +79,4 @@ function buildMachinesQuery({ staleAfterDays = DEFAULT_STALE_AFTER_DAYS } = {}) 
   };
 }
 
-module.exports = { buildMachinesQuery, DEFAULT_STALE_AFTER_DAYS };
+module.exports = { buildMachinesQuery, DEFAULT_STALE_AFTER_DAYS, visibleMachines };
