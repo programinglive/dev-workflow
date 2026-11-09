@@ -131,6 +131,16 @@ stringifies it and drops the milliseconds, so an equality check silently fails
 and the retired row stays visible. `visibleMachines` converts with a small
 `toMs` helper that handles `Date`, number and string inputs.
 
+### One repository address per card
+
+A session card renders the repository twice by design: the metadata line from
+`monitor-server/task-metadata.cjs` carries the local `repo_path`, and the
+`repoLinkHtml` chip in `dashboard.cjs` carries the clickable remote. The
+metadata line must not print the remote as well — during the 10 November 2026
+session the card showed the same GitHub URL twice, once as text and once as a
+chip. `tests/monitor-repo-link-dedup.test.js` pins the combined card to exactly
+one occurrence of the address.
+
 ### Membandingkan berkas yang terpasang dengan `main`
 
 `/opt/devwf-monitor/monitor.cjs` ditulis di server dengan **CRLF**, sedangkan
