@@ -125,6 +125,12 @@ The machine list omits the retired synthetic `uji` report from
 report from a machine with the same name is shown normally; the filter does
 not use a broad age cutoff that could hide a real silent device.
 
+The filter must compare timestamps as instants, not as strings: the Postgres
+driver returns `timestamptz` as a `Date`, and `Date.parse()` of a `Date`
+stringifies it and drops the milliseconds, so an equality check silently fails
+and the retired row stays visible. `visibleMachines` converts with a small
+`toMs` helper that handles `Date`, number and string inputs.
+
 ### Membandingkan berkas yang terpasang dengan `main`
 
 `/opt/devwf-monitor/monitor.cjs` ditulis di server dengan **CRLF**, sedangkan
@@ -387,12 +393,32 @@ before installation, checks live health and session data afterwards, and
 restores the previous files if verification fails. The private key is never
 committed or printed.
 
-The current deploy identity was provisioned on 10 November 2026. Its public
-fingerprint is `SHA256:Pac9Qohls+1kbl4F1+HJQJP28lJpBkP063iL5XoJHrs` and it
-accepts connections only from MMCH's Tailscale address. To rotate it, create
-a new dedicated key, update the repository secret, replace only this public
-key in the deploy account, and verify a main-branch deployment. Keep the old
-key until the new pipeline succeeds.
+The current deploy identity was provisioned on 10 November 2026 and rotated the
+same day after the first private key was lost before any login test succeeded.
+Its current public fingerprint is
+`SHA256:/f8T/lKJC3CZbc91wlsnDPb01nYk6kirzPztGrUtO8E` and it accepts connections
+only from MMCH's Tailscale address. To rotate it, create a new dedicated key,
+update the repository secret, replace only this public key in the deploy
+account, and verify a main-branch deployment. Keep the old key until the new
+pipeline succeeds.
+
+The deploy script must be safe on the self-hosted Windows runner, which runs it
+under PowerShell 5.1. Two failures were reproduced there before the script was
+accepted:
+
+- An ACL that granted only `SYSTEM` made the private key unreadable to the
+  process running `ssh`, which then reported a misleading `Permission denied`.
+  The script now grants the running account, and asserts the key is readable
+  before the first upload.
+- A captured `& ssh.exe ...` call inherited the runner's stdin and froze while
+  the remote command had already returned, so the job would sit until its
+  timeout. Remote commands now close stdin, carry `ConnectTimeout` and server
+  aliveness options, and are waited on with redirected streams.
+  `scp` has no `-n`, so it keeps its own guarded option list.
+
+`scripts/manual/verify-monitor-deploy-login.ps1` proves the identity from MMCH
+by hand: login, the exact sudo allowlist, and the staging paths the job uses.
+It is a diagnostic helper, not part of the pipeline.
 
 JavaScript dashboard berjalan di browser, terpisah dari konstanta Node pada
 server. Referensi interval seperti `POLL_MS` harus diinterpolasi ke template
