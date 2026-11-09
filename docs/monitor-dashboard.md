@@ -113,6 +113,34 @@ Perbaikan pada pelapor (`workflow-state.js`) mencegah baris baru terbentuk.
 Untuk baris lama, langkah di atas adalah satu-satunya jalur yang benar;
 mengubah `phase` langsung di database akan melewati kolom turunan lain.
 
+### Reopening the session close control
+
+After a successful manual close, the detail modal's button becomes disabled and
+shows a success state. Opening another session must reset that button before
+binding the next session key. Otherwise the next stale card cannot be closed
+from the dashboard even though its session is still active.
+
+The machine list omits the retired synthetic `uji` report from
+2026-11-03T10:10:45.095Z. The stored session remains in history. A newer
+report from a machine with the same name is shown normally; the filter does
+not use a broad age cutoff that could hide a real silent device.
+
+The filter must compare timestamps as instants, not as strings: the Postgres
+driver returns `timestamptz` as a `Date`, and `Date.parse()` of a `Date`
+stringifies it and drops the milliseconds, so an equality check silently fails
+and the retired row stays visible. `visibleMachines` converts with a small
+`toMs` helper that handles `Date`, number and string inputs.
+
+### One repository address per card
+
+A session card renders the repository twice by design: the metadata line from
+`monitor-server/task-metadata.cjs` carries the local `repo_path`, and the
+`repoLinkHtml` chip in `dashboard.cjs` carries the clickable remote. The
+metadata line must not print the remote as well — during the 10 November 2026
+session the card showed the same GitHub URL twice, once as text and once as a
+chip. `tests/monitor-repo-link-dedup.test.js` pins the combined card to exactly
+one occurrence of the address.
+
 ### Membandingkan berkas yang terpasang dengan `main`
 
 `/opt/devwf-monitor/monitor.cjs` ditulis di server dengan **CRLF**, sedangkan
@@ -365,6 +393,43 @@ interval Postgres, mis. `2 hours`).
 
 ## Deploy
 
+Monitor code is deployed by the `deploy-monitor` job in `.github/workflows/ci.yml`
+after the main-branch CI job succeeds. The MMCH runner uses the repository secret
+`MONITOR_DEPLOY_SSH_KEY` and the pinned host key in
+`monitor-server/bw-tools-known-hosts`. Its dedicated `devwf-monitor-deploy`
+account can install only `monitor.cjs` and `machines-query.cjs` and restart
+`devwf-monitor.service`. The job checks file hashes and JavaScript syntax
+before installation, checks live health and session data afterwards, and
+restores the previous files if verification fails. The private key is never
+committed or printed.
+
+The current deploy identity was provisioned on 10 November 2026 and rotated the
+same day after the first private key was lost before any login test succeeded.
+Its current public fingerprint is
+`SHA256:/f8T/lKJC3CZbc91wlsnDPb01nYk6kirzPztGrUtO8E` and it accepts connections
+only from MMCH's Tailscale address. To rotate it, create a new dedicated key,
+update the repository secret, replace only this public key in the deploy
+account, and verify a main-branch deployment. Keep the old key until the new
+pipeline succeeds.
+
+The deploy script must be safe on the self-hosted Windows runner, which runs it
+under PowerShell 5.1. Two failures were reproduced there before the script was
+accepted:
+
+- An ACL that granted only `SYSTEM` made the private key unreadable to the
+  process running `ssh`, which then reported a misleading `Permission denied`.
+  The script now grants the running account, and asserts the key is readable
+  before the first upload.
+- A captured `& ssh.exe ...` call inherited the runner's stdin and froze while
+  the remote command had already returned, so the job would sit until its
+  timeout. Remote commands now close stdin, carry `ConnectTimeout` and server
+  aliveness options, and are waited on with redirected streams.
+  `scp` has no `-n`, so it keeps its own guarded option list.
+
+`scripts/manual/verify-monitor-deploy-login.ps1` proves the identity from MMCH
+by hand: login, the exact sudo allowlist, and the staging paths the job uses.
+It is a diagnostic helper, not part of the pipeline.
+
 JavaScript dashboard berjalan di browser, terpisah dari konstanta Node pada
 server. Referensi interval seperti `POLL_MS` harus diinterpolasi ke template
 halaman (`${POLL_MS}`) agar browser menerima angka literal. Jika dibiarkan
@@ -375,20 +440,6 @@ Validasi juga JavaScript hasil render template, bukan hanya `dashboard.cjs`.
 Escape seperti `\n` di template dapat berubah menjadi newline di dalam string
 JavaScript browser; akibatnya server tetap menjawab HTTP 200 sementara polling
 dashboard tidak pernah berjalan.
-
-```bash
-scp monitor-server/dashboard.cjs        root@100.77.138.14:/tmp/monitor.cjs
-scp monitor-server/build-monitor.cjs    root@100.77.138.14:/tmp/build-monitor.cjs
-scp monitor-server/sessions-query.cjs   root@100.77.138.14:/tmp/sessions-query.cjs
-scp monitor-server/devwf-monitor.service root@100.77.138.14:/tmp/devwf-monitor.service
-ssh root@100.77.138.14
-install -d -m 755 /opt/devwf-monitor
-install -m 644 /tmp/monitor.cjs /tmp/build-monitor.cjs /tmp/sessions-query.cjs /opt/devwf-monitor/
-install -m 644 /tmp/devwf-monitor.service /etc/systemd/system/devwf-monitor.service
-install -m 600 /dev/null /etc/devwf-monitor.env   # isi DATABASE_URL
-systemctl daemon-reload && systemctl restart devwf-monitor
-curl -s http://100.77.138.14:3100/health
-```
 
 `dashboard.cjs` memerlukan paket `pg` di `/opt/devwf-monitor/node_modules`.
 

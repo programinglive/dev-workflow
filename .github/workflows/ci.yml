@@ -31,3 +31,20 @@ jobs:
       build-command: npm run ci:build
       web-build-command: npm run build
       web-dir: web
+
+  deploy-monitor:
+    needs: ci
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, windows, mmch]
+    timeout-minutes: 10
+    concurrency:
+      group: devwf-monitor-production
+      cancel-in-progress: false
+    steps:
+      - name: Checkout verified main commit
+        uses: actions/checkout@v7
+      - name: Deploy monitor through the dedicated identity
+        shell: powershell
+        env:
+          MONITOR_DEPLOY_SSH_KEY: ${{ secrets.MONITOR_DEPLOY_SSH_KEY }}
+        run: .\scripts\deploy-monitor.ps1

@@ -65,14 +65,13 @@ function renderTaskMetadata(session) {
   const origin = normalized.taskOrigin.system ? normalized.taskOrigin : { system: 'unknown' };
 
   const repoPath = typeof session.repo_path === 'string' ? session.repo_path.trim() : '';
-  const repoRemote = typeof session.repo_remote === 'string' ? session.repo_remote.trim() : '';
   let repositoryHtml = '';
-  if (repoPath || repoRemote) {
-    const remoteHtml = /^https?:\/\//i.test(repoRemote)
-      ? '<a href="' + escape(repoRemote) + '" target="_blank" rel="noopener noreferrer">' + escape(repoRemote) + '</a>'
-      : escape(repoRemote);
-    repositoryHtml = '<div class="repo-line meta" style="margin-top:4px;color:#8b949e">📁 ' + escape(repoPath) +
-      (repoRemote ? ' · 🔗 ' + remoteHtml : '') + '</div>';
+  if (repoPath) {
+    // The clickable repository chip is rendered separately by the card
+    // (repoLinkHtml) and already shows the remote. Printing the remote here too
+    // showed the same address twice on one card, so this line carries only the
+    // local path. When no path was reported the chip is the single link.
+    repositoryHtml = '<div class="repo-line meta" style="margin-top:4px;color:#8b949e">📁 ' + escape(repoPath) + '</div>';
   }
 
   // A task card without a Mermaid flow hides the one thing the owner asked for:
