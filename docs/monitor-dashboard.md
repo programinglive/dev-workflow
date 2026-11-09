@@ -377,6 +377,23 @@ interval Postgres, mis. `2 hours`).
 
 ## Deploy
 
+Monitor code is deployed by the `deploy-monitor` job in `.github/workflows/ci.yml`
+after the main-branch CI job succeeds. The MMCH runner uses the repository secret
+`MONITOR_DEPLOY_SSH_KEY` and the pinned host key in
+`monitor-server/bw-tools-known-hosts`. Its dedicated `devwf-monitor-deploy`
+account can install only `monitor.cjs` and `machines-query.cjs` and restart
+`devwf-monitor.service`. The job checks file hashes and JavaScript syntax
+before installation, checks live health and session data afterwards, and
+restores the previous files if verification fails. The private key is never
+committed or printed.
+
+The current deploy identity was provisioned on 10 November 2026. Its public
+fingerprint is `SHA256:Pac9Qohls+1kbl4F1+HJQJP28lJpBkP063iL5XoJHrs` and it
+accepts connections only from MMCH's Tailscale address. To rotate it, create
+a new dedicated key, update the repository secret, replace only this public
+key in the deploy account, and verify a main-branch deployment. Keep the old
+key until the new pipeline succeeds.
+
 JavaScript dashboard berjalan di browser, terpisah dari konstanta Node pada
 server. Referensi interval seperti `POLL_MS` harus diinterpolasi ke template
 halaman (`${POLL_MS}`) agar browser menerima angka literal. Jika dibiarkan
@@ -387,20 +404,6 @@ Validasi juga JavaScript hasil render template, bukan hanya `dashboard.cjs`.
 Escape seperti `\n` di template dapat berubah menjadi newline di dalam string
 JavaScript browser; akibatnya server tetap menjawab HTTP 200 sementara polling
 dashboard tidak pernah berjalan.
-
-```bash
-scp monitor-server/dashboard.cjs        root@100.77.138.14:/tmp/monitor.cjs
-scp monitor-server/build-monitor.cjs    root@100.77.138.14:/tmp/build-monitor.cjs
-scp monitor-server/sessions-query.cjs   root@100.77.138.14:/tmp/sessions-query.cjs
-scp monitor-server/devwf-monitor.service root@100.77.138.14:/tmp/devwf-monitor.service
-ssh root@100.77.138.14
-install -d -m 755 /opt/devwf-monitor
-install -m 644 /tmp/monitor.cjs /tmp/build-monitor.cjs /tmp/sessions-query.cjs /opt/devwf-monitor/
-install -m 644 /tmp/devwf-monitor.service /etc/systemd/system/devwf-monitor.service
-install -m 600 /dev/null /etc/devwf-monitor.env   # isi DATABASE_URL
-systemctl daemon-reload && systemctl restart devwf-monitor
-curl -s http://100.77.138.14:3100/health
-```
 
 `dashboard.cjs` memerlukan paket `pg` di `/opt/devwf-monitor/node_modules`.
 
