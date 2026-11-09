@@ -100,7 +100,9 @@ test("resolveStateFile prefers current working directory when multiple project m
 
     assert.ok(
       resolvedStateFile.startsWith(path.join(resolvedProjectB, ".state", "users")),
-      "State file should resolve under the current working directory's project"
+      "State file should resolve under the current working directory's project " +
+        `(actual: ${resolvedStateFile}; expected prefix: ${path.join(resolvedProjectB, ".state", "users")}; ` +
+        `tmpdir: ${tmpdir()}; cwd: ${process.cwd()})`
     );
 
     assert.ok(
@@ -210,7 +212,8 @@ test("WorkflowState avoids filesystem root when no project markers found", async
 
     assert.ok(
       state.stateFile.startsWith(resolvedTempRoot),
-      "state file should remain inside the temporary root when no project markers exist"
+      "state file should remain inside the temporary root when no project markers exist " +
+        `(actual: ${state.stateFile}; expected prefix: ${resolvedTempRoot}; cwd: ${process.cwd()})`
     );
     assert.ok(
       !state.stateFile.startsWith(path.join(path.sep, ".state")),
@@ -375,7 +378,8 @@ test("WorkflowState resolves state file relative to project root", async () => {
     const state = new WorkflowState();
     assert.ok(
       state.stateFile.startsWith(path.join(resolvedProjectRoot, ".state", "users")),
-      "state file should resolve under project .state/users directory"
+      "state file should resolve under project .state/users directory " +
+        `(actual: ${state.stateFile}; expected prefix: ${path.join(resolvedProjectRoot, ".state", "users")})`
     );
 
     process.chdir(nestedDir);
