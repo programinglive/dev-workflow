@@ -68,6 +68,25 @@ function realOrSame(target) {
 }
 
 /**
+ * True when two paths name the same directory.
+ *
+ * Windows reports the same directory with different capitalisation depending on
+ * who asked: `git worktree list` prints `C:\Windows\Temp\...` while Node's
+ * `realpathSync` returns `C:\WINDOWS\TEMP\...` for the directory it created.
+ * A case-sensitive comparison called the main worktree a different directory and
+ * marked it removable. Paths are case-insensitive on Windows, so compare them
+ * that way there and exactly everywhere else.
+ */
+export function samePath(a, b) {
+  if (!a || !b) return false;
+  const normalise = (value) => String(value).replace(/[\\/]+$/, "");
+  if (process.platform === "win32") {
+    return normalise(a).toLowerCase() === normalise(b).toLowerCase();
+  }
+  return normalise(a) === normalise(b);
+}
+
+/**
  * The branch this repository treats as its trunk.
  *
  * Origin's HEAD is the truth when it exists, because a clone names it there.
@@ -204,7 +223,7 @@ export function planCleanup({ repoDir, defaultBranch = null, idleMs = DEFAULT_ID
     const resolved = realOrSame(entry.path);
     const repoResolved = realOrSame(repoDir);
     const base = { path: resolved, branch: entry.branch, main: entry.main };
-    if (entry.main || resolved === repoResolved) {
+    if (entry.main || samePath(resolved, repoResolved)) {
       return { ...base, action: "keep", reason: "worktree utama" };
     }
     if (entry.bare) return { ...base, action: "keep", reason: "bare repository" };
