@@ -1213,6 +1213,8 @@ export class WorkflowState {
     // durasi task tidak mungkin dihitung. Pemilik memintanya secara eksplisit:
     // "setiap task mesti ada counter timenya".
     this.sessionStartedAt = new Date().toISOString();
+    // Penomoran export dalam proses ini; lihat _exportJson().
+    this._exportSeq = 0;
     // Konflik penyimpanan terakhir, dibaca oleh lapisan tool untuk memberi tahu
     // pengguna. Null berarti penyimpanan terakhir aman.
     this.lastConflict = null;
@@ -2511,7 +2513,11 @@ export class WorkflowState {
    */
   async _exportJson() {
     try {
-      const tmp = `${this.stateFile}.tmp-${process.pid}`;
+      // Nama temp harus unik per PANGGILAN, bukan per proses. Dua export
+      // bersamaan dalam satu proses dulu memakai nama yang sama, sehingga satu
+      // rename menang dan yang lain gagal ENOENT - peringatan yang membuat
+      // proses sehat terlihat rusak.
+      const tmp = `${this.stateFile}.tmp-${process.pid}-${++this._exportSeq}`;
       await fs.mkdir(path.dirname(this.stateFile), { recursive: true });
       await fs.writeFile(tmp, JSON.stringify(this.state, null, 2));
       await fs.rename(tmp, this.stateFile);

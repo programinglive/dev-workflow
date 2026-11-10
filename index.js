@@ -199,7 +199,7 @@ Use 'check_ready_to_commit' to verify workflow completion.
 export async function main() {
   securityMode();
   const startTime = Date.now();
-  safeLog('error', `[${new Date().toISOString()}] MCP Server starting...`);
+  safeLog('info', `[${new Date().toISOString()}] MCP Server starting...`);
 
   // Detect the tool versions once, without holding up startup: the promise is
   // not awaited, so a slow or missing binary costs nothing here, and every
@@ -218,7 +218,7 @@ export async function main() {
     workflowState = new WorkflowState();
     // Select request metadata before the first disk write. Creating an idle
     // PID fallback here leaves a phantom session alongside the real sessions.
-    safeLog('error', `[${new Date().toISOString()}] Workflow state initialization complete.`);
+    safeLog('info', `[${new Date().toISOString()}] Workflow state initialization complete.`);
   } catch (error) {
     safeLog('error', `[${new Date().toISOString()}] Warning: Failed to initialize workflow state:`, error.message);
     // Continue anyway - workflow state is optional for MCP to function
@@ -266,10 +266,10 @@ export async function main() {
     const isTrustedCatalog = message.result && JSON.stringify(message.result) === trustedToolCatalogJson;
     return send(isTrustedCatalog ? message : securityOutputFilter(message));
   };
-  safeLog('error', `[${new Date().toISOString()}] Connecting transport...`);
+  safeLog('info', `[${new Date().toISOString()}] Connecting transport...`);
   await server.connect(transport);
   const duration = Date.now() - startTime;
-  safeLog('error', `[${new Date().toISOString()}] Dev Workflow MCP Server running on stdio (startup took ${duration}ms)`);
+  safeLog('info', `[${new Date().toISOString()}] Dev Workflow MCP Server running on stdio (startup took ${duration}ms)`);
 
   // A connected agent session must remain visible even while it is working
   // with its own tools and has not called a dev-workflow tool yet. State saves
