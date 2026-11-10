@@ -2,6 +2,62 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.29.0](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.28.0...v1.29.0) (2026-11-10)
+
+
+### 🧹 Chores
+
+* **monitor:** checkpoint CI deploy setup for handoff ([a8b4999](https://github.com/programinglive/dev-workflow-mcp-server/commit/a8b49998789b123bba2b062277985a4a355c5eb0))
+
+
+### 🐛 Bug Fixes
+
+* **monitor:** adopt the original bw-tools host lineage ([baccfcf](https://github.com/programinglive/dev-workflow-mcp-server/commit/baccfcf6cb9de54a704a64e969b5fcccde384dc0))
+* **monitor:** close the task row instead of orphaning it at coding ([a287ad1](https://github.com/programinglive/dev-workflow-mcp-server/commit/a287ad1e4497ec9e320a14a068612a4f7e73d29e))
+* **monitor:** deploy task-metadata.cjs so card fixes reach production ([9aa59fd](https://github.com/programinglive/dev-workflow-mcp-server/commit/9aa59fdfc932e82bcd2aee12e072841398c407e4))
+* **monitor:** make the CI deploy path work on the Windows runner ([02c67f5](https://github.com/programinglive/dev-workflow-mcp-server/commit/02c67f52178bf69daece3bbcee6ab3bee9a7e04c))
+* **monitor:** merge closure identity fix into main ([450ac8a](https://github.com/programinglive/dev-workflow-mcp-server/commit/450ac8a60b11fc3847a2f9fccb37d3484bb5c954))
+* **monitor:** merge the session identity row into its card so the flow shows ([816d288](https://github.com/programinglive/dev-workflow-mcp-server/commit/816d2882580866c941d3a7cd6711cecfca0ce769))
+* **monitor:** point clients and managed rules at the bw-tools monitor host ([b012e01](https://github.com/programinglive/dev-workflow-mcp-server/commit/b012e0157c4e152fca04c48ef54d244d5c3cbdb5))
+* **monitor:** reset session close control and ignore retired test report ([b5edee0](https://github.com/programinglive/dev-workflow-mcp-server/commit/b5edee0464d2aed41abd810d8cbf55878d810f60))
+* **monitor:** show one repository address per session card ([3cc07c7](https://github.com/programinglive/dev-workflow-mcp-server/commit/3cc07c762e17f07031b24ccd4e4139db79caa871))
+* **monitor:** stop recording and counting sessions with no task or title ([bb60614](https://github.com/programinglive/dev-workflow-mcp-server/commit/bb60614b3ec1e65f660d1db38bfaadfa4c2a977d))
+
+
+### ✅ Tests
+
+* **monitor:** pin handed-off as a terminal phase ([e5a2567](https://github.com/programinglive/dev-workflow-mcp-server/commit/e5a25671b5022c8b5db663e7ded9ef8dedf1c973))
+* update README.md, bin/cli.js, cli/args.js +13 more ([0237e91](https://github.com/programinglive/dev-workflow-mcp-server/commit/0237e9102f4d9a21035ea3268de79168556520ca))
+* **workflow:** compare state paths case-insensitively on Windows ([dd58551](https://github.com/programinglive/dev-workflow-mcp-server/commit/dd58551914c2db236b6cc4d5a90ad1a9c0e8aa54))
+* **workflow:** report the resolved state path when the path guard fails ([e7cf7c0](https://github.com/programinglive/dev-workflow-mcp-server/commit/e7cf7c0dd5f6649ed82d011546029206705bc13a))
+
+
+### 📝 Documentation
+
+* document cross-machine handoff and list all 60 tools ([fe8a32f](https://github.com/programinglive/dev-workflow-mcp-server/commit/fe8a32f130afbefd9667e4f3db40fb2a0db5f1df))
+* **managed:** record the three-device restart onto the version-carrying launcher ([09cf623](https://github.com/programinglive/dev-workflow-mcp-server/commit/09cf623f8d17a394ef1540d7c762bfa9f7bbba5a))
+* **managed:** record the version protocol deployment and its verification ([e9b824a](https://github.com/programinglive/dev-workflow-mcp-server/commit/e9b824a2963743dda7f9653d1af0881955161a34))
+* **monitor:** explain stale coding rows and the CRLF size gap ([ce7a8b0](https://github.com/programinglive/dev-workflow-mcp-server/commit/ce7a8b00e76bfd287715cf3cfdeaff1f42fa079e))
+* **plan:** implementation plan for cross-machine task handoff ([5afe56d](https://github.com/programinglive/dev-workflow-mcp-server/commit/5afe56d557e8ea94e40922ea50f16cda14eb1963))
+* **spec:** design cross-machine task handoff via Zettly checkpoints ([91da619](https://github.com/programinglive/dev-workflow-mcp-server/commit/91da6192db623b1c2a4bcf6d26a5d3ff5e3ec53a))
+* **zettly:** document normalising legacy tags onto the axes ([75f53cb](https://github.com/programinglive/dev-workflow-mcp-server/commit/75f53cb1f1deb2d7165f2db6f76906e9e6124aff))
+
+
+### ✨ Features
+
+* **checkpoint:** add a machine-readable checkpoint element to the Zettly block ([dd130b5](https://github.com/programinglive/dev-workflow-mcp-server/commit/dd130b555b95c5cf8d41f725d9678b87702cb0ca))
+* **checkpoint:** add checkpoint_task with read-back confirmation ([812d7cf](https://github.com/programinglive/dev-workflow-mcp-server/commit/812d7cf0fa65d063cff76168127cf7c2b942ca42))
+* **checkpoint:** produce a bounded revert record and refuse unsafe candidates ([530470b](https://github.com/programinglive/dev-workflow-mcp-server/commit/530470b9f9371537eafecae4990fa7a9de225791))
+* **checkpoint:** record the owning machine and base commit at start_task ([0a7db03](https://github.com/programinglive/dev-workflow-mcp-server/commit/0a7db0320f589b41bad4be4ec78e74d0025240b1))
+* **handoff:** fetch a checkpoint from another machine over SSH ([498bb57](https://github.com/programinglive/dev-workflow-mcp-server/commit/498bb57ba251a17d5764123d40f7d48cd9874a3b))
+* **handoff:** record a handoff with a reason and refuse silent continuation ([e9ab387](https://github.com/programinglive/dev-workflow-mcp-server/commit/e9ab3874a30f628ad37cd0c40bf62b44722a4faf))
+* **integration:** land cross-machine handoff and devwf CLI on main ([2f18395](https://github.com/programinglive/dev-workflow-mcp-server/commit/2f183953656c8adf735abf3ae3fd53162f183681))
+* **managed:** carry the release version through the protocol and into the monitor ([ef1c952](https://github.com/programinglive/dev-workflow-mcp-server/commit/ef1c952f7150d1e23000c65cff7fd3c0572ecb0c))
+* **monitor:** show per-test-case progress on build cards ([d3c0d46](https://github.com/programinglive/dev-workflow-mcp-server/commit/d3c0d4660b14f8c93159ea834e00a4cb5ca3d864))
+* **monitor:** show release and tool parity per machine ([e209fd8](https://github.com/programinglive/dev-workflow-mcp-server/commit/e209fd89402217b1441397df8ae18726fd092b2e))
+* **workflow:** clean up merged branches and idle worktrees on completion ([9b700a8](https://github.com/programinglive/dev-workflow-mcp-server/commit/9b700a864900a40b765612b620326a40ae4cd074))
+* **zettly:** tag todos and drawings on the zettelkasten scheme ([31c3daa](https://github.com/programinglive/dev-workflow-mcp-server/commit/31c3daad4d3030b1b2da2b84c24ed71de652591d))
+
 ## [1.28.0](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.27.1...v1.28.0) (2026-11-08)
 
 
