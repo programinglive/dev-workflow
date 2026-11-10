@@ -127,6 +127,107 @@ async function detectExistingReleaseOnHead(git, fallbackLastCommitMessage = "") 
   };
 }
 
+/**
+ * Record the release tag that actually reached production through CI/CD.
+ *
+ * `released` only means "a release command ran". It says nothing about what is
+ * live. A direct file upload leaves no trace at all, which is how production
+ * ended up running files that no tag contains. This tool is the trace: it
+ * refuses a tag that does not exist or does not contain HEAD, so a session
+ * cannot claim a release it did not ship.
+ */
+export async function handleRecordDeployment(args, context) {
+  const { workflowState, exec, git, utils } = context;
+
+  if (workflowState.state.currentPhase === "idle") {
+    return textResponse("⚠️ Please start a task first using 'start_task' before recording a deployment.");
+  }
+
+  const tag = typeof args.tag === "string" ? args.tag.trim() : "";
+  if (!/^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(tag)) {
+    return textResponse("⚠️ 'tag' must be a stable release tag like v5.1.3.");
+  }
+
+  const pipelineId = typeof args.pipelineId === "string" ? args.pipelineId.trim() : "";
+  if (!pipelineId) {
+    return textResponse(
+      "⚠️ 'pipelineId' is required. A tag without a CI/CD pipeline is not a release; " +
+        "record the pipeline that deployed it."
+    );
+  }
+
+  const sites = Array.isArray(args.sites)
+    ? args.sites.map((site) => String(site).trim()).filter(Boolean)
+    : [];
+  if (sites.length === 0) {
+    return textResponse("⚠️ 'sites' must name at least one production site that received the tag.");
+  }
+
+  const evidence = typeof args.evidence === "string" ? args.evidence.trim() : "";
+  if (evidence.length < 5) {
+    return textResponse("⚠️ 'evidence' must describe what proves the tag is live (health receipt, deployed version read back).");
+  }
+
+  const requestedProjectDir = typeof args.projectDir === "string" ? args.projectDir.trim() : "";
+  if (requestedProjectDir) {
+    try {
+      setActiveProjectDir(resolveProjectDir({ explicit: requestedProjectDir }).dir);
+    } catch (error) {
+      return textResponse(`❌ projectDir tidak valid: ${error.message}`);
+    }
+    workflowState.state.projectDir = getActiveProjectDir();
+  }
+
+  let tagSha = "";
+  try {
+    const { stdout } = await exec(`git rev-parse --verify ${utils.shellEscape(tag)}^{commit}`);
+    tagSha = String(stdout || "").trim();
+  } catch {
+    return textResponse(
+      `⚠️ Tag ${tag} tidak ada di repo ini.\n\n` +
+        `Rilis harus dibuat lewat CI/CD (release script + push tag), bukan dikarang di sini.`
+    );
+  }
+
+  let headSha = "";
+  try {
+    headSha = await git.getHeadSha();
+  } catch {
+    headSha = "";
+  }
+
+  if (headSha) {
+    try {
+      await exec(`git merge-base --is-ancestor ${utils.shellEscape(headSha)} ${utils.shellEscape(tag)}`);
+    } catch {
+      return textResponse(
+        `⚠️ HEAD (${headSha.slice(0, 8)}) bukan bagian dari tag ${tag}.\n\n` +
+          `Artinya pekerjaan sesi ini TIDAK ikut terrilis. Buat tag dari commit yang memuat HEAD, ` +
+          `atau selesaikan rilisnya dulu sebelum mencatat deployment.`
+      );
+    }
+  }
+
+  workflowState.state.deployment = {
+    tag,
+    tagSha,
+    headSha,
+    pipelineId,
+    sites,
+    evidence,
+    recordedAt: new Date().toISOString(),
+  };
+  await workflowState.save();
+
+  return textResponse(
+    `✅ Deployment recorded: ${tag}\n` +
+      `Pipeline: ${pipelineId}\n` +
+      `Sites: ${sites.join(", ")}\n` +
+      `Tag contains HEAD: yes\n\n` +
+      `Next: run 'complete_task'.`
+  );
+}
+
 export async function handleSkipRelease(args, workflowState) {
   if (workflowState.state.currentPhase === "idle") {
     return textResponse("⚠️ Please start a task first using 'start_task' before skipping release.");

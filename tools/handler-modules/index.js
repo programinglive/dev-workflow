@@ -9,7 +9,7 @@ import path from 'node:path';
 import { assertSafeToolCommand } from '../../security/commands.js';
 import { sessionKeyFromRequest } from "../../workflow-state.js";
 import { handleStartTask, handleMarkBugFixed, handleCreateTests, handleSkipTests, handleRunTests, handleCreateDocumentation, handleCreateFeatureFlow, handleWaiveDocumentation, handleRecommendMcpTools, handleReportBuildStatus } from "./workflow-handlers.js";
-import { handleSkipRelease, handlePerformRelease } from "./release-handlers.js";
+import { handleSkipRelease, handlePerformRelease, handleRecordDeployment } from "./release-handlers.js";
 import { handleCommitAndPush, handleCompleteTask, handleForceCompleteTask, handleDropTask } from "./commit-handlers.js";
 import { handleProjectSummary, handleProjectSummaryData, handleProjectSummaryDb, handleViewHistory } from "./summary-handlers.js";
 import { handleGetWorkflowStatus, handleReadyCheck, handleContinueWorkflow, handleRerunWorkflow, handleListActiveSessions, handleBuildReport, handleBuildEstimate } from "./status-handlers.js";
@@ -421,6 +421,8 @@ async function dispatchToolCall({
         return handleCommitAndPush(args, { workflowState, exec, git, utils });
       case "perform_release":
         return handlePerformRelease(args, { workflowState, exec, git, utils });
+      case "record_deployment":
+        return handleRecordDeployment(args, { workflowState, exec, git, utils });
       case "skip_release":
         return handleSkipRelease(args, workflowState);
       case "complete_task":
@@ -542,7 +544,7 @@ export async function handleToolCall(context) {
     if (context.workflowState) context.workflowState.lastConflict = null;
     let response=await dispatchToolCall({...context,request:{...context.request,params:{...context.request.params,arguments:args}}});
     const name=context.request.params.name;
-    const syncTools=new Set(['start_task','set_plan','mark_plan_step','set_definition_of_done','mark_dod_item','waive_dod_item','mark_bug_fixed','create_tests','skip_tests','run_tests','create_documentation','waive_documentation','check_ready_to_commit','commit_and_push','perform_release','skip_release','get_workflow_status','continue_workflow','resume_session','claim_factory_task','link_sentry_issue','report_build_status','build_report','build_estimate']);
+    const syncTools=new Set(['start_task','set_plan','mark_plan_step','set_definition_of_done','mark_dod_item','waive_dod_item','mark_bug_fixed','create_tests','skip_tests','run_tests','create_documentation','waive_documentation','check_ready_to_commit','commit_and_push','perform_release','record_deployment','skip_release','get_workflow_status','continue_workflow','resume_session','claim_factory_task','link_sentry_issue','report_build_status','build_report','build_estimate']);
     syncTools.add('link_factory_task');
     syncTools.add('link_zettly_drawing');
     // checkpoint_task already forces its own write; the post-dispatch sync is a
