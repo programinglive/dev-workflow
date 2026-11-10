@@ -41,6 +41,45 @@ function localManagedRoot() {
 // HELLOWORLD, which made the log lie when the rollout ran from another machine.
 const LOCAL_LABEL = os.hostname();
 
+/**
+ * All three fleet workstations.
+ *
+ * The rollout used to hard-code `mac` and `mmch` as the remote SSH targets
+ * because it was originally run only from HELLOWORLD. When run from the Mac,
+ * `ssh mac` failed to resolve and HELLOWORLD was skipped altogether.
+ */
+const FLEET_DEVICES = [
+  {
+    label: 'HELLOWORLD',
+    host: 'helloworld',
+    matchHost: (h) => /helloworld/i.test(h),
+    scpBootstrapDest: 'helloworld:C:/Users/DHIKA/AppData/Local/ProgramingLive/ManagedMCP/bootstrap/',
+    prewarmCmd: 'node C:\\Users\\DHIKA\\AppData\\Local\\ProgramingLive\\ManagedMCP\\bootstrap\\device-entry.cjs opencode --resolve-only',
+    python: 'python',
+  },
+  {
+    label: 'Mac',
+    host: 'mac',
+    matchHost: (h) => /mac/i.test(h),
+    scpBootstrapDest: 'mac:~/.local/share/ProgramingLive/ManagedMCP/bootstrap/',
+    prewarmCmd: '/Users/mahardhika/.nvm/versions/node/v24.22.1/bin/node ~/.local/share/ProgramingLive/ManagedMCP/bootstrap/device-entry.cjs opencode --resolve-only',
+    python: 'python3',
+  },
+  {
+    label: 'MMCH',
+    host: 'mmch',
+    matchHost: (h) => /mmch/i.test(h),
+    scpBootstrapDest: 'mmch:C:/Users/mahardhika/AppData/Local/ProgramingLive/ManagedMCP/bootstrap/',
+    prewarmCmd: 'node C:\\Users\\mahardhika\\AppData\\Local\\ProgramingLive\\ManagedMCP\\bootstrap\\device-entry.cjs opencode --resolve-only',
+    python: 'python',
+  },
+];
+
+function remoteTargets(hostname = LOCAL_LABEL) {
+  const hostStr = String(hostname || '');
+  return FLEET_DEVICES.filter((d) => !d.matchHost(hostStr));
+}
+
 const RELEASE_HOSTS = [
   { name: 'bw-tools', ip: '100.77.138.14', port: 3101, isPrimary: true },
 ];
@@ -259,20 +298,14 @@ function updateBootstraps() {
     console.error(`      ⚠️ ${LOCAL_LABEL} has no ManagedMCP directory; bootstrap update skipped`);
   }
 
-  // 2. Mac
-  try {
-    run('scp', ['-o', 'BatchMode=yes', ...bootstrapFiles, 'mac:~/.local/share/ProgramingLive/ManagedMCP/bootstrap/']);
-    console.log('      ✅ Mac bootstrap updated');
-  } catch (err) {
-    console.error(`      ⚠️ Failed updating Mac bootstrap: ${err.message}`);
-  }
-
-  // 3. MMCH
-  try {
-    run('scp', ['-o', 'BatchMode=yes', ...bootstrapFiles, 'mmch:C:/Users/mahardhika/AppData/Local/ProgramingLive/ManagedMCP/bootstrap/']);
-    console.log('      ✅ MMCH bootstrap updated');
-  } catch (err) {
-    console.error(`      ⚠️ Failed updating MMCH bootstrap: ${err.message}`);
+  // 2. Remote fleet workstations
+  for (const device of remoteTargets()) {
+    try {
+      run('scp', ['-o', 'BatchMode=yes', ...bootstrapFiles, device.scpBootstrapDest]);
+      console.log(`      ✅ ${device.label} bootstrap updated`);
+    } catch (err) {
+      console.error(`      ⚠️ Failed updating ${device.label} bootstrap: ${err.message}`);
+    }
   }
 }
 
@@ -294,24 +327,15 @@ function prewarmDevices() {
     }
   }
 
-  // 2. Mac
-  try {
-    const macCmd = '/Users/mahardhika/.nvm/versions/node/v24.22.1/bin/node ~/.local/share/ProgramingLive/ManagedMCP/bootstrap/device-entry.cjs opencode --resolve-only';
-    const out = run('ssh', ['-o', 'BatchMode=yes', 'mac', macCmd]);
-    const parsed = JSON.parse(out);
-    console.log(`      ✅ Mac: revision ${parsed.revision.slice(0, 12)} (offline: ${parsed.offline})`);
-  } catch (err) {
-    console.error(`      ⚠️ Mac prewarm failed: ${err.message}`);
-  }
-
-  // 3. MMCH
-  try {
-    const mmchCmd = 'node C:\\Users\\mahardhika\\AppData\\Local\\ProgramingLive\\ManagedMCP\\bootstrap\\device-entry.cjs opencode --resolve-only';
-    const out = run('ssh', ['-o', 'BatchMode=yes', 'mmch', mmchCmd]);
-    const parsed = JSON.parse(out);
-    console.log(`      ✅ MMCH: revision ${parsed.revision.slice(0, 12)} (offline: ${parsed.offline})`);
-  } catch (err) {
-    console.error(`      ⚠️ MMCH prewarm failed: ${err.message}`);
+  // 2. Remote fleet workstations
+  for (const device of remoteTargets()) {
+    try {
+      const out = run('ssh', ['-o', 'BatchMode=yes', device.host, device.prewarmCmd]);
+      const parsed = JSON.parse(out);
+      console.log(`      ✅ ${device.label}: revision ${parsed.revision.slice(0, 12)} (offline: ${parsed.offline})`);
+    } catch (err) {
+      console.error(`      ⚠️ ${device.label} prewarm failed: ${err.message}`);
+    }
   }
 }
 
@@ -348,18 +372,13 @@ function syncRules() {
   // silent "synchronized" hid a stale rule block on MMCH for a whole day.
   console.log(`      ✅ ${LOCAL_LABEL} rules synchronized (${localChanged} changed of ${localPresent}/3 files)`);
 
-  // 2. Mac
-  try {
-    syncRulesOnDevice({ host: 'mac', python: 'python3', label: 'Mac' });
-  } catch (err) {
-    console.error(`      ⚠️ Mac rule sync failed: ${err.message}`);
-  }
-
-  // 3. MMCH
-  try {
-    syncRulesOnDevice({ host: 'mmch', python: 'python', label: 'MMCH' });
-  } catch (err) {
-    console.error(`      ⚠️ MMCH rule sync failed: ${err.message}`);
+  // 2. Remote fleet workstations
+  for (const device of remoteTargets()) {
+    try {
+      syncRulesOnDevice({ host: device.host, python: device.python, label: device.label });
+    } catch (err) {
+      console.error(`      ⚠️ ${device.label} rule sync failed: ${err.message}`);
+    }
   }
 }
 
@@ -453,6 +472,8 @@ module.exports = {
   syncRuleText,
   syncRulesOnDevice,
   MANAGED_RULE_BLOCK,
+  FLEET_DEVICES,
+  remoteTargets,
   classifyLineage,
   makeGitIsAncestor,
   enforceForwardOnly,
