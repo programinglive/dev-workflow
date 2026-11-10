@@ -89,8 +89,9 @@ test("record_deployment menolak tag yang tidak ada di repo", async () => {
       { tag: "v5.1.3", pipelineId: "12345", sites: ["timelessbintaro"], evidence: "health receipt 200" },
       state,
       {
-        exec: async (command) => {
-          if (command.includes("rev-parse")) throw new Error("unknown revision");
+        exec: async (command, options = {}) => {
+          const joined = [command, ...(options.arguments || [])].join(" ");
+          if (joined.includes("rev-parse")) throw new Error("unknown revision");
           return { stdout: "" };
         },
       },
@@ -110,9 +111,10 @@ test("record_deployment menolak tag yang tidak memuat HEAD", async () => {
       { tag: "v5.1.2", pipelineId: "12345", sites: ["timelessbintaro"], evidence: "health receipt 200" },
       state,
       {
-        exec: async (command) => {
-          if (command.includes("rev-parse")) return { stdout: "b".repeat(40) };
-          if (command.includes("merge-base")) throw new Error("not an ancestor");
+        exec: async (command, options = {}) => {
+          const joined = [command, ...(options.arguments || [])].join(" ");
+          if (joined.includes("rev-parse")) return { stdout: "b".repeat(40) };
+          if (joined.includes("merge-base")) throw new Error("not an ancestor");
           return { stdout: "" };
         },
       },
@@ -138,9 +140,10 @@ test("record_deployment menyimpan tag, pipeline, site, dan bukti", async () => {
       },
       state,
       {
-        exec: async (command) => {
-          if (command.includes("rev-parse")) return { stdout: "b".repeat(40) };
-          if (command.includes("merge-base")) return { stdout: "" };
+        exec: async (command, options = {}) => {
+          const joined = [command, ...(options.arguments || [])].join(" ");
+          if (joined.includes("rev-parse")) return { stdout: "b".repeat(40) };
+          if (joined.includes("merge-base")) return { stdout: "" };
           return { stdout: "" };
         },
       },
