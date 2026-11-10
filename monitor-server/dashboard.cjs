@@ -716,6 +716,23 @@ function renderTestCases(testCases) {
     parts.join('') +
   '</div>';
 }
+/**
+ * Which dev-workflow release a session is running.
+ *
+ * "connected" only proves a server is alive. A device left on an old release
+ * looked exactly as healthy as a current one, and finding out which build was
+ * answering meant SSH-ing to each machine. The version now travels with every
+ * report, so the card can simply show it.
+ *
+ * An empty value means the device does not use the managed bootstrap, which is
+ * different from "up to date" - so nothing is drawn rather than guessing.
+ */
+function versionPill(session) {
+  const version = session && session.release_version ? String(session.release_version) : '';
+  if (!version) return '';
+  return '<span class="phase" title="Dev Workflow release" style="background:#3fb9501a;color:#7ee787;border-color:#3fb95055">' +
+    'v' + esc(version) + '</span>';
+}
 const estimateBuild = ${estimateBuild.toString()};
 
 function buildSummaryFor(ab) {
@@ -1022,7 +1039,7 @@ function bukaDetail(sessionKey) {
 
   document.getElementById('modal-chips').innerHTML =
     '<span class="' + chipCls + '">' + chipText + '</span>' +
-    '<span class="phase" style="background:#a371f71a;color:#d2a8ff;border-color:#a371f755">' + agentText + '</span>';
+    '<span class="phase" style="background:#a371f71a;color:#d2a8ff;border-color:#a371f755">' + agentText + '</span>' + versionPill(s);
 
   document.getElementById('modal-task').textContent = s.task || s.session_title || '(tanpa task)';
   document.getElementById('modal-task-metadata').innerHTML = renderTaskMetadata(s);
@@ -1322,6 +1339,7 @@ function renderHistory(data) {
       '<div class="row">' +
       '<span class="phase" style="background:#a371f71a;color:#d2a8ff;border-color:#a371f755">' +
       esc(String(h.agent_tool || 'unknown').toUpperCase()) + '</span>' +
+      versionPill(h) +
       '<span class="task">' + esc(h.task || h.session_title || '(tanpa task)') + '</span></div>' +
       renderTaskMetadata(h) +
       renderChain(h) +
@@ -1427,6 +1445,7 @@ function render(data) {
         '<div class="row"><span class="' + chipCls + '">' + chipText + '</span>' +
         '<span class="phase" style="background:#a371f71a;color:#d2a8ff;border-color:#a371f755">' +
         esc(String(s.agent_tool || 'unknown').toUpperCase()) + '</span>' +
+        versionPill(s) +
         (s.project_name ? '<span class="proj-pill">' + esc(s.project_name) + '</span>' : '') +
         (durText ? '<span class="meta" style="margin-left:auto;color:#79c0ff">⏱ ' + esc(durText) + '</span>' : '') +
         '</div>' +
