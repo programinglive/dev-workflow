@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.29.4](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.29.3...v1.29.4) (2026-11-10)
+
+
+### 📝 Documentation
+
+* **monitor:** record the measured identity cleanup and the four infrastructure Todos ([#73](https://github.com/programinglive/dev-workflow-mcp-server/issues/73)) ([c2a6d66](https://github.com/programinglive/dev-workflow-mcp-server/commit/c2a6d66ab262160265245225940d104555d88ebf))
+
+
+### ✨ Features
+
+* **managed:** add one command to restart the MCP on every device ([0feb7d7](https://github.com/programinglive/dev-workflow-mcp-server/commit/0feb7d789f42632c515fa957d086f3d5c7ae08d6))
+* **workflow:** add a release lock so two sessions cannot release at once ([4f79aed](https://github.com/programinglive/dev-workflow-mcp-server/commit/4f79aedbd271a886c6b66dbdbf62bfc86c9050b9))
+* **workflow:** gate task closure on a recorded CI/CD deployment ([9eb89a5](https://github.com/programinglive/dev-workflow-mcp-server/commit/9eb89a50c174917ca33b97ed05980fc1a757edf4))
+
+
+### 🐛 Bug Fixes
+
+* **mcp:** stop logging healthy startup as an error and make exports unique ([8669bd7](https://github.com/programinglive/dev-workflow-mcp-server/commit/8669bd71d643b6b8fcf6adaafee1ff890a7c7579))
+* **mobile:** give the monitor fetch a deadline so the tablet cannot hang ([26949df](https://github.com/programinglive/dev-workflow-mcp-server/commit/26949df14b286b58042d75f5522d31948d922c17))
+
 ### [1.29.3](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.29.2...v1.29.3) (2026-11-10)
 
 
