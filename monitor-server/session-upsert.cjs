@@ -103,8 +103,9 @@ function buildSessionUpsert(body = {}) {
                                owner_pid, started_at, session_title, agent_tool,
                                workflow_task_id, task_origin_json, task_relations_json,
                                repo_path, repo_remote,
+                               release_version, release_revision,
                                task_id, parent_task_id, parent_task_title, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb,$20::jsonb,$21,$22,$23,$24,$25,now())
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb,$20::jsonb,$21,$22,$23,$24,$25,$26,$27,now())
          ON CONFLICT (session_key, task_id) DO UPDATE SET
            machine=EXCLUDED.machine,
            -- Identitas tidak boleh dihapus oleh kiriman kosong. Ini bug yang
@@ -165,6 +166,10 @@ function buildSessionUpsert(body = {}) {
            -- seperti identitas proyek di atas: nilai lama menang, nilai baru mengisi.
            parent_task_id=COALESCE(EXCLUDED.parent_task_id, sessions.parent_task_id),
            parent_task_title=COALESCE(NULLIF(EXCLUDED.parent_task_title, ''), sessions.parent_task_title),
+           -- Same rule as project_name: a reporter that does not know the
+           -- release must not erase what an earlier report proved.
+           release_version=COALESCE(NULLIF(EXCLUDED.release_version, ''), sessions.release_version),
+           release_revision=COALESCE(NULLIF(EXCLUDED.release_revision, ''), sessions.release_revision),
            updated_at=now()`,
     params: [
       key,
@@ -189,6 +194,10 @@ function buildSessionUpsert(body = {}) {
       JSON.stringify(metadata.taskRelations),
       str(b.repositoryPath, 512),
       str(b.repositoryRemote, 512),
+      // Bounded rather than rejected: a malformed publisher should degrade the
+      // version display, not break the whole session report.
+      str(b.releaseVersion, 40),
+      str(b.releaseRevision, 40),
       str(b.taskId, 200),
       parent ? parent.taskId : null,
       parent ? parent.title : null,

@@ -545,8 +545,31 @@ Aturan yang sekarang dipegang (`monitor-server/session-upsert.cjs`):
 |---|---|---|
 | `project_name`, `project_path` | **ya** | identitas, tidak boleh hilang |
 | `session_title`, `agent_tool` | **ya** | datang belakangan, bisa kosong sementara |
+| `release_version`, `release_revision` | **ya** | hanya dilaporkan oleh bootstrap managed; instalasi lain tidak mengirimnya |
 | `started_at` | ya, ambil yang paling awal | lihat catatan `LEAST`/`GREATEST` |
 | `task` | **tidak** | `task=''` adalah cara sah menutup task |
+
+### Versi rilis yang aktif
+
+`release_version` dan `release_revision` menjawab pertanyaan yang sebelumnya
+tidak bisa dijawab tanpa SSH ke setiap perangkat: **build mana yang benar-benar
+melayani sesi ini?**
+
+Alurnya:
+
+```
+package.json pada commit yang dipublikasikan
+  -> managed/publish.cjs        menulis version ke current.json
+  -> managed/release-server.cjs memvalidasi lalu meneruskannya
+  -> managed/launcher.cjs       menyimpan ke last-good.json, mengekspor DEVWF_RELEASE_VERSION
+  -> monitor.js                 buildSnapshot mengirim releaseVersion
+  -> sessions                   kolom release_version, release_revision
+```
+
+Perangkat yang tidak memakai bootstrap managed mengirim string kosong, dan
+kolomnya tetap kosong. Kosong berarti "tidak diketahui", bukan "versi terbaru".
+Karena itu nilai kosong **tidak boleh menimpa** versi yang sudah tercatat oleh
+laporan sebelumnya.
 
 `agent_tool` butuh perhatian khusus: nilai bawaan `'unknown'` **bukan** string
 kosong, jadi kalau dipakai sebagai nilai `EXCLUDED` ia akan menimpa label
