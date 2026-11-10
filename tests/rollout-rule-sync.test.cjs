@@ -68,3 +68,31 @@ test('stdin is piped whenever the sync sends the script as input', () => {
     'input must switch stdin to a pipe, otherwise the script never reaches the device',
   );
 });
+
+test('remoteTargets excludes the local workstation and includes the other two fleet devices', () => {
+  const rollout = require('../managed/rollout.cjs');
+  assert.equal(typeof rollout.remoteTargets, 'function', 'rollout must export remoteTargets(hostname)');
+
+  const fromMac = rollout.remoteTargets('mahatmas-MacBook-Pro.local').map((d) => d.label);
+  assert.deepEqual(fromMac, ['HELLOWORLD', 'MMCH']);
+
+  const fromHw = rollout.remoteTargets('HELLOWORLD').map((d) => d.label);
+  assert.deepEqual(fromHw, ['Mac', 'MMCH']);
+
+  const fromMmch = rollout.remoteTargets('MMCH').map((d) => d.label);
+  assert.deepEqual(fromMmch, ['HELLOWORLD', 'Mac']);
+});
+
+test('device-entry prefers canonical DEVWF_MONITOR_URL and DEVWF_RELEASE_URL from opencode.json', () => {
+  const entrySource = fs.readFileSync(path.join(__dirname, '..', 'managed', 'device-entry.cjs'), 'utf8');
+  assert.match(
+    entrySource,
+    /DEVWF_MONITOR_URL/,
+    'device-entry must enforce canonical DEVWF_MONITOR_URL from opencode.json over stale client configs',
+  );
+  assert.match(
+    entrySource,
+    /DEVWF_RELEASE_URL/,
+    'device-entry must enforce canonical DEVWF_RELEASE_URL from opencode.json over stale client configs',
+  );
+});

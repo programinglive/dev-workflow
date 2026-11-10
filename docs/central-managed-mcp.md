@@ -43,8 +43,14 @@ modes were measured on 8 November 2026 and are now guarded:
    discards `input`; the device then read an empty script and the ssh call never
    returned, so the rollout hung instead of reporting a failure. `run()` now
    switches stdin to `'pipe'` whenever `input` is supplied.
+4. **Host-aware remote fleet targets.** `managed/rollout.cjs` selects remote
+   targets dynamically via `remoteTargets()`, excluding the local hostname so the
+   rollout can run from HELLOWORLD, Mac, or MMCH without attempting `ssh` to itself
+   or skipping a peer workstation. `managed/device-entry.cjs` also prefers the
+   canonical `DEVWF_MONITOR_URL` and `DEVWF_RELEASE_URL` endpoints from
+   `opencode.json` over stale per-client environment overrides.
 
-`tests/rollout-rule-sync.test.cjs` pins all three properties.
+`tests/rollout-rule-sync.test.cjs` pins all four properties.
 
 ## Initial device setup
 

@@ -13,7 +13,9 @@ if(fs.existsSync(config)) {
   const source=JSON.parse(fs.readFileSync(config,'utf8'));
   const record=source.mcp?.['dev-workflow']||source.mcp?.servers?.['dev-workflow'];
   for(const [name,value] of Object.entries(record?.environment||record?.env||{})) {
-    if(typeof value!=='string'||env[name]) continue;
+    if(typeof value!=='string') continue;
+    const canonicalEndpoint=name==='DEVWF_MONITOR_URL'||name==='DEVWF_RELEASE_URL';
+    if(env[name]&&!canonicalEndpoint) continue;
     const ref=/^\{env:([A-Za-z_][A-Za-z0-9_]*)\}$/.exec(value);
     env[name]=ref?(process.env[ref[1]]||''):value;
   }
