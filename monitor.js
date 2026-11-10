@@ -154,6 +154,9 @@ export function buildSnapshot({ state, sessionKey = "", projectPath = "", sessio
     // Tanpa ini "connected" tidak membedakan build baru dari build lama.
     releaseVersion: releaseVersion(env),
     releaseRevision: releaseRevision(env),
+    // Versions of the tools the fleet depends on, so the monitor can show
+    // whether every device really can run the same work.
+    toolchain: cachedToolchain,
   };
 }
 
@@ -165,6 +168,26 @@ function releaseVersion(env) {
 function releaseRevision(env) {
   const value = typeof env.DEVWF_RELEASE_REVISION === "string" ? env.DEVWF_RELEASE_REVISION.trim() : "";
   return value.slice(0, 40);
+}
+
+/**
+ * The detected tool versions, filled once per process.
+ *
+ * buildSnapshot is synchronous and runs on every report, so the versions are
+ * detected asynchronously at startup and only READ here. Spawning `gh --version`
+ * inside every snapshot would be both slow and pointless: a tool does not change
+ * version mid-session.
+ */
+let cachedToolchain = null;
+
+/** Stores the detected toolchain for later snapshots. */
+export function setToolchain(toolchain) {
+  cachedToolchain = toolchain && typeof toolchain === "object" ? toolchain : null;
+}
+
+/** The toolchain as last detected, or null before the first detection. */
+export function getToolchain() {
+  return cachedToolchain;
 }
 
 /**

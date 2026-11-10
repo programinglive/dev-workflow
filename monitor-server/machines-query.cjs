@@ -70,7 +70,14 @@ function buildMachinesQuery({ staleAfterDays = DEFAULT_STALE_AFTER_DAYS } = {}) 
                  (array_agg(phase ORDER BY updated_at DESC))[1] AS last_phase,
                  (array_agg(NULLIF(task, '') ORDER BY updated_at DESC))[1] AS last_task,
                  (array_agg(NULLIF(project_name, '') ORDER BY updated_at DESC))[1] AS last_project,
-                 (array_agg(NULLIF(session_title, '') ORDER BY updated_at DESC))[1] AS last_title
+                 (array_agg(NULLIF(session_title, '') ORDER BY updated_at DESC))[1] AS last_title,
+                 -- Parity inputs come from the NEWEST row of each machine, for
+                 -- the same reason the phase and project do: an old session must
+                 -- not decide what the machine runs today. NULLIF keeps a blank
+                 -- historical report from outranking a real one.
+                 (array_agg(NULLIF(release_version, '') ORDER BY updated_at DESC))[1] AS release_version,
+                 (array_agg(NULLIF(release_revision, '') ORDER BY updated_at DESC))[1] AS release_revision,
+                 (array_agg(toolchain_json ORDER BY updated_at DESC))[1] AS toolchain_json
             FROM sessions
            WHERE machine <> ''
            GROUP BY machine

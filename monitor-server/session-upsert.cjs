@@ -81,6 +81,27 @@ function parentOf(b) {
  * @param {object} body  kiriman dari pelapor
  * @returns {{ sql: string, params: Array }}
  */
+/**
+ * Keeps the reported toolchain small and predictable.
+ *
+ * Only string versions are kept, at most 20 tools, each value truncated. A
+ * malformed report degrades the parity view instead of breaking the session
+ * write, which is the same rule the release version follows.
+ */
+function boundedToolchain(toolchain) {
+  if (!toolchain || typeof toolchain !== 'object' || Array.isArray(toolchain)) return {};
+  const out = {};
+  let count = 0;
+  for (const [name, version] of Object.entries(toolchain)) {
+    if (count >= 20) break;
+    const key = str(name, 40);
+    if (!key) continue;
+    out[key] = version === null || version === undefined ? null : str(version, 40);
+    count += 1;
+  }
+  return out;
+}
+
 function buildSessionUpsert(body = {}) {
   const b = body || {};
   const key = str(b.cardKey || b.sessionKey, 200);
@@ -103,9 +124,9 @@ function buildSessionUpsert(body = {}) {
                                owner_pid, started_at, session_title, agent_tool,
                                workflow_task_id, task_origin_json, task_relations_json,
                                repo_path, repo_remote,
-                               release_version, release_revision,
+                               release_version, release_revision, toolchain_json,
                                task_id, parent_task_id, parent_task_title, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb,$20::jsonb,$21,$22,$23,$24,$25,$26,$27,now())
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb,$20::jsonb,$21,$22,$23,$24,$25::jsonb,$26,$27,$28,now())
          ON CONFLICT (session_key, task_id) DO UPDATE SET
            machine=EXCLUDED.machine,
            -- Identitas tidak boleh dihapus oleh kiriman kosong. Ini bug yang
@@ -169,6 +190,11 @@ function buildSessionUpsert(body = {}) {
            -- Same rule as project_name: a reporter that does not know the
            -- release must not erase what an earlier report proved.
            release_version=COALESCE(NULLIF(EXCLUDED.release_version, ''), sessions.release_version),
+           -- Tool versions are identity too: a sparse report must not erase the
+           -- last known toolchain, or the parity view would flicker to empty.
+           toolchain_json=CASE
+             WHEN EXCLUDED.toolchain_json <> '{}'::jsonb THEN EXCLUDED.toolchain_json
+             ELSE COALESCE(sessions.toolchain_json, '{}'::jsonb) END,
            release_revision=COALESCE(NULLIF(EXCLUDED.release_revision, ''), sessions.release_revision),
            updated_at=now()`,
     params: [
@@ -198,6 +224,7 @@ function buildSessionUpsert(body = {}) {
       // version display, not break the whole session report.
       str(b.releaseVersion, 40),
       str(b.releaseRevision, 40),
+      JSON.stringify(boundedToolchain(b.toolchain)),
       str(b.taskId, 200),
       parent ? parent.taskId : null,
       parent ? parent.title : null,
