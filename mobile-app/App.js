@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   AppState,
+  Image,
   Linking,
   Modal,
   Pressable,
@@ -16,6 +17,7 @@ import {
 } from "react-native";
 import Constants from "expo-constants";
 import { namaSesi } from "./session-name";
+import { punyaTask, relasiFlow, urlThumbnail } from "./flow-relation";
 import { buildLocation, buildStatusLabel, isRunningBuild, parseEventDetail, visibleBuilds } from "./build-view";
 
 /**
@@ -675,6 +677,30 @@ function Kartu({ s, jamServer, onPress }) {
         {s.task_type ? " · " + s.task_type : ""} · {ago(s.updated_at, jamServer)}
       </Text>
 
+      {/* The flow is the plan. Without it the card is just a status line. */}
+      {(() => {
+        const flow = relasiFlow(s);
+        if (!flow) {
+          return punyaTask(s) ? (
+            <Text style={[gaya.flowKosong, { color: WARNA.kuning }]}>
+              📐 Flow belum ada - jalankan create_feature_flow
+            </Text>
+          ) : null;
+        }
+        return (
+          <View style={gaya.flowKotak}>
+            <Text style={gaya.flowJudul}>📐 Flow Diagram</Text>
+            {/* The endpoint returns SVG, which <Image> cannot draw, so the
+                monitor also serves a raster copy at .png. */}
+            <Image
+              source={{ uri: urlThumbnail(MONITOR_URL, flow.id) }}
+              style={gaya.flowGambar}
+              resizeMode="contain"
+            />
+          </View>
+        );
+      })()}
+
       {total > 0 && (
         <>
           <View style={gaya.barLuar}>
@@ -835,6 +861,33 @@ function DetailSesi({ s, jamServer, onClose }) {
           })()}
 
           <ScrollView style={gaya.modalIsi}>
+            {/* Same flow as the card, larger, plus the way back to Zettly. */}
+            {(() => {
+              const flow = relasiFlow(s);
+              if (!flow) {
+                return punyaTask(s) ? (
+                  <Text style={[gaya.flowKosong, { color: WARNA.kuning }]}>
+                    📐 Flow belum ada - jalankan create_feature_flow
+                  </Text>
+                ) : null;
+              }
+              return (
+                <View style={gaya.flowKotak}>
+                  <Text style={gaya.bagianJudul}>📐 Flow Diagram</Text>
+                  <Image
+                    source={{ uri: urlThumbnail(MONITOR_URL, flow.id) }}
+                    style={gaya.flowGambarBesar}
+                    resizeMode="contain"
+                  />
+                  {flow.url ? (
+                    <Pressable onPress={() => Linking.openURL(flow.url)} hitSlop={8}>
+                      <Text style={gaya.flowTautan}>Buka di Zettly ↗</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+              );
+            })()}
+
             {s.active_build?.target ? (
               <View style={gaya.buildDetail}>
                 <Text style={gaya.bagianJudul}>Build · {buildStatusLabel(s.active_build.status)}</Text>
@@ -1017,6 +1070,27 @@ const gaya = StyleSheet.create({
 
   langkah: { color: "#9da7b3", fontSize: 13, marginTop: 5 },
   langkahBeres: { color: WARNA.hijau, textDecorationLine: "line-through" },
+
+  // Flow diagram: the plan the owner asked to see on the tablet.
+  flowKotak: {
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: "#8b5cf655",
+    backgroundColor: "#0b1020",
+    borderRadius: 10,
+    padding: 8,
+  },
+  flowJudul: {
+    color: "#a78bfa",
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.5,
+    marginBottom: 6,
+  },
+  flowGambar: { width: "100%", height: 120, borderRadius: 6 },
+  flowGambarBesar: { width: "100%", height: 260, borderRadius: 6 },
+  flowKosong: { fontSize: 12, marginTop: 8 },
+  flowTautan: { color: WARNA.biruMuda, fontSize: 12, marginTop: 8, fontWeight: "600" },
 
   kartuKaki: {
     flexDirection: "row",
