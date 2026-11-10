@@ -548,6 +548,27 @@ export async function handleToolCall(context) {
     if (context.workflowState) context.workflowState.lastConflict = null;
     let response=await dispatchToolCall({...context,request:{...context.request,params:{...context.request.params,arguments:args}}});
     const name=context.request.params.name;
+
+    // While the Zettly drawing is missing, every reply carries the reminder.
+    // An agent that never sees this works through the whole task with a plan the
+    // monitor cannot show, which is exactly how the flow went missing before.
+    // Refusals count too: a "⚠️ create the flow first" reply is precisely the
+    // moment the agent must be told how to fix it, so do not filter on the glyph.
+    if (context.workflowState && !response?.isError) {
+      const st = context.workflowState.state || {};
+      const drawingId = st.zettly?.externalLinks?.drawing?.id;
+      const skip = new Set(['create_feature_flow','get_workflow_status','get_current_focus','get_integration_status','start_task']);
+      if (st.currentPhase && st.currentPhase !== 'idle' && !drawingId && !skip.has(name)) {
+        const text = response?.content?.[0]?.text;
+        // Machine-readable payloads must stay parseable; the reminder would
+        // corrupt JSON that callers parse directly.
+        if (typeof text === 'string' && !/^\s*[[{]/.test(text)) {
+          response.content[0].text = text +
+            "\n\n⚠️ FLOW BELUM ADA DI MONITOR: drawing Zettly belum dibuat. " +
+            "Jalankan 'create_feature_flow' { mermaidCode, description } sekarang supaya konteksnya lengkap.";
+        }
+      }
+    }
     const syncTools=new Set(['start_task','set_plan','mark_plan_step','set_definition_of_done','mark_dod_item','waive_dod_item','mark_bug_fixed','create_tests','skip_tests','run_tests','create_documentation','waive_documentation','check_ready_to_commit','commit_and_push','perform_release','record_deployment','acquire_release_lock','release_release_lock','skip_release','get_workflow_status','continue_workflow','resume_session','claim_factory_task','link_sentry_issue','report_build_status','build_report','build_estimate']);
     syncTools.add('link_factory_task');
     syncTools.add('link_zettly_drawing');

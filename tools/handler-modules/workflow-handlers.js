@@ -515,7 +515,13 @@ export async function handleStartTask(args, workflowState, git, zettlyOptions = 
     if (drawing.ok) {
       drawNote = `\n\n🎨 Zettly Draw #${drawing.id}: ${drawing.url || `https://zettly.programinglive.com/draw/${drawing.id}`}`;
     } else if (drawing.note) {
-      drawNote = `\n\n⚠️ Zettly Draw: ${drawing.note}`;
+      // A pending drawing means the monitor has no flow to show. Say so in the
+      // start_task reply, because an agent that never sees this will work
+      // through the whole task with an invisible plan.
+      drawNote =
+        `\n\n⚠️ FLOW BELUM TERLIHAT DI MONITOR: ${drawing.note}\n` +
+        `   Jalankan 'create_feature_flow' sekarang (sebelum menulis kode) supaya konteksnya lengkap. ` +
+        `Setiap balasan tool akan mengingatkan sampai drawing-nya ada.`;
     }
   } catch (e) {
     drawNote = `\n\n⚠️ Zettly Draw sync error: ${String(e && e.message).slice(0, 120)}`;
