@@ -1,5 +1,7 @@
 import {createHash} from 'node:crypto';
 import {createZettlyClient,resolveZettlyConfig,zettlySyncEnabled} from './zettly-client.js';
+import {deriveTags,ensureTags} from './zettly-tags.js';
+import {buildTaskProvenance} from './task-provenance.js';
 
 const BASE62='0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
 export function fractionalIndex(index) {
@@ -134,7 +136,12 @@ export async function syncZettlyDrawing(workflowState,{client,env=process.env}={
   if(!id&&state.zettlyDrawingCreateAttempted)return {ok:false,note:'Zettly drawing creation result is uncertain; inspect Draw before retrying.'};
   if(!id){state.zettlyDrawingCreateAttempted=true;const saved=await workflowState.save();if(saved?.verified===false||saved?.conflict)throw Error('Drawing creation intent was not saved');}
   let response;
-  try{response=await client.request(id?'PATCH':'POST',id?`/drawings/${id}`:'/drawings',payload);}
+  try{
+    const tagNames=deriveTags({taskDescription:state.taskDescription,taskType:state.taskType,projectDir:state.projectDir,taskOrigin:buildTaskProvenance(state)});
+    const tagIds=await ensureTags({client,names:tagNames});
+    const payloadWithTags=tagIds.length?{...payload,tag_ids:tagIds}:payload;
+    response=await client.request(id?'PATCH':'POST',id?`/drawings/${id}`:'/drawings',payloadWithTags);
+  }
   catch(error){return {ok:false,note:`Zettly drawing pending: ${error.status?`HTTP ${error.status}`:'connection or response unavailable'}.`};}
   const drawing=response.drawing||response.data?.drawing||response.data;
   if(!Number.isSafeInteger(Number(drawing?.id))||Number(drawing.id)<1)return {ok:false,note:'Zettly drawing pending: creation returned no ID.'};

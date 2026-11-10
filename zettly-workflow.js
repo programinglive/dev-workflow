@@ -5,6 +5,8 @@ import {StateConflict} from './db/errors.js';
 import {createZettlyClient,resolveZettlyConfig,zettlySyncEnabled} from './zettly-client.js';
 import {validateTaskSource,originForTask,buildTaskProvenance} from './task-provenance.js';
 import {renderAiSessions} from './ai-sessions.js';
+import {renderCheckpointElement} from './tools/handler-modules/checkpoint-block.js';
+import {deriveTags,ensureTags} from './zettly-tags.js';
 
 const escape=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 const hash=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -85,7 +87,18 @@ function blockFor(state,status,args={}) {
   const dod=safe.dod.map(item=>`[${item.status==='done'?'x':item.status==='waived'?'-':' '}] ${item.text}${item.evidence?' — '+item.evidence:''}`).join('\n');
   const links=externalLinkSummary(state);
   const sessions=renderAiSessions(state);
-  return `<!-- dev-workflow:${id}:start --><section data-dev-workflow-id="${id}"><h3>Dev Workflow</h3><p>Task ID: <code>${id}</code></p><p>Project: ${escape(safe.project)}</p><p>Status: ${escape(status)}</p><p>Implementation language: English</p>${links?`<h4>Connected work</h4><pre>${escape(links)}</pre>`:''}${sessions.length?`<h4>AI sessions</h4><pre>${escape(sessions.join('\n'))}</pre>`:''}<h4>Plan</h4><pre>${escape(plan)}</pre><h4>Definition of done</h4><pre>${escape(dod)}</pre>${safe.commit?`<p>Commit: ${escape(safe.commit)}</p>`:''}${safe.reason?`<p>Reason: ${escape(safe.reason)}</p>`:''}${safe.next.length?`<h4>Next action</h4><pre>${escape(safe.next.join('\n'))}</pre>`:''}</section><!-- dev-workflow:${id}:end -->`;
+  // The checkpoint element travels inside the same block so mergeBlock keeps it.
+  // Its fields (machine, baseSha, commits, handover) are what another machine
+  // needs; the human-readable Plan/DoD above stay for people reading Zettly.
+  const checkpoint=renderCheckpointElement(state.workflowTaskId,{
+    machine:state.machine??null,
+    checkpointedAt:state.checkpoint?.checkpointedAt??null,
+    summary:state.checkpoint?.summary??'',
+    baseSha:state.checkpoint?.baseSha??null,
+    commits:state.checkpoint?.commits??[],
+    handover:state.checkpoint?.handover??null,
+  });
+  return `<!-- dev-workflow:${id}:start --><section data-dev-workflow-id="${id}"><h3>Dev Workflow</h3><p>Task ID: <code>${id}</code></p><p>Project: ${escape(safe.project)}</p><p>Status: ${escape(status)}</p><p>Implementation language: English</p>${links?`<h4>Connected work</h4><pre>${escape(links)}</pre>`:''}${sessions.length?`<h4>AI sessions</h4><pre>${escape(sessions.join('\n'))}</pre>`:''}<h4>Plan</h4><pre>${escape(plan)}</pre><h4>Definition of done</h4><pre>${escape(dod)}</pre>${safe.commit?`<p>Commit: ${escape(safe.commit)}</p>`:''}${safe.reason?`<p>Reason: ${escape(safe.reason)}</p>`:''}${safe.next.length?`<h4>Next action</h4><pre>${escape(safe.next.join('\n'))}</pre>`:''}${checkpoint}</section><!-- dev-workflow:${id}:end -->`;
 }
 function externalLinkSummary(state) {
   const links=sanitize(state.zettly?.externalLinks||{});
@@ -121,7 +134,11 @@ async function syncState(workflowState,state,status,args,options) {
         state.zettly.createAttempted=true;
         await persist(workflowState,guard);
         let created;
-        try {created=await client.request('POST','/todos',{type:'todo',title:String(sanitize(state.taskDescription)).slice(0,255),description:block});}
+        try {
+          const tagNames=deriveTags({taskDescription:state.taskDescription,taskType:state.taskType,projectDir:state.projectDir,taskOrigin:buildTaskProvenance(state)});
+          const tagIds=await ensureTags({client,names:tagNames});
+          created=await client.request('POST','/todos',{type:'todo',title:String(sanitize(state.taskDescription)).slice(0,255),description:block,...(tagIds.length?{tag_ids:tagIds}:{})});
+        }
         catch(error){if(error.status&&error.status<500)state.zettly.createAttempted=false;throw error;}
         todo=created.data;
         if(!Number.isSafeInteger(Number(todo?.id))||Number(todo.id)<1)throw Object.assign(new Error('Missing Todo ID'),{uncertain:true});
@@ -141,7 +158,9 @@ async function syncState(workflowState,state,status,args,options) {
 }
 
 export async function syncZettlyTask(workflowState,options={}) {
-  if(!zettlySyncEnabled(options.env||process.env))return {ok:true,disabled:true,note:''};
+  // An explicitly injected client already chose its transport; only the
+  // self-resolving path is gated by the sync flag and the test context.
+  if(!options.client&&!zettlySyncEnabled(options.env||process.env))return {ok:true,disabled:true,note:''};
   if(options.todoId!==undefined&&(!Number.isSafeInteger(options.todoId)||options.todoId<1))return {ok:false,note:'Invalid Zettly Todo ID: a positive integer is required.'};
   const state=workflowState.state;
   if(!state.taskDescription)return {ok:true,note:''};

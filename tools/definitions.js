@@ -267,6 +267,102 @@ export function getToolList() {
       },
     },
     {
+      name: "checkpoint_task",
+      description:
+        "Write an authoritative checkpoint of the current task into its Zettly Todo and prove the " +
+        "write landed by reading the Todo back. Records which machine owns the task, the summary of " +
+        "what is done, the base commit, and every commit this session made since the base. Use it at " +
+        "phase transitions and before handing a task to another machine, or whenever the owner asks " +
+        "for a checkpoint. The result reports confirmed=true only after the read-back matched; " +
+        "confirmed=false means the checkpoint may exist but could not be verified, and another " +
+        "machine must not rely on it. Refuses when no task has been started.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          summary: {
+            type: "string",
+            description:
+              "One or two sentences on what is done and what remains. Recorded in the checkpoint " +
+              "and visible to the machine that picks the task up.",
+          },
+          showRevertPlan: {
+            type: "boolean",
+            description:
+              "Also produce the bounded, read-only revert record: which of this session's commits " +
+              "could be unwound, which are refused and why, and the dirty files. Recorded, never executed.",
+          },
+        },
+        required: [],
+      },
+    },
+    {
+      name: "handoff_task",
+      description:
+        "Record that the current task is handed from this machine to another one. Requires a target " +
+        "machine different from the current one and a non-empty reason: the receiving machine must " +
+        "know why it is taking over. Writing the marker also writes and confirms a checkpoint, so " +
+        "the target can read the marker even if this process dies. After this call, this machine's " +
+        "start_task refuses the task until acknowledge_handover is called on the machine that takes " +
+        "it back.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          to: {
+            type: "string",
+            description: "Name of the target machine, exactly as recorded in that machine's state (e.g. 'MMCH').",
+          },
+          reason: {
+            type: "string",
+            description: "Why the task is leaving this machine. Mandatory, shown to the receiving machine.",
+          },
+        },
+        required: ["to", "reason"],
+      },
+    },
+    {
+      name: "acknowledge_handover",
+      description:
+        "Explicitly take a handed-off task back on this machine. Only works when a handover marker " +
+        "is recorded; the acknowledgement is appended to the checkpoint summary first (so the fact " +
+        "of returning is itself recorded), then the marker is cleared and the write is confirmed. " +
+        "Never called implicitly: a silent return would let two machines believe they own the task.",
+      inputSchema: {
+        type: "object",
+        properties: {},
+        required: [],
+      },
+    },
+    {
+      name: "fetch_task",
+      description:
+        "Take a task over from another machine by refreshing that machine's checkpoint over SSH and " +
+        "adopting it into this session. With no 'from' (or 'from' equal to this machine) it is a " +
+        "plain local checkpoint. With 'from' naming another machine, a 'reason' is required: it " +
+        "becomes the handover marker the source machine will read and must stop working from. If the " +
+        "remote refresh fails, the last readable Zettly checkpoint is adopted instead and the result " +
+        "is flagged confirmed:false. An unresolvable machine name is refused, never guessed.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          from: {
+            type: "string",
+            description: "Machine to take the task over from (e.g. 'Mac'). Omit for a local checkpoint.",
+          },
+          reason: {
+            type: "string",
+            description: "Why this machine is taking the task over. Required when 'from' names another machine.",
+          },
+          sessionKey: {
+            type: "string",
+            description:
+              "Optional remote session key to checkpoint explicitly (e.g. 'ses_e69e5134...'). " +
+              "Omit to let the remote process use its default session context.",
+          },
+        },
+        required: [],
+      },
+    },
+    {
       name: "mark_bug_fixed",
       description:
         "Mark that the bug/feature is fixed. Reminder: Now you MUST create tests!",
@@ -1052,6 +1148,33 @@ export function getToolList() {
           output: {
             type: "string",
             description: "Optional sanitized log snippet or build output summary.",
+          },
+          testCases: {
+            type: "array",
+            description:
+              "Optional per-test-case results so the card shows which case is running and how far the suite has got. Keep it bounded; only the last 100 are kept.",
+            items: {
+              type: "object",
+              properties: {
+                name: {
+                  type: "string",
+                  maxLength: 160,
+                  description: "Test case name as the runner prints it.",
+                },
+                status: {
+                  type: "string",
+                  enum: ["passed", "failed", "skipped", "running"],
+                  description: "Current state of this case.",
+                },
+                durationMs: {
+                  type: "number",
+                  minimum: 0,
+                  description: "How long this case took, when known.",
+                },
+              },
+              required: ["name", "status"],
+              additionalProperties: false,
+            },
           },
         },
         required: ["status", "target"],

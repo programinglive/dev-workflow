@@ -1264,6 +1264,13 @@ export class WorkflowState {
       // SHA yang benar-benar ter-push. Dipakai rekomendasi tindak lanjut untuk
       // membaca diff commit ini (TODO baru, jumlah berkas) tanpa menebak HEAD.
       lastCommitSha: "",
+      // Mesin pemilik task ini. Dipakai checkpoint supaya mesin lain tahu siapa
+      // yang memegang state hidup, dan supaya handoff bisa menyebut asal/tujuan.
+      machine: "",
+      // Rekaman checkpoint. `baseSha` diambil saat start_task sehingga daftar
+      // commit milik sesi ini bisa dihitung tanpa menebak, dan `handover` dicatat
+      // bila task diserahkan ke mesin lain.
+      checkpoint: { checkpointedAt: null, summary: "", baseSha: null, commits: [], handover: null },
       // Repo proyek untuk sesi ini. Ditentukan saat start_task, dipakai semua
       // operasi git berikutnya. Kosong berarti ikuti urutan resolusi di exec.js.
       projectDir: "",
@@ -1344,6 +1351,13 @@ export class WorkflowState {
       // SHA yang benar-benar ter-push. Dipakai rekomendasi tindak lanjut untuk
       // membaca diff commit ini (TODO baru, jumlah berkas) tanpa menebak HEAD.
       lastCommitSha: "",
+      // Mesin pemilik task ini. Dipakai checkpoint supaya mesin lain tahu siapa
+      // yang memegang state hidup, dan supaya handoff bisa menyebut asal/tujuan.
+      machine: "",
+      // Rekaman checkpoint. `baseSha` diambil saat start_task sehingga daftar
+      // commit milik sesi ini bisa dihitung tanpa menebak, dan `handover` dicatat
+      // bila task diserahkan ke mesin lain.
+      checkpoint: { checkpointedAt: null, summary: "", baseSha: null, commits: [], handover: null },
       // Repo proyek untuk sesi ini. Ditentukan saat start_task, dipakai semua
       // operasi git berikutnya. Kosong berarti ikuti urutan resolusi di exec.js.
       projectDir: "",
@@ -1419,6 +1433,15 @@ export class WorkflowState {
     await this._hydrateHistoryFromDatabase(db, userId, projectPath);
     await this.mergeSharedHistory();
     this.loadedTask = this.state.taskDescription || "";
+      // A state written before checkpoints existed has no `checkpoint` field.
+      // Normalise it here rather than in every reader, so callers can assume the
+      // shape. Old sessions simply have an empty checkpoint, not a broken one.
+      if (!this.state.checkpoint || typeof this.state.checkpoint !== "object") {
+        this.state.checkpoint = { checkpointedAt: null, summary: "", baseSha: null, commits: [], handover: null };
+      }
+      if (typeof this.state.machine !== "string") {
+        this.state.machine = "";
+      }
       if (typeof this.state.testsCreated !== "boolean") {
         this.state.testsCreated = false;
       }
@@ -2627,6 +2650,13 @@ export class WorkflowState {
       // SHA yang benar-benar ter-push. Dipakai rekomendasi tindak lanjut untuk
       // membaca diff commit ini (TODO baru, jumlah berkas) tanpa menebak HEAD.
       lastCommitSha: "",
+      // Mesin pemilik task ini. Dipakai checkpoint supaya mesin lain tahu siapa
+      // yang memegang state hidup, dan supaya handoff bisa menyebut asal/tujuan.
+      machine: "",
+      // Rekaman checkpoint. `baseSha` diambil saat start_task sehingga daftar
+      // commit milik sesi ini bisa dihitung tanpa menebak, dan `handover` dicatat
+      // bila task diserahkan ke mesin lain.
+      checkpoint: { checkpointedAt: null, summary: "", baseSha: null, commits: [], handover: null },
       // Repo proyek untuk sesi ini. Ditentukan saat start_task, dipakai semua
       // operasi git berikutnya. Kosong berarti ikuti urutan resolusi di exec.js.
       projectDir: "",

@@ -17,6 +17,8 @@ import { handleSetDefinitionOfDone, handleMarkDodItem, handleWaiveDodItem } from
 import { handleNextSteps } from "./next-steps-handlers.js";
 import { handleResumeSession } from "./resume-handlers.js";
 import { handleSetPlan, handleMarkPlanStep } from "./workflow-handlers.js";
+import { handleCheckpointTask, handleHandoffTask, handleAcknowledgeHandover } from "./checkpoint-handlers.js";
+import { handleFetchTask } from "./remote-checkpoint.js";
 import { renderPlanShort } from "./plan.js";
 import { openItems, MIN_EVIDENCE } from "./dod.js";
 import { handleSearchProject } from "./search-handlers.js";
@@ -427,6 +429,49 @@ async function dispatchToolCall({
         return handleNextSteps(args, workflowState);
       case "resume_session":
         return handleResumeSession(args, workflowState);
+      case "checkpoint_task":
+        return textResponse(
+          JSON.stringify(
+            await handleCheckpointTask(args, {
+              workflowState,
+              client: zettlyOptions?.client || integrationOptions?.zettly,
+              env: zettlyOptions?.env || integrationOptions?.env || process.env,
+            })
+          )
+        );
+      case "handoff_task":
+        return textResponse(
+          JSON.stringify(
+            await handleHandoffTask(args, {
+              workflowState,
+              client: zettlyOptions?.client || integrationOptions?.zettly,
+              env: zettlyOptions?.env || integrationOptions?.env || process.env,
+            })
+          )
+        );
+      case "acknowledge_handover":
+        return textResponse(
+          JSON.stringify(
+            await handleAcknowledgeHandover(args, {
+              workflowState,
+              client: zettlyOptions?.client || integrationOptions?.zettly,
+              env: zettlyOptions?.env || integrationOptions?.env || process.env,
+            })
+          )
+        );
+      case "fetch_task":
+        return textResponse(
+          JSON.stringify(
+            await handleFetchTask(args, {
+              workflowState,
+              client: zettlyOptions?.client || integrationOptions?.zettly,
+              env: zettlyOptions?.env || integrationOptions?.env || process.env,
+              machineAliases: integrationOptions?.machineAliases || {},
+              nodePath: integrationOptions?.remoteNodePath,
+              scriptPath: integrationOptions?.remoteScriptPath,
+            })
+          )
+        );
       case "force_complete_task":
         return handleForceCompleteTask(args, workflowState, { factory, zettlyOptions });
       case "drop_task":
@@ -500,6 +545,12 @@ export async function handleToolCall(context) {
     const syncTools=new Set(['start_task','set_plan','mark_plan_step','set_definition_of_done','mark_dod_item','waive_dod_item','mark_bug_fixed','create_tests','skip_tests','run_tests','create_documentation','waive_documentation','check_ready_to_commit','commit_and_push','perform_release','skip_release','get_workflow_status','continue_workflow','resume_session','claim_factory_task','link_sentry_issue','report_build_status','build_report','build_estimate']);
     syncTools.add('link_factory_task');
     syncTools.add('link_zettly_drawing');
+    // checkpoint_task already forces its own write; the post-dispatch sync is a
+    // cheap retry when that write landed in a pending state (Zettly was down).
+    syncTools.add('checkpoint_task');
+    syncTools.add('handoff_task');
+    syncTools.add('acknowledge_handover');
+    syncTools.add('fetch_task');
     if(context.workflowState&&!response?.isError&&!isErrorResponse(response)&&!context.workflowState.lastConflict&&syncTools.has(name)){
       const notes=[];
       if(name==='get_workflow_status'&&context.workflowState.state.zettlyOutbox?.length){const result=await flushZettlyOutbox(context.workflowState,context.zettlyOptions);if(result.note)notes.push(result.note);}

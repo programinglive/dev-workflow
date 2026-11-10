@@ -108,6 +108,30 @@ function normalizeBuildState(input = {}, existing = null) {
     600,
   );
 
+  /*
+   * Per-test-case visibility.
+   *
+   * OWNER REQUEST (10 November 2026): "I want output about test cases on the
+   * monitor, so we know tests are running and how far they have got." A card
+   * that only says `npm test (100%)` cannot distinguish a slow suite from a
+   * frozen one.
+   *
+   * WHY BOUNDED AND WHY AN EMPTY LIST CLEARS
+   * ----------------------------------------
+   * The payload travels through the session row on every report, so an
+   * unbounded suite (thousands of cases) would bloat every write and every
+   * dashboard poll. Only the last MAX_TEST_CASES are kept, and each name is
+   * truncated. An EXPLICIT empty array means "this build has no cases now"
+   * and must clear the old list; an ABSENT array means "no news" and keeps
+   * what is already known.
+   */
+  const testCases =
+    input.testCases !== undefined
+      ? normalizeTestCases(input.testCases)
+      : Array.isArray(prev.testCases)
+        ? prev.testCases
+        : [];
+
   let progress = null;
   if (input.progress !== undefined && input.progress !== null && input.progress !== '') {
     const n = Number(input.progress);
@@ -118,6 +142,11 @@ function normalizeBuildState(input = {}, existing = null) {
     progress = 100;
   } else if (Number.isFinite(prev.progress)) {
     progress = prev.progress;
+  }
+  // No explicit percentage: derive one from the cases so the bar moves while a
+  // suite runs. Only cases that have settled count as done.
+  if (progress === null && testCases.length > 0) {
+    progress = Math.max(0, Math.min(100, Math.round((settledTestCases(testCases) / testCases.length) * 100)));
   }
 
   const startedAt = cleanStr(
@@ -135,10 +164,64 @@ function normalizeBuildState(input = {}, existing = null) {
     stage,
     progress,
     output,
+    testCases,
     startedAt,
     updatedAt,
     finishedAt,
   };
+}
+
+/**
+ * The case statuses a card knows how to draw.
+ *
+ * Anything else becomes `unknown` rather than being coerced into `passed` or
+ * `failed`: a monitor that invents a result is worse than one that admits it
+ * does not understand the report.
+ */
+const TEST_CASE_STATUSES = new Set(['passed', 'failed', 'skipped', 'running', 'unknown']);
+
+/** Keep the most recent cases; a suite is read from the bottom up. */
+const MAX_TEST_CASES = 100;
+
+function normalizeTestCases(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((entry) => entry && typeof entry === 'object')
+    .slice(-MAX_TEST_CASES)
+    .map((entry) => {
+      const name = cleanStr(entry.name || entry.title || '', 160);
+      const status = String(entry.status || '').trim().toLowerCase();
+      const durationMs = Number(entry.durationMs !== undefined ? entry.durationMs : entry.ms);
+      return {
+        name,
+        status: TEST_CASE_STATUSES.has(status) ? status : 'unknown',
+        durationMs: Number.isFinite(durationMs) && durationMs >= 0 ? Math.round(durationMs) : null,
+      };
+    })
+    .filter((entry) => entry.name !== '');
+}
+
+/** Cases that have settled (anything except still-running). */
+function settledTestCases(testCases) {
+  return (Array.isArray(testCases) ? testCases : []).filter(
+    (entry) => entry && entry.status !== 'running'
+  ).length;
+}
+
+/**
+ * Counts for the card header.
+ *
+ * Returns zeroes rather than null for an empty list so the template never has
+ * to branch on undefined.
+ */
+function summarizeTestCases(testCases) {
+  const list = Array.isArray(testCases) ? testCases : [];
+  const summary = { total: list.length, passed: 0, failed: 0, skipped: 0, running: 0, unknown: 0 };
+  for (const entry of list) {
+    const status = entry && TEST_CASE_STATUSES.has(entry.status) ? entry.status : 'unknown';
+    summary[status] += 1;
+  }
+  return summary;
 }
 
 function renderAsciiBar(progress, width = 16) {
@@ -209,6 +292,24 @@ function formatBuildStatusBlock(activeBuild, buildHistory = []) {
 
   if (activeBuild.output) {
     lines.push(`- **Latest Output**: \`${activeBuild.output.replace(/\r?\n/g, ' | ').slice(0, 220)}\``);
+  }
+
+  // Test case progress, so the agent's own answer also shows how far a suite
+  // has got instead of only a percentage.
+  if (Array.isArray(activeBuild.testCases) && activeBuild.testCases.length > 0) {
+    const counts = summarizeTestCases(activeBuild.testCases);
+    const running = activeBuild.testCases.filter((entry) => entry && entry.status === 'running');
+    lines.push(
+      `- **Test Cases**: ${counts.passed} passed, ${counts.failed} failed, ` +
+        `${counts.skipped} skipped, ${counts.running} running (${counts.total} reported)`
+    );
+    if (running.length > 0) {
+      lines.push(`- **Running now**: ${running.slice(-3).map((entry) => entry.name).join(', ')}`);
+    }
+    const failed = activeBuild.testCases.filter((entry) => entry && entry.status === 'failed');
+    if (failed.length > 0) {
+      lines.push(`- **Failed**: ${failed.slice(0, 3).map((entry) => entry.name).join(', ')}`);
+    }
   }
 
   if (Array.isArray(buildHistory) && buildHistory.length > 0) {
@@ -332,4 +433,5 @@ module.exports = {
   parseEventDetail,
   formatElapsedShort,
   statusBadge,
+  summarizeTestCases,
 };

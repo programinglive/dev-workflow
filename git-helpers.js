@@ -302,6 +302,85 @@ export async function getPrimaryBranch() {
 }
 
 /**
+ * Nama branch default remote (sasaran revert). Revert hanya boleh menyentuh
+ * commit yang TIDAK ada di branch ini; yang sudah ter-push ke sana tidak
+ * boleh dihapus diam-diam.
+ */
+export async function defaultBranch() {
+  try {
+    return await getPrimaryBranch();
+  } catch {
+    // No resolvable branch (not a repo yet, or bare fallback failed): the
+    // revert plan must not crash the checkpoint, so assume the common name.
+    return "main";
+  }
+}
+
+/**
+ * Daftar branch remote yang berisi SHA ini. Dipakai penjagaan revert:
+ * bila branch default ada di daftar, commit itu sudah terdistribusi dan
+ * tidak boleh masuk kandidat.
+ */
+export async function remoteBranchesContaining(sha) {
+  const target = String(sha ?? "").trim();
+  if (!target || !/^[a-f0-9]{40}$/.test(target)) return [];
+  try {
+    const { stdout } = await exec(`git branch -r --contains ${target}`);
+    return stdout
+      .split("\n")
+      .map((line) => line.replace(/^origin\//, "").trim())
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Email penulis satu commit. Pemilik sesi hanya boleh mem-bunk commit
+ * yang ditulisnya sendiri; commit orang lain ditolak dengan alasan.
+ */
+export async function authorEmail(sha) {
+  const target = String(sha ?? "").trim();
+  if (!target || !/^[a-f0-9]{40}$/.test(target)) return "";
+  try {
+    const { stdout } = await exec(`git show -s --format=%ae ${target}`);
+    return stdout.trim();
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Identitas penulisan sesi ini (`git config user.email`). Dipakai membanding
+ * dengan penulis commit saat menghitung revert; kosong berarti repo lokal
+ * belum dikonfigurasi dan perbandingan identitas dilewati.
+ */
+export async function sessionEmail() {
+  try {
+    const { stdout } = await exec("git config user.email");
+    return stdout.trim();
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Working tree dalam bentuk baris `git status --porcelain`. Revert hanya
+ * MELAPOR berkas kotor, tidak pernah membersihkannya.
+ */
+export async function statusPorcelain() {
+  try {
+    const { stdout } = await exec("git status --porcelain");
+    return stdout
+      .split("\n")
+      .map((line) => line.trimEnd())
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Tanggal commit terakhir yang menyentuh satu path.
  *
  * Dipakai gerbang dokumentasi untuk menyebut berapa lama README dibiarkan.
