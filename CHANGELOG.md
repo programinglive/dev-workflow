@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.29.1](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.29.0...v1.29.1) (2026-11-10)
+
+
+### 🐛 Bug Fixes
+
+* **managed:** make multi-device rollout host-aware and enforce canonical monitor URL ([2f6e66c](https://github.com/programinglive/dev-workflow-mcp-server/commit/2f6e66c738022f303accec0926b181d3e16b331f))
+* **release:** push the release on a branch that exists ([6dd081a](https://github.com/programinglive/dev-workflow-mcp-server/commit/6dd081a6b67ce86189b07d98cb68362777660b14))
+
 ## [1.29.0](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.28.0...v1.29.0) (2026-11-10)
 
 
