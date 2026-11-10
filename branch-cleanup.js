@@ -61,7 +61,11 @@ function tryGit(cwd, args) {
  */
 function realOrSame(target) {
   try {
-    return fs.realpathSync(target);
+    // `.native` matters on Windows: the JavaScript implementation returns the
+    // 8.3 short form (C:\Users\MAHARD~1\...) while git prints the long form
+    // (C:/Users/mahardhika/...). Comparing those two says "different directory"
+    // for the same place, which marks the main worktree removable.
+    return fs.realpathSync.native(target);
   } catch {
     return path.resolve(target);
   }
@@ -76,10 +80,17 @@ function realOrSame(target) {
  * A case-sensitive comparison called the main worktree a different directory and
  * marked it removable. Paths are case-insensitive on Windows, so compare them
  * that way there and exactly everywhere else.
+ *
+ * Windows can also report the same directory in its 8.3 short form
+ * (`C:\Users\MAHARD~1\...`) while the caller holds the long form. Comparing the
+ * raw strings then says "different directory" for the same place, which is the
+ * dangerous direction: the main worktree gets marked removable. Both sides are
+ * resolved through realpath first, so the comparison is about the directory
+ * rather than about how it was spelled.
  */
 export function samePath(a, b) {
   if (!a || !b) return false;
-  const normalise = (value) => String(value).replace(/[\\/]+$/, "");
+  const normalise = (value) => realOrSame(String(value)).replace(/[\\/]+$/, "");
   if (process.platform === "win32") {
     return normalise(a).toLowerCase() === normalise(b).toLowerCase();
   }

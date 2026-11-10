@@ -2169,6 +2169,28 @@ export class WorkflowState {
   }
 
   /**
+   * Tutup koneksi state database.
+   *
+   * KENAPA ADA
+   * ----------
+   * Adapter SQLite memegang berkas `.db`, `-wal`, dan `-shm` selama terbuka.
+   * Tanpa cara menutup, sebuah proses yang membuat `WorkflowState` sementara -
+   * tes, skrip sekali jalan, atau CLI - meninggalkan berkas terkunci. Di Windows
+   * itu membuat direktori sementara tidak bisa dihapus (EBUSY), dan di Linux
+   * berkas `-wal` tetap tertinggal.
+   *
+   * Idempoten: memanggilnya dua kali, atau pada state yang belum pernah menyentuh
+   * database, tidak melakukan apa pun.
+   */
+  async close() {
+    const adapter = this.dbAdapter;
+    this.dbAdapter = null;
+    if (adapter && typeof adapter.close === "function") {
+      await adapter.close();
+    }
+  }
+
+  /**
    * Adapter SQLite yang dipakai menyimpan state hidup.
    *
    * Dimuat malas supaya modul ini tetap bisa diimpor oleh tes yang tidak
