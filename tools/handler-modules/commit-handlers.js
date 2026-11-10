@@ -7,6 +7,7 @@ import { validateAiSuggestions, collectSignals, buildRecommendations, renderReco
 import { resolveProjectDir, setActiveProjectDir, getActiveProjectDir } from "../../exec.js";
 import path from "path";
 import { updateTaskStatus, isConfigured, readFactoryConfig } from "../../factory-client.js";
+import { cleanupWorkBranches } from "../../branch-cleanup.js";
 
 /**
  * Tutup task Factory yang di-claim saat workflow berakhir, supaya board tidak
@@ -547,6 +548,8 @@ export async function handleCompleteTask(args, workflowState, context = {}) {
     "task_done",
     entry.commitMessage || "",
   );
+  // Captured before reset, because reset clears it and the cleanup needs it.
+  const projectDir = workflowState.state.projectDir || "";
   // `dodFactoryTaskId` harus dibaca SEBELUM reset, karena reset mengosongkannya.
   const factoryTaskId = workflowState.state.dodFactoryTaskId;
   const zettlyResult = await closeZettlyTask(workflowState,'completed',args,context.zettlyOptions);
@@ -576,11 +579,42 @@ export async function handleCompleteTask(args, workflowState, context = {}) {
       `mengerjakan — itu yang dibaca sesi berikutnya lewat 'next_steps'.`
     : "";
 
+  // Finished work should not leave litter behind. Only branches whose commits
+  // are all reachable from the default branch are removed, plus worktrees that
+  // are clean, merged, unlocked and idle; everything else is kept. This never
+  // fails the completion that already happened - a locked directory is not a
+  // reason to lose a finished task.
+  let cleanupNote = "";
+  if (projectDir) {
+    try {
+      const cleanup = cleanupWorkBranches({ repoDir: projectDir, apply: true });
+      const removedBranches = cleanup.deleted || [];
+      const removedWorktrees = cleanup.removed || [];
+      if (removedBranches.length || removedWorktrees.length) {
+        const parts = [];
+        if (removedBranches.length) {
+          parts.push(`${removedBranches.length} branch: ${removedBranches.join(", ")}`);
+        }
+        if (removedWorktrees.length) {
+          const names = removedWorktrees.map((item) => item.split("/").filter(Boolean).pop());
+          parts.push(`${removedWorktrees.length} worktree: ${names.join(", ")}`);
+        }
+        cleanupNote = `\n\n🧹 Cleaned up (${parts.join(" · ")}).`;
+      }
+      const failures = cleanup.failures || [];
+      if (failures.length) {
+        cleanupNote += `\n⚠️ Could not clean: ${failures.map((item) => item.target).join(", ")}.`;
+      }
+    } catch (error) {
+      cleanupNote = `\n\n⚠️ Branch cleanup skipped: ${String(error.message || error).slice(0, 120)}`;
+    }
+  }
+
   return textResponse(
     `✅ Task completed!\n\nCommit message: ${args.commitMessage}\n` +
       `DoD: ${dod.done}/${dod.total} terbukti, ${dod.waived} dikecualikan.\nHistory recorded.` +
       `${factoryNote}${zettlyNote}\n\n` +
-      `${renderRecommendations(recommendations)}${diffNote}${askForSuggestions}`
+      `${renderRecommendations(recommendations)}${diffNote}${askForSuggestions}${cleanupNote}`
   );
 }
 
