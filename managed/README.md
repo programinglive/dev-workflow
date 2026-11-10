@@ -73,6 +73,24 @@ curl -s -H "authorization: Bearer $TOKEN" http://100.77.138.14:3101/v1/current
 Devices pick the new manifest up on their next start. The version appears in
 `last-good.json` and in the session report.
 
+## Restarting the MCP on all devices
+
+The MCP is a child of the AI CLI. Killing it does not make the CLI spawn it
+again, and the launcher only picks a release at start. Restarting therefore
+means: stop the ManagedMCP process tree on every device, then reopen the CLI.
+
+```bash
+node managed/restart-devices.cjs
+```
+
+It stops the ManagedMCP processes on HELLOWORLD, Mac and MMCH in one command.
+It matches `ManagedMCP` in the command line, so other MCP servers are left
+alone. Reopen the AI CLI on each device afterwards; the launcher resolves the
+release that `managed/rollout.cjs` promoted.
+
+Do not restart one device by hand and leave the others on an old release. That
+is how a device ends up reporting a version the fleet no longer runs.
+
 ## Backward compatibility
 
 An old device launcher ignores an unknown `version` key, and it validates the
