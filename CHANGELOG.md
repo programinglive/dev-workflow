@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.29.2](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.29.1...v1.29.2) (2026-11-10)
+
+
+### 🐛 Bug Fixes
+
+* **cleanup:** compare worktree paths case-insensitively on Windows ([806fb27](https://github.com/programinglive/dev-workflow-mcp-server/commit/806fb27befc04b280ae1a9fc42ead40a3d0d0f02))
+* **deps:** record the devwf bin in the lockfile ([20a0b36](https://github.com/programinglive/dev-workflow-mcp-server/commit/20a0b36ad3d1ceecdc0d38f2106541313445882c))
+* **monitor:** require both a task and a project before a session is recorded, shown or recapped ([#71](https://github.com/programinglive/dev-workflow-mcp-server/issues/71)) ([1aeee75](https://github.com/programinglive/dev-workflow-mcp-server/commit/1aeee7585b146ba2138952cc29f20048570badaf))
+* **monitor:** treat a project path as no content and show the release version ([58a8cb1](https://github.com/programinglive/dev-workflow-mcp-server/commit/58a8cb1671d25f621310d377e38761e5a1b3640b))
+* resolve Windows short paths and close the state database so the suite is green ([a5031d2](https://github.com/programinglive/dev-workflow-mcp-server/commit/a5031d26545a0a5972d0212877fd5429f65b59e5))
+
 ### [1.29.1](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.29.0...v1.29.1) (2026-11-10)
 
 
