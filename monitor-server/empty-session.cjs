@@ -111,8 +111,7 @@ function shouldSkipCreate(body = {}, hasRow = false) {
   const hasContent =
     String(b.task || '').trim() !== '' ||
     String(b.sessionTitle || '').trim() !== '' ||
-    String(b.projectName || '').trim() !== '' ||
-    String(b.projectPath || '').trim() !== '';
+    String(b.projectName || '').trim() !== '';
   return !hasContent;
 }
 
