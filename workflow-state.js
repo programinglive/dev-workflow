@@ -1258,6 +1258,11 @@ export class WorkflowState {
       releaseSkippedReason: "",
       releaseCommand: "",
       releaseNotes: "",
+      // Rekaman rilis yang benar-benar sampai ke produksi lewat CI/CD.
+      // `released` hanya berarti "perintah rilis dijalankan"; ini menyimpan tag,
+      // pipeline, dan site yang sudah menerimanya. Tanpa ini, upload langsung ke
+      // server tidak meninggalkan jejak apa pun di MCP.
+      deployment: null,
       commitAndPushCompleted: false,
       lastCommitMessage: "",
       lastPushBranch: "",
@@ -1345,6 +1350,11 @@ export class WorkflowState {
       releaseSkippedReason: "",
       releaseCommand: "",
       releaseNotes: "",
+      // Rekaman rilis yang benar-benar sampai ke produksi lewat CI/CD.
+      // `released` hanya berarti "perintah rilis dijalankan"; ini menyimpan tag,
+      // pipeline, dan site yang sudah menerimanya. Tanpa ini, upload langsung ke
+      // server tidak meninggalkan jejak apa pun di MCP.
+      deployment: null,
       commitAndPushCompleted: false,
       lastCommitMessage: "",
       lastPushBranch: "",
@@ -2666,6 +2676,11 @@ export class WorkflowState {
       releaseSkippedReason: "",
       releaseCommand: "",
       releaseNotes: "",
+      // Rekaman rilis yang benar-benar sampai ke produksi lewat CI/CD.
+      // `released` hanya berarti "perintah rilis dijalankan"; ini menyimpan tag,
+      // pipeline, dan site yang sudah menerimanya. Tanpa ini, upload langsung ke
+      // server tidak meninggalkan jejak apa pun di MCP.
+      deployment: null,
       commitAndPushCompleted: false,
       lastCommitMessage: "",
       lastPushBranch: "",

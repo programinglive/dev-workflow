@@ -6,6 +6,7 @@ import { reportEventSafe } from "../../monitor.js";
 import { validateAiSuggestions, collectSignals, buildRecommendations, renderRecommendations } from "./next-steps.js";
 import { resolveProjectDir, setActiveProjectDir, getActiveProjectDir } from "../../exec.js";
 import path from "path";
+import fs from "fs";
 import { updateTaskStatus, isConfigured, readFactoryConfig } from "../../factory-client.js";
 import { cleanupWorkBranches } from "../../branch-cleanup.js";
 
@@ -453,6 +454,24 @@ export async function handleCommitAndPush(args, context) {
   );
 }
 
+/**
+ * Does this project ship through the Clinic CI/CD release runner?
+ *
+ * The marker is `scripts/ops/clinic-gitlab-release.cjs`, the job that deploys
+ * staging, quality and production from a protected tag. A generic `release`
+ * script is not enough: the MCP's own repository has one, and gating on that
+ * would block unrelated projects.
+ */
+function isDeployableProject(projectDir) {
+  if (!projectDir) return false;
+
+  try {
+    return fs.existsSync(path.join(projectDir, "scripts", "ops", "clinic-gitlab-release.cjs"));
+  } catch {
+    return false;
+  }
+}
+
 export async function handleCompleteTask(args, workflowState, context = {}) {
   // Sampai 31 Oktober 2026 fungsi ini tidak memeriksa apa pun: task bisa
   // ditutup dengan DoD kosong atau masih penuh item terbuka. Sekarang tidak.
@@ -476,6 +495,29 @@ export async function handleCompleteTask(args, workflowState, context = {}) {
         `Buktikan dengan 'mark_dod_item' { id, evidence } atau kecualikan dengan ` +
         `'waive_dod_item' { id, reason }.`
     );
+  }
+
+  // Deployment gate: a project that ships through a release script must record
+  // the tag that actually reached production. Direct uploads bypass CI/CD and
+  // leave the MCP with no idea what is live, which is exactly how untagged files
+  // ended up on production. `skip_release` with a written reason is the only
+  // escape hatch, and it is recorded.
+  const deploymentGateProjectDir = workflowState.state.projectDir || getActiveProjectDir() || "";
+  if (isDeployableProject(deploymentGateProjectDir) && !workflowState.state.releaseSkipped) {
+    const deployment = workflowState.state.deployment;
+    if (!deployment || !deployment.tag) {
+      return textResponse(
+        `⚠️ Proyek ini dirilis lewat CI/CD, tapi belum ada deployment yang dicatat.\n\n` +
+          `Upload berkas langsung ke server TIDAK dihitung sebagai rilis, dan MCP tidak punya ` +
+          `catatan apa pun tentangnya.\n\n` +
+          `Langkah yang benar:\n` +
+          `  1. rilis lewat tag: 'perform_release' (release script + push tag)\n` +
+          `  2. tunggu pipeline CI/CD sampai selesai\n` +
+          `  3. catat tag yang benar-benar live: 'record_deployment' { tag, pipelineId, sites, evidence }\n\n` +
+          `Task BELUM ditutup.\n` +
+          `Kalau task ini memang tidak perlu rilis, pakai 'skip_release' dengan alasan tertulis.`
+      );
+    }
   }
 
   // Validasi SEBELUM menyentuh state: saran yang ditolak tidak boleh menutup

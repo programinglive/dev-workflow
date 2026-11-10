@@ -590,6 +590,42 @@ export function getToolList() {
       },
     },
     {
+      name: "record_deployment",
+      description:
+        "Record the release tag that actually reached production through CI/CD. " +
+        "Verifies the tag exists and contains HEAD, then stores tag, pipeline, sites and evidence " +
+        "in the workflow. A project that ships through a release script cannot be closed with " +
+        "'complete_task' until this is recorded, so a direct file upload cannot pass as a release.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          tag: {
+            type: "string",
+            pattern: "^v(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$",
+            description: "Stable release tag that was deployed, e.g. v5.1.3.",
+          },
+          pipelineId: {
+            type: "string",
+            description: "CI/CD pipeline id or URL that deployed the tag.",
+          },
+          sites: {
+            type: "array",
+            items: { type: "string" },
+            description: "Production sites that received the tag, e.g. ['timelessbintaro'].",
+          },
+          evidence: {
+            type: "string",
+            description: "What proves the tag is live, e.g. a health receipt or the deployed version read back from the site.",
+          },
+          projectDir: {
+            type: "string",
+            description: "Absolute path to the repository. Overrides the repo pinned by 'start_task'.",
+          },
+        },
+        required: ["tag", "pipelineId", "sites", "evidence"],
+      },
+    },
+    {
       name: "skip_release",
       description:
         "Record that the release step was intentionally skipped (e.g., non-Node projects or documentation-only work). Requires a justification.",
