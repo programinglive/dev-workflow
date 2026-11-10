@@ -180,8 +180,14 @@ export async function handleRecordDeployment(args, context) {
   }
 
   let tagSha = "";
+  const repoDir = workflowState.state.projectDir || getActiveProjectDir() || "";
   try {
-    const { stdout } = await exec(`git rev-parse --verify ${utils.shellEscape(tag)}^{commit}`);
+    // Run git inside the pinned repo. `exec` falls back to the session cwd, and
+    // the MCP's own checkout is a git repo too, so a bare `git rev-parse` here
+    // read the wrong repository and reported the tag as missing.
+    const { stdout } = await exec(
+      `git -C ${utils.shellEscape(repoDir)} rev-parse --verify ${utils.shellEscape(tag)}^{commit}`
+    );
     tagSha = String(stdout || "").trim();
   } catch {
     return textResponse(
@@ -199,7 +205,9 @@ export async function handleRecordDeployment(args, context) {
 
   if (headSha) {
     try {
-      await exec(`git merge-base --is-ancestor ${utils.shellEscape(headSha)} ${utils.shellEscape(tag)}`);
+      await exec(
+        `git -C ${utils.shellEscape(repoDir)} merge-base --is-ancestor ${utils.shellEscape(headSha)} ${utils.shellEscape(tag)}`
+      );
     } catch {
       return textResponse(
         `⚠️ HEAD (${headSha.slice(0, 8)}) bukan bagian dari tag ${tag}.\n\n` +
