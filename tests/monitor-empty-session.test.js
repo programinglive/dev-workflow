@@ -97,3 +97,13 @@ test("the README states that a session without task or project is not recorded",
   assert.match(readme, /cleanup-empty-sessions\.cjs/);
   assert.match(readme, /both\*\* a task \*\*and\*\* a project/i);
 });
+test("a project path alone is not enough to make a card", () => {
+  // The defect behind "(tanpa task)": a client reported a projectPath with no
+  // task and no title, the row was created, and the card had nothing to show.
+  const { shouldSkipCreate } = require("../monitor-server/empty-session.cjs");
+  assert.equal(
+    shouldSkipCreate({ projectPath: "D:\\code\\zettly", task: "", sessionTitle: "" }, false),
+    true,
+    "a path is not a report title"
+  );
+});

@@ -13,6 +13,7 @@ import {
 } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import { tmpdir } from "node:os";
+import { realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { SqliteAdapter } from "../db/adapters/sqlite.js";
@@ -48,11 +49,52 @@ import {
  * reported a failure that did not exist.
  */
 function samePathPrefix(candidate, prefix) {
-  const normalise = (value) => String(value).replace(/[\\/]+$/, "");
+  // Windows can report the same directory two ways: the long form
+  // (C:\Users\mahardhika) and the 8.3 short form (C:\Users\MAHARD~1). Both name
+  // the same place, so a textual comparison fails on a machine that happens to
+  // have short names enabled.
+  //
+  // realpath only answers for paths that exist, and a state file usually does
+  // not exist yet when it is compared. So walk up to the nearest existing
+  // ancestor, resolve that, and append the remainder unchanged.
+  const resolveExisting = (value) => {
+    const text = String(value);
+    let head = text;
+    const tail = [];
+    for (let guard = 0; guard < 64; guard++) {
+      try { return path.join(realpathSync.native(head), ...tail.reverse()); } catch { /* keep walking up */ }
+      const parent = path.dirname(head);
+      if (parent === head) break;
+      tail.push(path.basename(head));
+      head = parent;
+    }
+    return text;
+  };
+  const normalise = (value) => resolveExisting(value).replace(/[\\/]+$/, "");
   if (process.platform === "win32") {
     return normalise(candidate).toLowerCase().startsWith(normalise(prefix).toLowerCase());
   }
   return normalise(candidate).startsWith(normalise(prefix));
+}
+
+/**
+ * Remove a temporary directory, tolerating a brief lock.
+ *
+ * On Windows SQLite keeps the .db and -shm handles open for a moment after the
+ * last statement, so rm() races with the driver and throws EBUSY. Retrying is
+ * the documented remedy; failing the test over a cleanup race hides the result
+ * the test actually produced.
+ */
+async function removeTempDir(dir) {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    try {
+      await rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      return;
+    } catch (error) {
+      if (attempt === 19) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
 }
 
 async function withWorkflowState(callback) {  const tempDir = await mkdtemp(path.join(tmpdir(), "workflow-state-"));
@@ -63,7 +105,10 @@ async function withWorkflowState(callback) {  const tempDir = await mkdtemp(path
   try {
     await callback(state);
   } finally {
-    await rm(tempDir, { recursive: true, force: true });
+    // Release the SQLite handle before removing the directory. Without this the
+    // .db/-wal/-shm files stay locked and the delete fails with EBUSY.
+    if (typeof state.close === "function") await state.close();
+    await removeTempDir(tempDir);
   }
 }
 
@@ -132,7 +177,7 @@ test("resolveStateFile prefers current working directory when multiple project m
     } else {
       delete process.env.INIT_CWD;
     }
-    await rm(tempRoot, { recursive: true, force: true });
+    await removeTempDir(tempRoot);
   }
 });
 
@@ -184,7 +229,7 @@ test("WorkflowState mirrors state file to compatibility locations", async () => 
   assert.equal(primaryParsed.currentPhase, "commit", "primary state file should be updated");
 
   await adapter.close();
-  await rm(tempRoot, { recursive: true, force: true });
+  await removeTempDir(tempRoot);
 });
 
 test("WorkflowState avoids filesystem root when no project markers found", async () => {
@@ -243,7 +288,7 @@ test("WorkflowState avoids filesystem root when no project markers found", async
       delete process.env.INIT_CWD;
     }
 
-    await rm(tempRoot, { recursive: true, force: true });
+    await removeTempDir(tempRoot);
   }
 });
 
