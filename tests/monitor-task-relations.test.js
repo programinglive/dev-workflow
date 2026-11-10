@@ -145,7 +145,7 @@ test('served browser script displays metadata on cards, history and detail and a
     fetch: () => new Promise(() => {}),
     document: { getElementById: node, querySelector: node, querySelectorAll: () => [], addEventListener() {} } });
   vm.runInContext(script, browser);
-  const session = { session_key: 's', task: 'Repair', task_origin_json: origin, task_relations_json: relations,
+  const session = { session_key: 's', project_name: 'printer-erp', task: 'Repair', task_origin_json: origin, task_relations_json: relations,
     phase: 'coding', state: 'live', machine: 'TEST', updated_at: '2026-11-04T00:00:00Z' };
   browser.render({ now: '2026-11-04T00:00:00Z', sessions: [session], history: [session] });
   browser.bukaDetail('s');

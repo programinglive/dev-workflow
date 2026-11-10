@@ -37,7 +37,7 @@ function buildProjectSummaryQuery({ days = DEFAULT_SUMMARY_DAYS, limit = DEFAULT
   const batas = Number(limit) > 0 ? Math.min(MAKS_LIMIT, Number(limit)) : DEFAULT_SUMMARY_LIMIT;
 
   return {
-    sql: `SELECT CASE WHEN project_name = '' THEN '(tanpa proyek)' ELSE project_name END AS project,
+    sql: `SELECT project_name AS project,
                  count(*) AS sessions,
                  count(*) FILTER (WHERE updated_at > now() - interval '15 minutes') AS recent,
                  SUM(EXTRACT(EPOCH FROM (updated_at - started_at)))::int AS total_seconds,

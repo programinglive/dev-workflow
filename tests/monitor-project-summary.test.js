@@ -22,19 +22,16 @@ const {
 
 test("durasi dijumlahkan per proyek, dihitung database", () => {
   const { sql } = buildProjectSummaryQuery({});
-  // Dikelompokkan pada LABEL proyek (CASE ... AS project), bukan pada kolom
-  // mentah, supaya sesi tanpa nama ikut terkumpul di satu kelompok.
-  assert.match(sql, /END AS project/);
+  assert.match(sql, /project_name AS project/);
   assert.match(sql, /GROUP BY 1/);
   assert.match(sql, /SUM\(/);
 });
 
-test("proyek tanpa nama TIDAK ditebak, dipisah dan ditandai", () => {
-  // 5 dari 9 sesi lama tidak punya project_name. Menebaknya dari jalur atau
-  // judul sesi berarti mengarang data. Yang jujur: kelompokkan sebagai
-  // "(tanpa proyek)" supaya terlihat bahwa catatannya tidak lengkap.
+test("sesi tanpa nama proyek atau tanpa task ditolak dari rekap (tidak ada lagi '(tanpa proyek)')", () => {
   const { sql } = buildProjectSummaryQuery({});
-  assert.match(sql, /\(tanpa proyek\)/);
+  assert.doesNotMatch(sql, /\(tanpa proyek\)/);
+  assert.match(sql.toLowerCase(), /nullif\(btrim\(project_name\),\s*''\)\s+is not null/);
+  assert.match(sql.toLowerCase(), /nullif\(btrim\(task\),\s*''\)\s+is not null/);
   assert.ok(!/COALESCE\(project_name, session_title\)/.test(sql), "jangan menebak dari judul");
 });
 

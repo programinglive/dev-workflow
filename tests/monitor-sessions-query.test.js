@@ -72,10 +72,10 @@ test("limit diteruskan sebagai parameter, bukan disisipkan ke SQL", () => {
   assert.ok(!sql.includes("7"), "angka limit tidak boleh masuk teks SQL");
 });
 
-test('anonymous connections never appear as active tasks, real session titles remain useful',()=>{
+test('anonymous connections and sessions without task or project never appear as active tasks',()=>{
   const {sql}=buildSessionsQuery();
-  assert.match(sql,/NULLIF\(BTRIM\(task\), ''\)/);
-  assert.match(sql,/NULLIF\(BTRIM\(session_title\), ''\)/);
+  assert.match(sql,/NULLIF\(BTRIM\(task\), ''\) IS NOT NULL/);
+  assert.match(sql,/NULLIF\(BTRIM\(project_name\), ''\) IS NOT NULL/);
   // 'handed-off' ditambahkan 8 November 2026: kartu yang sudah diserahkan ke
   // kartu berikutnya dalam sesi yang sama bukan lagi pekerjaan aktif.
   assert.match(sql,/phase NOT IN \('closed', 'done', 'cancelled', 'handed-off'\)/);
