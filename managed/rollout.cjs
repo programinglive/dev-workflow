@@ -8,12 +8,38 @@
  */
 
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 const MANAGED_DIR = __dirname;
 const STAGING_DIR = path.join(REPO_ROOT, '.managed-publish');
+
+/**
+ * The ManagedMCP root on THIS device, whatever the platform.
+ *
+ * The rollout was written on Windows and read `process.env.LOCALAPPDATA`
+ * directly. Run from the Mac, that value is undefined, so `path.join` threw
+ * "The path argument must be of type string" and the whole rollout died after
+ * the release had already been promoted. Every device runs this script, so the
+ * location has to be discovered rather than assumed.
+ */
+function localManagedRoot() {
+  const candidates = [
+    process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'ProgramingLive', 'ManagedMCP') : null,
+    process.env.XDG_DATA_HOME ? path.join(process.env.XDG_DATA_HOME, 'ProgramingLive', 'ManagedMCP') : null,
+    path.join(os.homedir(), '.local', 'share', 'ProgramingLive', 'ManagedMCP'),
+    process.platform === 'darwin'
+      ? path.join(os.homedir(), 'Library', 'Application Support', 'ProgramingLive', 'ManagedMCP')
+      : null,
+  ].filter(Boolean);
+  return candidates.find((dir) => fs.existsSync(dir)) || null;
+}
+
+// The device this script is running on. It used to be hard-coded as
+// HELLOWORLD, which made the log lie when the rollout ran from another machine.
+const LOCAL_LABEL = os.hostname();
 
 const RELEASE_HOSTS = [
   { name: 'bw-tools', ip: '100.77.138.14', port: 3101, isPrimary: true },
@@ -220,13 +246,18 @@ function updateBootstraps() {
     path.join(MANAGED_DIR, 'device-entry.cjs'),
   ];
 
-  // 1. HELLOWORLD (local)
-  const localBootstrap = path.join(process.env.LOCALAPPDATA, 'ProgramingLive', 'ManagedMCP', 'bootstrap');
-  fs.mkdirSync(localBootstrap, { recursive: true });
-  for (const file of bootstrapFiles) {
-    fs.copyFileSync(file, path.join(localBootstrap, path.basename(file)));
+  // 1. This device
+  const localRoot = localManagedRoot();
+  if (localRoot) {
+    const localBootstrap = path.join(localRoot, 'bootstrap');
+    fs.mkdirSync(localBootstrap, { recursive: true });
+    for (const file of bootstrapFiles) {
+      fs.copyFileSync(file, path.join(localBootstrap, path.basename(file)));
+    }
+    console.log(`      ✅ ${LOCAL_LABEL} bootstrap updated`);
+  } else {
+    console.error(`      ⚠️ ${LOCAL_LABEL} has no ManagedMCP directory; bootstrap update skipped`);
   }
-  console.log('      ✅ HELLOWORLD bootstrap updated');
 
   // 2. Mac
   try {
@@ -248,14 +279,19 @@ function updateBootstraps() {
 function prewarmDevices() {
   console.log('[4/5] Prewarming and resolving managed runtime on all devices...');
 
-  // 1. HELLOWORLD
-  try {
-    const entry = path.join(process.env.LOCALAPPDATA, 'ProgramingLive', 'ManagedMCP', 'bootstrap', 'device-entry.cjs');
-    const out = run(process.execPath, [entry, 'opencode', '--resolve-only']);
-    const parsed = JSON.parse(out);
-    console.log(`      ✅ HELLOWORLD: revision ${parsed.revision.slice(0, 12)} (offline: ${parsed.offline})`);
-  } catch (err) {
-    console.error(`      ⚠️ HELLOWORLD prewarm failed: ${err.message}`);
+  // 1. This device
+  const localRoot = localManagedRoot();
+  if (!localRoot) {
+    console.error(`      ⚠️ ${LOCAL_LABEL} prewarm skipped: no ManagedMCP directory`);
+  } else {
+    try {
+      const entry = path.join(localRoot, 'bootstrap', 'device-entry.cjs');
+      const out = run(process.execPath, [entry, 'opencode', '--resolve-only']);
+      const parsed = JSON.parse(out);
+      console.log(`      ✅ ${LOCAL_LABEL}: revision ${parsed.revision.slice(0, 12)} (offline: ${parsed.offline})`);
+    } catch (err) {
+      console.error(`      ⚠️ ${LOCAL_LABEL} prewarm failed: ${err.message}`);
+    }
   }
 
   // 2. Mac
@@ -290,11 +326,12 @@ function syncRuleText(content) {
 function syncRules() {
   console.log('[5/5] Synchronizing AI CLI rules across Codex, OpenCode, and AGY on all devices...');
 
-  // 1. HELLOWORLD
+  // 1. This device
+  const home = os.homedir();
   const hwFiles = [
-    path.join(process.env.USERPROFILE, '.gemini', 'GEMINI.md'),
-    path.join(process.env.USERPROFILE, '.codex', 'AGENTS.md'),
-    path.join(process.env.USERPROFILE, '.config', 'opencode', 'AGENTS.md'),
+    path.join(home, '.gemini', 'GEMINI.md'),
+    path.join(home, '.codex', 'AGENTS.md'),
+    path.join(home, '.config', 'opencode', 'AGENTS.md'),
   ];
   let localChanged = 0;
   let localPresent = 0;
@@ -309,7 +346,7 @@ function syncRules() {
   }
   // Report what actually changed, not just that the device was visited: a
   // silent "synchronized" hid a stale rule block on MMCH for a whole day.
-  console.log(`      ✅ HELLOWORLD rules synchronized (${localChanged} changed of ${localPresent}/3 files)`);
+  console.log(`      ✅ ${LOCAL_LABEL} rules synchronized (${localChanged} changed of ${localPresent}/3 files)`);
 
   // 2. Mac
   try {

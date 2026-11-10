@@ -10,6 +10,7 @@
 
 import {
   getCurrentBranch,
+  branchExists,
   getHeadSha,
   getLastCommitMessage,
   getPrimaryBranch,
@@ -44,6 +45,7 @@ export function createGitFacade() {
     hasStagedChanges,
     getStagedChanges,
     getCurrentBranch,
+    branchExists,
     getHeadSha,
     getPrimaryBranch,
     getRemoteBranchSha,
