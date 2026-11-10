@@ -1,5 +1,6 @@
 import { textResponse, isReleaseSatisfied, resetToCommitIfWorkingChanges, summarizeHistory } from "./shared.js";
 import { resolveProjectDir, setActiveProjectDir, getActiveProjectDir } from "../../exec.js";
+import { acquireReleaseLock, releaseReleaseLock, readReleaseLock } from "../release-lock.js";
 
 /**
  * Label repo yang dipakai, untuk ditampilkan di laporan.
@@ -228,6 +229,70 @@ export async function handleRecordDeployment(args, context) {
   );
 }
 
+function resolveLockProjectDir(args, workflowState) {
+  const requested = typeof args.projectDir === "string" ? args.projectDir.trim() : "";
+  if (requested) {
+    try {
+      setActiveProjectDir(resolveProjectDir({ explicit: requested }).dir);
+    } catch {
+      return "";
+    }
+    workflowState.state.projectDir = getActiveProjectDir();
+  }
+  return workflowState.state.projectDir || getActiveProjectDir() || "";
+}
+
+export async function handleAcquireReleaseLock(args, context) {
+  const { workflowState } = context;
+  const projectDir = resolveLockProjectDir(args, workflowState);
+  if (!projectDir) {
+    return textResponse("⚠️ Tidak bisa menentukan repo. Sebutkan 'projectDir'.");
+  }
+
+  const result = acquireReleaseLock({
+    projectDir,
+    tag: typeof args.tag === "string" ? args.tag.trim() : "",
+    sessionId: workflowState.sessionId || process.env.DEVWF_SESSION_ID || "",
+    machine: workflowState.state.machine || process.env.COMPUTERNAME || "",
+  });
+
+  if (!result.ok) {
+    return textResponse(`⚠️ ${result.error}`);
+  }
+
+  return textResponse(
+    `✅ Release lock dipegang sesi ini.\n` +
+      `Repo: ${projectDir}\n` +
+      `Tag: ${result.lock.tag || "(belum ditentukan)"}\n` +
+      `Kedaluwarsa: ${result.lock.expiresAt}\n\n` +
+      `Sesi lain tidak bisa menjalankan release sampai lock dilepas.`
+  );
+}
+
+export async function handleReleaseReleaseLock(args, context) {
+  const { workflowState } = context;
+  const projectDir = resolveLockProjectDir(args, workflowState);
+  if (!projectDir) {
+    return textResponse("⚠️ Tidak bisa menentukan repo. Sebutkan 'projectDir'.");
+  }
+
+  const result = releaseReleaseLock({
+    projectDir,
+    sessionId: workflowState.sessionId || process.env.DEVWF_SESSION_ID || "",
+    force: args.force === true,
+  });
+
+  if (!result.ok) {
+    return textResponse(`⚠️ ${result.error}`);
+  }
+
+  return textResponse(
+    result.released
+      ? "✅ Release lock dilepas."
+      : `ℹ️ ${result.note}`
+  );
+}
+
 export async function handleSkipRelease(args, workflowState) {
   if (workflowState.state.currentPhase === "idle") {
     return textResponse("⚠️ Please start a task first using 'start_task' before skipping release.");
@@ -312,6 +377,20 @@ export async function handlePerformRelease(args, context) {
       return textResponse(`❌ projectDir tidak valid: ${error.message}`);
     }
     workflowState.state.projectDir = getActiveProjectDir();
+  }
+
+  // Release lock: a second session must not run the release script at the same
+  // time. Two release commits and two tags is how work gets clobbered.
+  const lockProjectDir = workflowState.state.projectDir || getActiveProjectDir() || "";
+  const heldLock = readReleaseLock(lockProjectDir);
+  const mySession = workflowState.sessionId || process.env.DEVWF_SESSION_ID || "";
+  if (heldLock && heldLock.sessionId && heldLock.sessionId !== mySession) {
+    return textResponse(
+      `⚠️ Rilis sedang dipegang sesi lain (${heldLock.sessionId}` +
+        `${heldLock.machine ? " di " + heldLock.machine : ""}) untuk tag ${heldLock.tag || "(belum ditentukan)"}.\n\n` +
+        `Jangan jalankan release script sekarang. Tunggu lock itu dilepas atau kedaluwarsa ` +
+        `(${heldLock.expiresAt}).`
+    );
   }
 
   let hasNewChanges;

@@ -626,6 +626,45 @@ export function getToolList() {
       },
     },
     {
+      name: "acquire_release_lock",
+      description:
+        "Claim the release for this clone so a second AI session cannot run the release script at the same time. " +
+        "The lock lives in .git/ and expires after two hours. Call it before 'perform_release'.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          tag: {
+            type: "string",
+            description: "Tag that will be released, e.g. v5.1.3 (optional, for the lock record).",
+          },
+          projectDir: {
+            type: "string",
+            description: "Absolute path to the repository. Overrides the repo pinned by 'start_task'.",
+          },
+        },
+        required: [],
+      },
+    },
+    {
+      name: "release_release_lock",
+      description:
+        "Release the release lock after the tag is deployed and recorded. Refuses when another session holds it unless force is set.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          force: {
+            type: "boolean",
+            description: "Release a lock held by another session. Only when that session is known to be dead.",
+          },
+          projectDir: {
+            type: "string",
+            description: "Absolute path to the repository. Overrides the repo pinned by 'start_task'.",
+          },
+        },
+        required: [],
+      },
+    },
+    {
       name: "skip_release",
       description:
         "Record that the release step was intentionally skipped (e.g., non-Node projects or documentation-only work). Requires a justification.",
