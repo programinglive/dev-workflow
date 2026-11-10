@@ -1,8 +1,10 @@
-# Self-Hosted CI Runner (MMCH)
+# Self-Hosted CI Runner (bw-tools)
 
-CI for this repo runs on **MMCH**, not on GitHub-hosted minutes. GitHub-hosted
+CI for this repo runs on **bw-tools** (`100.77.138.14`, Linux Ubuntu), not on GitHub-hosted minutes. GitHub-hosted
 runners cost build minutes we are not paying for, and the project builds fine on
 hardware we already own.
+
+The former Windows runner on MMCH (`100.109.164.16`) has been decommissioned and migrated to bw-tools.
 
 ---
 
@@ -10,16 +12,14 @@ hardware we already own.
 
 | Item | Value |
 |---|---|
-| Name | `mmch-dev-workflow` |
-| Labels | `self-hosted`, `windows`, `mmch` (plus automatic `Windows`, `X64`) |
-| Version | 2.338.1 |
-| Install path | `C:\actions-runner` |
-| Host | MMCH — Windows 11 Pro, `100.109.164.16` |
-| Started by | Scheduled task `GitHubActionsRunner-MMCH` |
+| Name | `bwtools-devwf` |
+| Labels | `self-hosted`, `Linux`, `X64`, `bwtools`, `bw-tools`, `dev-workflow-mcp-server` |
+| Version | 2.338.2 |
+| Install path | `/home/dhika/actions-runner-devwf` |
+| Host | bw-tools — Linux Ubuntu, `100.77.138.14` |
+| Service | `actions.runner.programinglive-dev-workflow-mcp-server.bwtools-devwf.service` |
 
-Workflow jobs target `runs-on: [self-hosted, windows, mmch]`. The generic
-`self-hosted` label alone is deliberately **not** used: any future Linux runner
-would otherwise be able to pick up a job whose steps are Windows PowerShell.
+Workflow jobs target `runs-on: [self-hosted, linux, bw-tools]`.
 
 ---
 
