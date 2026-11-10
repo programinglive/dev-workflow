@@ -18,8 +18,8 @@ test('CI calls the shared ci-cd workflow', () => {
   assert.match(ci, /uses:\s*programinglive\/ci-cd\/\.github\/workflows\/ci-node\.yml@v1/);
 });
 
-test('CI keeps the self-hosted MMCH runner', () => {
-  assert.match(ci, /\["self-hosted","windows","mmch"\]/);
+test('CI keeps the self-hosted bw-tools runner', () => {
+  assert.match(ci, /\["self-hosted","linux","bw-tools"\]/);
 });
 
 test('CI preserves the quality gates that existed before', () => {
