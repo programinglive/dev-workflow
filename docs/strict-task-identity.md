@@ -109,6 +109,28 @@ node scripts/recover-monitor-identities.cjs --delete-unrecoverable
 the authenticated MCP client, which keeps the Zettly credential out of the server
 process.
 
+### The 10 November 2026 cleanup, in numbers
+
+Measured on the live `devwf_monitor.sessions` table:
+
+| Step | Rows |
+|---|---|
+| Rows missing a task or a project | 79 |
+| Recovered from their Zettly Todo | 52 |
+| Deleted: no task **and** no project (pure junk) | 19 |
+| Deleted: either field missing and no source could explain it | 8 |
+| Remaining incomplete rows afterwards | 0 |
+
+The eight deleted rows were identity placeholders (`task_id = ''`) of sessions
+that already had a proper card, plus the retired `uji` test machine. Their real
+work is still on the board under its own card, so nothing was lost.
+
+Four Zettly Todos had **no** `Project:` line and no `proyek:` tag because the work
+never belonged to a repository (`#299` RDP access for the POS PCs, `#400` and
+`#401` Windows restore points on MMCH, `#495` the timelessbintaro latency
+investigation). Those were infrastructure tasks, not repository work, so the
+monitor cannot report them; assign them a project if they must appear again.
+
 Cleanup of plain junk stays separate and bounded:
 `monitor-server/cleanup-empty-sessions.cjs --dry-run`.
 
