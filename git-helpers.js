@@ -233,6 +233,29 @@ export async function getCurrentBranch() {
 }
 
 /**
+ * True when a local branch with this name exists.
+ *
+ * Used before pushing a release: a remembered branch name can already be merged
+ * and deleted, and `git push origin <gone>` fails with "src refspec does not
+ * match any" only AFTER the release tag was created locally.
+ */
+export async function branchExists(name) {
+  const branch = typeof name === "string" ? name.trim() : "";
+  if (!branch) return false;
+  try {
+    await exec(`git rev-parse --verify --quiet ${shellEscapeGitRef(branch)}`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Escapes a branch name for the shell without allowing option injection. */
+function shellEscapeGitRef(name) {
+  return `'${String(name).replace(/'/g, `'\\''`)}'`;
+}
+
+/**
  * SHA commit yang sedang di HEAD.
  *
  * Dipakai untuk membuktikan bahwa push benar-benar mengirim commit ini, bukan

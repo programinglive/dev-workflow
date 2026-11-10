@@ -42,6 +42,34 @@ const RELEASE_COMMIT_VERSION_REGEX =
   /^(?:chore\(release\)|release(?:\([^)]+\))?):\s*v?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)\b/i;
 
 /**
+ * The branch the release must be pushed to.
+ *
+ * A requested branch wins, but only when it still exists: the release commits
+ * and tags on the branch checked out right now, so a remembered name that has
+ * been merged and deleted would make `git push origin <gone>` fail with "src
+ * refspec does not match any", after the tag already exists locally. That is how
+ * v1.29.0 was left on a laptop on 10 November 2026.
+ *
+ * Order: the requested branch if it exists, then the current branch, then no
+ * branch (a bare `--follow-tags` push, which lets git decide).
+ */
+export async function chooseReleaseBranch({ requested, git }) {
+  const wanted = typeof requested === "string" ? requested.trim() : "";
+  const current = (await git.getCurrentBranch()) || "";
+
+  if (wanted && current && wanted === current) return wanted;
+
+  if (wanted) {
+    const exists = typeof git.branchExists === "function"
+      ? await git.branchExists(wanted).catch(() => false)
+      : true;
+    if (exists) return wanted;
+  }
+
+  return current;
+}
+
+/**
  * Detects whether HEAD is already a release commit or already has a semver
  * release tag pointing directly at HEAD.
  *
@@ -341,8 +369,10 @@ export async function handlePerformRelease(args, context) {
         : "";
 
   if (isAlreadyReleasedMode) {
-    const branchForPush =
-      workflowState.state.lastPushBranch || (await git.getCurrentBranch()) || "";
+    const branchForPush = await chooseReleaseBranch({
+      requested: workflowState.state.lastPushBranch,
+      git,
+    });
     const pushCommand = branchForPush
       ? `git push --follow-tags origin ${utils.shellEscape(branchForPush)}`
       : "git push --follow-tags";
@@ -472,7 +502,10 @@ export async function handlePerformRelease(args, context) {
   const headAfter = await safeExecStdout(exec, "git rev-parse HEAD");
   const tagAfter = await safeExecStdout(exec, "git describe --tags --abbrev=0");
 
-  const branchForPush = workflowState.state.lastPushBranch || (await git.getCurrentBranch()) || "";
+  const branchForPush = await chooseReleaseBranch({
+    requested: workflowState.state.lastPushBranch,
+    git,
+  });
   const pushCommand = branchForPush
     ? `git push --follow-tags origin ${utils.shellEscape(branchForPush)}`
     : "git push --follow-tags";
