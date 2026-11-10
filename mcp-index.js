@@ -315,50 +315,6 @@ export const MCP_ECOSYSTEM_INDEX = Object.freeze([
     },
   },
   {
-    id: "factory",
-    serverName: "dev-workflow (factory tools) / factory / central-gateway (factory_*)",
-    endpoint: "Built into dev-workflow + http://100.77.138.14:3200/sse -> Factory (100.77.138.14:3000)",
-    category: "Factory Kanban & Autonomous Task Queue",
-    summary:
-      "List projects and kanban tasks, create/update tasks, claim queued tasks for execution, and move tasks across backlog, queued, running, review, and done.",
-    tools: [
-      {
-        name: "list_factory_tasks",
-        description: "List tasks on the Factory kanban board filtered by status or project.",
-        keywords: ["factory", "kanban", "board", "tasks", "queue"],
-      },
-      {
-        name: "claim_factory_task",
-        description: "Claim a Factory task so it transitions to running and links to the active dev-workflow session.",
-        keywords: ["claim", "running", "pickup", "factory task"],
-      },
-      {
-        name: "sync_task_status",
-        description: "Move a Factory task status (backlog, queued, review, done, blocked, paused, cancelled).",
-        keywords: ["review", "done", "approve", "status", "move task"],
-      },
-      {
-        name: "create_factory_task",
-        description: "Create a new task card on the Factory board with acceptance criteria.",
-        keywords: ["create task", "new task", "backlog"],
-      },
-    ],
-    triggers: {
-      keywords: [
-        "factory",
-        "kanban",
-        "board",
-        "claim_factory_task",
-        "sync_task_status",
-        "backlog",
-        "queued",
-        "review",
-        "autonomous",
-      ],
-      pathPatterns: ["factory"],
-    },
-  },
-  {
     id: "zettly",
     serverName: "dev-workflow (sync_zettly_task) / zettly",
     endpoint: "Automatic via dev-workflow -> Zettly API",
@@ -387,11 +343,11 @@ export const MCP_ECOSYSTEM_INDEX = Object.freeze([
     endpoint: "http://100.77.138.14:3200/sse",
     category: "Unified Remote MCP Gateway (SSE)",
     summary:
-      "Single remote SSE MCP server on bw-tools (100.77.138.14:3200) aggregating PocketBase (pb_*), Infrastructure (infra_*), Factory (factory_*), and Notification Hub (notify_*) tools for zero-maintenance multi-device access.",
+      "Single remote SSE MCP server on bw-tools (100.77.138.14:3200) aggregating PocketBase (pb_*), Infrastructure (infra_*), and Notification Hub (notify_*) tools for zero-maintenance multi-device access.",
     tools: [
       {
-        name: "pb_* / infra_* / factory_* / notify_*",
-        description: "18 remote tools served over SSE from a single centrally updated server.",
+        name: "pb_* / infra_* / notify_*",
+        description: "15 remote tools served over SSE from a single centrally updated server.",
         keywords: ["gateway", "central-gateway", "sse", "remote mcp", "3200"],
       },
     ],
@@ -650,7 +606,7 @@ export function recommendMcpTools(context = {}) {
   // Provide helpful baseline orientation when a generic task has no specific domain keywords
   const isFallback = scored.length === 0;
   if (isFallback) {
-    for (const fallbackId of ["infra-knowledge", "central-gateway", "factory"]) {
+    for (const fallbackId of ["infra-knowledge", "central-gateway", "zettly"]) {
       const server = MCP_ECOSYSTEM_INDEX.find((s) => s.id === fallbackId);
       if (server) {
         scored.push({
