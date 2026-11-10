@@ -502,7 +502,7 @@ export async function handleStartTask(args, workflowState, git, zettlyOptions = 
       const persisted=await workflowState.save();
       if(persisted?.verified===false||persisted?.conflict)throw Error('Factory link persistence was not verified');
       factoryNote = `\n\n🏭 ${hasil.reused?'Linked existing':'Recorded in'} Factory: ${hasil.id}`;
-    } else if (hasil.reason) {
+    } else if (hasil.reason && hasil.reason !== "dimatikan" && hasil.reason !== "kredensial Factory tidak lengkap") {
       factoryNote = `\n\n⚠️ Factory TIDAK mencatat task ini: ${hasil.reason}`;
     }
   } catch (e) {
