@@ -30,6 +30,8 @@ const DEFAULT_SUMMARY_DAYS = 7;
 const DEFAULT_SUMMARY_LIMIT = 20;
 const MAKS_LIMIT = 50;
 
+const { worthReportingPredicate } = require('./empty-session.cjs');
+
 function buildProjectSummaryQuery({ days = DEFAULT_SUMMARY_DAYS, limit = DEFAULT_SUMMARY_LIMIT } = {}) {
   const hari = Number(days) > 0 ? Number(days) : DEFAULT_SUMMARY_DAYS;
   const batas = Number(limit) > 0 ? Math.min(MAKS_LIMIT, Number(limit)) : DEFAULT_SUMMARY_LIMIT;
@@ -45,6 +47,7 @@ function buildProjectSummaryQuery({ days = DEFAULT_SUMMARY_DAYS, limit = DEFAULT
              AND started_at IS NOT NULL
              AND phase IN ('idle', 'closed', 'done', 'cancelled')
              AND updated_at > now() - ($1::text || ' days')::interval
+             AND ${worthReportingPredicate()}
            GROUP BY 1
            ORDER BY total_seconds DESC NULLS LAST
            LIMIT $2`,

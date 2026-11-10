@@ -50,6 +50,7 @@ const {
 } = require('./share-route.cjs');
 const { ensureTableSql } = require('./share-links.cjs');
 const { normalizeBuildState, extractActiveBuildFromEvents } = require('./build-monitor.cjs');
+const { shouldSkipCreate } = require('./empty-session.cjs');
 
 const liveBuildsBySession = new Map();
 
@@ -644,8 +645,74 @@ function renderBuildBox(ab, jNow, machine) {
     eta +
     (ab.stage ? '<div class="build-stage">▸ ' + esc(ab.stage) + (hasPct ? ' (' + pct + '%)' : '') + '</div>' : '') +
     '<div class="' + barCls + '"><i style="width:' + pct + '%"></i></div>' +
+    renderTestCases(ab.testCases) +
     (ab.command ? '<div class="build-cmd">$ ' + esc(ab.command) + '</div>' : '') +
     (ab.output ? '<div class="event-out-box" style="margin-top:6px">' + esc(ab.output) + '</div>' : '') +
+  '</div>';
+}
+
+/**
+ * Per-test-case progress on a card.
+ *
+ * OWNER REQUEST (10 November 2026): "I want output about test cases on the
+ * monitor, so we know tests are running and how far they have got." Without
+ * this, a card reads "npm test (100%)" for five minutes and looks frozen.
+ *
+ * This function lives INSIDE the page template, so it is browser code: no
+ * backticks, no template interpolation, no require(). The counts are computed
+ * here rather than from the server helper for that reason.
+ *
+ * Only a bounded window is drawn: the running case first (that is the one
+ * somebody is waiting for), then the most recent settled ones. A suite with
+ * thousands of cases must not push the rest of the card off the screen.
+ */
+function renderTestCases(testCases) {
+  if (!Array.isArray(testCases) || testCases.length === 0) return '';
+  const counts = { passed: 0, failed: 0, skipped: 0, running: 0 };
+  for (let i = 0; i < testCases.length; i++) {
+    const entry = testCases[i];
+    if (!entry) continue;
+    if (entry.status === 'passed') counts.passed++;
+    else if (entry.status === 'failed') counts.failed++;
+    else if (entry.status === 'skipped') counts.skipped++;
+    else if (entry.status === 'running') counts.running++;
+  }
+  const icon = function (status) {
+    if (status === 'passed') return '✅';
+    if (status === 'failed') return '❌';
+    if (status === 'skipped') return '⏭️';
+    if (status === 'running') return '▶️';
+    return '❔';
+  };
+  const running = testCases.filter(function (entry) { return entry && entry.status === 'running'; });
+  const failed = testCases.filter(function (entry) { return entry && entry.status === 'failed'; });
+  const settled = testCases.filter(function (entry) { return entry && entry.status !== 'running'; });
+  const recent = settled.slice(-6);
+
+  const parts = [];
+  if (running.length) {
+    parts.push('<div class="build-stage">▶️ ' + running.slice(-2).map(function (entry) {
+      return esc(entry.name);
+    }).join(' · ') + '</div>');
+  }
+  if (recent.length) {
+    parts.push('<div class="meta" style="margin-top:3px;line-height:1.55">' +
+      recent.map(function (entry) {
+        return icon(entry.status) + ' ' + esc(entry.name);
+      }).join('<br>') + '</div>');
+  }
+  const failuresShown = recent.filter(function (entry) { return entry.status === 'failed'; }).length;
+  if (counts.failed > failuresShown) {
+    parts.push('<div class="meta" style="margin-top:3px">… and ' +
+      (counts.failed - failuresShown) + ' more failed</div>');
+  }
+
+  return '<div class="test-cases" style="margin-top:6px">' +
+    '<div class="meta" style="font-weight:600">🧪 Test cases: ' +
+      counts.passed + ' passed · ' + counts.failed + ' failed · ' +
+      counts.skipped + ' skipped · ' + counts.running + ' running (' + testCases.length + ')' +
+    '</div>' +
+    parts.join('') +
   '</div>';
 }
 const estimateBuild = ${estimateBuild.toString()};
@@ -1725,6 +1792,38 @@ async function pruneOldRows() {
 }
 
 async function upsertSession(body) {
+  /*
+   * Junk sessions are never CREATED.
+   *
+   * OWNER INSTRUCTION (10 November 2026): a session with no title cannot be
+   * used in a report, so treat it as junk and make sure it does not happen
+   * again.
+   *
+   * WHY THIS CHECK IS HERE AND NOT IN buildSessionUpsert
+   * ----------------------------------------------------
+   * A sparse report for an ALREADY EXISTING session is legitimate: closing a
+   * task sends an empty task on purpose so the row keeps its identity and its
+   * relations (see the COALESCE guards in the upsert). Refusing that shape in
+   * the SQL builder would break closing a task. The junk case is specifically a
+   * row that would be CREATED with nothing in it, so this asks whether the row
+   * already exists first.
+   *
+   * A report with a task, a title OR a project still creates a row: a card that
+   * only has a title is something a human can recognise.
+   */
+  const key = str(body.cardKey || body.sessionKey, 200);
+  const taskId = str(body.taskId, 200);
+  if (key) {
+    const existing = await query(
+      `SELECT 1 FROM sessions WHERE session_key = $1 AND task_id = $2 LIMIT 1`,
+      [key, taskId],
+    );
+    if (shouldSkipCreate(body, existing.rowCount > 0)) {
+      // Nothing to report and no row to preserve: do not create one.
+      return key;
+    }
+  }
+
   const { sql, params } = buildSessionUpsert(body);
   await query(sql, params);
   // Kartu yang digantikan oleh kartu baru dalam sesi yang sama dihentikan:
@@ -1732,8 +1831,6 @@ async function upsertSession(body) {
   // tampil "berjalan" selamanya di tab Aktif.
   const handoff = buildParentHandoff(body);
   if (handoff) await query(handoff.sql, handoff.params);
-  const key = str(body.cardKey || body.sessionKey, 200);
-  const taskId = str(body.taskId, 200);
   // Kunci build per KARTU, bukan per sesi. Sebelumnya satu build bocor ke
   // topik berikutnya di sesi yang sama dan membuat kartu baru tampak bekerja
   // padahal tidak pernah memulainya.

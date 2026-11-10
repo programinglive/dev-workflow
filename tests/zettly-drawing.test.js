@@ -36,20 +36,27 @@ test('plain text and disconnected placeholders cannot satisfy the Mermaid gate',
 });
 
 test('Draw creation is linked to the same Todo and repeated calls reuse it',async()=>{
- const current=state();let calls=0;let saves=0;
+ const current=state();let draws=0;let saves=0;
  const workflowState={state:current,async save(){saves++;return {verified:true};}};
- const client={async request(method,route,body){calls++;assert.equal(method,'POST');assert.equal(route,'/drawings');assert.match(body.title,/#215/);return {drawing:{id:5}};}};
+ const client={async request(method,route,body){
+   if(route==='/tags'&&method==='GET')return {data:{tags:[{id:1,name:'tipe:feature'}]}};
+   if(route==='/tags'&&method==='POST')return {data:{tag:{id:2,name:body?.name}}};
+   assert.equal(method,'POST');assert.equal(route,'/drawings');assert.match(body.title,/#215/);
+   // The Draw carries the same zettelkasten tags as its Todo.
+   assert.ok(Array.isArray(body.tag_ids),'drawing must be tagged');
+   draws++;return {drawing:{id:5}};
+ }};
  const first=await syncZettlyDrawing(workflowState,{client});
  const second=await syncZettlyDrawing(workflowState,{client});
- assert.equal(first.id,5);assert.equal(second.reused,true);assert.equal(calls,1);assert.ok(saves>=2);
+ assert.equal(first.id,5);assert.equal(second.reused,true);assert.equal(draws,1);assert.ok(saves>=2);
  assert.equal(current.zettly.externalLinks.drawing.url,'https://zettly.programinglive.com/draw/5');
 });
 
 test('an uncertain create result does not silently create another drawing',async()=>{
- const current=state();const workflowState={state:current,async save(){return {verified:true};}};let calls=0;
- const client={async request(){calls++;throw Error('Connection closed after write');}};
+ const current=state();const workflowState={state:current,async save(){return {verified:true};}};let draws=0;
+ const client={async request(method,route){if(route.startsWith('/tags'))return {data:{tags:[]}};draws++;throw Error('Connection closed after write');}};
  const first=await syncZettlyDrawing(workflowState,{client});const second=await syncZettlyDrawing(workflowState,{client});
- assert.equal(first.ok,false);assert.match(second.note,/uncertain/);assert.equal(calls,1);
+ assert.equal(first.ok,false);assert.match(second.note,/uncertain/);assert.equal(draws,1);
 });
 
 test('tldraw document complies with tldraw v4 store schema, session, and fractional indexing',()=>{

@@ -1,5 +1,6 @@
 import {resolveZettlyConfig,createZettlyClient} from './zettly-client.js';
 import {sanitize} from './security/sanitizer.js';
+import {handoffGuard} from './tools/handler-modules/checkpoint-handlers.js';
 
 const positive=value=>Number.isSafeInteger(value)&&value>0;
 const text=(value,max=2500)=>typeof value==='string'?value.slice(0,max):'';
@@ -66,6 +67,21 @@ function focusError(error) {
 
 export async function handleFocusTool(name,args={},workflowState,options={}) {
  try {
+  // A task handed over to another machine must not be silently worked on here.
+  // get_current_focus is read-only, so the guard only reports the marker; it
+  // does not clear it. Clearing requires the explicit acknowledge_handover.
+  if(name==='get_current_focus'){
+   const handoff=handoffGuard(workflowState?.state||{});
+   if(handoff.handedOver){
+    return result({
+     owner:null,
+     focus:null,
+     status:'handed_over',
+     handoff:{from:handoff.from,to:handoff.to,reason:handoff.reason,at:handoff.at},
+     instruction:`This task was handed over to ${handoff.to}. Do not continue work here; if this machine should resume locally, call 'acknowledge_handover' first.`,
+    });
+   }
+  }
   const ctx=await context(args,options);
   let focus=await activeFocus(ctx);
   if(name==='get_current_focus')return result({owner:ctx.owner,focus:projection(focus,ctx),status:focus?'active':'none',instruction:focus?'Keep work within this focus. Complete linked tasks and record evidence before closing it.':'Set a focus before starting work.'});

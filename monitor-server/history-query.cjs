@@ -1,5 +1,7 @@
 'use strict';
 
+const { worthReportingPredicate } = require('./empty-session.cjs');
+
 /**
  * Riwayat sesi, beserta durasi akhir dan statusnya.
  *
@@ -49,6 +51,7 @@ function buildHistoryQuery({
             FROM sessions
            WHERE machine <> ''
              AND updated_at > now() - ($1::text || ' days')::interval
+             AND ${worthReportingPredicate()}
            ORDER BY updated_at DESC
            LIMIT $2`,
     params: [String(hari), batas],

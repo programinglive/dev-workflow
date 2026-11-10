@@ -81,7 +81,7 @@ finished.
 
 | Path | Single responsibility |
 |---|---|
-| `index.js` | MCP entry point: registers the 56 tools, English implementation instructions and handlers |
+| `index.js` | MCP entry point: registers the 60 tools, English implementation instructions and handlers |
 | `mcp-index.js` | Central MCP ecosystem index & context-aware recommender for all 12 ecosystem MCP servers |
 | `build-monitor.js`, `monitor-server/build-monitor.cjs` | Real-time build & execution status tracker (`report_build_status`) shared between MCP and the live monitor dashboard |
 | `mobile-app/build-view.js` | Android build tab presentation and truthful build host labeling |
@@ -148,7 +148,7 @@ See [MCP client configuration](#mcp-client-configuration).
 
 ## Available Tools
 
-56 tools. See [service connections and proactive Zettly direction](docs/service-integrations.md) and [focus-first development](docs/focus-workflow.md).
+60 tools. See [service connections and proactive Zettly direction](docs/service-integrations.md) and [focus-first development](docs/focus-workflow.md).
 
 | Tool | Purpose |
 |---|---|
@@ -170,6 +170,10 @@ See [MCP client configuration](#mcp-client-configuration).
 | `search_project` | Search bounded local text in the active repo; returns sanitized path:line citations |
 | `mark_plan_step` | Mark one plan step done (or reopen it) |
 | `resume_session` | Reconnect to state left behind by another session in this project |
+| `checkpoint_task` | Write a checkpoint into the linked Zettly Todo and report `confirmed` only after reading it back; `showRevertPlan` adds a read-only revert record |
+| `handoff_task` | Mark the task as leaving this machine for another one; a reason is mandatory |
+| `fetch_task` | Refresh another machine's checkpoint over its own dev-workflow process and adopt it here |
+| `acknowledge_handover` | Explicitly take a handed-off task back on this machine and clear the marker |
 | `set_definition_of_done` | Add or replace the checklist of the current task |
 | `mark_dod_item` | Prove one item, with evidence |
 | `waive_dod_item` | Exclude one item, with a reason |
@@ -190,8 +194,6 @@ See [MCP client configuration](#mcp-client-configuration).
 | `next_steps` | Show the follow-ups stored by the last completed task |
 | `get_workflow_status` | Show the current phase |
 | `continue_workflow` | Get guidance on the next step |
-
-Development tasks are recorded in Factory by default when the configured account and a matching Git repository project are available. The original request, Zettly Todo, Sentry issue if applicable, Factory task, and visual plan remain separate linked records. `start_task` reports a visible warning when Factory recording fails; it never chooses an unrelated project. Existing Factory links are reused. `create_feature_flow` publishes editable shapes and a preview in Zettly Draw, while `mark_bug_fixed` requires that flow first. The monitor shows the source and linked records. An explicit `FACTORY_AUTO_TASK=false` is reserved for isolated test environments.
 | `view_history` | List completed tasks |
 | `run_full_workflow` | Run every step in one call (requires `dodEvidence` for open items) |
 | `rerun_workflow` | Restart the current task from the beginning |
@@ -200,12 +202,107 @@ Development tasks are recorded in Factory by default when the configured account
 | `project_summary` | Aggregate activity for the project |
 | `project_summary_data` | Read the persisted `project-summary.json` |
 | `project_summary_db` | Read the per-user summary from SQLite |
-| `list_active_sessions` | List active workflow sessions across all machines from the central monitor (`DEVWF_MONITOR_URL`). Output includes a 🔗 clickable dashboard URL. || `list_factory_tasks` | List your Factory task queue (requires config) |
+| `list_active_sessions` | List active workflow sessions across all machines from the central monitor (`DEVWF_MONITOR_URL`). Output includes a 🔗 clickable dashboard URL. |
+| `list_factory_tasks` | List your Factory task queue (requires config) |
+| `list_factory_projects` | List Factory projects available to the configured account |
 | `create_factory_task` | Record a new task with a required definition of done |
 | `update_factory_task` | Edit a task, including filling a missing definition of done |
 | `claim_factory_task` | Claim a Factory task and start a local workflow |
 | `start_task` (claim view) | Before you commit to a task, reports which tasks other live sessions currently hold, so two sessions do not compete for the same one. Own, idle and stale (older than 15 minutes) claims are excluded. |
 | `sync_task_status` | Report a status change back to Factory |
+
+Development tasks are recorded in Factory by default when the configured account and a matching Git repository project are available. The original request, Zettly Todo, Sentry issue if applicable, Factory task, and visual plan remain separate linked records. `start_task` reports a visible warning when Factory recording fails; it never chooses an unrelated project. Existing Factory links are reused. `create_feature_flow` publishes editable shapes and a preview in Zettly Draw, while `mark_bug_fixed` requires that flow first. The monitor shows the source and linked records. An explicit `FACTORY_AUTO_TASK=false` is reserved for isolated test environments.
+
+#### Junk sessions are not recorded
+
+A session with **no task and no session title** carries no information: it can
+appear in no recap, no history entry and no report. The owner's rule (10
+November 2026) is to treat it as junk, clean it up, and stop it coming back.
+
+Three things enforce it:
+
+- `monitor-server/empty-session.cjs` holds the one definition. Recap and history
+  both filter on it, so a session cannot be counted in one and hidden in the
+  other.
+- Ingestion refuses to **create** such a row. A sparse report for an existing
+  session is still accepted, because closing a task sends an empty task on
+  purpose to keep its identity and relations.
+- `node monitor-server/cleanup-empty-sessions.cjs --dry-run` lists existing junk
+  rows, and running it without `--dry-run` deletes at most `--limit` of them.
+  Only rows with an empty `task_id` are matched, so a real card whose task text
+  was cleared when it closed is never touched.
+
+A session with **either** a task **or** a title is real work and is kept: a card
+that only has a title is still something a human can recognise.
+
+#### Zettly tags for zettelkasten relations
+
+Every record the workflow writes into Zettly carries tags, because the
+zettelkasten method depends on being able to walk relations: when you need
+something, you should already know what it is connected to.
+
+Four axes, so a card can be reached from several directions:
+
+```
+proyek:<repository>   which codebase the work belongs to
+tipe:<type>           feature, bugfix, refactor, infra, other
+area:<subsystem>      monitor, cli, checkpoint, zettly, erp, deploy, ...
+sumber:<origin>       manual, sentry, factory, codex, mcp
+```
+
+`zettly-tags.js` derives the names and resolves them to ids. A tag is created
+once per owner and reused after that, so the same name never appears twice. Tag
+resolution is deliberately **not** allowed to fail the task: if Zettly refuses a
+tag call, the task is still created and only the label is lost.
+
+Two details that bit us and are now handled explicitly:
+
+- `GET /api/v1/tags` answers `{ tags, deletedTags }` at the top level, with no
+  `data` wrapper. Reading only `data.tags` returned nothing against production,
+  which made the client try to create tags that already existed.
+- That attempt came back `409`, and treating `409` as a failure silently dropped
+  half the tags. A conflict now means "it already exists": the list is re-read
+  and the existing id is used.
+
+Drawings and journal entries had no tag relation in Zettly at all, so the
+schema now includes `drawing_tag` and `journal_entry_tag` pivots, and
+`POST/PATCH /api/v1/drawings` accepts `tag_ids` restricted to the caller's own
+tags. Existing records were backfilled with
+`php artisan zettly:backfill-tags`, which is idempotent and supports
+`--dry-run`; it attached tags to 320 todos, 129 drawings and 318 journal
+entries, leaving none without a tag.
+
+The backlog also held 33 free-form tags — `main`, `master`, `@journal`, `dev`,
+`—`, `codex/...` — that no reader could place on an axis. `php artisan
+zettly:normalise-tags` maps each one to its canonical equivalent and then
+deletes it, in that order: branch and session labels become `proyek:<repo>`,
+topics become `area:<topic>`, `@journal` becomes `tipe:journal`, and the literal
+dash becomes `tipe:todo`. A legacy tag is deleted only after every record that
+carried it still holds a schema tag, so normalising can never leave a record
+bare. Production ended at 51 tags, all on an axis, with zero records untagged.
+
+Two things to know when reading the result: tags are **per owner**, so the same
+name appearing under two users is correct and not a duplicate; and a record
+created before a deploy is tagged by the process that created it, which is why a
+`php-fpm` reload (and an MCP restart) is part of shipping a tag change.
+
+#### Why a card says "Flow belum ada"
+The `sessions` table is keyed by `(session_key, task_id)`, so one session owns
+an **identity row** (both fields empty) plus one row per task. Only the card row
+carries the relations, including the Zettly Draw link.
+
+On 10 November 2026 the dashboard rendered the identity row as a second card
+for a session that already had a properly linked card. That second card has no
+relations, so it printed `⚠ Flow belum ada — jalankan create_feature_flow`
+while the real card next to it showed `Draw #126`. The flow was never missing;
+the duplicate was.
+
+`dedupeSessions` now drops the identity row when the same session has a card
+row. The test for "identity" is **both** `task_id` and `task` being empty, not
+just `task`: closing a task clears its text but keeps its `task_id` and its
+relations, and dropping those would erase the flow from a real card. A session
+with no card row keeps its own row, and two different `task_id` rows still
+render as two cards.
 
 ### Central MCP Ecosystem Index (`recommend_mcp_tools`)
 
@@ -424,9 +521,38 @@ mutation — break the code on purpose, watch the test fail, restore it.
 
 
 ### Watching the work happen
-
 `definitionOfDone` says what must be true before the task may close. It does not say *what you are doing right now*. `start_task` therefore also requires `plan`: 1-15 ordered steps, 3-200 characters each.
 
+#### Test case progress on the card
+
+A card that only says `npm test (100%)` cannot distinguish a slow suite from a
+frozen one. Pass `testCases` to `report_build_status` while a suite runs and the
+card shows the running case, the counts and a progress bar that moves:
+
+```
+report_build_status {
+  "status": "testing",
+  "target": "unit suite",
+  "stage": "tests/cli-commands.test.js",
+  "testCases": [
+    { "name": "close without --session is refused", "status": "passed", "durationMs": 4 },
+    { "name": "drop requires --reason", "status": "passed", "durationMs": 7 },
+    { "name": "the card renders the running case", "status": "running" }
+  ]
+}
+```
+
+`status` is one of `passed`, `failed`, `skipped` or `running`; anything else is
+recorded as `unknown` rather than guessed as a pass. If you omit `progress`, it
+is derived from how many cases have settled, so the bar moves without you having
+to compute a percentage. Only the last 100 cases are kept and each name is
+truncated to 160 characters, so a huge suite cannot flood every write and every
+dashboard poll. An explicit empty `testCases: []` clears the list; omitting the
+field keeps what the card already knows.
+
+The same counts also appear in the `report_build_status` answer itself, under
+**Test Cases** and **Running now**, so you see the progress without opening the
+dashboard.
 ```
 start_task {
   "description": "Tambah endpoint retry",
@@ -516,6 +642,91 @@ explanation instead of silently disappearing.
 
 Deployment (Cloudflare Tunnel, DNS, Netlify rewrite) is in
 [docs/monitor-dashboard.md](docs/monitor-dashboard.md).
+
+### Closing sessions and cards from the terminal
+
+The dashboard is not always reachable — over SSH, in a script, or when the
+dashboard is the thing that is stuck. `devwf` does the same closings from a
+terminal:
+
+```bash
+devwf list                                      # sessions reported by the monitor
+devwf close --session ses_abc                   # mark one session closed
+devwf share list                                # every live share link
+devwf share revoke --token <t>                  # revoke one link
+devwf share revoke --orphans                    # clear links whose session is gone
+devwf drop --session ses_abc --reason "stale"    # abandon a task, recorded
+devwf complete --session ses_abc                 # close a task whose DoD is proven
+```
+
+Add `--dry-run` to any writing command to print what would change and write
+nothing.
+
+```bash
+DEVWF_MONITOR_URL=http://100.77.138.14:3100
+DEVWF_MONITOR_TOKEN=<same token the monitor was started with>
+```
+
+Both are required for `list`, `close` and `share`. `drop` and `complete` do not
+talk to the monitor at all: they load the target session's state on this machine
+and run the ordinary `drop_task` / `complete_task` handlers, so the Zettly Todo,
+the Factory task and the history are closed exactly as the MCP tool would close
+them. Point `DEVWF_STATE_ROOT` at a state tree if the default is wrong.
+
+Four rules matter more than the flags:
+
+- **`--session` is mandatory** for `close`, `drop` and `complete`. There is no
+  "current session" default, so a missing target is always a refusal instead of
+  a deleted task.
+- **`drop` requires `--reason`**, mirroring the MCP rule that abandoning a task
+  must say why.
+- **No process is ever signalled.** `close` only marks the session closed. The
+  monitor's owner pid is the MCP process, not the harness session, so killing it
+  can hit the wrong process.
+- **Exit code 0 means it really happened.** A refusal, an unknown session, a
+  missing token or a `complete` whose Definition of Done is still open all exit
+  non-zero, so a script can depend on the result rather than the wording.
+
+### Taking a task across machines
+
+A task can move between the owner's machines (Mac, MMCH, ...) without losing
+its Definition of Done, plan, or evidence. The Zettly Todo is the single
+record; the machines only *refresh* it over SSH. This is how "take the task
+from the Mac and work here on MMCH" works:
+
+```
+checkpoint_task                  # write + prove a checkpoint into the Zettly Todo
+handoff_task { to, reason }      # mark the task as leaving this machine (reason mandatory)
+fetch_task { from, reason }      # on the target: refresh the source's checkpoint, adopt it
+acknowledge_handover            # explicit: this machine takes the task back (clears the marker)
+```
+
+**When to checkpoint.** At phase transitions, before `complete_task`, and
+whenever the owner asks for one. A checkpoint is only `confirmed` after the
+machine reads the Zettly Todo back and finds its own element with a matching
+timestamp — `confirmed:false` means the write may exist but could not be
+verified, so another machine must not rely on it.
+
+**A handoff needs a reason.** `handoff_task` refuses an empty reason: the
+machine that picks the task up must know *why* it is taking over. After a
+handoff, the source machine's `start_task` and `get_current_focus` refuse to
+continue the task silently. Only `acknowledge_handover` (explicit, on the
+machine that takes it back) clears the marker, and it records the return in
+the checkpoint summary first.
+
+**Fetching from another machine.** `fetch_task` refreshes the source's
+checkpoint through that machine's own dev-workflow process with one fixed,
+non-interactive SSH command that carries an explicit session key — never a
+free-form shell string. An unresolvable machine name is refused, not guessed.
+If the remote refresh fails, the last readable Zettly checkpoint is adopted
+and the result is flagged `confirmed:false`, so the takeover never blocks.
+
+**Reverts are recorded, never executed.** `checkpoint_task { showRevertPlan:
+true }` produces a bounded record of which of this session's commits could be
+unwound: candidates, refusals with a reason (already on the remote default
+branch, or not authored by this session's identity), and the dirty files.
+Nothing runs `reset`, `clean`, or `checkout`; the record is read by the
+returning machine and acted on by a human.
 
 ### Checking for updates
 ```bash
