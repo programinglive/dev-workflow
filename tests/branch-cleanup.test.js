@@ -109,7 +109,7 @@ test("a clean, merged, idle worktree is removed with its directory", () => {
   fs.utimesSync(wtPath, old / 1000, old / 1000);
   const now = Date.now();
 
-  const canonical = fs.realpathSync(wtPath);
+  const canonical = fs.realpathSync.native(wtPath);
   const plan = planCleanup({ repoDir: repo, now });
   assert.equal(worktreeDecision(plan, canonical).action, "remove");
 
@@ -129,7 +129,7 @@ test("a worktree with uncommitted changes is kept", () => {
   fs.writeFileSync(path.join(wtPath, "d.txt"), "changed\n");
 
   const plan = planCleanup({ repoDir: repo });
-  const decision = worktreeDecision(plan, fs.realpathSync(wtPath));
+  const decision = worktreeDecision(plan, fs.realpathSync.native(wtPath));
   assert.equal(decision.action, "keep");
   assert.match(decision.reason, /belum di-commit|uncommitted/i);
 
@@ -148,7 +148,7 @@ test("a worktree modified moments ago is kept, because a session may still be in
   sh(wtPath, ["checkout", "--", "b.txt"]); // clean again, but mtime is now
 
   const plan = planCleanup({ repoDir: repo, idleMs: 30 * 60 * 1000 });
-  const decision = worktreeDecision(plan, fs.realpathSync(wtPath));
+  const decision = worktreeDecision(plan, fs.realpathSync.native(wtPath));
   assert.equal(decision.action, "keep");
   assert.match(decision.reason, /baru|recent/i);
 });
@@ -163,7 +163,7 @@ test("a locked worktree is kept", () => {
   sh(repo, ["worktree", "lock", wtPath]);
 
   const plan = planCleanup({ repoDir: repo });
-  const decision = worktreeDecision(plan, fs.realpathSync(wtPath));
+  const decision = worktreeDecision(plan, fs.realpathSync.native(wtPath));
   assert.equal(decision.action, "keep");
   assert.match(decision.reason, /lock/i);
 });
@@ -173,9 +173,28 @@ test("the main worktree is never removed", () => {
   const plan = planCleanup({ repoDir: repo });
   // Windows reports the same directory with different capitalisation depending
   // on who asked, so compare the way the implementation does.
-  const mainEntry = plan.worktrees.find((w) => samePath(w.path, fs.realpathSync(repo)));
+  const mainEntry = plan.worktrees.find((w) => samePath(w.path, fs.realpathSync.native(repo)));
   assert.ok(mainEntry, "the main worktree must be listed");
   assert.equal(mainEntry.action, "keep");
+});
+
+test("samePath treats the short and long spellings of one directory as equal", () => {
+  // The dangerous direction of this bug: git prints C:/Users/mahardhika/...
+  // while a caller may hold C:\Users\MAHARD~1\... for the same place. Comparing
+  // raw strings says "different directory" and the main worktree gets marked
+  // removable, which would delete the checkout somebody is working in.
+  const repo = makeRepo();
+  const long = fs.realpathSync.native(repo);
+  // On Windows the JavaScript realpath returns the 8.3 short form while the
+  // native one returns the long form. Both name the same directory, which is
+  // exactly the pair that used to compare unequal.
+  const short = fs.realpathSync(repo);
+
+  if (short !== long) {
+    assert.equal(samePath(short, long), true, `short ${short} and long ${long} must compare equal`);
+  }
+  assert.equal(samePath(long, long), true);
+  assert.equal(samePath(long, path.join(long, "nested")), false, "a child is not the same directory");
 });
 
 test("planning changes nothing: the dry run proves it", () => {
