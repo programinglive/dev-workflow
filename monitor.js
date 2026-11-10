@@ -149,7 +149,22 @@ export function buildSnapshot({ state, sessionKey = "", projectPath = "", sessio
     // git tetap berguna dari perangkat lain. Dikosongkan bila memang bukan repo.
     repositoryPath: String(s.repository?.path || ""),
     repositoryRemote: String(s.repository?.remote || ""),
+    // Release yang benar-benar menjalankan sesi ini. Diisi oleh bootstrap
+    // managed saat ia men-spawn server; kosong pada instalasi tanpa bootstrap.
+    // Tanpa ini "connected" tidak membedakan build baru dari build lama.
+    releaseVersion: releaseVersion(env),
+    releaseRevision: releaseRevision(env),
   };
+}
+
+function releaseVersion(env) {
+  const value = typeof env.DEVWF_RELEASE_VERSION === "string" ? env.DEVWF_RELEASE_VERSION.trim() : "";
+  return value.slice(0, 40);
+}
+
+function releaseRevision(env) {
+  const value = typeof env.DEVWF_RELEASE_REVISION === "string" ? env.DEVWF_RELEASE_REVISION.trim() : "";
+  return value.slice(0, 40);
 }
 
 /**

@@ -109,8 +109,8 @@ test("the upsert unifies the task-metadata and the card-chain models", () => {
   assert.match(sql, /workflow_task_id=CASE WHEN \(/);
   assert.match(sql, /task_relations_json=CASE/);
   assert.match(sql, /repo_path=COALESCE\(NULLIF\(EXCLUDED\.repo_path, ''\), sessions\.repo_path\)/);
-  // 17 base + 5 metadata + 3 chain = 25.
-  assert.equal(params.length, 25, "the unified upsert takes 25 params");
+  // 17 base + 5 metadata + 2 release + 3 chain = 27.
+  assert.equal(params.length, 27, "the unified upsert takes 27 params");
   assert.equal(params.at(17), "task-x");
   assert.equal(params.at(18), JSON.stringify({ system: "factory", id: "45489f0d", url: "", label: "" }));
   assert.equal(params.at(20), "/code/x");
