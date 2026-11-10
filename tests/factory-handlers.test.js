@@ -335,6 +335,11 @@ test("sync handler finishes the session for review", async () => {
   setEnv();
   const stub = stubFetch((call) => {
     if (call.url.endsWith("/api/factory")) return json(WORKSPACE);
+    // The workspace badge carries no session id or state, so the real session is
+    // read from GET /api/work before the finish request is sent.
+    if (call.url.endsWith("/api/work") && call.method === "GET") {
+      return json({ sessions: [{ id: "sess-1", taskId: TASK_ID, state: "active", device: { id: DEVICE_ID } }] });
+    }
     if (call.url.endsWith("/api/work")) {
       return json({ session: { id: "sess-1", state: "review", summary: "Selesai, minta review." } });
     }
@@ -351,7 +356,7 @@ test("sync handler finishes the session for review", async () => {
       /Definition of done:\n- \[ \] sesi kerja tercatat/,
       "checklist harus dibaca lagi saat melaporkan selesai, bukan hanya saat claim",
     );
-    const finish = stub.calls.find((call) => call.url.endsWith("/api/work"));
+    const finish = stub.calls.find((call) => call.url.endsWith("/api/work") && call.method === "POST");
     assert.strictEqual(finish.body.action, "finish");
     assert.strictEqual(finish.body.deviceId, DEVICE_ID);
   } finally {
