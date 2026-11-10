@@ -2520,7 +2520,26 @@ export class WorkflowState {
       const tmp = `${this.stateFile}.tmp-${process.pid}-${++this._exportSeq}`;
       await fs.mkdir(path.dirname(this.stateFile), { recursive: true });
       await fs.writeFile(tmp, JSON.stringify(this.state, null, 2));
-      await fs.rename(tmp, this.stateFile);
+
+      // Windows NTFS melempar EPERM bila file target sedang dikunci oleh rename/write
+      // bersamaan dalam proses yang sama. Coba ulang beberapa kali dengan jeda singkat.
+      let renamed = false;
+      for (let attempt = 0; attempt < 10; attempt++) {
+        try {
+          await fs.rename(tmp, this.stateFile);
+          renamed = true;
+          break;
+        } catch (renameErr) {
+          if ((renameErr.code === 'EPERM' || renameErr.code === 'EBUSY' || renameErr.code === 'EACCES') && attempt < 9) {
+            await new Promise((res) => setTimeout(res, 10 * (attempt + 1)));
+            continue;
+          }
+          throw renameErr;
+        }
+      }
+      if (!renamed) {
+        throw new Error('Rename failed after retries');
+      }
 
       // Cermin ke lokasi kompatibilitas lama. Tetap dilakukan karena alat lama
       // membaca jalur itu; yang berubah hanya statusnya - sekarang salinan,

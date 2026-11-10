@@ -2,9 +2,9 @@ name: CI
 
 # Standard pipeline from programinglive/ci-cd.
 #
-# Runs on the self-hosted Windows runner on MMCH, matching the previous
-# workflow. The commands preserve the checks that existed before: unit tests,
-# security boundaries, lint, server bundle verification, and the web build.
+# Runs on the self-hosted Linux runner on bw-tools. The commands preserve the
+# checks that existed before: unit tests, security boundaries, lint, server
+# bundle verification, and the web build.
 on:
   pull_request:
     branches:
@@ -22,10 +22,9 @@ jobs:
     uses: programinglive/ci-cd/.github/workflows/ci-node.yml@v1
     with:
       node-version: "24"
-      runner: '["self-hosted","windows","mmch"]'
-      # The MMCH runner has no npm cache directory, so caching stays off. Each
-      # runner uses its own default shell (pwsh on Windows, bash on Linux).
-      cache: ""
+      runner: '["self-hosted","linux","bw-tools"]'
+      # bw-tools Linux runner supports npm cache; enable it for faster builds.
+      cache: "npm"
       test-command: npm run ci:test
       lint-command: npm run lint
       build-command: npm run ci:build
@@ -35,7 +34,7 @@ jobs:
   deploy-monitor:
     needs: ci
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: [self-hosted, windows, mmch]
+    runs-on: [self-hosted, linux, bw-tools]
     timeout-minutes: 10
     concurrency:
       group: devwf-monitor-production
@@ -44,7 +43,7 @@ jobs:
       - name: Checkout verified main commit
         uses: actions/checkout@v7
       - name: Deploy monitor through the dedicated identity
-        shell: powershell
+        shell: bash
         env:
           MONITOR_DEPLOY_SSH_KEY: ${{ secrets.MONITOR_DEPLOY_SSH_KEY }}
-        run: .\scripts\deploy-monitor.ps1
+        run: bash scripts/deploy-monitor.sh
