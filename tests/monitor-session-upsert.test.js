@@ -65,11 +65,15 @@ test("nama proyek yang BARU tetap boleh menggantikan yang lama", () => {
   );
 });
 
-test("task tetap boleh dikosongkan - itu memang cara menutup task", () => {
-  // Berbeda dengan project_name: `task=''` adalah sinyal sah bahwa task
-  // ditutup, jadi jangan "dilindungi" dengan cara yang sama.
+test("task juga tidak boleh dihapus oleh kiriman kosong saat task ditutup", () => {
+  // Ketika complete_task dipanggil, state di-reset sehingga laporan penutupan
+  // mengirim task="". Kalau task ditimpa string kosong, kartu di Riwayat dan
+  // kartu idle 30 menit berubah menjadi "(tanpa task)" atau hanya judul chat.
   const { sql } = buildSessionUpsert(SESI);
-  assert.match(sql, /(^|[\s,])task=EXCLUDED\.task/);
+  assert.match(
+    sql,
+    /task=COALESCE\(NULLIF\(EXCLUDED\.task, ''\), sessions\.task\)/,
+  );
 });
 
 test("parameter dikirim berurutan dan berisi nilai yang diberikan", () => {

@@ -33,20 +33,20 @@
 function worthReportingPredicate() {
   return `(
     NULLIF(BTRIM(task), '') IS NOT NULL
-    OR NULLIF(BTRIM(session_title), '') IS NOT NULL
+    AND NULLIF(BTRIM(project_name), '') IS NOT NULL
   )`;
 }
 
 /**
- * SQL fragment: true when the session is junk (no task and no title).
+ * SQL fragment: true when the session is junk (missing task OR missing project_name).
  *
  * The complement of {@link worthReportingPredicate}. Both are offered so a
- * caller can write WHILE instead of a negation it might get wrong.
+ * caller can write WHERE instead of a negation it might get wrong.
  */
 function emptySessionPredicate() {
   return `(
     NULLIF(BTRIM(task), '') IS NULL
-    AND NULLIF(BTRIM(session_title), '') IS NULL
+    OR NULLIF(BTRIM(project_name), '') IS NULL
   )`;
 }
 
@@ -57,8 +57,8 @@ function emptySessionPredicate() {
  * accidental match cannot empty the table in one shot. Re-running is safe and
  * simply continues where the last run stopped.
  *
- * Only junk rows are removed. A row that has a `task_id` is a CARD, even when
- * its `task` text was cleared when the task closed, so those are kept.
+ * Any row missing `task` or `project_name` is removed because a session without
+ * a task or without a project cannot appear in any valid report or recap.
  *
  * @param {{ limit?: number, olderThanMinutes?: number }} options
  * @returns {{ sql: string, params: Array }}
@@ -77,7 +77,6 @@ function buildEmptySessionCleanup({ limit = 500, olderThanMinutes = 0 } = {}) {
               SELECT session_key, task_id
                 FROM sessions
                WHERE ${emptySessionPredicate()}
-                 AND COALESCE(task_id, '') = ''
                  AND updated_at < now() - ($1::text || ' minutes')::interval
                ORDER BY updated_at ASC
                LIMIT $2
@@ -90,16 +89,18 @@ function buildEmptySessionCleanup({ limit = 500, olderThanMinutes = 0 } = {}) {
 /**
  * Decides whether a report may CREATE a session row.
  *
- * The rule is "no task, no title, no project, and no row yet". Everything about
- * it is decided from data, so it is testable without a database:
+ * The rule is "must have BOTH a non-empty task AND a non-empty project when
+ * creating a new row". Everything about it is decided from data, so it is
+ * testable without a database:
  *
  * - `body` is the report.
  * - `hasRow` says whether this (session_key, task_id) already exists.
  *
  * A sparse report for an existing row returns false (do not skip) because
- * closing a task sends an empty task on purpose to preserve identity and
- * relations. A first report with nothing in it returns true (skip) because a
- * card with no task and no title cannot appear in any report.
+ * closing a task sends an empty task and empty project on purpose while the
+ * database COALESCE guards preserve the existing task and project_name. A first
+ * report missing either task or project returns true (skip) because a card
+ * without a task or without a project cannot appear in any report.
  *
  * @param {object} body
  * @param {boolean} hasRow
@@ -108,11 +109,11 @@ function buildEmptySessionCleanup({ limit = 500, olderThanMinutes = 0 } = {}) {
 function shouldSkipCreate(body = {}, hasRow = false) {
   if (hasRow) return false;
   const b = body || {};
-  const hasContent =
-    String(b.task || '').trim() !== '' ||
-    String(b.sessionTitle || '').trim() !== '' ||
-    String(b.projectName || '').trim() !== '';
-  return !hasContent;
+  const hasTask = String(b.task || '').trim() !== '';
+  const hasProject =
+    String(b.projectName || '').trim() !== '' ||
+    String(b.projectPath || '').trim() !== '';
+  return !(hasTask && hasProject);
 }
 
 module.exports = {

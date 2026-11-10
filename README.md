@@ -95,7 +95,7 @@ finished.
 | `tools/handler-modules/integration-handlers.js` | Verified service connection states and canonical Zettly/Factory/Sentry links |
 | `db/` | Storage adapters: SQLite (default), PostgreSQL, MySQL, plus migration and replication |
 | `monitor.js` | Best-effort reporting of workflow changes to the live dashboard; the MCP process also sends a small heartbeat while its client session stays connected |
-| `monitor-server/` | The dashboard process (`dashboard.cjs`), the public share process (`share-server.cjs`), their SQL builders, and their systemd units. Includes responsive bottom navigation bar (Aktif, Riwayat, Rekap, Mesin, Info) and interactive session detail modals. Session cards show the repository (`repo_path` plus `repo_remote`) and warn when a task has no Mermaid flow yet. Reopening a session detail restores its close control. The machine view excludes one identified retired synthetic report while preserving later reports from the same machine name. Main-branch CI deploys reviewed monitor artifacts through a dedicated key after tests pass. |
+| `monitor-server/` | The dashboard process (`dashboard.cjs`), the public share process (`share-server.cjs`), their SQL builders, and their systemd units. Includes responsive bottom navigation bar (Aktif, Riwayat, Rekap, Mesin, Info) and interactive session detail modals. Session cards show the repository (`repo_path` plus `repo_remote`) and warn when a task has no Mermaid flow yet. A card, a history row and a recap line all require **both** a task and a project; see [strict task and project identity](docs/strict-task-identity.md). Reopening a session detail restores its close control. The machine view excludes one identified retired synthetic report while preserving later reports from the same machine name. Main-branch CI deploys reviewed monitor artifacts through a dedicated key after tests pass. |
 | `web/` | The public marketing site: Next.js static export published to `devworkflow.programinglive.com` |
 | `mobile-app/` | The tablet client (Expo/React Native) that shows the same sessions on a wall screen. Includes a **"Buka di Browser"** button (Info tab) and a tappable header URL that open the dashboard in the device browser via `Linking.openURL`. |
 | `security/` | Secret references, output scanning, and the audit |
@@ -215,25 +215,21 @@ Development tasks are recorded in Factory by default when the configured account
 
 #### Junk sessions are not recorded
 
-A session with **no task and no session title** carries no information: it can
-appear in no recap, no history entry and no report. The owner's rule (10
-November 2026) is to treat it as junk, clean it up, and stop it coming back.
+A session without **both** a task **and** a project carries incomplete
+information: it can appear in no active list, no recap, no history entry and no
+report. The owner's rule (10 November 2026) is to require both a real task and a
+real project (`start_task` and `claim_factory_task` refuse to start without a
+valid project), preserve the task description when a task closes, clean up any
+incomplete rows, and stop them coming back.
 
 Three things enforce it:
 
-- `monitor-server/empty-session.cjs` holds the one definition. Recap and history
-  both filter on it, so a session cannot be counted in one and hidden in the
-  other.
-- Ingestion refuses to **create** such a row. A sparse report for an existing
-  session is still accepted, because closing a task sends an empty task on
-  purpose to keep its identity and relations.
-- `node monitor-server/cleanup-empty-sessions.cjs --dry-run` lists existing junk
-  rows, and running it without `--dry-run` deletes at most `--limit` of them.
-  Only rows with an empty `task_id` are matched, so a real card whose task text
-  was cleared when it closed is never touched.
+- `monitor-server/empty-session.cjs` holds the one definition (`worthReportingPredicate` requires both `task` and `project_name` to be non-empty). Active, recap and history all filter on it, so a session without a task or without a project is never displayed or counted.
+- Ingestion refuses to **create** a row unless it carries **both** a task **and** a project. A sparse report for an existing session is still accepted, and `session-upsert.cjs` preserves both `task` and `project_name` via `COALESCE(NULLIF(...))` when a task closes.
+- `node scripts/recover-monitor-identities.cjs --dry-run` restores identity from the linked Zettly Todo, `repo_path` or a sibling row before anything is deleted; `node monitor-server/cleanup-empty-sessions.cjs --dry-run` lists what is left. Running either without `--dry-run` writes at most `--limit` rows.
 
-A session with **either** a task **or** a title is real work and is kept: a card
-that only has a title is still something a human can recognise.
+Full rule, rationale and the production verification are in
+[docs/strict-task-identity.md](docs/strict-task-identity.md).
 
 #### Zettly tags for zettelkasten relations
 

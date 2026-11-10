@@ -51,10 +51,9 @@ function parseArgs(argv) {
 function buildPreviewQuery({ limit }) {
   const { emptySessionPredicate } = require('./empty-session.cjs');
   return {
-    sql: `SELECT session_key, machine, project_name, phase, updated_at
+    sql: `SELECT session_key, task_id, machine, project_name, task, phase, updated_at
             FROM sessions
            WHERE ${emptySessionPredicate()}
-             AND COALESCE(task_id, '') = ''
            ORDER BY updated_at ASC
            LIMIT $1`,
     params: [limit],

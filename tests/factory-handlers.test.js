@@ -230,6 +230,7 @@ test("claim handler opens a work session and starts the local workflow", async (
     assert.strictEqual(workflowState.state.definitionOfDone[0].status, "open");
     assert.strictEqual(workflowState.state.definitionOfDone[0].text, "tes lulus");
     assert.match(workflowState.state.taskDescription, /Sambungkan MCP ke Factory|Task backlog/);
+    assert.ok(workflowState.state.projectDir, "claim_factory_task must set a non-empty projectDir so the monitor never shows (tanpa proyek)");
     assert.strictEqual(saved.length, 1);
     assert.strictEqual(workflowState.state.taskOrigin.system,'factory');
     assert.strictEqual(workflowState.state.taskOrigin.id,BACKLOG_ID);

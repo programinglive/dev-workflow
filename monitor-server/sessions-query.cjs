@@ -53,7 +53,8 @@ function buildSessionsQuery({
                  workflow_task_id, task_origin_json, task_relations_json
             FROM sessions
            WHERE phase NOT IN ('closed', 'done', 'cancelled', 'handed-off')
-             AND (NULLIF(BTRIM(task), '') IS NOT NULL OR NULLIF(BTRIM(session_title), '') IS NOT NULL)
+             AND NULLIF(BTRIM(task), '') IS NOT NULL
+             AND NULLIF(BTRIM(project_name), '') IS NOT NULL
              AND NOT (
                    phase = 'idle'
                    AND (

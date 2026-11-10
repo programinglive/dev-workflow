@@ -2,6 +2,7 @@ import { textResponse } from "./shared.js";
 import { parseFactoryChecklist } from "./dod.js";
 import { startKeeping, stopKeeping } from "../../session-keeper.js";
 import {assignWorkflowIdentity} from '../../zettly-workflow.js';
+import { resolveProjectDir, setActiveProjectDir } from "../../exec.js";
 import {
   readFactoryConfig,
   listTasks,
@@ -150,6 +151,35 @@ export async function handleClaimFactoryTask(args = {}, { workflowState } = {}) 
     // seseorang pernah menyatakannya, bukan bahwa kode di mesin ini terbukti.
     const importedDod = parseFactoryChecklist(task.definitionOfDone);
     if (workflowState) {
+      const explicitDir = typeof args.projectDir === "string" ? args.projectDir.trim() : "";
+      const priorDir = typeof workflowState.state.projectDir === "string" ? workflowState.state.projectDir.trim() : "";
+      let resolvedDir = "";
+      if (explicitDir) {
+        resolvedDir = resolveProjectDir({ explicit: explicitDir }).dir;
+      } else if (priorDir) {
+        try {
+          resolvedDir = resolveProjectDir({ pinned: priorDir }).dir;
+        } catch {
+          resolvedDir = priorDir;
+        }
+      } else {
+        try {
+          resolvedDir = resolveProjectDir({ env: process.env, candidates: [process.cwd(), process.env.INIT_CWD] }).dir;
+        } catch {
+          resolvedDir = "";
+        }
+      }
+      const derivedProjectName = String(task.projectName || "")
+        .replace(/\.git$/i, "")
+        .split(/[\\/]/)
+        .filter(Boolean)
+        .pop() || "";
+      if (!resolvedDir && !derivedProjectName) {
+        return textResponse(
+          "Cannot claim task without a project: pass 'projectDir' pointing to the local Git repository, " +
+          "or assign the task to a project on the Factory board first.",
+        );
+      }
       continuingTask=workflowState.state.zettly?.externalLinks?.factory?.id===recordId&&Boolean(workflowState.state.taskDescription);
       if(!continuingTask){
       const archived = workflowState.reset({
@@ -159,8 +189,11 @@ export async function handleClaimFactoryTask(args = {}, { workflowState } = {}) 
       archivedTask = archived?.archivedTask || null;
       const now = new Date().toISOString();
       workflowState.state.currentPhase = "coding";
+      workflowState.state.taskStartedAt = now;
       workflowState.state.taskDescription = `[${task.taskKey || task.id}] ${task.title}`;
       workflowState.state.taskType = "other";
+      workflowState.state.projectDir = resolvedDir || derivedProjectName;
+      if (resolvedDir) setActiveProjectDir(resolvedDir);
       workflowState.state.definitionOfDone = importedDod.items.map((text, index) => ({
         id: `dod-${index + 1}`,
         text,
@@ -174,7 +207,12 @@ export async function handleClaimFactoryTask(args = {}, { workflowState } = {}) 
       workflowState.state.dodFactoryTaskId = importedDod.items.length > 0 ? recordId : "";
       workflowState.state.dodRevision = 0;
       assignWorkflowIdentity(workflowState.state,null,{zettlyTodoId:args.zettlyTodoId,source:{system:'factory',id:recordId}});
-      }else if(args.zettlyTodoId){if(workflowState.state.zettly.todoId!==args.zettlyTodoId)workflowState.state.zettlyContext=null;workflowState.state.zettly.todoId=args.zettlyTodoId;}
+      }else {
+        if (!workflowState.state.projectDir) {
+          workflowState.state.projectDir = resolvedDir || derivedProjectName;
+        }
+        if (args.zettlyTodoId){if(workflowState.state.zettly.todoId!==args.zettlyTodoId)workflowState.state.zettlyContext=null;workflowState.state.zettly.todoId=args.zettlyTodoId;}
+      }
       workflowState.state.zettly.externalLinks={...workflowState.state.zettly.externalLinks,factory:{id:recordId,taskKey:task.taskKey||''}};
       const saved=await workflowState.save();
       if(saved?.verified===false||workflowState.lastConflict)throw new Error('Factory claim exists, but local workflow persistence was not verified.');
