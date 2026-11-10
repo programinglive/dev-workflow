@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.29.3](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.29.2...v1.29.3) (2026-11-10)
+
+
+### 🐛 Bug Fixes
+
+* **factory:** read the work session from /api/work because the board payload carries only a badge ([#72](https://github.com/programinglive/dev-workflow-mcp-server/issues/72)) ([bc03ae0](https://github.com/programinglive/dev-workflow-mcp-server/commit/bc03ae0be429330479535d30fa145baad8ff854b))
+
 ### [1.29.2](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.29.1...v1.29.2) (2026-11-10)
 
 
