@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { planCleanup, applyCleanup, cleanupWorkBranches } from "../branch-cleanup.js";
+import { planCleanup, applyCleanup, cleanupWorkBranches, samePath } from "../branch-cleanup.js";
 
 /**
  * Owner request, 10 November 2026: "when bug fixing is finished, delete the
@@ -43,7 +43,7 @@ function decide(plan, branch) {
 }
 
 function worktreeDecision(plan, wtPath) {
-  return plan.worktrees.find((w) => w.path === wtPath);
+  return plan.worktrees.find((w) => samePath(w.path, wtPath));
 }
 
 test("a fully merged branch is deleted", () => {
@@ -114,7 +114,8 @@ test("a clean, merged, idle worktree is removed with its directory", () => {
   assert.equal(worktreeDecision(plan, canonical).action, "remove");
 
   const result = applyCleanup(repo, plan);
-  assert.deepEqual(result.removed, [canonical]);
+  assert.equal(result.removed.length, 1);
+  assert.ok(samePath(result.removed[0], canonical), `removed ${result.removed[0]} instead of ${canonical}`);
   assert.equal(fs.existsSync(wtPath), false);
 });
 
@@ -170,7 +171,9 @@ test("a locked worktree is kept", () => {
 test("the main worktree is never removed", () => {
   const repo = makeRepo();
   const plan = planCleanup({ repoDir: repo });
-  const mainEntry = plan.worktrees.find((w) => w.path === fs.realpathSync(repo));
+  // Windows reports the same directory with different capitalisation depending
+  // on who asked, so compare the way the implementation does.
+  const mainEntry = plan.worktrees.find((w) => samePath(w.path, fs.realpathSync(repo)));
   assert.ok(mainEntry, "the main worktree must be listed");
   assert.equal(mainEntry.action, "keep");
 });
