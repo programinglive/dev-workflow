@@ -174,6 +174,17 @@ async function captureDirtyAtStart(git) {
 
 export async function handleStartTask(args, workflowState, git, zettlyOptions = {}) {
   const env = zettlyOptions?.env || process.env;
+  // `task` is a natural alias for `description`. Accepting it as an unknown key
+  // silently created an empty task, which then had no Todo and no drawing, so
+  // the monitor showed no flow. Normalise it, and refuse an empty description.
+  if ((args.description === undefined || args.description === "") && typeof args.task === "string") {
+    args = { ...args, description: args.task };
+  }
+  if (typeof args.description !== "string" || args.description.trim() === "") {
+    return textResponse(
+      "⚠️ 'description' is required. Pass the task description as 'description' (not 'task'). The task was not started."
+    );
+  }
   const zettlyArgumentError=validateZettlyTaskArguments(args);
   if(zettlyArgumentError)return textResponse(`⚠️ ${zettlyArgumentError} The existing task was not changed.`);
   // A task handed over to another machine must not be silently continued here:
