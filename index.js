@@ -26,6 +26,8 @@ import { WorkflowState, sessionKeyFromRequest, reportToMonitorSafe } from "./wor
 import { getToolList } from "./tools/definitions.js";
 import { WORKFLOW_INSTRUCTIONS, ENGLISH_IMPLEMENTATION_RULE } from './workflow-guidance.js';
 import { handleToolCall } from "./tools/handlers.js";
+import { setToolchain } from "./monitor.js";
+import { toolchainOnce } from "./toolchain.js";
 
 export { createCommitMessageParts, determineReleaseTypeFromCommit } from "./commit-helpers.js";
 export { containsTestFilesInStatus, workingTreeSummary } from "./git-helpers.js";
@@ -198,6 +200,18 @@ export async function main() {
   securityMode();
   const startTime = Date.now();
   safeLog('error', `[${new Date().toISOString()}] MCP Server starting...`);
+
+  // Detect the tool versions once, without holding up startup: the promise is
+  // not awaited, so a slow or missing binary costs nothing here, and every
+  // later snapshot reads the cached result.
+  toolchainOnce({
+    run: async (tool, args) => {
+      const { stdout } = await exec([tool, ...args].map(shellEscape).join(' '), { timeout: 4000 });
+      return stdout;
+    },
+  })
+    .then((toolchain) => setToolchain(toolchain))
+    .catch(() => setToolchain(null));
 
   try {
     // Initialize workflow state

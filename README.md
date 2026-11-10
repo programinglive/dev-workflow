@@ -329,6 +329,7 @@ When a session runs a build, test suite, container image build, security scan, o
 - **MCP Status Visibility**: `get_workflow_status`, `continue_workflow`, and `list_active_sessions` render a `🏗️ Active Build / Execution Monitor` section with an ASCII progress bar, elapsed duration, command, and recent build history.
 - **Mission-Control Web Dashboard (`monitor-server/dashboard.cjs`)**: Displays a top KPI strip, a dedicated **🏗️ Live Build & Execution Monitor** hero radar with animated progress bars and 1-second live ticking timers, plus a 6-step Workflow Pipeline Stepper on every session card and detail modal.
 - **Zettelkasten card chaining**: starting a new task in the same session creates its own card and marks the previous one `handed-off`, so the board links "continued from" / "continued to" instead of overwriting the topic. See [docs/card-chaining.md](docs/card-chaining.md) and the migration command `node scripts/migrate-monitor-db.cjs`.
+- **Fleet parity** (Mesin tab): every machine shows its MCP release version plus the version of each required tool (`gh`, `glab`, `wrangler`, `gcloud`, `node`, `npm`), so "is every device the same?" is answered on one screen instead of by asking three terminals. Version parity and tool parity are reported separately: a matching version with no reported tools is `unreported`, never "in sync". See [docs/fleet-parity.md](docs/fleet-parity.md).
 
 ### Build duration report and ETA (`build_report`, `build_estimate`)
 

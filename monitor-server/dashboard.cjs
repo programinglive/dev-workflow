@@ -21,6 +21,7 @@ const {
 } = require('./retention.cjs');
 const { buildHealth, DEFAULT_STALE_AFTER_MS } = require('./health.cjs');
 const { buildMachinesQuery, DEFAULT_STALE_AFTER_DAYS, visibleMachines } = require('./machines-query.cjs');
+const { buildFleetParity } = require('./fleet-parity.cjs');
 const { dedupeSessions } = require('./dedupe-sessions.cjs');
 const { buildReportQuery, buildReportPayload, estimateBuild } = require('./build-report.cjs');
 const { withRepoLink } = require('./repo-link.cjs');
@@ -1380,7 +1381,13 @@ function render(data) {
     kpiEl.innerHTML =
       '<div class="kpi-card"><span class="kpi-lbl">⚡ Task Aktif</span><span class="kpi-val">' + activeSessions.length + '</span><span class="kpi-sub">sesi sedang berjalan</span></div>' +
       '<div class="kpi-card' + (buildingNowCount > 0 ? ' building-active' : '') + '"><span class="kpi-lbl">🏗️ Sedang Build / Test</span><span class="kpi-val" style="color:' + (buildingNowCount > 0 ? '#f0c674' : '#e6edf3') + '">' + buildingNowCount + '</span><span class="kpi-sub">' + (buildingNowCount > 0 ? 'proses build aktif' : 'tidak ada build aktif') + '</span></div>' +
-      '<div class="kpi-card"><span class="kpi-lbl">🖥️ Mesin Terhubung</span><span class="kpi-val">' + onlineMachines + '/' + (data.machines || []).length + '</span><span class="kpi-sub">aktif melapor</span></div>' +
+      '<div class="kpi-card"><span class="kpi-lbl">🖥️ Mesin Terhubung</span><span class="kpi-val">' + onlineMachines + '/' + (data.machines || []).length + '</span><span class="kpi-sub">' + (function() {
+        const f = data.fleet;
+        if (!f || !(f.machines || []).length) return 'aktif melapor';
+        if ((f.mismatched || []).length) return 'versi menyimpang di ' + f.mismatched.length + ' mesin';
+        if ((f.unreported || []).length) return (f.version ? 'versi ' + f.version : 'versi belum bulat') + ' · ' + f.unreported.length + ' belum melapor';
+        return 'versi ' + (f.version || '-') + ' sama di semua';
+      })() + '</span></div>' +
       '<div class="kpi-card"><span class="kpi-lbl">✅ Riwayat (7 Hari)</span><span class="kpi-val" style="color:#3fb950">' + (data.history || []).length + '</span><span class="kpi-sub">sesi tercatat</span></div>';
   }
 
@@ -1457,13 +1464,80 @@ function render(data) {
   ).join('') || '<div class="empty">belum ada sesi selesai</div>';
 
   // Mesin
-  document.getElementById('machines').innerHTML = (data.machines || []).map(m =>
-    '<div class="card"><div class="row"><b style="color:' + (m.stale ? '#d29922' : '#3fb950') + '">' + (m.stale ? '⚠ ' : '● ') + '</b> ' +
-    '<b>' + esc(m.machine) + '</b><span class="meta" style="margin-left:auto">terakhir melapor ' + ago(m.last_seen, jNow) + '</span></div>' +
+  // Kesamaan armada. Pertanyaan pemilik, 10 Nov 2026: "apakah versinya sudah
+  // sama semua, apakah MCP-nya sama dan aktif semua, apakah cmd yang dibutuhkan
+  // sudah sama semua". Kartu ringkas di atas, lalu satu baris alat per mesin.
+  const fleet = data.fleet || { machines: [], tools: [], version: null, revision: null, mismatched: [], unreported: [] };
+  const parityByMachine = {};
+  (fleet.machines || []).forEach(function(p) { parityByMachine[p.machine] = p; });
+  const expectedByTool = {};
+  (fleet.tools || []).forEach(function(t) { expectedByTool[t.name] = t.expected; });
+
+  function toolChip(name, actual) {
+    var expected = expectedByTool[name];
+    var colour = '#8b949e';
+    var text = name + ' ?';
+    if (actual === null) { colour = '#f85149'; text = name + ' ✕'; }
+    else if (actual) {
+      colour = (expected && actual !== expected) ? '#d29922' : '#3fb950';
+      text = name + ' ' + actual;
+    }
+    return '<span title="' + esc(name + (expected ? ' · mayoritas ' + expected : '')) + '" style="color:' + colour +
+      ';border:1px solid ' + colour + '55;background:' + colour + '14;border-radius:999px;padding:1px 7px;font-size:11px">' +
+      esc(text) + '</span>';
+  }
+
+  const parityHead = (fleet.machines || []).length
+    ? '<div class="card" style="border-color:#1f6feb55;background:linear-gradient(135deg,#0d1724 0%,#0d131c 100%)">' +
+        '<div class="row"><b>Kesamaan Armada</b>' +
+        '<span class="meta" style="margin-left:auto">versi ' + esc(fleet.version || 'belum bulat') +
+        ' · rev ' + esc(String(fleet.revision || '-').slice(0, 7)) + '</span></div>' +
+        '<div class="meta" style="margin-top:6px">' +
+          (fleet.mismatched.length
+            ? '<span style="color:#d29922">⚠ ' + fleet.mismatched.length + ' mesin menyimpang: ' + esc(fleet.mismatched.join(', ')) + '</span>'
+            : '<span style="color:#3fb950">✓ versi sama di semua mesin yang melapor</span>') +
+          (fleet.unreported.length
+            ? ' · <span style="color:#8b949e">' + fleet.unreported.length + ' belum melapor lengkap: ' + esc(fleet.unreported.join(', ')) + '</span>'
+            : '') +
+        '</div>' +
+        ((fleet.tools || []).length
+          ? '<div class="meta" style="margin-top:6px;display:flex;flex-wrap:wrap;gap:6px">' +
+              fleet.tools.map(function(t) { return toolChip(t.name, t.expected); }).join('') + '</div>'
+          : '') +
+      '</div>'
+    : '';
+
+  document.getElementById('machines').innerHTML = parityHead + ((data.machines || []).map(function(m) {
+    const p = parityByMachine[m.machine] || null;
+    const vState = !p ? 'versi ?'
+      : p.versionStatus === 'same' ? 'versi sama'
+      : p.versionStatus === 'differs' ? 'versi beda' : 'versi ?';
+    const tState = !p ? 'alat ?'
+      : p.toolsStatus === 'same' ? 'alat sama'
+      : p.toolsStatus === 'differs' ? 'alat beda' : 'alat belum dilapor';
+    const statusColour = !p ? '#8b949e'
+      : (p.versionStatus === 'differs' || p.toolsStatus === 'differs') ? '#d29922'
+      : p.status === 'in-sync' ? '#3fb950' : '#8b949e';
+    const toolNames = (fleet.tools || []).map(function(t) { return t.name; });
+    const chips = toolNames.map(function(name) {
+      var actual = p && p.toolchain && Object.prototype.hasOwnProperty.call(p.toolchain, name) ? p.toolchain[name] : undefined;
+      return toolChip(name, actual === undefined ? undefined : actual);
+    }).join('');
+    const drift = (p && p.driftedTools && p.driftedTools.length)
+      ? '<div class="meta" style="margin-top:4px;color:#d29922">beda versi: ' + esc(p.driftedTools.join(', ')) + '</div>' : '';
+    const missing = (p && p.missingTools && p.missingTools.length)
+      ? '<div class="meta" style="margin-top:4px;color:#f85149">tidak terpasang: ' + esc(p.missingTools.join(', ')) + '</div>' : '';
+
+    return '<div class="card"><div class="row"><b style="color:' + (m.stale ? '#d29922' : '#3fb950') + '">' + (m.stale ? '⚠ ' : '● ') + '</b> ' +
+    '<b>' + esc(m.machine) + '</b>' +
+    '<span class="meta" style="margin-left:auto">' + esc(p && p.version ? 'v' + p.version : 'versi ?') +
+    ' · <span style="color:' + statusColour + '">' + vState + ' · ' + tState + '</span></span></div>' +
     '<div class="meta" style="margin-top:4px">' + m.sessions + ' sesi · fase terakhir ' + esc(m.last_phase || '-') +
     (m.last_project ? ' · ' + esc(m.last_project) : '') +
-    (m.stale ? ' · sudah lama tidak melapor' : '') + '</div></div>'
-  ).join('') || '<div class="empty">belum ada mesin terhubung</div>';
+    (m.stale ? ' · sudah lama tidak melapor' : ' · terakhir melapor ' + ago(m.last_seen, jNow)) + '</div>' +
+    (chips ? '<div class="meta" style="margin-top:6px;display:flex;flex-wrap:wrap;gap:6px">' + chips + '</div>' : '') +
+    drift + missing + '</div>';
+  }).join('') || '<div class="empty">belum ada mesin terhubung</div>');
 
   // Events
   renderEventsList(data.events || [], jNow);
@@ -2069,6 +2143,10 @@ const server = http.createServer(async (req, res) => {
       const mq = buildMachinesQuery({ staleAfterDays: STALE_AFTER_DAYS });
       const machineRows = await query(mq.sql, mq.params);
       const machines = visibleMachines(machineRows.rows);
+      // Kesamaan armada: apakah semua mesin menjalankan rilis dan alat yang
+      // sama. Dihitung dari baris mesin yang SUDAH ditampilkan, jadi angkanya
+      // tidak bisa berbeda dengan yang dilihat pemilik di layar.
+      const fleet = buildFleetParity(machines);
       // Riwayat sesi SELESAI. Durasi dihitung database supaya sama di semua
       // perangkat, dan tidak ada data yang dihapus.
       const hq = buildHistoryQuery({ historyDays: HISTORY_DAYS });
@@ -2215,7 +2293,7 @@ const server = http.createServer(async (req, res) => {
       }
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       return res.end(
-        JSON.stringify({ now: serverNow, sessions: tampil, events: events.rows, health, machines, history, alerts, summary, shares, summary_days: SUMMARY_DAYS }),
+        JSON.stringify({ now: serverNow, sessions: tampil, events: events.rows, health, machines, fleet, history, alerts, summary, shares, summary_days: SUMMARY_DAYS }),
       );
     }
     if (url.pathname === '/api/builds/report') {

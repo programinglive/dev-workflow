@@ -34,5 +34,5 @@ test("the API uses the same visible machines for counts and silence alerts", () 
   const source = readFileSync(path.join(ROOT, "monitor-server", "dashboard.cjs"), "utf8");
   assert.match(source, /const machines = visibleMachines\(machineRows\.rows\)/);
   assert.match(source, /buildAlerts\(\{[\s\S]*?machines,[\s\S]*?\}\)/);
-  assert.match(source, /JSON\.stringify\(\{ now: serverNow,[^\n]*machines, history, alerts/);
+  assert.match(source, /JSON\.stringify\(\{ now: serverNow,[^\n]*machines,[^\n]*history, alerts/);
 });
