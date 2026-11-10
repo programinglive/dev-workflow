@@ -65,6 +65,19 @@ function workspaceWith(events) {
   return { projects: [{ id: "p1", name: "mahatmamahardhikach/bw-server-grooming" }], tasks: [ACTIVE_TASK], events };
 }
 
+/**
+ * The real work session, as `GET /api/work` returns it.
+ *
+ * The workspace payload only carries a badge (no `id`, no `state`), so the
+ * client reads the session from this endpoint before it can finish anything.
+ */
+function workSessionsResponse() {
+  return json({
+    sessions: [{ id: "sess-new", taskId: TASK_ID, state: "active", device: { id: "d1" } }],
+    staleAfterSeconds: 120,
+  });
+}
+
 test("menolak finish review bila task sudah punya riwayat work.review", async () => {
   const fetchImpl = fakeFetch([
     (call) =>
@@ -81,7 +94,8 @@ test("menolak finish review bila task sudah punya riwayat work.review", async ()
             ]),
           )
         : null,
-    (call) => (call.url.endsWith("/api/work") ? json({ session: { id: "sess-new", state: "review" } }) : null),
+    (call) => (call.url.endsWith("/api/work") && call.method === "GET" ? workSessionsResponse() : null),
+    (call) => (call.url.endsWith("/api/work") && call.method === "POST" ? json({ session: { id: "sess-new", state: "review" } }) : null),
   ]);
 
   await assert.rejects(
@@ -104,7 +118,8 @@ test("menolak finish review bila task sudah pernah done", async () => {
             ]),
           )
         : null,
-    (call) => (call.url.endsWith("/api/work") ? json({ session: { id: "sess-new", state: "review" } }) : null),
+    (call) => (call.url.endsWith("/api/work") && call.method === "GET" ? workSessionsResponse() : null),
+    (call) => (call.url.endsWith("/api/work") && call.method === "POST" ? json({ session: { id: "sess-new", state: "review" } }) : null),
   ]);
 
   await assert.rejects(
@@ -151,6 +166,7 @@ test("riwayat review milik task LAIN tidak ikut memblokir", async () => {
             ]),
           )
         : null,
+    (call) => (call.url.endsWith("/api/work") && call.method === "GET" ? workSessionsResponse() : null),
     (call) =>
       call.url.endsWith("/api/work") && call.method === "POST"
         ? json({ session: { id: "sess-new", state: "review", summary: "Selesai." } })
@@ -160,7 +176,7 @@ test("riwayat review milik task LAIN tidak ikut memblokir", async () => {
   const result = await updateTaskStatus(CONFIG, { recordId: TASK_ID, status: "review", reason: "Selesai." }, fetchImpl);
 
   assert.strictEqual(result.status, "review");
-  const finish = fetchImpl.calls.find((call) => call.url.endsWith("/api/work"));
+  const finish = fetchImpl.calls.find((call) => call.url.endsWith("/api/work") && call.method === "POST");
   assert.strictEqual(finish.body.outcome, "review");
 });
 
@@ -170,6 +186,7 @@ test("workspace tanpa array events tetap boleh finish review", async () => {
       call.url.endsWith("/api/factory")
         ? json({ projects: [], tasks: [ACTIVE_TASK] })
         : null,
+    (call) => (call.url.endsWith("/api/work") && call.method === "GET" ? workSessionsResponse() : null),
     (call) =>
       call.url.endsWith("/api/work") && call.method === "POST"
         ? json({ session: { id: "sess-new", state: "review" } })
@@ -191,6 +208,7 @@ test("outcome blocked tidak terpengaruh riwayat review", async () => {
             ]),
           )
         : null,
+    (call) => (call.url.endsWith("/api/work") && call.method === "GET" ? workSessionsResponse() : null),
     (call) =>
       call.url.endsWith("/api/work") && call.method === "POST"
         ? json({ session: { id: "sess-new", state: "blocked" } })
@@ -216,6 +234,7 @@ test("review setelah work.paused boleh: pekerjaan memang dikerjakan ulang", asyn
             ]),
           )
         : null,
+    (call) => (call.url.endsWith("/api/work") && call.method === "GET" ? workSessionsResponse() : null),
     (call) =>
       call.url.endsWith("/api/work") && call.method === "POST"
         ? json({ session: { id: "sess-new", state: "review" } })

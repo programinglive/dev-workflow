@@ -670,8 +670,11 @@ test("updateTaskStatus memotong alasan move_task ke 500 karakter", async () => {
 });
 
 test("updateTaskStatus finishes the active session for review", async () => {
+  // The workspace badge carries no session id or state (Factory sends only the
+  // badge), so the real session is read from GET /api/work.
   const fetchImpl = fakeFetch([
     (call) => (call.url.endsWith("/api/factory") ? json(WORKSPACE) : null),
+    (call) => (call.url.endsWith("/api/work") && call.method === "GET" ? json({ sessions: [{ id: "sess-1", taskId: "33333333-3333-4333-8333-333333333333", state: "active", device: { id: "d1" } }] }) : null),
     (call) => (call.url.endsWith("/api/work") && call.method === "POST" ? json({ session: { id: "sess-1", state: "review", summary: "Selesai" } }) : null),
   ]);
   const config = { ...CONFIG, deviceId: "d1" };
@@ -683,14 +686,45 @@ test("updateTaskStatus finishes the active session for review", async () => {
   }, fetchImpl);
 
   assert.strictEqual(result.status, "review");
-  const finish = fetchImpl.calls.find((call) => call.url.endsWith("/api/work"));
+  const finish = fetchImpl.calls.find((call) => call.url.endsWith("/api/work") && call.method === "POST");
   assert.strictEqual(finish.body.action, "finish");
   assert.strictEqual(finish.body.sessionId, "sess-1");
   assert.strictEqual(finish.body.outcome, "review");
 });
 
+test("updateTaskStatus reports the outcome when the workspace badge has no session id", async () => {
+  // MEASURED 10 November 2026: every running task answered "no active work
+  // session" because the badge has no id/state. Reproduced here with a badge
+  // that matches production exactly.
+  const badgeOnlyWorkspace = {
+    ...WORKSPACE,
+    tasks: WORKSPACE.tasks.map((task) => (task.id === "33333333-3333-4333-8333-333333333333"
+      ? { ...task, work: { activityStatus: "active", device: { name: "HELLOWORLD", agent: "opencode-deepseek" }, clientSession: null } }
+      : task)),
+  };
+  const fetchImpl = fakeFetch([
+    (call) => (call.url.endsWith("/api/factory") ? json(badgeOnlyWorkspace) : null),
+    (call) => (call.url.endsWith("/api/work") && call.method === "GET" ? json({ sessions: [{ id: "sess-real", taskId: "33333333-3333-4333-8333-333333333333", state: "active", device: { id: "d1" } }] }) : null),
+    (call) => (call.url.endsWith("/api/work") && call.method === "POST" ? json({ session: { id: "sess-real", state: "review" } }) : null),
+  ]);
+  const config = { ...CONFIG, deviceId: "d1" };
+
+  const result = await updateTaskStatus(config, {
+    recordId: "33333333-3333-4333-8333-333333333333",
+    status: "review",
+    reason: "Selesai, minta review.",
+  }, fetchImpl);
+
+  assert.strictEqual(result.status, "review");
+  const finish = fetchImpl.calls.find((call) => call.url.endsWith("/api/work") && call.method === "POST");
+  assert.strictEqual(finish.body.sessionId, "sess-real", "the real session id must come from GET /api/work");
+});
+
 test("updateTaskStatus refuses review without an active session", async () => {
-  const fetchImpl = fakeFetch([(call) => (call.url.endsWith("/api/factory") ? json(WORKSPACE) : null)]);
+  const fetchImpl = fakeFetch([
+    (call) => (call.url.endsWith("/api/factory") ? json(WORKSPACE) : null),
+    (call) => (call.url.endsWith("/api/work") && call.method === "GET" ? json({ sessions: [] }) : null),
+  ]);
 
   await assert.rejects(
     () => updateTaskStatus(CONFIG, { recordId: "11111111-1111-4111-8111-111111111111", status: "review" }, fetchImpl),

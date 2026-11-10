@@ -638,6 +638,34 @@ export async function heartbeatWork(config, { sessionId, deviceId, step, clientS
 }
 
 /**
+ * The active work session of a task, read from the endpoint that carries it.
+ *
+ * WHY THIS IS NOT READ FROM THE WORKSPACE PAYLOAD
+ * -----------------------------------------------
+ * `GET /api/factory` deliberately sends only a *badge* per task
+ * (`activityStatus`, device name/agent, client session title) because the full
+ * session is 191 KB across 829 tasks and the board renders none of it. The
+ * badge has no `id` and no `state`, so a client that reads the session from
+ * there can never finish anything: it sees `state === undefined` and reports
+ * "no active work session" for a task that is visibly running.
+ *
+ * `GET /api/work` is the endpoint that returns the real sessions, including
+ * `id`, `state` and `device.id`. That is what a finish call needs.
+ */
+export async function findActiveWorkSession(config, { taskId, deviceId } = {}, fetchImpl = fetch) {
+  if (!taskId) throw new Error("taskId is required to find a work session.");
+  const body = await request(config, "/api/work", { fetchImpl });
+  const sessions = Array.isArray(body?.sessions) ? body.sessions : [];
+  const active = sessions.find(
+    (session) =>
+      String(session?.taskId || "") === String(taskId) &&
+      String(session?.state || "") === "active" &&
+      (!deviceId || String(session?.device?.id || "") === String(deviceId)),
+  );
+  return active || null;
+}
+
+/**
  * Finishes the active work session of a task.
  *
  * Factory only accepts an outcome for a session that exists and belongs to the
@@ -666,10 +694,12 @@ export async function finishWork(config, { taskId, outcome, summary, device } = 
     }
   }
 
-  const session = task.work;
-  if (!session || session.state !== "active") {
+  // The workspace badge has no session id or state, so the real session is read
+  // from /api/work. A badge that says "active" is not enough to finish with.
+  const session = await findActiveWorkSession(config, { taskId, deviceId }, fetchImpl);
+  if (!session) {
     throw new Error(
-      `Task "${task.title}" has no active work session. Use claim_factory_task first, then report the outcome.`,
+      `Task "${task.title}" has no active work session on this device. Use claim_factory_task first, then report the outcome.`,
     );
   }
 
