@@ -119,9 +119,15 @@ export default function App() {
   const duaKolom = width >= MIN_WIDTH_FOR_TWO_COLUMNS;
 
   const ambil = useCallback(async () => {
+    // A fetch without a deadline leaves the tablet on the spinner forever when
+    // the Tailscale path stalls. Ten seconds is enough for a 120 KB payload on
+    // this network; after that the app must say so instead of hanging.
+    const controller = new AbortController();
+    const batas = setTimeout(() => controller.abort(), 10000);
     try {
       const r = await fetch(MONITOR_URL + "/api/sessions", {
         headers: { "cache-control": "no-store" },
+        signal: controller.signal,
       });
       if (!r.ok) throw new Error("HTTP " + r.status);
       const j = await r.json();
@@ -130,8 +136,12 @@ export default function App() {
       setGalat(null);
     } catch (e) {
       if (!hidup.current) return;
-      setGalat(String(e && e.message ? e.message : e));
+      const pesan = e && e.name === "AbortError"
+        ? "Monitor tidak menjawab dalam 10 detik"
+        : String(e && e.message ? e.message : e);
+      setGalat(pesan);
     } finally {
+      clearTimeout(batas);
       if (hidup.current) {
         setMemuat(false);
         setMenyegarkan(false);
