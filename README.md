@@ -789,9 +789,24 @@ the endpoint that actually supports it:
 | `running` | — rejected | Point the caller at `claim_factory_task` |
 
 `review` requires an active work session. Asking for it without one fails with
-"no active work session" instead of silently doing nothing - the task must be
-claimed first. Full behaviour, limits (summary 2000 chars, step 240 chars) and
-troubleshooting live in [docs/factory-integration.md](docs/factory-integration.md).
+"no active work session on this device" instead of silently doing nothing - the
+task must be claimed first. Full behaviour, limits (summary 2000 chars, step 240
+chars) and troubleshooting live in
+[docs/factory-integration.md](docs/factory-integration.md).
+
+#### The work session is read from `/api/work`, not from the board payload
+
+`GET /api/factory` deliberately sends only a **badge** per task
+(`activityStatus`, device name/agent, client session title). The full session is
+191 KB across 829 tasks and no list renders it, so the badge carries no `id` and
+no `state`.
+
+Reading the session from that badge made `finishWork` see `state === undefined`
+and refuse **every** running task with "no active work session" - measured on
+10 November 2026 against a task the board showed as `running`. The client now
+reads the real session from `GET /api/work`, which returns `id`, `state` and
+`device.id`, and only then sends the finish request. A session that belongs to
+another device, or that is already closed, is still refused before any write.
 
 For a linked development task, claim the Factory task, report it for review, and
 then call `complete_task` after the workflow checks pass. `complete_task` moves
