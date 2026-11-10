@@ -43,8 +43,8 @@ test("a handed-off card is no longer an active task", () => {
 
 test("the visible-task filter hides handed-off cards", () => {
   const visible = visibleTaskSessions([
-    { session_key: "s", phase: "coding", task: "live one", state: "live" },
-    { session_key: "s", phase: "handed-off", task: "old one", state: "ended" },
+    { session_key: "s", project_name: "dev-workflow-mcp-server", phase: "coding", task: "live one", state: "live" },
+    { session_key: "s", project_name: "dev-workflow-mcp-server", phase: "handed-off", task: "old one", state: "ended" },
   ]);
   assert.deepEqual(visible.map((s) => s.task), ["live one"]);
 });

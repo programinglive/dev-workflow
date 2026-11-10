@@ -1028,6 +1028,12 @@ export function getToolList() {
             type: "string",
             description: "Factory task id (UUID) to claim.",
           },
+          projectDir: {
+            type: "string",
+            description:
+              "Optional absolute path to the repository this claimed task works on (e.g. D:\\code\\clinic). " +
+              "When omitted, resolved from the session's active repository or the Factory project name.",
+          },
           zettlyTodoId: {type:'integer',minimum:1,description:'Reuse the known canonical Zettly Todo for this Factory task instead of creating another tracking Todo.'},
           focusId: {type:'integer',minimum:1,description:'Verify and link the claimed canonical task to the current focus.'},
           requireFocus: {type:'boolean',description:'Refuse the claim when no single active focus is available.'},

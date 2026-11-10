@@ -93,7 +93,14 @@ export function generateDefaultFlow(description, planItems = []) {
  * Best-effort: kalau repo belum bisa ditentukan, task tetap boleh mulai, tapi
  * pengguna diberi tahu supaya tidak terkejut saat commit.
  */
-function pinProjectDir(args, workflowState) {
+/**
+ * Resolve and validate the project directory before touching workflow state.
+ *
+ * Owner rule (10 November 2026): a task without a project is not allowed. Every
+ * task MUST belong to a real Git repository so the monitor never displays or
+ * recaps "(tanpa proyek)".
+ */
+function resolveTaskProject(args) {
   const requested = typeof args.projectDir === "string" ? args.projectDir.trim() : "";
 
   let resolved = null;
@@ -108,18 +115,17 @@ function pinProjectDir(args, workflowState) {
     error = resolveError;
   }
 
-  if (!resolved) {
-    workflowState.state.projectDir = "";
-    setActiveProjectDir("");
+  if (!resolved || !resolved.dir) {
     return {
+      ok: false,
+      dir: "",
       message:
-        `⚠️ Repo proyek belum ditentukan: ${error.message}\n` +
-        `   Sebutkan 'projectDir' pada 'start_task' supaya commit tidak salah arah.`,
+        `⚠️ Dibatalkan: repo proyek belum ditentukan (${error ? error.message : "projectDir kosong"}).\n` +
+        `   Task tanpa proyek tidak diizinkan oleh Dev Workflow MCP.\n` +
+        `   Sebutkan 'projectDir' yang menunjuk ke repository Git (mis. "D:\\\\code\\\\clinic") pada 'start_task'.\n\n` +
+        `Task BELUM dimulai; workflow sebelumnya tidak diubah.`,
     };
   }
-
-  workflowState.state.projectDir = resolved.dir;
-  setActiveProjectDir(resolved.dir);
 
   const sourceNote = {
     explicit: "dari argumen projectDir",
@@ -144,7 +150,7 @@ function pinProjectDir(args, workflowState) {
       `\n   Kalau task ini bekerja di repo lain, ulangi 'start_task' dengan projectDir yang benar.`;
   }
 
-  return { message };
+  return { ok: true, dir: resolved.dir, message };
 }
 
 /**
@@ -303,6 +309,12 @@ export async function handleStartTask(args, workflowState, git, zettlyOptions = 
     );
   }
 
+  // Validasi projectDir SEBELUM reset(): task tanpa proyek ditolak keras.
+  const project = resolveTaskProject(args);
+  if (!project.ok) {
+    return textResponse(project.message);
+  }
+
   // Selamatkan dulu pekerjaan yang mungkin tertimpa. Ini menangani dua kasus:
   //   1. Proses MCP LAIN menulis berkas state setelah kita memuatnya.
   //   2. Task kita sendiri yang belum selesai lalu diganti task baru.
@@ -362,8 +374,9 @@ export async function handleStartTask(args, workflowState, git, zettlyOptions = 
   workflowState.state.commitAndPushCompleted = false;
   workflowState.state.lastCommitMessage = "";
   workflowState.state.lastPushBranch = "";
-  // Setelah reset(), karena reset mengosongkan projectDir.
-  const project = pinProjectDir(args, workflowState);
+  // Setelah reset(), pasang projectDir yang sudah tervalidasi.
+  workflowState.state.projectDir = project.dir;
+  setActiveProjectDir(project.dir);
 
   // Now that the directory is resolved for THIS task, record the commit the task
   // started from. Everything a later revert may touch is measured from here.

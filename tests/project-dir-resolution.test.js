@@ -291,6 +291,52 @@ test("start_task dengan projectDir mengalahkan env dan tidak melaporkan konflik"
   }
 });
 
+test("start_task menolak memulai bila projectDir tidak bisa ditentukan (tanpa proyek tidak diizinkan)", async () => {
+  const bukanRepo = await makeNonRepo("no-git-");
+  const previousEnv = process.env.WORKFLOW_PROJECT_DIR;
+  const previousProjectEnv = process.env.PROJECT_DIR;
+  const previousInitCwd = process.env.INIT_CWD;
+  const previousCwd = process.cwd();
+
+  try {
+    await withWorkflowState(async (workflowState) => {
+      delete process.env.WORKFLOW_PROJECT_DIR;
+      delete process.env.PROJECT_DIR;
+      delete process.env.INIT_CWD;
+      process.chdir(bukanRepo);
+
+      const response = await handleToolCall({
+        request: createRequest("start_task", {
+          description: "Task tanpa repo tidak boleh dimulai",
+          type: "bugfix",
+          definitionOfDone: ["task tercatat"],
+          plan: ["langkah 1"],
+        }),
+        normalizeRequestArgs: (args) => ({ args, error: null }),
+        workflowState,
+        exec: async () => ({ stdout: "" }),
+        git: createGitMock(),
+        utils: testUtils,
+      });
+
+      const text = response.content[0].text;
+      assert.match(text, /projectDir/i);
+      assert.strictEqual(workflowState.state.currentPhase, "idle", "state tidak boleh berpindah ke coding tanpa projectDir");
+      assert.strictEqual(workflowState.state.taskDescription, "", "task tanpa proyek tidak boleh disimpan");
+    });
+  } finally {
+    process.chdir(previousCwd);
+    if (previousEnv === undefined) delete process.env.WORKFLOW_PROJECT_DIR;
+    else process.env.WORKFLOW_PROJECT_DIR = previousEnv;
+    if (previousProjectEnv === undefined) delete process.env.PROJECT_DIR;
+    else process.env.PROJECT_DIR = previousProjectEnv;
+    if (previousInitCwd === undefined) delete process.env.INIT_CWD;
+    else process.env.INIT_CWD = previousInitCwd;
+    setActiveProjectDir("");
+    await cleanup(bukanRepo);
+  }
+});
+
 test("commit_and_push melaporkan repo yang dipakai saat tidak ada perubahan", async () => {
   // "No changes detected" tanpa nama repo tidak bisa dibedakan dari
   // "git berjalan di repo yang salah".

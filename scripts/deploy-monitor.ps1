@@ -20,6 +20,13 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $dashboard = Join-Path $repoRoot 'monitor-server/dashboard.cjs'
 $machines = Join-Path $repoRoot 'monitor-server/machines-query.cjs'
 $taskMetadata = Join-Path $repoRoot 'monitor-server/task-metadata.cjs'
+$emptySession = Join-Path $repoRoot 'monitor-server/empty-session.cjs'
+$projectSummary = Join-Path $repoRoot 'monitor-server/project-summary.cjs'
+$sessionsQuery = Join-Path $repoRoot 'monitor-server/sessions-query.cjs'
+$sessionUpsert = Join-Path $repoRoot 'monitor-server/session-upsert.cjs'
+$visibleTasks = Join-Path $repoRoot 'monitor-server/visible-task-sessions.cjs'
+$cleanupEmpty = Join-Path $repoRoot 'monitor-server/cleanup-empty-sessions.cjs'
+$historyQuery = Join-Path $repoRoot 'monitor-server/history-query.cjs'
 $knownHosts = Join-Path $repoRoot 'monitor-server/bw-tools-known-hosts'
 $keyPath = Join-Path $env:RUNNER_TEMP 'devwf-monitor-deploy.key'
 $target = 'devwf-monitor-deploy@100.77.138.14'
@@ -37,7 +44,14 @@ $scpOptions = @('-q', '-i', $keyPath, '-o', 'IdentitiesOnly=yes', '-o', 'BatchMo
 $artifacts = @(
     [pscustomobject]@{ Local = $dashboard; Staged = 'monitor.cjs'; Installed = '/opt/devwf-monitor/monitor.cjs'; Previous = 'monitor.previous.cjs' },
     [pscustomobject]@{ Local = $machines; Staged = 'machines-query.cjs'; Installed = '/opt/devwf-monitor/machines-query.cjs'; Previous = 'machines-query.previous.cjs' },
-    [pscustomobject]@{ Local = $taskMetadata; Staged = 'task-metadata.cjs'; Installed = '/opt/devwf-monitor/task-metadata.cjs'; Previous = 'task-metadata.previous.cjs' }
+    [pscustomobject]@{ Local = $taskMetadata; Staged = 'task-metadata.cjs'; Installed = '/opt/devwf-monitor/task-metadata.cjs'; Previous = 'task-metadata.previous.cjs' },
+    [pscustomobject]@{ Local = $emptySession; Staged = 'empty-session.cjs'; Installed = '/opt/devwf-monitor/empty-session.cjs'; Previous = 'empty-session.previous.cjs' },
+    [pscustomobject]@{ Local = $projectSummary; Staged = 'project-summary.cjs'; Installed = '/opt/devwf-monitor/project-summary.cjs'; Previous = 'project-summary.previous.cjs' },
+    [pscustomobject]@{ Local = $sessionsQuery; Staged = 'sessions-query.cjs'; Installed = '/opt/devwf-monitor/sessions-query.cjs'; Previous = 'sessions-query.previous.cjs' },
+    [pscustomobject]@{ Local = $sessionUpsert; Staged = 'session-upsert.cjs'; Installed = '/opt/devwf-monitor/session-upsert.cjs'; Previous = 'session-upsert.previous.cjs' },
+    [pscustomobject]@{ Local = $visibleTasks; Staged = 'visible-task-sessions.cjs'; Installed = '/opt/devwf-monitor/visible-task-sessions.cjs'; Previous = 'visible-task-sessions.previous.cjs' },
+    [pscustomobject]@{ Local = $cleanupEmpty; Staged = 'cleanup-empty-sessions.cjs'; Installed = '/opt/devwf-monitor/cleanup-empty-sessions.cjs'; Previous = 'cleanup-empty-sessions.previous.cjs' },
+    [pscustomobject]@{ Local = $historyQuery; Staged = 'history-query.cjs'; Installed = '/opt/devwf-monitor/history-query.cjs'; Previous = 'history-query.previous.cjs' }
 )
 $deployed = $false
 

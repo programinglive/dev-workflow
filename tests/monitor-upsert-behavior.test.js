@@ -163,7 +163,7 @@ test("sesi baru tanpa info tool tetap tercatat sebagai unknown", async (t) => {
   assert.equal((await baca("ses_uji_baru")).agent_tool, "unknown");
 });
 
-test("project_name dan project_path bertahan saat task ditutup", async (t) => {
+test("project_name, project_path, dan task bertahan saat task ditutup", async (t) => {
   if (lewati(t)) return;
   await bersihkan();
 
@@ -173,7 +173,7 @@ test("project_name dan project_path bertahan saat task ditutup", async (t) => {
   const row = await baca(DASAR.sessionKey);
   assert.equal(row.project_name, "proyek");
   assert.equal(row.project_path, "/code/proyek");
-  assert.equal(row.task, "", "task tetap boleh dikosongkan");
+  assert.equal(row.task, "kerja", "task tidak boleh hilang saat ditutup");
 });
 
 test("started_at tidak hilang oleh laporan tanpa waktu mulai", async (t) => {

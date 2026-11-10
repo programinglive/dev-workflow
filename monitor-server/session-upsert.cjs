@@ -137,9 +137,11 @@ function buildSessionUpsert(body = {}) {
            -- boleh menghapus lokasi proyek yang sudah tercatat.
            repo_path=COALESCE(NULLIF(EXCLUDED.repo_path, ''), sessions.repo_path),
            repo_remote=COALESCE(NULLIF(EXCLUDED.repo_remote, ''), sessions.repo_remote),
-           -- Kolom "task" SENGAJA tidak dilindungi: mengosongkannya adalah cara
-           -- sah menutup task.
-           task=EXCLUDED.task, task_type=EXCLUDED.task_type, phase=EXCLUDED.phase,
+            -- Task description juga identitas kartu: saat complete_task dipanggil,
+           -- state lokal di-reset menjadi kosong, tetapi kartu di monitor dan
+           -- riwayat harus tetap menampilkan nama task yang baru selesai, bukan
+           -- berubah menjadi "(tanpa task)" atau hanya judul chat.
+           task=COALESCE(NULLIF(EXCLUDED.task, ''), sessions.task), task_type=COALESCE(NULLIF(EXCLUDED.task_type, ''), sessions.task_type), phase=EXCLUDED.phase,
            workflow_task_id=CASE WHEN ${newTask} THEN EXCLUDED.workflow_task_id
              ELSE COALESCE(NULLIF(EXCLUDED.workflow_task_id, ''), sessions.workflow_task_id) END,
            task_origin_json=CASE

@@ -9,93 +9,77 @@ const { buildSessionUpsert } = require("../monitor-server/session-upsert.cjs");
 const { emptySessionPredicate } = require("../monitor-server/empty-session.cjs");
 
 /**
- * Owner instruction, 10 November 2026: "A session without a title does not need
- * to be recorded because it cannot be used in a report; treat it as junk, clean
- * it, and make sure it does not happen again."
+ * Owner instruction, 10 November 2026: "still showing tanpa task and in the recap
+ * tab still showing tanpa project — that is wrong; without a task it cannot be
+ * reported as a report, and without a project we must make this MCP know that is
+ * not allowed."
  *
- * The rule: a session with NO task AND NO title carries no information. It must
- * not be stored, must not appear in recap or history, and existing rows must be
- * removable. A session with EITHER a task or a title is real work and stays.
+ * The rule: a session is worth reporting ONLY when it has BOTH a non-empty task
+ * AND a non-empty project_name. A session missing either task or project is not
+ * a valid task report: it must not be created as a card, must not appear in
+ * active, recap or history, and existing incomplete rows must be removable.
  */
 
-test("the shared predicate requires both task and title to be empty", () => {
+test("the shared empty-session predicate matches rows missing task OR project_name", () => {
   const sql = emptySessionPredicate();
   assert.match(sql, /task/);
-  assert.match(sql, /session_title/);
+  assert.match(sql, /project_name/);
   assert.match(sql, /BTRIM/);
+  assert.match(sql, /\bOR\b/i);
 });
 
-test("history excludes sessions that have neither task nor title", () => {
+test("worthReportingPredicate requires BOTH non-empty task AND non-empty project_name", () => {
+  const { worthReportingPredicate } = require("../monitor-server/empty-session.cjs");
+  const sql = worthReportingPredicate().toLowerCase();
+  assert.match(sql, /nullif\(btrim\(task\),\s*''\)\s+is not null/);
+  assert.match(sql, /nullif\(btrim\(project_name\),\s*''\)\s+is not null/);
+  assert.match(sql, /\band\b/);
+  assert.ok(!sql.includes("or nullif(btrim(session_title)"), "session_title alone must never qualify a session without a task");
+});
+
+test("history excludes sessions missing task or project_name", () => {
   const { sql } = buildHistoryQuery({ historyDays: 7 });
   const lower = sql.toLowerCase();
-  assert.ok(
-    lower.includes("btrim(task)") || lower.includes("nullif(btrim(task)"),
-    "history must test the task column for emptiness"
-  );
-  assert.ok(
-    lower.includes("session_title"),
-    "history must test the session title for emptiness"
-  );
-  assert.ok(lower.includes("is not null"), "history must require at least one of them");
+  assert.match(lower, /nullif\(btrim\(task\),\s*''\)\s+is not null/);
+  assert.match(lower, /nullif\(btrim\(project_name\),\s*''\)\s+is not null/);
 });
 
-test("recap excludes sessions that have neither task nor title", () => {
+test("recap excludes sessions missing task or project_name and never produces (tanpa proyek)", () => {
   const { sql } = buildProjectSummaryQuery({ days: 7 });
   const lower = sql.toLowerCase();
-  assert.ok(lower.includes("session_title"), "recap must test the session title");
-  assert.ok(lower.includes("is not null"), "recap must require at least one of them");
+  assert.match(lower, /nullif\(btrim\(task\),\s*''\)\s+is not null/);
+  assert.match(lower, /nullif\(btrim\(project_name\),\s*''\)\s+is not null/);
+  assert.doesNotMatch(sql, /\(tanpa proyek\)/);
 });
 
-test("recap still counts a session that has only a title", () => {
-  const { sql } = buildProjectSummaryQuery({ days: 7 });
-  // The filter must be an OR of both fields, never an AND.
-  const filter = sql.toLowerCase();
-  const orBetween = /\(\s*nullif\(btrim\(task\)[^)]*\)\s+is not null\s+or\s+nullif\(btrim\(session_title\)[^)]*\)\s+is not null\s*\)/.test(filter)
-    || (filter.includes(" or ") && filter.includes("session_title"));
-  assert.ok(orBetween, "the filter must keep a row that has only one of the two fields");
-});
-
-test("ingestion refuses to CREATE a report with no task, no title and no project", () => {
+test("ingestion refuses to CREATE a report when task or project is missing", () => {
   const { shouldSkipCreate } = require("../monitor-server/empty-session.cjs");
   assert.equal(shouldSkipCreate({ task: "", sessionTitle: "", projectName: "", projectPath: "" }, false), true);
+  assert.equal(shouldSkipCreate({ task: "", sessionTitle: "Watching the build", projectName: "clinic" }, false), true);
+  assert.equal(shouldSkipCreate({ task: "Fix the recap", sessionTitle: "", projectName: "", projectPath: "" }, false), true);
+  assert.equal(shouldSkipCreate({ task: "Fix the recap", sessionTitle: "", projectName: "dev-workflow-mcp-server" }, false), false);
 });
 
 test("a sparse report for an existing row is still accepted", () => {
   // Closing a task sends an empty task on purpose to keep identity and
-  // relations. That must never be skipped.
+  // relations. That must never be skipped when updating an existing row.
   const { shouldSkipCreate } = require("../monitor-server/empty-session.cjs");
   assert.equal(shouldSkipCreate({ task: "", sessionTitle: "" }, true), false);
 });
 
-test("the SQL builder still accepts a sparse report so a task can be closed", () => {
+test("the SQL builder preserves existing task text when closing sends empty task", () => {
   const { sql } = buildSessionUpsert({ sessionKey: "ses_close", task: "", sessionTitle: "" });
   assert.ok(sql.includes("INSERT INTO sessions"));
+  assert.match(sql, /task=COALESCE\(NULLIF\(EXCLUDED\.task, ''\), sessions\.task\)/);
 });
 
-test("a first report with a project but no task is still recorded", () => {
-  const { shouldSkipCreate } = require("../monitor-server/empty-session.cjs");
-  assert.equal(shouldSkipCreate({ task: "", sessionTitle: "", projectName: "dev-workflow-mcp-server" }, false), false);
-});
-
-test("a first report with only a title is recorded", () => {
-  const { shouldSkipCreate } = require("../monitor-server/empty-session.cjs");
-  assert.equal(shouldSkipCreate({ task: "", sessionTitle: "Watching the build" }, false), false);
-});
-
-test("a first report with only a task is recorded", () => {
-  const { shouldSkipCreate } = require("../monitor-server/empty-session.cjs");
-  assert.equal(shouldSkipCreate({ task: "Fix the recap", sessionTitle: "" }, false), false);
-});
-
-test("the cleanup deletes only junk rows and is bounded", () => {
+test("the cleanup deletes rows missing task or project_name and is bounded", () => {
   const { buildEmptySessionCleanup } = require("../monitor-server/empty-session.cjs");
   const { sql, params } = buildEmptySessionCleanup({ limit: 250, olderThanMinutes: 60 });
   const lower = sql.toLowerCase();
   assert.match(lower, /delete from sessions/);
-  // The junk predicate must be present, so a real card is never matched.
-  assert.match(lower, /btrim\(session_title\)/);
-  // A card keeps its task_id even when the task text was cleared on close.
-  assert.match(lower, /coalesce\(task_id, ''\) = ''/);
+  assert.match(lower, /btrim\(task\)/);
+  assert.match(lower, /btrim\(project_name\)/);
   assert.equal(params[1], 250);
   assert.equal(params[0], "60");
 });
@@ -106,18 +90,10 @@ test("the cleanup limit cannot be unbounded", () => {
   assert.ok(Number(huge.params[1]) <= 5000);
 });
 
-test("the cleanup refuses to touch a row that carries a task id", () => {
-  const { buildEmptySessionCleanup } = require("../monitor-server/empty-session.cjs");
-  const { sql } = buildEmptySessionCleanup();
-  // A closed task keeps task_id and its relations; deleting it would erase a
-  // real card from recap and history.
-  assert.match(sql.toLowerCase(), /coalesce\(task_id, ''\) = ''/);
-});
-
-test("the README states that a session with no task and no title is junk", () => {
+test("the README states that a session without task or project is not recorded", () => {
   const { readFileSync } = require("node:fs");
   const readme = readFileSync("README.md", "utf8");
   assert.match(readme, /Junk sessions are not recorded/i);
   assert.match(readme, /cleanup-empty-sessions\.cjs/);
-  assert.match(readme, /either\*\* a task \*\*or\*\* a title/i);
+  assert.match(readme, /both\*\* a task \*\*and\*\* a project/i);
 });

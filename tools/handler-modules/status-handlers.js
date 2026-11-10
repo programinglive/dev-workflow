@@ -388,7 +388,9 @@ export async function handleListActiveSessions(args = {}, context = {}) {
     return textResponse(`⚠️ Gagal mengambil daftar sesi dari monitor:\n${result.error}`);
   }
 
-  let sessions = result.sessions || [];
+  let sessions = (result.sessions || []).filter(
+    (s) => String(s?.task || "").trim() !== "" && String(s?.project_name || "").trim() !== "",
+  );
   if (filterMachine) {
     sessions = sessions.filter((s) => String(s.machine || "").toLowerCase().includes(filterMachine));
   }
