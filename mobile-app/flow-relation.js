@@ -21,7 +21,20 @@ export function punyaTask(session) {
   return Boolean(String((session && (session.task || session.session_title)) || "").trim());
 }
 
+/**
+ * A token that changes once per app launch.
+ *
+ * The tablet cached a 404 for the flow image and never asked again, even after
+ * the server started serving it: the URL was identical, so the image loader
+ * answered from its failure cache. A per-launch token makes every start a new
+ * URL, so a failure cannot outlive the session that caused it, while a running
+ * session still reuses the image it already has.
+ */
+const LAUNCH_TOKEN = Date.now().toString(36);
+
 /** The raster copy the tablet can draw; `<Image>` cannot render SVG. */
-export function urlThumbnail(baseUrl, drawingId) {
-  return String(baseUrl).replace(/\/+$/, "") + "/api/drawings/" + encodeURIComponent(drawingId) + "/thumbnail.png";
+export function urlThumbnail(baseUrl, drawingId, token = LAUNCH_TOKEN) {
+  const base = String(baseUrl).replace(/\/+$/, "");
+  return base + "/api/drawings/" + encodeURIComponent(drawingId) +
+    "/thumbnail.png?v=" + encodeURIComponent(token);
 }
