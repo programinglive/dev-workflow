@@ -42,8 +42,15 @@ jobs:
     steps:
       - name: Checkout verified main commit
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
       - name: Deploy monitor through the dedicated identity
         shell: bash
         env:
           MONITOR_DEPLOY_SSH_KEY: ${{ secrets.MONITOR_DEPLOY_SSH_KEY }}
-        run: bash scripts/deploy-monitor.sh
+        run: |
+          if git diff --name-only HEAD^ HEAD -- monitor-server/ scripts/deploy-monitor.sh | grep -q .; then
+            bash scripts/deploy-monitor.sh
+          else
+            echo "Monitor artifacts unchanged; skip deployment"
+          fi

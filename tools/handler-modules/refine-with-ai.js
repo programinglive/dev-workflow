@@ -4,6 +4,20 @@ import { validateItemTexts, nextItemId } from './dod.js';
 
 const MAX_CONTEXT = 8000;
 
+function validatedBugContext(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const fields = ['symptom', 'observed', 'expected', 'evidence', 'constraints'];
+  if (fields.some(key => typeof value[key] !== 'string' || value[key].trim().length < 10 || value[key].length > 1000)) return null;
+  if (!Array.isArray(value.reproduction) || value.reproduction.length < 1 || value.reproduction.length > 10 ||
+      value.reproduction.some(step => typeof step !== 'string' || step.trim().length < 5 || step.length > 300)) return null;
+  return {
+    symptom: value.symptom.trim(),
+    reproduction: value.reproduction.map(step => step.trim()),
+    observed: value.observed.trim(), expected: value.expected.trim(),
+    evidence: value.evidence.trim(), constraints: value.constraints.trim(),
+  };
+}
+
 export async function handleRefineWithAi(args, workflowState) {
   const state = workflowState?.state;
   if (!state || state.currentPhase === 'idle' || !state.workflowTaskId) {
@@ -19,6 +33,10 @@ export async function handleRefineWithAi(args, workflowState) {
   if (description.length < 20 || description.length > 2000 || newContext.length < 10 || newContext.length > 4000 || !plan.ok || !dod.ok) {
     return { ...textResponse(`Provide a complete revised description, new context, plan, and definition of done. ${plan.error || dod.error || ''}`), isError: true };
   }
+  const bugContext = args.bugContext === undefined ? null : validatedBugContext(args.bugContext);
+  if ((state.taskType === 'bugfix' || args.bugContext !== undefined) && !bugContext) {
+    return { ...textResponse('Bugfix refinement requires symptom, reproduction steps, observed and expected behavior, evidence, and constraints.'), isError: true };
+  }
 
   const oldPlan = normalizePlan(state.plan);
   const doneSteps = new Map(oldPlan.filter(item => item.status === 'done').map(item => [item.text.toLowerCase(), item]));
@@ -31,7 +49,8 @@ export async function handleRefineWithAi(args, workflowState) {
   const sameContext = previous.lastContext === newContext;
   if (sameContext && state.taskDescription === description &&
       oldPlan.map(item => item.text).join('\n') === plan.items.join('\n') &&
-      oldDod.map(item => item.text).join('\n') === dod.items.join('\n')) {
+      oldDod.map(item => item.text).join('\n') === dod.items.join('\n') &&
+      JSON.stringify(previous.bugContext || null) === JSON.stringify(bugContext)) {
     return textResponse(`Refinement revision ${previous.revision} is already saved for canonical task ${state.workflowTaskId}.`);
   }
   const byText = new Map(oldDod.map(item => [item.text.toLowerCase(), item]));
@@ -67,6 +86,7 @@ export async function handleRefineWithAi(args, workflowState) {
     previousDescription: originalDescription,
     context,
     lastContext: newContext,
+    ...(bugContext ? { bugContext } : {}),
     revision: (Number(previous.revision) || 0) + 1,
     updatedAt: new Date().toISOString(),
   };
@@ -84,5 +104,6 @@ export async function handleRefineWithAi(args, workflowState) {
     }
     throw error;
   }
-  return textResponse(`Refined canonical task ${state.workflowTaskId} (revision ${state.refinement.revision}).\nDescription: ${description}\nPrior description: ${originalDescription}\nContext: ${context}\nPlan:\n${revisedPlan.map(item => `- [${item.status === 'done' ? 'x' : ' '}] ${item.text}`).join('\n')}\nDefinition of done:\n${revisedDod.map(item => `- [${item.status === 'done' ? 'x' : ' '}] ${item.text}`).join('\n')}\nNext: follow the revised plan and preserve the linked Todo #${state.zettly?.todoId || 'pending'}.`);
+  const investigation = bugContext ? `\nBug investigation:\nSymptom: ${bugContext.symptom}\nReproduction: ${bugContext.reproduction.join(' -> ')}\nObserved: ${bugContext.observed}\nExpected: ${bugContext.expected}\nEvidence: ${bugContext.evidence}\nConstraints: ${bugContext.constraints}` : '';
+  return textResponse(`Refined canonical task ${state.workflowTaskId} (revision ${state.refinement.revision}).\nDescription: ${description}\nPrior description: ${originalDescription}\nContext: ${context}${investigation}\nPlan:\n${revisedPlan.map(item => `- [${item.status === 'done' ? 'x' : ' '}] ${item.text}`).join('\n')}\nDefinition of done:\n${revisedDod.map(item => `- [${item.status === 'done' ? 'x' : ' '}] ${item.text}`).join('\n')}\nNext: follow the revised plan and preserve the linked Todo #${state.zettly?.todoId || 'pending'}.`);
 }
