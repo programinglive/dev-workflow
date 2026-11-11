@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -37,6 +38,10 @@ const originalDbPath = process.env.DEV_WORKFLOW_DB_PATH;
 async function withProject(callback) {
   const projectRoot = await mkdtemp(path.join(tmpdir(), "session-meta-"));
   await writeFile(path.join(projectRoot, "package.json"), JSON.stringify({ name: "fixture" }));
+  execFileSync("git", ["init", "-q", "-b", "main"], { cwd: projectRoot });
+  execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: projectRoot });
+  execFileSync("git", ["config", "user.name", "Test"], { cwd: projectRoot });
+  execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "init"], { cwd: projectRoot });
 
   if (!process.env.DEV_WORKFLOW_DB_PATH) {
     process.env.DEV_WORKFLOW_DB_PATH = path.join(tmpdir(), `session-meta-tests-${process.pid}.db`);

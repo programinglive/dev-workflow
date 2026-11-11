@@ -208,6 +208,14 @@ const PAGE = `<!doctype html>
   .build-badge.succeeded { background:#2ea04326; color:#3fb950; border:1px solid #2ea04366; }
   .build-badge.failed { background:#f8514926; color:#ff7b72; border:1px solid #f8514966; }
   .build-target { font-weight:700; font-size:14px; color:#f0f6fc; margin-top:6px; }
+  .build-job-link {
+    display:inline-flex; align-items:center; gap:4px; font-size:11px; font-weight:600;
+    color:#58a6ff; text-decoration:none; padding:2px 7px; border-radius:6px;
+    background:#1f6feb22; border:1px solid #1f6feb44; transition:background .15s, border-color .15s;
+  }
+  .build-job-link:hover {
+    background:#1f6feb44; border-color:#58a6ff; text-decoration:none; color:#79c0ff;
+  }
   .build-location { color:#a5d6ff; font-size:12px; font-weight:600; margin-top:7px; overflow-wrap:anywhere; }
   .build-stage { font-size:12px; color:#a5d6ff; margin-top:3px; }
   .build-cmd { margin-top:8px; padding:7px 9px; background:#05080c; border:1px solid #1b222c;
@@ -636,10 +644,24 @@ function renderBuildBox(ab, jNow, machine) {
   const elapsed = ab.startedAt ? durasiDetik(ab.startedAt, ab.finishedAt ? new Date(ab.finishedAt).getTime() : jNow) : '';
   const liveAttr = (isRunning && ab.startedAt) ? ' data-live-start="' + esc(ab.startedAt) + '"' : '';
   const eta = renderEta(ab, jNow);
+  const rawJobUrl = ab.jobUrl || ab.url || ab.buildUrl || '';
+  let validJobUrl = '';
+  if (rawJobUrl) {
+    try {
+      const u = new URL(rawJobUrl);
+      if (u.protocol === 'http:' || u.protocol === 'https:') validJobUrl = u.href;
+    } catch {}
+  }
+  const jobLink = validJobUrl
+    ? '<a href="' + esc(validJobUrl) + '" target="_blank" rel="noopener noreferrer" class="build-job-link" onclick="event.stopPropagation()">🔗 Buka Job Runner ↗</a>'
+    : '';
   return '<div class="build-card ' + esc(st) + '" style="margin-top:10px">' +
     '<div class="row" style="justify-content:space-between;align-items:center">' +
       '<span class="build-badge ' + esc(st) + '">' + labelBuildStatus(st) + '</span>' +
-      (elapsed ? '<span class="meta"' + liveAttr + '>⏱ ' + esc(elapsed) + '</span>' : '') +
+      '<div style="display:flex;align-items:center;gap:8px">' +
+        jobLink +
+        (elapsed ? '<span class="meta"' + liveAttr + '>⏱ ' + esc(elapsed) + '</span>' : '') +
+      '</div>' +
     '</div>' +
     '<div class="build-target">🏗️ ' + esc(ab.target) + '</div>' +
     renderBuildLocation(ab, machine) +
@@ -857,10 +879,16 @@ function renderBuildMonitor(activeSessions, jNow) {
         const barCls = (!hasPct && isRunning) ? 'build-bar indeterminate' : 'build-bar';
         const elapsed = ab.startedAt ? durasiDetik(ab.startedAt, ab.finishedAt ? new Date(ab.finishedAt).getTime() : jNow) : '';
         const liveAttr = (isRunning && ab.startedAt) ? ' data-live-start="' + esc(ab.startedAt) + '"' : '';
+        const heroJobLink = ab.jobUrl
+          ? '<a href="' + esc(ab.jobUrl) + '" target="_blank" rel="noopener noreferrer" class="build-job-link" onclick="event.stopPropagation()">🔗 Job ↗</a>'
+          : '';
         return '<div class="build-card ' + esc(st) + '" data-session-key="' + esc(s.session_key) + '">' +
           '<div class="row" style="justify-content:space-between;align-items:center">' +
             '<span class="build-badge ' + esc(st) + '">' + labelBuildStatus(st) + '</span>' +
-            '<span class="proj-pill">' + esc(s.machine) + ' · ' + esc(s.project_name || 'proyek') + '</span>' +
+            '<div style="display:flex;align-items:center;gap:6px">' +
+              heroJobLink +
+              '<span class="proj-pill">' + esc(s.machine) + ' · ' + esc(s.project_name || 'proyek') + '</span>' +
+            '</div>' +
           '</div>' +
           '<div class="build-target">' + esc(ab.target) + '</div>' +
           renderBuildLocation(ab, s.machine) +

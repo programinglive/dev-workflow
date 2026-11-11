@@ -712,6 +712,11 @@ function Kartu({ s, jamServer, onPress }) {
           <Text style={gaya.buildTarget} numberOfLines={2}>
             🏗️ {s.active_build.target}
           </Text>
+          {s.active_build.jobUrl ? (
+            <Pressable onPress={() => Linking.openURL(s.active_build.jobUrl)} hitSlop={8}>
+              <Text style={gaya.buildJobLink}>🔗 Buka Job Runner ↗</Text>
+            </Pressable>
+          ) : null}
           {/* No reporter: the card meta line above already names the machine,
               so repeating it here would say HELLOWORLD twice. */}
           <Text style={gaya.buildHost} numberOfLines={1}>
@@ -955,6 +960,11 @@ function DetailSesi({ s, jamServer, onClose }) {
               <View style={gaya.buildDetail}>
                 <Text style={gaya.bagianJudul}>Build · {buildStatusLabel(s.active_build.status)}</Text>
                 <Text style={gaya.buildTarget}>{s.active_build.target}</Text>
+          {s.active_build.jobUrl ? (
+            <Pressable onPress={() => Linking.openURL(s.active_build.jobUrl)} hitSlop={8} style={{ marginTop: 4 }}>
+              <Text style={gaya.buildJobLink}>🔗 Buka Job Runner ↗</Text>
+            </Pressable>
+          ) : null}
                 <Text style={gaya.buildHost}>{buildLocation(s.active_build, s.machine)}</Text>
                 {s.active_build.stage ? <Text style={gaya.buildStage}>{s.active_build.stage}</Text> : null}
                 {Number.isFinite(s.active_build.progress) ? <Text style={gaya.buildFooter}>Progres {Math.round(s.active_build.progress)}%</Text> : null}
@@ -1078,6 +1088,7 @@ const gaya = StyleSheet.create({
   buildStatus: { fontSize: 11, fontWeight: "700", letterSpacing: 0.5 },
   buildProject: { color: WARNA.redup, fontSize: 12, flexShrink: 1 },
   buildTarget: { color: WARNA.teks, fontSize: 16, fontWeight: "700", marginTop: 8 },
+  buildJobLink: { color: WARNA.biruMuda, fontSize: 12, marginTop: 4, fontWeight: "600" },
   buildHost: { color: WARNA.biruMuda, fontSize: 12, fontWeight: "600", marginTop: 7 },
   buildStage: { color: "#b9c3cf", fontSize: 12, marginTop: 8 },
   buildFooter: { color: WARNA.redup, fontSize: 11, marginTop: 8 },
