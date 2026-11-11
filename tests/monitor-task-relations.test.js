@@ -34,6 +34,7 @@ test('sparse completion preserves provenance while a new workflow ID or task tit
     repo_path TEXT DEFAULT '', repo_remote TEXT DEFAULT '',
     release_version TEXT DEFAULT '', release_revision TEXT DEFAULT '',
     toolchain_json TEXT DEFAULT '{}',
+    refinement_json TEXT,
     parent_task_id TEXT, parent_task_title TEXT,
     PRIMARY KEY (session_key, task_id)
   )`);

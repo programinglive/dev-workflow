@@ -1086,7 +1086,14 @@ export async function handleReportBuildStatus(args = {}, workflowState) {
   await reportEventSafe(workflowState.state, eventKind, JSON.stringify(next), workflowState._sessionKey().key);
 
   const block = formatBuildStatusBlock(next, workflowState.state.buildHistory);
-  return textResponse(`✅ Build status recorded!\n\n${block}`);
+  // A build card without a URL is a dead end: the reader can see that something
+  // ran but cannot open it. Say so at the moment the report is made, while the
+  // caller still has the pipeline page in hand.
+  const urlHint = next.jobUrl
+    ? ''
+    : '\n\nNo job URL recorded, so the monitor card has no link. Pass `jobUrl` ' +
+      '(the pipeline or job page) when the build runs in CI.';
+  return textResponse(`? Build status recorded!\n\n${block}${urlHint}`);
 }
 
 
