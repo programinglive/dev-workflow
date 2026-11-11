@@ -166,7 +166,7 @@ See [MCP client configuration](#mcp-client-configuration).
 | `start_task` | Begin a task; requires `definitionOfDone` and `plan`; automatically creates or links its Zettly Todo |
 | `refine_with_ai` | After the flow gate, submit complete AI-rewritten task instructions using new and prior context; bugfixes require reproduction, expected and observed behavior, evidence, and constraints; updates the same task and Todo, retaining proven evidence |
 | `recommend_mcp_tools` | Central discovery index and context-aware recommender for all MCP servers and tools (`central-gateway`, `pocketbase`, `infra-knowledge`, `notify`, `factory`, `zettly`, `clinic-helper`, `playwright`, `gcp`, `cloudflare`, `netlify`, `mermaid`) |
-| `report_build_status` | Report live build, test, security scan, or deployment progress (`building`, `testing`, `scanning`, `deploying`, `succeeded`, `failed`, `idle`) with target, command, stage, progress percentage, and output snippet |
+| `report_build_status` | Report live build, test, security scan, or deployment progress (`building`, `testing`, `scanning`, `deploying`, `succeeded`, `failed`, `idle`) with target, command, stage, progress percentage, output snippet, and runner job URL |
 | `sync_zettly_task` | Retry pending Zettly task/outcome synchronization or link an existing Todo |
 | `set_plan` | Replace the work plan of the running task |
 | `search_project` | Search bounded local text in the active repo; returns sanitized path:line citations |
@@ -317,6 +317,8 @@ When a session runs a build, test suite, container image build, security scan, o
 {
   "status": "building",
   "target": "clinic-app:v0.2.11 + Trivy Scan",
+  "buildHost": "builder-vm",
+  "jobUrl": "https://gitlab.com/beautyworld_repository/clinic/-/jobs/12345",
   "command": "docker build -t clinic-app:v0.2.11 . && trivy image clinic-app:v0.2.11",
   "stage": "Step 2/4: Compiling Vite frontend assets",
   "progress": 50,

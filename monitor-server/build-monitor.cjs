@@ -20,6 +20,19 @@ function cleanStr(val, maxLen = 400) {
   return String(val).trim().slice(0, maxLen);
 }
 
+function validateJobUrl(val) {
+  if (val === null || val === undefined) return '';
+  const str = String(val).trim();
+  if (!str) return '';
+  try {
+    const u = new URL(str);
+    if (u.protocol === 'http:' || u.protocol === 'https:') {
+      return u.href;
+    }
+  } catch {}
+  return '';
+}
+
 function extractHostFromCommand(cmd) {
   if (typeof cmd !== 'string' || !cmd.trim()) return '';
   const cleanCmd = cmd.trim();
@@ -156,6 +169,24 @@ function normalizeBuildState(input = {}, existing = null) {
   const updatedAt = cleanStr(input.updatedAt || nowIso, 64);
   const finishedAt = isTerminal ? cleanStr(input.finishedAt || nowIso, 64) : '';
 
+  const isSameBuild = !input.target || input.target === prev.target;
+  const rawJobUrl = input.jobUrl !== undefined
+    ? input.jobUrl
+    : input.url !== undefined
+      ? input.url
+      : input.buildUrl !== undefined
+        ? input.buildUrl
+        : isSameBuild
+          ? prev.jobUrl
+          : '';
+  let jobUrl = validateJobUrl(rawJobUrl);
+  if (!jobUrl) {
+    const envUrl = (typeof process !== 'undefined' && process.env)
+      ? (process.env.CI_JOB_URL || process.env.BUILD_URL || '')
+      : '';
+    jobUrl = validateJobUrl(envUrl);
+  }
+
   return {
     status,
     target,
@@ -165,6 +196,7 @@ function normalizeBuildState(input = {}, existing = null) {
     progress,
     output,
     testCases,
+    jobUrl,
     startedAt,
     updatedAt,
     finishedAt,
@@ -281,6 +313,7 @@ function formatBuildStatusBlock(activeBuild, buildHistory = []) {
     `- **Target**: \`${activeBuild.target}\``,
   ];
   if (activeBuild.buildHost) lines.push(`- **Build host**: ${activeBuild.buildHost}`);
+  if (activeBuild.jobUrl) lines.push(`- **Runner / Job URL**: ${activeBuild.jobUrl}`);
 
   if (activeBuild.stage) {
     lines.push(`- **Current Stage**: ${activeBuild.stage}`);
@@ -336,7 +369,7 @@ function parseEventDetail(detail) {
   if (detail === null || detail === undefined) return { isBuild: false, data: null, text: '' };
   if (typeof detail === 'object') {
     const isBuild = Boolean(
-      detail.target || detail.command || detail.stage || detail.buildHost || detail.status || detail.progress !== undefined || detail.output
+      detail.target || detail.command || detail.stage || detail.buildHost || detail.status || detail.progress !== undefined || detail.output || detail.jobUrl || detail.url || detail.buildUrl
     );
     return {
       isBuild,
@@ -350,7 +383,7 @@ function parseEventDetail(detail) {
       const obj = JSON.parse(str);
       if (obj && typeof obj === 'object') {
         const isBuild = Boolean(
-          obj.target || obj.command || obj.stage || obj.buildHost || obj.status || obj.progress !== undefined || obj.output
+          obj.target || obj.command || obj.stage || obj.buildHost || obj.status || obj.progress !== undefined || obj.output || obj.jobUrl || obj.url || obj.buildUrl
         );
         return {
           isBuild,

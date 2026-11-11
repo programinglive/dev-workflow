@@ -71,3 +71,9 @@ test("the build section sits above the flow diagram so it is visible without scr
   assert.ok(buildAt !== -1 && flowAt !== -1, "both sections must exist");
   assert.ok(buildAt < flowAt, "build status must come before the flow diagram");
 });
+
+test("the card renders a clickable runner job link when active_build.jobUrl is present", () => {
+  const kartu = kartuSource();
+  assert.match(kartu, /s\.active_build\.jobUrl/, "card must check active_build.jobUrl");
+  assert.match(kartu, /Linking\.openURL\(s\.active_build\.jobUrl\)/, "card must link to runner job URL");
+});

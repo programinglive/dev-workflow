@@ -1242,6 +1242,11 @@ export function getToolList() {
             maxLength: 120,
             description: "Actual machine or server executing the build. Set explicitly for remote builds; do not use the deploy destination unless it also executes the build.",
           },
+          jobUrl: {
+            type: "string",
+            maxLength: 500,
+            description: "Direct URL to the active CI/CD runner or build job (e.g. 'https://gitlab.com/.../-/jobs/12345', 'https://github.com/.../actions/runs/...').",
+          },
           command: {
             type: "string",
             description: "Optional command line being executed (e.g. 'npm run build', 'docker build -t app:latest .').",
