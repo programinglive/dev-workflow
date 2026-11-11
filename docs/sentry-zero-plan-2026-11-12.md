@@ -22,10 +22,26 @@ ERP-2Z already has a committed fix waiting for a release.
 
 | Level | Open | Notes |
 |---|---|---|
-| error | 9 | 3 owned by another session (memory) |
+| error | 3 | Clinic CI cache path, Clinic deadlock, frontend 404 from localhost |
 | warning | 4 | 1 permission, 3 query insight |
 | info | 11 | N+1 and slow query |
-| fatal | 0 | ERP-2Z fixed, awaiting release |
+| fatal | 0 | ERP-2Z and ERP-7Z fixed and deployed |
+
+## Progress log
+
+| Date | Change | Evidence |
+|---|---|---|
+| 12 Nov | 5 CLI/debugbar issues closed | event titles carried `Command line code:6`; class never had `build()` |
+| 12 Nov | 10 dormant issues closed | explicit last-event date per issue |
+| 12 Nov | ERP-2Z closed | commit `32c23579`, live in v2.41.26, verified on host |
+| 12 Nov | ERP-7Z closed | commit `10d62c39`, live in v2.41.27, 11 null-safe calls verified |
+| 12 Nov | ERP-7W closed | commit `6ec496ad`, migration guard verified live |
+| 12 Nov | TODOAPP-6G closed | `Drawing::tags()` exists since the 10 Nov pivot migration |
+| 12 Nov | POS-CLINIC-DE closed | `newFolderName=0` across all five deployed tenants |
+| 12 Nov | Mac session restored to the monitor | `opencode service restart` on Mac |
+
+Started at 40 open; 18 remain at the last successful read.
+
 
 ---
 
@@ -135,6 +151,82 @@ Order by reported volume, not alphabetically.
 3. Phase 3 (application defects, one release per repo)
 4. Phase 4 (performance, longest; do it last so it never blocks the rest)
 5. Phase 5 and Phase 6
+
+## Hardening: traps this plan must not fall into
+
+These came out of actually attempting the work. Each one is a way to make the
+numbers look better while making the product worse.
+
+### Bulk inserts can silently corrupt stock
+
+The ERP N+1 in `TrTransferstockBTBController` is per-row `create()` inside a
+`foreach`. The obvious fix — `insert($rows)` — is **not** a drop-in replacement:
+
+- each row is built with `(array) $value` from a browser payload, so the key set
+  differs between items;
+- `insert()` requires an identical key set across rows, or MySQL rejects the
+  statement or writes values into the wrong columns;
+- for `ms_Stock` and `tr_TransferStockBTB_D` a misaligned insert means a wrong
+  stock balance, discovered only at period close.
+
+Required sequence before touching stock tables:
+
+1. `Schema::getColumnListing()` for the target table.
+2. Normalise every row to exactly that column set, filling missing keys with
+   `null`; drop unknown keys with `array_intersect_key`.
+3. Wrap the whole document in one transaction.
+4. Measure with `DB::listen()` on a 30-item payload **before and after**, and
+   record both counts.
+5. Reconcile: compare the resulting stock rows against the previous behaviour
+   on the same payload.
+
+If step 5 cannot be done, the change does not ship.
+
+### Never trade the audit trail for a lower count
+
+`LogBatch::withinBatch()` exists so each row's activity entry shares one
+`batch_uuid`. Replacing per-row `create()` calls with `insert()` also removes
+their model events, so the audit rows disappear. The decision recorded for ERP is
+**one activity entry per document**, which matches the original intent
+("one BTB document = one unit of work"). Any other module must make that decision
+explicitly rather than inherit it silently.
+
+### A quiet issue is not a fixed issue
+
+`POS-CLINIC-EB` and the TODOAPP cluster went quiet while the code never changed.
+Closing them on silence alone would have been wrong. Every closure needs one of:
+
+- a commit plus a verified deploy, or
+- a verified state change on the host, stated concretely.
+
+"Stopped reporting" is never sufficient on its own.
+
+### The monitor can lose a healthy session
+
+On 12 Nov the Mac session was running with a healthy MCP, a matching token, a
+current release and working connectivity, yet it did not appear in
+`/api/sessions` at all. `opencode service restart` on Mac made it reappear
+immediately.
+
+Consequence for this plan: **absence from the monitor is not evidence that a
+session is idle.** Before claiming an issue is unowned, check the device directly
+(`pgrep -f ManagedMCP`, then `--resolve-only`). A monitor entry older than the
+heartbeat window must be treated as stale, not as live.
+
+### Development events must not land in the production project
+
+`FRONTEND_ERP-57` reported `/dashboard` on `http://localhost:3000`. A developer
+machine was sending events into the production Sentry project. Fixing the 404 is
+secondary; the DSN scoping is the actual defect, and until it is fixed every
+local error pollutes the same backlog.
+
+### CI must create its own storage tree
+
+`POS-CLINIC-EW` ("Please provide a valid cache path") fired on `bw-tools`, not on
+`bw-app`. A quality job runs `artisan` in a fresh checkout where
+`storage/framework/{cache,sessions,views}` do not exist. The job must create them
+before invoking artisan; resolving the issue without that change guarantees a
+repeat.
 
 ## What "done" means
 
