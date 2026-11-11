@@ -46,7 +46,7 @@ async function linkedTasks(ctx,id) {
  if(!Array.isArray(rows)||rows.length>1000)throw fail('FOCUS_TASK_SCAN_INCOMPLETE','Cannot prove focus completion from an incomplete Todo collection.');
  const ids=new Set();
  for(const row of rows){if(!positive(Number(row.id))||Number(row.user_id)!==ctx.owner.id||typeof row.is_completed!=='boolean'||ids.has(Number(row.id)))throw fail('FOCUS_TASK_SCAN_INCOMPLETE','Todo identity or completion status is unavailable.');ids.add(Number(row.id));}
- return rows.filter(row=>String(row.description||'').includes(focusMarker(id)));
+ return rows.filter(row=>Number(row.focus_id)===Number(id)||String(row.description||'').includes(focusMarker(id)));
 }
 
 export async function prepareTaskFocus(args,options={}) {
@@ -109,15 +109,21 @@ export async function handleFocusTool(name,args={},workflowState,options={}) {
    if(!unchanged())throw fail('FOCUS_TASK_CHANGED','The canonical task changed during focus verification.');
    if(Number(todo.id)!==todoId||Number(todo.user_id)!==ctx.owner.id)throw fail('FOCUS_TASK_OWNER_MISMATCH','The canonical Todo is not owned by the focus owner.');
    const description=typeof todo.description==='string'?todo.description:'';
+   // A legacy marker is still honoured on read so a device that has not been
+   // rolled out yet cannot silently lose its scope.
    const previous=description.match(/<!-- dev-workflow-focus:(\d+) -->/g)||[];
    if(previous.some(marker=>marker!==focusMarker(args.focusId)))throw fail('FOCUS_TASK_ALREADY_LINKED','This task is linked to another focus. Preserve its original scope.');
+   const existingFocusId=todo.focus_id==null?null:Number(todo.focus_id);
+   if(existingFocusId!==null&&existingFocusId!==Number(args.focusId))throw fail('FOCUS_TASK_ALREADY_LINKED','This task is linked to another focus. Preserve its original scope.');
    selected(await activeFocus(ctx),args.focusId);
    if(!unchanged())throw fail('FOCUS_TASK_CHANGED','The canonical task changed before focus linking.');
-   if(!previous.length) {
-    const saved=await ctx.client.request('PATCH','/todos/'+todoId,{description:description+'\n'+focusMarker(args.focusId)});
+   if(existingFocusId===null) {
+    // Write the real relation. The description marker was only ever a
+    // stand-in for this column and is no longer written.
+    const saved=await ctx.client.request('PATCH','/todos/'+todoId,{focus_id:Number(args.focusId)});
     if(Number(saved.data?.id)!==todoId)throw fail('FOCUS_LINK_UNVERIFIED','The Todo focus link could not be verified.');
     const readBack=await ctx.client.request('GET','/todos/'+todoId);
-    if(Number(readBack.data?.id)!==todoId||Number(readBack.data?.user_id)!==ctx.owner.id||!String(readBack.data?.description||'').includes(focusMarker(args.focusId)))throw fail('FOCUS_LINK_UNVERIFIED','The saved focus link was not present on readback.');
+    if(Number(readBack.data?.id)!==todoId||Number(readBack.data?.user_id)!==ctx.owner.id||Number(readBack.data?.focus_id)!==Number(args.focusId))throw fail('FOCUS_LINK_UNVERIFIED','The saved focus link was not present on readback.');
    }
    selected(await activeFocus(ctx),args.focusId);
    if(!unchanged())throw fail('FOCUS_TASK_CHANGED','The canonical task changed after the remote focus link was saved. Read both records before retrying.');
