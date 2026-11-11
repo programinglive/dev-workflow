@@ -85,5 +85,15 @@ for (const device of DEVICES) {
 }
 
 console.log('');
-console.log('Reopen the AI CLI on each device so the launcher resolves the promoted release.');
+console.log('Next step, in this order:');
+console.log('  1. Close every AI CLI window on HELLOWORLD, Mac and MMCH:');
+console.log('       OpenCode  -> close the terminal window running `opencode`');
+console.log('       Codex     -> close the terminal window running `codex`');
+console.log('       AGY       -> close the Antigravity window');
+console.log('  2. Start them again with the same command you used before.');
+console.log('  3. Verify:  node managed/fleet-status.cjs');
+console.log('     ManagedMCP must say "running" and every client must show the same revision.');
+console.log('');
+console.log('The MCP is a child of the CLI, so a running CLI cannot pick up a new release.');
+console.log('Restarting the CLI is the only way, and step 3 proves it worked.');
 process.exitCode = failures > 0 ? 1 : 0;
