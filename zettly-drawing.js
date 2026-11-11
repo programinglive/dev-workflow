@@ -139,7 +139,7 @@ export async function syncZettlyDrawing(workflowState,{client,env=process.env}={
   try{
     const tagNames=deriveTags({taskDescription:state.taskDescription,taskType:state.taskType,projectDir:state.projectDir,taskOrigin:buildTaskProvenance(state)});
     const tagIds=await ensureTags({client,names:tagNames});
-    const payloadWithTags=tagIds.length?{...payload,tag_ids:tagIds}:payload;
+    const payloadWithTags={...payload,...(Number.isSafeInteger(Number(state.focus?.id))&&Number(state.focus.id)>0?{focus_id:Number(state.focus.id)}:{}),...(tagIds.length?{tag_ids:tagIds}:{})};
     response=await client.request(id?'PATCH':'POST',id?`/drawings/${id}`:'/drawings',payloadWithTags);
   }
   catch(error){return {ok:false,note:`Zettly drawing pending: ${error.status?`HTTP ${error.status}`:'connection or response unavailable'}.`};}

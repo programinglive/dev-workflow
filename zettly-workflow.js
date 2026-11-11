@@ -139,7 +139,7 @@ async function syncState(workflowState,state,status,args,options) {
         try {
           const tagNames=deriveTags({taskDescription:state.taskDescription,taskType:state.taskType,projectDir:state.projectDir,taskOrigin:buildTaskProvenance(state)});
           const tagIds=await ensureTags({client,names:tagNames});
-          created=await client.request('POST','/todos',{type:'todo',title:String(sanitize(state.taskDescription)).slice(0,255),description:block,...(tagIds.length?{tag_ids:tagIds}:{})});
+          created=await client.request('POST','/todos',{type:'todo',title:String(sanitize(state.taskDescription)).slice(0,255),description:block,...(state.focus?.id?{focus_id:Number(state.focus.id)}:{}),...(tagIds.length?{tag_ids:tagIds}:{})});
         }
         catch(error){if(error.status&&error.status<500)state.zettly.createAttempted=false;throw error;}
         todo=created.data;
