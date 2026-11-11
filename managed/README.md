@@ -17,20 +17,31 @@ approved Dev Workflow MCP releases.
 
 ## Restarting the fleet
 
-The MCP is a child of the AI CLI. A running CLI cannot be handed a new MCP, so
-"restart" always means: stop the MCP, stop the CLI, start the CLI, verify. There
-is no shortcut, and pretending otherwise is what left devices on old releases.
+The MCP is a child of the AI CLI. It cannot be handed a new release while the
+CLI is running, but **not every client needs a window restart**:
 
-Two commands, run from a checkout of this repository:
+| Client | How a new release is picked up |
+|---|---|
+| OpenCode | `opencode service restart` — the TUI reconnects on its own |
+| Codex | no reload command; close that one app and start it again |
+| Antigravity | no reload command; close that one app and start it again |
+
+One command does the whole fleet:
 
 ```bash
-node managed/restart-devices.cjs   # stops ManagedMCP on HELLOWORLD, Mac and MMCH
-node managed/fleet-status.cjs      # proves what each device and client will run
+node managed/restart-devices.cjs
 ```
 
-`restart-devices.cjs` deliberately does **not** relaunch the CLIs: they are
-interactive terminal programs, and a relaunch over SSH lands in the wrong
-session. It prints the exact per-CLI instruction instead.
+It stops stale ManagedMCP processes on HELLOWORLD, Mac and MMCH, then runs
+`opencode service restart` on each device. Codex and Antigravity are reported as
+needing their own restart rather than being silently skipped. Finally it runs
+`managed/fleet-status.cjs` and prints the table.
+
+**Expect one interrupted tool call on the device you run it from.** Restarting
+the OpenCode service bounces the connection of the session that issued the
+command. The session reconnects and the MCP comes back on the new release; the
+in-flight command is the only casualty. Do not treat that abort as a failure —
+re-run `node managed/fleet-status.cjs` to confirm.
 
 `fleet-status.cjs` answers three questions with facts and never guesses:
 
@@ -47,12 +58,10 @@ is unreachable or a client would resolve a different revision.
 
 When an agent has lost the MCP, do not ask it to "restart". Say:
 
-> Run `node managed/restart-devices.cjs`, then tell me the exact commands I must
-> paste to reopen each CLI, then run `node managed/fleet-status.cjs` and show me
-> the table.
+> Run `node managed/restart-devices.cjs`, then show me the fleet-status table.
 
-That gives the agent three concrete actions and a verifiable end state, so it
-does not have to invent a procedure.
+That gives the agent one command, a known side effect it will not mistake for a
+failure, and a verifiable end state.
 
 ## The manifest
 

@@ -2,31 +2,33 @@
 'use strict';
 
 /**
- * Restart the managed Dev Workflow MCP on every fleet device.
+ * Bring the managed Dev Workflow MCP onto the promoted release on every device.
  *
- * WHY THIS EXISTS
- * ---------------
- * The MCP is a child of the AI CLI. Killing it does not make the CLI spawn it
- * again, and the launcher only picks a release at start. So "restart the MCP"
- * means: kill the ManagedMCP process tree on every device, then reopen the CLI.
- * Doing that by hand, device by device, is how one device was left on an old
- * release while the others were current.
+ * WHAT CHANGED AND WHY
+ * --------------------
+ * This used to only kill ManagedMCP and tell the operator to "reopen the AI
+ * CLI". That left out three facts the operator needs: which CLIs exist, which
+ * of them can reload without closing a window, and how to prove it worked.
  *
- * This script kills the ManagedMCP processes on HELLOWORLD, Mac and MMCH in one
- * command. It does not touch other MCP servers: the match is `ManagedMCP` in the
- * command line, not every node process.
+ * OpenCode owns a background service. `opencode service restart` re-launches the
+ * MCP and the running TUI reconnects on its own, so no window has to be closed.
+ * That path is exercised here, not described.
+ *
+ * Codex and Antigravity spawn their MCP at process start and expose no reload
+ * command. They are reported as "needs its own restart" instead of being ignored,
+ * because silently skipping them is how a device ends up on an old release.
  *
  * Usage:
- *   node managed/restart-devices.cjs
- *
- * After it finishes, reopen the AI CLI on each device. The launcher will resolve
- * the release that `managed/rollout.cjs` promoted.
+ *   node managed/restart-devices.cjs            # reload + verify
+ *   node managed/restart-devices.cjs --no-verify
  */
 
 const os = require('node:os');
+const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
 const LOCAL = os.hostname();
+const SKIP_VERIFY = process.argv.includes('--no-verify');
 
 const DEVICES = [
   { label: 'HELLOWORLD', host: 'helloworld', match: /helloworld/i, platform: 'windows' },
@@ -34,66 +36,103 @@ const DEVICES = [
   { label: 'MMCH', host: 'mmch', match: /mmch/i, platform: 'windows' },
 ];
 
-const WINDOWS_SCRIPT = [
+const WINDOWS_KILL = [
   "Get-CimInstance Win32_Process -Filter \"Name='node.exe'\"",
   "| Where-Object { $_.CommandLine -match 'ManagedMCP' }",
   '| ForEach-Object { Stop-Process -Id $_.ProcessId -Force }',
 ].join(' ');
 
-const WINDOWS_ENCODED = Buffer.from(WINDOWS_SCRIPT, 'utf16le').toString('base64');
-const MAC_SCRIPT = "pkill -f ManagedMCP || true";
+const WINDOWS_RELOAD = [
+  "try { $null = Get-Command opencode -ErrorAction Stop; opencode service restart 2>&1 | Out-String }",
+  "catch { 'OPENCODE_MISSING' }",
+].join(' ');
 
-function run(command, args) {
+const MAC_KILL = 'pkill -f ManagedMCP || true';
+
+const MAC_RELOAD = [
+  'if command -v opencode >/dev/null 2>&1; then',
+  '  opencode service restart 2>&1',
+  'else',
+  '  # nvm keeps node off a non-interactive PATH',
+  '  export PATH="$HOME/.nvm/versions/node/$(ls -1 "$HOME/.nvm/versions/node" 2>/dev/null | tail -1)/bin:$PATH"',
+  '  if command -v opencode >/dev/null 2>&1; then opencode service restart 2>&1; else echo OPENCODE_MISSING; fi',
+  'fi',
+].join('\n');
+
+function run(command, args, timeout = 90000) {
   return execFileSync(command, args, {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
+    timeout,
   }).trim();
 }
 
-function killLocal(platform) {
-  if (platform === 'windows') {
-    run('powershell', ['-NoProfile', '-EncodedCommand', WINDOWS_ENCODED]);
-  } else {
-    run('sh', ['-c', MAC_SCRIPT]);
-  }
+function encoded(script) {
+  return Buffer.from(script, 'utf16le').toString('base64');
 }
 
-function killRemote(device) {
+function onDevice(device, script, macScript) {
+  const isLocal = device.match.test(LOCAL);
   if (device.platform === 'windows') {
-    run('ssh', ['-o', 'BatchMode=yes', device.host, 'powershell', '-NoProfile', '-EncodedCommand', WINDOWS_ENCODED]);
-  } else {
-    run('ssh', ['-o', 'BatchMode=yes', device.host, MAC_SCRIPT]);
+    const args = ['-NoProfile', '-EncodedCommand', encoded(script)];
+    return isLocal ? run('powershell', args) : run('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', device.host, 'powershell', ...args]);
   }
+  const payload = Buffer.from(macScript, 'utf8').toString('base64');
+  const remote = `echo ${payload} | base64 -d | sh`;
+  return isLocal ? run('sh', ['-c', macScript]) : run('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', device.host, remote]);
 }
 
 let failures = 0;
 
+console.log('Dev Workflow MCP — reload to the promoted release');
+console.log('='.repeat(60));
+
 for (const device of DEVICES) {
   const isLocal = device.match.test(LOCAL);
+  const suffix = isLocal ? ' (local)' : '';
+
+  // Stale processes hold the old build in memory and must go first.
   try {
-    if (isLocal) {
-      killLocal(device.platform);
-    } else {
-      killRemote(device);
-    }
-    console.log(`  ✅ ${device.label}${isLocal ? ' (local)' : ''}: ManagedMCP processes stopped`);
+    onDevice(device, WINDOWS_KILL, MAC_KILL);
+    console.log(`\n${device.label}${suffix}`);
+    console.log('  stale ManagedMCP processes stopped');
   } catch (error) {
     failures += 1;
-    console.log(`  ⚠️ ${device.label}: ${error.message}`);
+    console.log(`\n${device.label}${suffix}`);
+    console.log(`  ! could not stop ManagedMCP: ${error.message.split('\n')[0]}`);
+    continue;
+  }
+
+  // OpenCode reloads through its own service; nothing is closed.
+  try {
+    const output = onDevice(device, WINDOWS_RELOAD, MAC_RELOAD);
+    if (output.includes('OPENCODE_MISSING')) {
+      console.log('  OpenCode  - not installed on this device');
+    } else {
+      console.log('  OpenCode  - reloaded via `opencode service restart`');
+    }
+  } catch (error) {
+    failures += 1;
+    console.log(`  OpenCode  - reload failed: ${error.message.split('\n')[0]}`);
   }
 }
 
-console.log('');
-console.log('Next step, in this order:');
-console.log('  1. Close every AI CLI window on HELLOWORLD, Mac and MMCH:');
-console.log('       OpenCode  -> close the terminal window running `opencode`');
-console.log('       Codex     -> close the terminal window running `codex`');
-console.log('       AGY       -> close the Antigravity window');
-console.log('  2. Start them again with the same command you used before.');
-console.log('  3. Verify:  node managed/fleet-status.cjs');
-console.log('     ManagedMCP must say "running" and every client must show the same revision.');
-console.log('');
-console.log('The MCP is a child of the CLI, so a running CLI cannot pick up a new release.');
-console.log('Restarting the CLI is the only way, and step 3 proves it worked.');
+console.log('\n' + '='.repeat(60));
+console.log('Codex and Antigravity spawn their MCP at process start and have no');
+console.log('reload command. Where either is open, close that one app and start it');
+console.log('again; nothing else on the device needs to be touched.');
+
+if (!SKIP_VERIFY) {
+  try {
+    const statusScript = path.join(__dirname, 'fleet-status.cjs');
+    console.log('\n' + run(process.execPath, [statusScript]));
+  } catch (error) {
+    const output = error.stdout ? String(error.stdout).trim() : '';
+    if (output) console.log('\n' + output);
+    failures += 1;
+    console.log('\n! fleet-status reported a problem; see the table above.');
+  }
+}
+
 process.exitCode = failures > 0 ? 1 : 0;
