@@ -157,6 +157,53 @@ async function fetchDrawing(id) {
   return null;
 }
 
+/** Zettly stores the drawing as an SVG data URI; unwrap it to plain markup. */
+function drawingSvg(thumbnail) {
+  let svg = String(thumbnail || '');
+  if (svg.startsWith('data:image/svg+xml;charset=utf-8,')) {
+    svg = decodeURIComponent(svg.slice('data:image/svg+xml;charset=utf-8,'.length));
+  } else if (svg.startsWith('data:image/svg+xml;base64,')) {
+    svg = Buffer.from(svg.slice('data:image/svg+xml;base64,'.length), 'base64').toString('utf8');
+  }
+  return svg;
+}
+
+/**
+ * Raster copy of a drawing.
+ *
+ * The tablet app draws the flow with React Native's <Image>, which cannot
+ * render SVG at all. It asks for /thumbnail.png, and that route did not exist,
+ * so the flow was a 404 on the one device the owner actually carries. sharp is
+ * loaded lazily: a host without it still serves the SVG and the browser
+ * dashboard keeps working.
+ */
+let sharpModule;
+function getSharp() {
+  if (sharpModule === undefined) {
+    try {
+      sharpModule = require('sharp');
+    } catch {
+      sharpModule = null;
+    }
+  }
+  return sharpModule;
+}
+
+const pngCache = new Map();
+
+async function renderDrawingPng(id, svg) {
+  const cached = pngCache.get(id);
+  if (cached && cached.svgLength === svg.length) return cached.buffer;
+
+  const sharp = getSharp();
+  if (!sharp) throw new Error('sharp tidak tersedia untuk merender PNG');
+
+  const buffer = await sharp(Buffer.from(svg), { density: 144 }).png().toBuffer();
+  pngCache.set(id, { svgLength: svg.length, buffer });
+  if (pngCache.size > 50) pngCache.delete(pngCache.keys().next().value);
+  return buffer;
+}
+
 const PAGE = `<!doctype html>
 <html lang="id"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -2205,9 +2252,14 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'content-type': 'application/json' });
       return res.end(JSON.stringify({ ok: true, closed: true, sessionKey: row.session_key }));
     }
-    const drawingMatch = /^\/api\/drawings\/(\d+)\/thumbnail$/.exec(url.pathname);
+    const drawingMatch = /^\/api\/drawings\/(\d+)\/thumbnail(\.png)?$/.exec(url.pathname);
     if (drawingMatch && (req.method === 'GET' || req.method === 'HEAD')) {
       const drawingId = Number(drawingMatch[1]);
+      const wantsPng = Boolean(drawingMatch[2]);
+      // Logged because "the image does not appear" is otherwise unanswerable:
+      // the browser and the tablet hit the same route and only one of them
+      // fails, and without the caller address there is no way to tell which.
+      console.log(`[drawing] ${req.method} ${url.pathname} from ${req.socket.remoteAddress} ua=${String(req.headers['user-agent'] || '').slice(0, 60)}`);
       if (!Number.isSafeInteger(drawingId) || drawingId < 1) {
         res.writeHead(400, { 'content-type': 'application/json' });
         return res.end(JSON.stringify({ ok: false, error: 'invalid drawing id' }));
@@ -2218,12 +2270,18 @@ const server = http.createServer(async (req, res) => {
           res.writeHead(404, { 'content-type': 'application/json' });
           return res.end(JSON.stringify({ ok: false, error: 'drawing thumbnail not found' }));
         }
-        let svg = String(row.thumbnail);
-        if (svg.startsWith('data:image/svg+xml;charset=utf-8,')) {
-          svg = decodeURIComponent(svg.slice('data:image/svg+xml;charset=utf-8,'.length));
-        } else if (svg.startsWith('data:image/svg+xml;base64,')) {
-          svg = Buffer.from(svg.slice('data:image/svg+xml;base64,'.length), 'base64').toString('utf8');
+        const svg = drawingSvg(row.thumbnail);
+
+        if (wantsPng) {
+          const png = await renderDrawingPng(drawingId, svg);
+          res.writeHead(200, {
+            'content-type': 'image/png',
+            'cache-control': 'public, max-age=3600',
+          });
+          if (req.method === 'HEAD') return res.end();
+          return res.end(png);
         }
+
         res.writeHead(200, {
           'content-type': 'image/svg+xml; charset=utf-8',
           'cache-control': 'public, max-age=3600',
