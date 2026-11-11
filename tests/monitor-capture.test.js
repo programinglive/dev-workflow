@@ -114,3 +114,13 @@ test('the build link shows the URL text, not only a label', () => {
   // be eaten before the browser sees it. String replaces keep it literal.
   assert.match(DASHBOARD, /validJobUrl\.replace\('https:\/\/', ''\)/);
 });
+
+test('the monitor serves a PNG copy for clients that cannot draw SVG', () => {
+  // The tablet app uses React Native <Image>, which cannot render SVG, and asks
+  // for /thumbnail.png. That route did not exist, so the flow was a 404 on the
+  // device the owner actually carries.
+  assert.match(DASHBOARD, /thumbnail\(\\\.png\)\?/);
+  assert.match(DASHBOARD, /function renderDrawingPng/);
+  assert.match(DASHBOARD, /'content-type': 'image\/png'/);
+  assert.match(DASHBOARD, /require\('sharp'\)/);
+});
