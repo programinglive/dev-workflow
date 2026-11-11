@@ -117,3 +117,30 @@ test('bugfix refinement saves reproduction, expected and observed behavior, evid
   assert.match(response.content[0].text, /guest checkout/);
   assert.match(response.content[0].text, /failing regression test/);
 });
+
+test('every revision is kept in history, not only the last one', async () => {
+  const workflow = fixture();
+  await handleRefineWithAi(revised, workflow);
+  await handleRefineWithAi({ ...revised, newContext: 'The fix must cover guest checkout too.' }, workflow);
+
+  const history = workflow.state.refinement.history;
+  assert.equal(history.length, 2);
+  assert.equal(history[0].revision, 1);
+  assert.equal(history[1].revision, 2);
+  assert.match(history[0].newContext, /expired/);
+  assert.match(history[1].newContext, /guest checkout/);
+  assert.ok(history[0].at, 'each revision records when it happened');
+  assert.equal(history[1].plan.length, revised.plan.length);
+});
+
+test('history is capped so a long session cannot grow the state without bound', async () => {
+  const workflow = fixture();
+  for (let i = 0; i < 12; i += 1) {
+    await handleRefineWithAi({ ...revised, newContext: `Revision context number ${i} for the checkout fix.` }, workflow);
+  }
+
+  const history = workflow.state.refinement.history;
+  assert.equal(history.length, 10);
+  assert.equal(history[history.length - 1].revision, 12);
+  assert.equal(history[0].revision, 3);
+});

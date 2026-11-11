@@ -55,6 +55,20 @@ function normalTool(v) {
 }
 
 /**
+ * Refinement history as a jsonb parameter.
+ *
+ * Dropped, not truncated, when it is oversized: half a JSON document is not a
+ * smaller document, it is a parse error waiting for the next reader. The
+ * publisher already bounds the list, so reaching this limit means a caller sent
+ * something it should not have.
+ */
+function refinementParam(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const serialized = JSON.stringify(value);
+  return serialized.length <= 64000 ? serialized : null;
+}
+
+/**
  * Fase kartu yang sudah diserahkan ke kartu berikutnya dalam sesi yang sama.
  *
  * Bukan `closed`: sesinya masih hidup. Tetapi kartu ini tidak lagi menjadi
@@ -125,8 +139,9 @@ function buildSessionUpsert(body = {}) {
                                workflow_task_id, task_origin_json, task_relations_json,
                                repo_path, repo_remote,
                                release_version, release_revision, toolchain_json,
-                               task_id, parent_task_id, parent_task_title, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb,$20::jsonb,$21,$22,$23,$24,$25::jsonb,$26,$27,$28,now())
+                               task_id, parent_task_id, parent_task_title,
+                               refinement_json, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb,$20::jsonb,$21,$22,$23,$24,$25::jsonb,$26,$27,$28,$29::jsonb,now())
          ON CONFLICT (session_key, task_id) DO UPDATE SET
            machine=EXCLUDED.machine,
            -- Identitas tidak boleh dihapus oleh kiriman kosong. Ini bug yang
@@ -198,6 +213,10 @@ function buildSessionUpsert(body = {}) {
              WHEN EXCLUDED.toolchain_json <> '{}'::jsonb THEN EXCLUDED.toolchain_json
              ELSE COALESCE(sessions.toolchain_json, '{}'::jsonb) END,
            release_revision=COALESCE(NULLIF(EXCLUDED.release_revision, ''), sessions.release_revision),
+           -- Refinement history is append-only in the publisher, so the newest
+           -- payload always wins. A report that carries none (every tool except
+           -- refine_with_ai) must not erase what is already there.
+           refinement_json=COALESCE(EXCLUDED.refinement_json, sessions.refinement_json),
            updated_at=now()`,
     params: [
       key,
@@ -230,6 +249,7 @@ function buildSessionUpsert(body = {}) {
       str(b.taskId, 200),
       parent ? parent.taskId : null,
       parent ? parent.title : null,
+      refinementParam(b.refinement),
     ],
   };
 }

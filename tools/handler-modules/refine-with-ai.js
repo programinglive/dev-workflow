@@ -4,6 +4,11 @@ import { validateItemTexts, nextItemId } from './dod.js';
 
 const MAX_CONTEXT = 8000;
 
+// How many revisions are kept per task. Each entry holds the description, the
+// new context, the plan and the definition of done, so a large cap would grow
+// the state file without bound. Ten revisions covers a real working session.
+const MAX_HISTORY = 10;
+
 function validatedBugContext(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const fields = ['symptom', 'observed', 'expected', 'evidence', 'constraints'];
@@ -71,6 +76,23 @@ export async function handleRefineWithAi(args, workflowState) {
     return { ...textResponse('Combined refinement context exceeds 8,000 characters. Summarize earlier context before retrying.'), isError: true };
   }
   const originalDescription = previous.previousDescription || state.taskDescription;
+
+  // Every revision is kept, not just the last one. The monitor is supposed to
+  // answer "what did the AI actually do in this session", and a single
+  // overwritten `refinement` object cannot answer that: the earlier reasoning
+  // is gone the moment the next revision lands.
+  const revision = (Number(previous.revision) || 0) + 1;
+  const history = Array.isArray(previous.history) ? previous.history.slice(-(MAX_HISTORY - 1)) : [];
+  history.push({
+    revision,
+    at: new Date().toISOString(),
+    description,
+    newContext,
+    plan: plan.items,
+    definitionOfDone: dod.items,
+    ...(bugContext ? {bugContext} : {}),
+  });
+
   const before = {
     taskDescription: state.taskDescription,
     plan: state.plan,
@@ -87,7 +109,8 @@ export async function handleRefineWithAi(args, workflowState) {
     context,
     lastContext: newContext,
     ...(bugContext ? { bugContext } : {}),
-    revision: (Number(previous.revision) || 0) + 1,
+    revision,
+    history,
     updatedAt: new Date().toISOString(),
   };
   state.readyCheckCompleted = false;
