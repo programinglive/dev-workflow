@@ -24,6 +24,7 @@ import { openItems, MIN_EVIDENCE } from "./dod.js";
 import { handleSearchProject } from "./search-handlers.js";
 import { handleListFactoryTasks, handleClaimFactoryTask, handleSyncTaskStatus, handleListFactoryProjects, handleCreateFactoryTask, handleUpdateFactoryTask } from "./factory-handlers.js";
 import {handleIntegrationTool,prepareTaskSource} from './integration-handlers.js';
+import {handleRefineWithAi} from './refine-with-ai.js';
 import {handleFocusTool,prepareTaskFocus} from '../../focus-workflow.js';
 
 function summarizeResponse(label, response) {
@@ -387,6 +388,8 @@ async function dispatchToolCall({
         if(focused.response)return focused.response;
         return handleStartTask(focused.args, workflowState, git, zettlyOptions);
       }
+      case "refine_with_ai":
+        return handleRefineWithAi(args, workflowState);
       case 'link_factory_task':
         return handleIntegrationTool('link_factory_task',args,workflowState,integrationOptions);
       case 'link_zettly_drawing':
@@ -548,7 +551,7 @@ export async function handleToolCall(context) {
     if (context.workflowState) context.workflowState.lastConflict = null;
     let response=await dispatchToolCall({...context,request:{...context.request,params:{...context.request.params,arguments:args}}});
     const name=context.request.params.name;
-    const syncTools=new Set(['start_task','set_plan','mark_plan_step','set_definition_of_done','mark_dod_item','waive_dod_item','mark_bug_fixed','create_tests','skip_tests','run_tests','create_documentation','waive_documentation','check_ready_to_commit','commit_and_push','perform_release','record_deployment','acquire_release_lock','release_release_lock','skip_release','get_workflow_status','continue_workflow','resume_session','claim_factory_task','link_sentry_issue','report_build_status','build_report','build_estimate']);
+    const syncTools=new Set(['start_task','refine_with_ai','set_plan','mark_plan_step','set_definition_of_done','mark_dod_item','waive_dod_item','mark_bug_fixed','create_tests','skip_tests','run_tests','create_documentation','waive_documentation','check_ready_to_commit','commit_and_push','perform_release','record_deployment','acquire_release_lock','release_release_lock','skip_release','get_workflow_status','continue_workflow','resume_session','claim_factory_task','link_sentry_issue','report_build_status','build_report','build_estimate']);
     syncTools.add('link_factory_task');
     syncTools.add('link_zettly_drawing');
     // checkpoint_task already forces its own write; the post-dispatch sync is a

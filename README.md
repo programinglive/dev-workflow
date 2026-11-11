@@ -56,7 +56,8 @@ An MCP server that enforces development workflow discipline: **start (mandatory 
 ```mermaid
 graph LR
     A[start_task] --> F[Auto Zettly Draw Canvas & Flow Gate]
-    F --> S[Optional search_project discovery]
+    F --> R[refine_with_ai]
+    R --> S[Optional search_project discovery]
     S --> B[Implement]
     B --> C[mark_bug_fixed]
     C --> D[create_tests]
@@ -81,7 +82,7 @@ finished.
 
 | Path | Single responsibility |
 |---|---|
-| `index.js` | MCP entry point: registers the 60 tools, English implementation instructions and handlers |
+| `index.js` | MCP entry point: registers the 64 tools, English implementation instructions and handlers |
 | `mcp-index.js` | Central MCP ecosystem index & context-aware recommender for all 12 ecosystem MCP servers |
 | `build-monitor.js`, `monitor-server/build-monitor.cjs` | Real-time build & execution status tracker (`report_build_status`) shared between MCP and the live monitor dashboard |
 | `mobile-app/build-view.js` | Android build tab presentation and truthful build host labeling |
@@ -148,7 +149,7 @@ See [MCP client configuration](#mcp-client-configuration).
 
 ## Available Tools
 
-60 tools. See [service connections and proactive Zettly direction](docs/service-integrations.md) and [focus-first development](docs/focus-workflow.md).
+64 tools. See [service connections and proactive Zettly direction](docs/service-integrations.md) and [focus-first development](docs/focus-workflow.md).
 
 | Tool | Purpose |
 |---|---|
@@ -163,6 +164,7 @@ See [MCP client configuration](#mcp-client-configuration).
 | `get_sentry_issue` | Retrieve one bounded issue summary without raw event payloads |
 | `link_sentry_issue` | Link a verified issue and optional existing Factory task to the current canonical Zettly Todo |
 | `start_task` | Begin a task; requires `definitionOfDone` and `plan`; automatically creates or links its Zettly Todo |
+| `refine_with_ai` | After the flow gate, submit complete AI-rewritten task instructions using new and prior context; updates the same task and Todo, retaining proven evidence |
 | `recommend_mcp_tools` | Central discovery index and context-aware recommender for all MCP servers and tools (`central-gateway`, `pocketbase`, `infra-knowledge`, `notify`, `factory`, `zettly`, `clinic-helper`, `playwright`, `gcp`, `cloudflare`, `netlify`, `mermaid`) |
 | `report_build_status` | Report live build, test, security scan, or deployment progress (`building`, `testing`, `scanning`, `deploying`, `succeeded`, `failed`, `idle`) with target, command, stage, progress percentage, and output snippet |
 | `sync_zettly_task` | Retry pending Zettly task/outcome synchronization or link an existing Todo |
