@@ -37,11 +37,13 @@ test('refined context updates the existing Todo block without creating another T
  const state=workflow(),client=api();assignWorkflowIdentity(state.state,null,{});
  await syncZettlyTask(state,{env,client});
  state.state.taskDescription='Fix checkout with expired coupons';
- state.state.refinement={context:'Previous checkout behavior and expired coupon failure.',revision:1};
+ state.state.refinement={context:'Previous checkout behavior and expired coupon failure.',revision:1,bugContext:{symptom:'Guest checkout failure',reproduction:['Apply expired coupon'],observed:'Generic error',expected:'Coupon-specific error',evidence:'Checkout trace',constraints:'Preserve cart'}};
  await syncZettlyTask(state,{env,client});
  assert.equal(client.tasks.size,1);
  assert.match(client.tasks.get(1).description,/Refined task context/);
  assert.match(client.tasks.get(1).description,/expired coupon failure/);
+ assert.match(client.tasks.get(1).description,/Bug investigation/);
+ assert.match(client.tasks.get(1).description,/Apply expired coupon/);
  assert.equal(state.state.zettly.todoId,1);
 });
 
