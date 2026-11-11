@@ -99,6 +99,62 @@ test("release hanya menghapus lock milik sendiri", () => {
   });
 });
 
+// 11 November 2026: lock tertinggal dari 7 November menunjuk PID 831, dan PID
+// itu sudah dipakai ulang oleh perluasan Calendar.app. `isAlive` hanya
+// memeriksa "ada proses dengan PID ini", jadi lock mati terlihat hidup dan
+// proses MCP baru bisa mengira ada penulis lain. Identitas pemegang harus
+// diperiksa, bukan hanya keberadaan PID-nya.
+test("mengambil alih lock yang PID-nya dipakai ulang proses lain", () => {
+  withTempDir((dir) => {
+    acquireProcessLock({ dir, pid: 111, now: 1000, isAlive: () => true });
+
+    const result = acquireProcessLock({
+      dir,
+      pid: 222,
+      now: 2000,
+      isAlive: () => true,
+      isHolderProcess: () => false,
+    });
+
+    assert.equal(result.acquired, true, "PID yang dipakai ulang bukan pemegang lock");
+    assert.equal(result.tookOverFrom, 111);
+    assert.equal(readProcessLock({ dir }).pid, 222);
+  });
+});
+
+test("tetap menolak saat pemegangnya benar-benar proses dev-workflow", () => {
+  withTempDir((dir) => {
+    acquireProcessLock({ dir, pid: 111, now: 1000, isAlive: () => true });
+
+    const result = acquireProcessLock({
+      dir,
+      pid: 222,
+      now: 2000,
+      isAlive: () => true,
+      isHolderProcess: () => true,
+    });
+
+    assert.equal(result.acquired, false);
+    assert.equal(result.holder.pid, 111);
+  });
+});
+
+test("menolak saat identitas pemegang tidak bisa dipastikan", () => {
+  withTempDir((dir) => {
+    acquireProcessLock({ dir, pid: 111, now: 1000, isAlive: () => true });
+
+    const result = acquireProcessLock({
+      dir,
+      pid: 222,
+      now: 2000,
+      isAlive: () => true,
+      isHolderProcess: () => null,
+    });
+
+    assert.equal(result.acquired, false, "tidak tahu bukan alasan menimpa lock");
+  });
+});
+
 test("isi berkas lock memuat pid dan waktu mulai", () => {
   withTempDir((dir) => {
     acquireProcessLock({ dir, pid: 111, now: 1700000000000, isAlive: () => false });
