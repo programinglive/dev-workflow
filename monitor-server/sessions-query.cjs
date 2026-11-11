@@ -50,7 +50,7 @@ function buildSessionsQuery({
                  plan_json, plan_done, plan_total, dod_done, dod_total, dod_waived,
                  started_at, session_title, agent_tool, release_version, release_revision, toolchain_json, updated_at,
                  repo_path, repo_remote,
-                 workflow_task_id, task_origin_json, task_relations_json
+                 workflow_task_id, task_origin_json, task_relations_json, refinement_json
             FROM sessions
            WHERE phase NOT IN ('closed', 'done', 'cancelled', 'handed-off')
              AND NULLIF(BTRIM(task), '') IS NOT NULL

@@ -145,6 +145,10 @@ export function buildSnapshot({ state, sessionKey = "", projectPath = "", sessio
     // ada petunjuk. Tidak pernah menebak.
     agentTool: detectTool({ env, commandLine: String(process.argv.slice(0, 2).join(' ')) }),
     activeBuild: s.activeBuild && typeof s.activeBuild === "object" ? s.activeBuild : null,
+    // Refinement history. Bounded so a runaway session cannot bloat the
+    // snapshot: the state file already caps the list, and this is the second
+    // gate before it crosses the network.
+    refinement: boundedRefinement(s.refinement),
     // Lokasi proyek. Path lokal menjawab "ada di mana" untuk mesin ini; remote
     // git tetap berguna dari perangkat lain. Dikosongkan bila memang bukan repo.
     repositoryPath: String(s.repository?.path || ""),
@@ -163,6 +167,42 @@ export function buildSnapshot({ state, sessionKey = "", projectPath = "", sessio
 function releaseVersion(env) {
   const value = typeof env.DEVWF_RELEASE_VERSION === "string" ? env.DEVWF_RELEASE_VERSION.trim() : "";
   return value.slice(0, 40);
+}
+
+/**
+ * The refinement payload that crosses the network.
+ *
+ * Only the fields the monitor renders survive, and the history is capped here
+ * as well as in the handler: an old state file written by a previous release
+ * can still carry a longer list, and the snapshot must stay a fixed size no
+ * matter what is on disk.
+ */
+function boundedRefinement(refinement) {
+  if (!refinement || typeof refinement !== "object" || Array.isArray(refinement)) return null;
+
+  const text = (value, max) => (typeof value === "string" ? value.slice(0, max) : "");
+  const list = (value, max) => (Array.isArray(value)
+    ? value.filter(item => typeof item === "string").slice(0, max).map(item => item.slice(0, 300))
+    : []);
+
+  const history = Array.isArray(refinement.history)
+    ? refinement.history.slice(-10).map(entry => ({
+        revision: Number(entry && entry.revision) || 0,
+        at: text(entry && entry.at, 40),
+        description: text(entry && entry.description, 2000),
+        newContext: text(entry && entry.newContext, 4000),
+        plan: list(entry && entry.plan, 20),
+        definitionOfDone: list(entry && entry.definitionOfDone, 20),
+      }))
+    : [];
+
+  return {
+    revision: Number(refinement.revision) || 0,
+    context: text(refinement.context, 8000),
+    previousDescription: text(refinement.previousDescription, 2000),
+    updatedAt: text(refinement.updatedAt, 40),
+    history,
+  };
 }
 
 function releaseRevision(env) {
