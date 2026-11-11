@@ -59,6 +59,7 @@ const WARNA = {
   biruMuda: "#79c0ff",
   hijau: "#3fb950",
   kuning: "#e3b341",
+  merah: "#f85149",
   abu: "#8b949e",
 };
 
@@ -606,6 +607,11 @@ function Kartu({ s, jamServer, onPress }) {
   const rencana = Array.isArray(s.plan_json) ? s.plan_json : [];
   const label = s.state === "idle" ? (s.phase || "idle").toUpperCase() : g.label;
   const sisaLangkah = Math.max(0, rencana.length - LANGKAH_DI_KARTU);
+  // Build progress is optional: a report may carry no percentage at all, and
+  // "0%" would then claim a build had not started.
+  const buildProgress = Number.isFinite(s.active_build?.progress)
+    ? Math.max(0, Math.min(100, Math.round(s.active_build.progress)))
+    : null;
 
   return (
     <Pressable
@@ -676,6 +682,61 @@ function Kartu({ s, jamServer, onPress }) {
         {s.machine}
         {s.task_type ? " · " + s.task_type : ""} · {ago(s.updated_at, jamServer)}
       </Text>
+
+      {/* Build status. The owner asked why a reported build never showed on the
+          card: /api/sessions already carried active_build and the web card drew
+          the same box, but this component ignored it. Placed above the flow
+          diagram so a running build is visible without scrolling. */}
+      {s.active_build?.target ? (
+        <View style={gaya.kartuBuild}>
+          <View style={gaya.baris}>
+            <Text
+              style={[
+                gaya.buildStatus,
+                {
+                  color:
+                    s.active_build.status === "failed"
+                      ? WARNA.merah
+                      : isRunningBuild(s.active_build.status)
+                        ? WARNA.kuning
+                        : WARNA.hijau,
+                },
+              ]}
+            >
+              {buildStatusLabel(s.active_build.status)}
+            </Text>
+            <Text style={[gaya.buildFooter, { marginTop: 0, marginLeft: "auto" }]}>
+              {ago(s.active_build.updatedAt || s.updated_at, jamServer)}
+            </Text>
+          </View>
+          <Text style={gaya.buildTarget} numberOfLines={2}>
+            🏗️ {s.active_build.target}
+          </Text>
+          <Text style={gaya.buildHost} numberOfLines={1}>
+            {buildLocation(s.active_build, s.machine)}
+          </Text>
+          {s.active_build.stage ? (
+            <Text style={gaya.buildStage} numberOfLines={2}>
+              ▸ {s.active_build.stage}
+            </Text>
+          ) : null}
+          <View style={gaya.barLuar}>
+            <View
+              style={[
+                gaya.barDalam,
+                {
+                  width: `${buildProgress === null ? 0 : buildProgress}%`,
+                  backgroundColor:
+                    s.active_build.status === "failed" ? WARNA.merah : WARNA.biru,
+                },
+              ]}
+            />
+          </View>
+          <Text style={gaya.buildFooter}>
+            {buildProgress === null ? "Progres belum dilaporkan" : `${buildProgress}%`}
+          </Text>
+        </View>
+      ) : null}
 
       {/* The flow is the plan. Without it the card is just a status line. */}
       {(() => {
@@ -1009,6 +1070,9 @@ const gaya = StyleSheet.create({
   buildShortcutMeta: { color: WARNA.teks, fontSize: 12, marginTop: 4 },
   buildIntro: { color: WARNA.redup, fontSize: 12, lineHeight: 18, marginBottom: 14 },
   buildCard: { borderWidth: 1, borderColor: "#2f81f766", backgroundColor: WARNA.card, borderRadius: 14, padding: 14, minHeight: 175 },
+  // Build block inside a session card: same information as the web card, but
+  // compact enough to sit above the flow diagram.
+  kartuBuild: { borderWidth: 1, borderColor: "#2f81f766", backgroundColor: "#0f1a2a", borderRadius: 12, padding: 10, marginTop: 10 },
   buildStatus: { fontSize: 11, fontWeight: "700", letterSpacing: 0.5 },
   buildProject: { color: WARNA.redup, fontSize: 12, flexShrink: 1 },
   buildTarget: { color: WARNA.teks, fontSize: 16, fontWeight: "700", marginTop: 8 },
