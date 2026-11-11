@@ -47,7 +47,21 @@ const WINDOWS_RELOAD = [
   "catch { 'OPENCODE_MISSING' }",
 ].join(' ');
 
+const WINDOWS_KILL_CLIENTS = [
+  "$names=@('codex','agy','antigravity');",
+  'Get-Process -ErrorAction SilentlyContinue',
+  '| Where-Object { $names -contains $_.ProcessName }',
+  '| ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; $_.ProcessName }',
+].join(' ');
+
 const MAC_KILL = 'pkill -f ManagedMCP || true';
+
+// opencode is excluded on purpose: it is reloaded in place through its service.
+const MAC_KILL_CLIENTS = [
+  'for n in codex agy antigravity; do',
+  '  pkill -x "$n" 2>/dev/null && echo "$n" || true',
+  'done',
+].join('\n');
 
 const MAC_RELOAD = [
   'if command -v opencode >/dev/null 2>&1; then',
@@ -104,6 +118,19 @@ for (const device of DEVICES) {
     continue;
   }
 
+  // Codex and Antigravity cannot reload; they are closed and resumed by hand.
+  try {
+    const closed = onDevice(device, WINDOWS_KILL_CLIENTS, MAC_KILL_CLIENTS)
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean);
+    console.log(closed.length
+      ? `  closed     - ${[...new Set(closed)].join(', ')} (reopen and resume)`
+      : '  closed     - no Codex or Antigravity process was running');
+  } catch (error) {
+    console.log(`  closed     - could not close clients: ${error.message.split('\n')[0]}`);
+  }
+
   // OpenCode reloads through its own service; nothing is closed.
   try {
     const output = onDevice(device, WINDOWS_RELOAD, MAC_RELOAD);
@@ -119,9 +146,9 @@ for (const device of DEVICES) {
 }
 
 console.log('\n' + '='.repeat(60));
-console.log('Codex and Antigravity spawn their MCP at process start and have no');
-console.log('reload command. Where either is open, close that one app and start it');
-console.log('again; nothing else on the device needs to be touched.');
+console.log('Codex and Antigravity were closed. Reopen them and resume your session;');
+console.log('they pick up the promoted release on start. OpenCode was already reloaded');
+console.log('in place and needs nothing.');
 
 if (!SKIP_VERIFY) {
   try {
