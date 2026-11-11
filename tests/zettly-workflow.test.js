@@ -33,6 +33,18 @@ test('start creates one linked Todo and repeated progress reuses it',async()=>{
  assert.equal(state.state.workflowTaskId,identity);
 });
 
+test('refined context updates the existing Todo block without creating another Todo',async()=>{
+ const state=workflow(),client=api();assignWorkflowIdentity(state.state,null,{});
+ await syncZettlyTask(state,{env,client});
+ state.state.taskDescription='Fix checkout with expired coupons';
+ state.state.refinement={context:'Previous checkout behavior and expired coupon failure.',revision:1};
+ await syncZettlyTask(state,{env,client});
+ assert.equal(client.tasks.size,1);
+ assert.match(client.tasks.get(1).description,/Refined task context/);
+ assert.match(client.tasks.get(1).description,/expired coupon failure/);
+ assert.equal(state.state.zettly.todoId,1);
+});
+
 test('explicit Todo links preserve user text and checklist metadata',async()=>{
  const state=workflow(),client=api();client.tasks.set(42,{id:42,title:'Existing work',description:'Owner context',is_completed:false,checklist_items:[{id:7,title:'Owner item'}]});
  assignWorkflowIdentity(state.state,null,{zettlyTodoId:42});
