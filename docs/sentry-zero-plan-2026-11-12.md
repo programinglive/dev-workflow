@@ -152,6 +152,33 @@ Order by reported volume, not alphabetically.
 4. Phase 4 (performance, longest; do it last so it never blocks the rest)
 5. Phase 5 and Phase 6
 
+## Backups taken (find these here if the session drops)
+
+### ERP production database — before the BTB stock reconciliation
+
+| Field | Value |
+|---|---|
+| Taken (UTC) | 2026-11-11T19:27:53Z |
+| Database | `gcp_erp_database_bw_server` on `10.184.0.9` |
+| Path on bw-app | `/var/backups/erp_pre_btb_reconcile_20261111T192753Z.sql.gz` |
+| Size | 240,702,148 bytes (229.5 MiB) |
+| gzip integrity | `gzip -t` returned OK |
+| Tables in dump | 159 |
+| SHA256 | `823356c3f1b67333d1c5582bb1443fe8ad7af826191cd02f6fdaabea35ce3f87` |
+| Command | `mysqldump --single-transaction --quick --no-tablespaces ... | gzip -1` |
+
+**Off-host copy is NOT done.** `gsutil cp` to
+`gs://bw-server-backups-377312/server_backups_v2/pre-repair/` failed twice with
+`403 Provided scope(s) are not authorized`. The service account on `bw-app` has no
+storage write scope, unlike whatever uploaded the Zettly backup earlier. Until
+this is fixed by granting that scope (or copying the file from a machine that has
+it), the only copy of this backup lives on `bw-app` itself.
+
+Do not treat this backup as sufficient for a destructive write until an off-host
+copy exists.
+
+
+
 ## Hardening: traps this plan must not fall into
 
 These came out of actually attempting the work. Each one is a way to make the
