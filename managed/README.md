@@ -15,6 +15,45 @@ approved Dev Workflow MCP releases.
 | `install-device.py` | Installs the bootstrap into a device's `%LOCALAPPDATA%\ProgramingLive\ManagedMCP`. |
 | `devwf-managed.service` | systemd unit for the release server. |
 
+## Restarting the fleet
+
+The MCP is a child of the AI CLI. A running CLI cannot be handed a new MCP, so
+"restart" always means: stop the MCP, stop the CLI, start the CLI, verify. There
+is no shortcut, and pretending otherwise is what left devices on old releases.
+
+Two commands, run from a checkout of this repository:
+
+```bash
+node managed/restart-devices.cjs   # stops ManagedMCP on HELLOWORLD, Mac and MMCH
+node managed/fleet-status.cjs      # proves what each device and client will run
+```
+
+`restart-devices.cjs` deliberately does **not** relaunch the CLIs: they are
+interactive terminal programs, and a relaunch over SSH lands in the wrong
+session. It prints the exact per-CLI instruction instead.
+
+`fleet-status.cjs` answers three questions with facts and never guesses:
+
+| It reports | Why it matters |
+|---|---|
+| ManagedMCP running or not, per device | After a restart this must say `running` |
+| The revision each of `opencode`, `codex`, `antigravity` resolves to | Proves the release the next CLI start will load |
+| Whether every device agrees | Catches the one-device-left-behind failure |
+
+It is read-only: it starts nothing and kills nothing. Exit code 1 means a device
+is unreachable or a client would resolve a different revision.
+
+### What to tell the agent
+
+When an agent has lost the MCP, do not ask it to "restart". Say:
+
+> Run `node managed/restart-devices.cjs`, then tell me the exact commands I must
+> paste to reopen each CLI, then run `node managed/fleet-status.cjs` and show me
+> the table.
+
+That gives the agent three concrete actions and a verifiable end state, so it
+does not have to invent a procedure.
+
 ## The manifest
 
 ```json
@@ -75,21 +114,11 @@ Devices pick the new manifest up on their next start. The version appears in
 
 ## Restarting the MCP on all devices
 
-The MCP is a child of the AI CLI. Killing it does not make the CLI spawn it
-again, and the launcher only picks a release at start. Restarting therefore
-means: stop the ManagedMCP process tree on every device, then reopen the CLI.
-
-```bash
-node managed/restart-devices.cjs
-```
-
-It stops the ManagedMCP processes on HELLOWORLD, Mac and MMCH in one command.
-It matches `ManagedMCP` in the command line, so other MCP servers are left
-alone. Reopen the AI CLI on each device afterwards; the launcher resolves the
-release that `managed/rollout.cjs` promoted.
-
-Do not restart one device by hand and leave the others on an old release. That
-is how a device ends up reporting a version the fleet no longer runs.
+See [Restarting the fleet](#restarting-the-fleet) above. It is the single
+authoritative procedure: stop the MCP, stop the CLI, start the CLI, verify with
+`fleet-status.cjs`. Do not restart one device by hand and leave the others on an
+old release; that is how a device ends up reporting a version the fleet no
+longer runs.
 
 ## Backward compatibility
 
