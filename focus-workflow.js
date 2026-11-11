@@ -26,18 +26,23 @@ async function activeFocus(ctx) {
  const rows=response.data;
  if(!Array.isArray(rows)||rows.length>1000)throw fail('FOCUS_INCOMPLETE','Focus collection is malformed or exceeds the bounded scan.');
  for(const row of rows)if(!positive(Number(row.id))||Number(row.user_id)!==ctx.owner.id||typeof row.title!=='string'||!Object.hasOwn(row,'completed_at')||(row.completed_at!==null&&(typeof row.completed_at!=='string'||!Number.isFinite(Date.parse(row.completed_at)))))throw fail('FOCUS_INVALID_DATA','Focus data has missing identity or belongs to another owner.');
- const active=rows.filter(row=>row.completed_at===null);
- if(active.length>1)throw fail('FOCUS_CONFLICT','Multiple active focuses exist. Resolve the conflict before starting more work.',{focusIds:active.slice(0,10).map(f=>f.id)});
- return active[0]||null;
+ const active=rows.filter(row=>row.completed_at===null&&(row.status===undefined||row.status===null||row.status==='active'));
+ return active;
 }
+
+async function activeFoci(ctx){return activeFocus(ctx);}
 
 function projection(focus,ctx) {
  return focus?{id:Number(focus.id),ownerId:ctx.owner.id,title:text(focus.title,255),description:text(focus.description),url:ctx.base+'/dashboard'}:null;
 }
 
-function selected(focus,id) {
- if(!focus)throw fail('FOCUS_REQUIRED','Set one focus before starting or linking work.');
- if(!positive(id)||Number(focus.id)!==id)throw fail('FOCUS_CHANGED','The requested focus is not the current active focus.');
+function selected(foci,id) {
+ const list=Array.isArray(foci)?foci:(foci?[foci]:[]);
+ if(!list.length)throw fail('FOCUS_REQUIRED','Set one focus before starting or linking work.');
+ if(!positive(id))throw fail('FOCUS_REQUIRED','Choose which active focus this work belongs to.');
+ const match=list.find(focus=>Number(focus.id)===Number(id));
+ if(!match)throw fail('FOCUS_CHANGED','The requested focus is not one of the active focuses.',{focusIds:list.slice(0,10).map(f=>f.id)});
+ return match;
 }
 
 async function linkedTasks(ctx,id) {
@@ -55,7 +60,9 @@ export async function prepareTaskFocus(args,options={}) {
  if(!args.focusId&&!required)return {args:prepared};
  try {
   const ctx=await context(args,options);
-  const focus=await activeFocus(ctx);selected(focus,args.focusId||Number(focus?.id));
+  const all=await activeFoci(ctx);
+  if(!args.focusId&&all.length>1)throw fail('FOCUS_AMBIGUOUS','Several focuses are active; pass focusId explicitly to choose which one this task belongs to.',{focusIds:all.slice(0,10).map(f=>f.id)});
+  const focus=selected(all,args.focusId||Number(all[0]?.id));
   return {args:{...prepared,_verifiedFocus:projection(focus,ctx)}};
  }catch(error){return {response:focusError(error)};}
 }
@@ -83,21 +90,22 @@ export async function handleFocusTool(name,args={},workflowState,options={}) {
    }
   }
   const ctx=await context(args,options);
-  let focus=await activeFocus(ctx);
-  if(name==='get_current_focus')return result({owner:ctx.owner,focus:projection(focus,ctx),status:focus?'active':'none',instruction:focus?'Keep work within this focus. Complete linked tasks and record evidence before closing it.':'Set a focus before starting work.'});
+  let all=await activeFoci(ctx);
+  if(name==='get_current_focus'){
+   return result({owner:ctx.owner,focus:projection(all[0],ctx),activeFoci:all.slice(0,50).map(f=>projection(f,ctx)),activeFocusCount:all.length,status:all.length?'active':'none',instruction:all.length>1?'Several focuses are active. Pass the intended focusId explicitly so work is not attached to the wrong container.':(all.length?'Keep work within this focus. Complete linked tasks and record evidence before closing it.':'Set a focus before starting work.')});
+  }
   if(name==='set_focus') {
    const title=text(args.title,255).trim();
    if(!title||typeof args.title!=='string'||args.title.length>255)throw fail('FOCUS_INVALID_TITLE','Provide a focus title of 1–255 characters.');
-   if(focus) {
-    if(focus.title!==title)throw fail('FOCUS_ALREADY_ACTIVE','Complete the existing focus before selecting a different one.',{focusIds:[focus.id]});
-    return result({owner:ctx.owner,focus:projection(focus,ctx),reused:true});
-   }
+   const sameFocus=all.find(item=>item.title===title);
+   if(sameFocus)return result({owner:ctx.owner,focus:projection(sameFocus,ctx),reused:true});
    const created=await ctx.client.request('POST','/focus',{title,description:text(args.description,4000)});
    const id=Number(created.data?.id);
-   focus=await activeFocus(ctx);selected(focus,id);
-   return result({owner:ctx.owner,focus:projection(focus,ctx),created:true});
+   all=await activeFoci(ctx);
+   const createdFocus=selected(all,id);
+   return result({owner:ctx.owner,focus:projection(createdFocus,ctx),created:true});
   }
-  selected(focus,args.focusId);
+  selected(all,args.focusId);
   if(name==='link_task_to_focus') {
    const state=workflowState?.state;
    const taskId=state?.workflowTaskId,todoId=Number(state?.zettly?.todoId);
@@ -115,7 +123,7 @@ export async function handleFocusTool(name,args={},workflowState,options={}) {
    if(previous.some(marker=>marker!==focusMarker(args.focusId)))throw fail('FOCUS_TASK_ALREADY_LINKED','This task is linked to another focus. Preserve its original scope.');
    const existingFocusId=todo.focus_id==null?null:Number(todo.focus_id);
    if(existingFocusId!==null&&existingFocusId!==Number(args.focusId))throw fail('FOCUS_TASK_ALREADY_LINKED','This task is linked to another focus. Preserve its original scope.');
-   selected(await activeFocus(ctx),args.focusId);
+   selected(await activeFoci(ctx),args.focusId);
    if(!unchanged())throw fail('FOCUS_TASK_CHANGED','The canonical task changed before focus linking.');
    if(existingFocusId===null) {
     // Write the real relation. The description marker was only ever a
@@ -125,10 +133,10 @@ export async function handleFocusTool(name,args={},workflowState,options={}) {
     const readBack=await ctx.client.request('GET','/todos/'+todoId);
     if(Number(readBack.data?.id)!==todoId||Number(readBack.data?.user_id)!==ctx.owner.id||Number(readBack.data?.focus_id)!==Number(args.focusId))throw fail('FOCUS_LINK_UNVERIFIED','The saved focus link was not present on readback.');
    }
-   selected(await activeFocus(ctx),args.focusId);
+   selected(await activeFoci(ctx),args.focusId);
    if(!unchanged())throw fail('FOCUS_TASK_CHANGED','The canonical task changed after the remote focus link was saved. Read both records before retrying.');
    const old=state.focus;
-   const attachment={...projection(focus,ctx),todoId};state.focus=attachment;
+   const attachment={...projection(selected(all,args.focusId),ctx),todoId};state.focus=attachment;
    try {
     const saved=await workflowState.save();
     if(saved?.verified===false||!unchanged())throw fail('FOCUS_STATE_UNVERIFIED','The remote focus link exists but local task attachment was not verified.');
@@ -143,13 +151,13 @@ export async function handleFocusTool(name,args={},workflowState,options={}) {
    const tasks=await linkedTasks(ctx,args.focusId);
    if(!tasks.length)throw fail('FOCUS_NO_LINKED_TASKS','Link and complete actual work before closing this focus.');
    if(tasks.some(t=>!t.is_completed))throw fail('FOCUS_OPEN_TASKS','Linked tasks are still open; finish them before closing the focus.');
-   selected(await activeFocus(ctx),args.focusId);
+   selected(await activeFoci(ctx),args.focusId);
    const rechecked=await linkedTasks(ctx,args.focusId);
    if(rechecked.length!==tasks.length||rechecked.some(t=>!t.is_completed))throw fail('FOCUS_TASKS_CHANGED','Focus tasks changed during completion checks.');
    const closed=await ctx.client.request('POST','/focus/'+args.focusId+'/complete',{reason:evidence});
    if(closed.success===false||Number(closed.data?.id)!==args.focusId||Number(closed.data?.user_id)!==ctx.owner.id||typeof closed.data?.completed_at!=='string'||!Number.isFinite(Date.parse(closed.data.completed_at)))throw fail('FOCUS_COMPLETION_UNVERIFIED','Focus completion was not accepted with a verified completed record.');
-   const remaining=await activeFocus(ctx);
-   if(Number(remaining?.id)===args.focusId)throw fail('FOCUS_COMPLETION_UNVERIFIED','The focus still appears active after completion.');
+   const remaining=await activeFoci(ctx);
+   if(remaining.some(item=>Number(item.id)===Number(args.focusId)))throw fail('FOCUS_COMPLETION_UNVERIFIED','The focus still appears active after completion.');
    const after=await linkedTasks(ctx,args.focusId);
    if(after.some(t=>!t.is_completed)||after.length!==rechecked.length)throw fail('FOCUS_COMPLETION_CONFLICT','Focus completion raced with task changes. Inspect the records before setting another focus.');
    return result({owner:ctx.owner,focusId:args.focusId,completed:true,linkedTaskIds:after.map(t=>t.id),evidence,nextAction:'Set the next focus only after reviewing this recorded outcome.'});

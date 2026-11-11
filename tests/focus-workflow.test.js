@@ -18,10 +18,11 @@ test('catalog exposes explicit focus lifecycle tools',()=>{
  for(const name of ['get_current_focus','set_focus','link_task_to_focus','complete_focus'])assert.ok(getToolList().some(t=>t.name===name));
 });
 
-test('current focus includes owner identity and warns on multiple active records',async()=>{
- const f=fixture();const r=data(await handleFocusTool('get_current_focus',{},f.state,f.options));assert.equal(r.owner.id,1);assert.equal(r.focus.id,7);
+test('current focus reports every active focus instead of refusing to choose',async()=>{
+ const f=fixture();const r=data(await handleFocusTool('get_current_focus',{},f.state,f.options));assert.equal(r.owner.id,1);assert.equal(r.focus.id,7);assert.equal(r.activeFocusCount,1);
  f.setFocuses([{id:7,user_id:1,title:'One',completed_at:null},{id:8,user_id:1,title:'Two',completed_at:null}]);
- assert.equal((await handleFocusTool('get_current_focus',{},f.state,f.options)).isError,true);
+ const many=await handleFocusTool('get_current_focus',{},f.state,f.options);assert.equal(many.isError,undefined);
+ const view=data(many);assert.equal(view.activeFocusCount,2);assert.deepEqual(view.activeFoci.map(x=>x.id),[7,8]);assert.match(view.instruction,/focusId explicitly/);
 });
 
 test('expected browser owner mismatch stops reads and mutations before task data changes',async()=>{
@@ -29,10 +30,11 @@ test('expected browser owner mismatch stops reads and mutations before task data
  assert.equal(data(r).error,'FOCUS_OWNER_MISMATCH');assert.equal(f.calls.length,1);
 });
 
-test('setting another focus never replaces unfinished work and repeating the same title is idempotent',async()=>{
- const f=fixture();assert.equal((await handleFocusTool('set_focus',{title:'Unrelated work'},f.state,f.options)).isError,true);
+test('a second focus can be opened beside an unfinished one and a repeated title is reused',async()=>{
+ const f=fixture();
+ const other=await handleFocusTool('set_focus',{title:'Unrelated work'},f.state,f.options);assert.equal(other.isError,undefined);assert.equal(data(other).created,true);
  assert.equal(data(await handleFocusTool('set_focus',{title:'Finish notifications'},f.state,f.options)).focus.id,7);
- assert.equal(f.calls.filter(c=>c.method==='POST').length,0);
+ assert.equal(f.calls.filter(c=>c.method==='POST'&&c.route==='/focus').length,1);
 });
 
 test('missing focus can be created and is read back before success',async()=>{
