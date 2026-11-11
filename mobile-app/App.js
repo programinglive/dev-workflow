@@ -368,7 +368,7 @@ export default function App() {
 
           {tab === "build" && (
             <>
-              <Text style={gaya.buildIntro}>Build berjalan ditampilkan lebih dulu. Lokasi hanya disebut sebagai host build bila dilaporkan langsung oleh pelaksana.</Text>
+              <Text style={gaya.buildIntro}>Build berjalan ditampilkan lebih dulu. "Build di …" hanya untuk host yang dilaporkan pelaksananya sendiri; bila tidak, yang tampil adalah mesin pelapor.</Text>
               {builds.length === 0 ? (
                 <Text style={gaya.kosong}>belum ada build yang dilaporkan</Text>
               ) : (
@@ -712,8 +712,10 @@ function Kartu({ s, jamServer, onPress }) {
           <Text style={gaya.buildTarget} numberOfLines={2}>
             🏗️ {s.active_build.target}
           </Text>
+          {/* No reporter: the card meta line above already names the machine,
+              so repeating it here would say HELLOWORLD twice. */}
           <Text style={gaya.buildHost} numberOfLines={1}>
-            {buildLocation(s.active_build, s.machine)}
+            {buildLocation(s.active_build)}
           </Text>
           {s.active_build.stage ? (
             <Text style={gaya.buildStage} numberOfLines={2}>
