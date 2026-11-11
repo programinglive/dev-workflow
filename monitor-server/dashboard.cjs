@@ -564,6 +564,70 @@ function repoLinkHtml(s) {
   return '<a class="repo-link" href="' + esc(s.repo_url) + '" target="_blank" rel="noopener noreferrer"' +
     ' title="' + esc(s.repo_url) + '">🔗 ' + esc(label) + ' ↗</a>';
 }
+/**
+ * The approved flow diagram of this task, taken from task_relations_json.
+ *
+ * The monitor has rendered flow thumbnails through /api/drawings/:id/thumbnail
+ * and openFlowModal for a while, but nothing ever emitted an element with
+ * data-flow-id, so there was no way to open the modal: the diagram existed and
+ * was unreachable. The relation is already stored - it just was never read.
+ */
+function flowRelation(s) {
+  const raw = s && s.task_relations_json;
+  const list = Array.isArray(raw) ? raw : (raw && typeof raw === 'object' ? [raw] : []);
+  for (let i = 0; i < list.length; i += 1) {
+    const item = list[i];
+    if (item && item.system === 'zettly_draw' && item.id) {
+      return {
+        id: String(item.id),
+        label: String(item.label || ('Draw #' + item.id)),
+        url: String(item.url || ''),
+      };
+    }
+  }
+  return null;
+}
+
+function flowChipHtml(s) {
+  const rel = flowRelation(s);
+  if (!rel) return '';
+  return '<button type="button" data-flow-id="' + esc(rel.id) + '"' +
+    ' data-flow-title="' + esc(rel.label) + '"' +
+    ' data-flow-url="' + esc(rel.url) + '"' +
+    ' style="margin:6px 0 0;padding:5px 12px;border-radius:999px;cursor:pointer;' +
+    'background:#1f6feb22;border:1px solid #1f6feb66;color:#79c0ff;font-size:12px">' +
+    'Lihat diagram flow</button>';
+}
+
+/**
+ * What refine_with_ai actually asked for, revision by revision.
+ *
+ * Without this the monitor can only show the CURRENT description, so a task
+ * refined four times looks like it was always described that way.
+ */
+function renderRefinementHistory(s) {
+  const r = s && s.refinement_json;
+  if (!r || !Array.isArray(r.history) || r.history.length === 0) return '';
+
+  const entries = r.history.slice(-10).reverse().map(function(entry) {
+    const when = entry.at ? new Date(entry.at).toLocaleString('id-ID') : 'waktu tidak tercatat';
+    const plan = Array.isArray(entry.plan) ? entry.plan.length : 0;
+    const dod = Array.isArray(entry.definitionOfDone) ? entry.definitionOfDone.length : 0;
+    return '<div class="event-card" style="margin-top:8px">' +
+      '<div class="row" style="justify-content:space-between;align-items:center">' +
+        '<span class="phase" style="background:#2ea04322;color:#7ee787;border-color:#2ea04355">revisi ' +
+          esc(String(entry.revision || '?')) + '</span>' +
+        '<span class="meta">' + esc(when) + '</span>' +
+      '</div>' +
+      '<div style="margin-top:6px">' + esc(entry.description || '') + '</div>' +
+      (entry.newContext ? '<div class="meta" style="margin-top:4px">Konteks baru: ' + esc(entry.newContext) + '</div>' : '') +
+      '<div class="meta" style="margin-top:4px">' + plan + ' langkah rencana / ' + dod + ' item DoD</div>' +
+      '</div>';
+  }).join('');
+
+  return '<div class="modal-sec-title">Riwayat Refinement AI (' + r.history.length + ' revisi)</div>' + entries;
+}
+
 function ago(iso, nowMs) {
   if (!iso) return '';
   const d = ((nowMs || Date.now()) - new Date(iso).getTime()) / 1000;
@@ -653,7 +717,10 @@ function renderBuildBox(ab, jNow, machine) {
     } catch {}
   }
   const jobLink = validJobUrl
-    ? '<a href="' + esc(validJobUrl) + '" target="_blank" rel="noopener noreferrer" class="build-job-link" onclick="event.stopPropagation()">🔗 Buka Job Runner ↗</a>'
+    ? '<a href="' + esc(validJobUrl) + '" target="_blank" rel="noopener noreferrer" class="build-job-link" onclick="event.stopPropagation()">' +
+      'Buka job' +
+      '<span style="font-weight:400;opacity:.85;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' +
+      esc(validJobUrl.replace('https://', '').replace('http://', '')) + '</span></a>'
     : '';
   return '<div class="build-card ' + esc(st) + '" style="margin-top:10px">' +
     '<div class="row" style="justify-content:space-between;align-items:center">' +
@@ -892,6 +959,7 @@ function renderBuildMonitor(activeSessions, jNow) {
           '</div>' +
           '<div class="build-target">' + esc(ab.target) + '</div>' +
           renderBuildLocation(ab, s.machine) +
+          flowChipHtml(s) +
           (ab.stage ? '<div class="build-stage">▸ ' + esc(ab.stage) + (hasPct ? ' (' + pct + '%)' : '') + '</div>' : '') +
           '<div class="' + barCls + '"><i style="width:' + pct + '%"></i></div>' +
           (ab.command ? '<div class="build-cmd">$ ' + esc(ab.command) + '</div>' : '') +
@@ -1070,7 +1138,7 @@ function bukaDetail(sessionKey) {
     '<span class="phase" style="background:#a371f71a;color:#d2a8ff;border-color:#a371f755">' + agentText + '</span>' + versionPill(s);
 
   document.getElementById('modal-task').textContent = s.task || s.session_title || '(tanpa task)';
-  document.getElementById('modal-task-metadata').innerHTML = renderTaskMetadata(s);
+  document.getElementById('modal-task-metadata').innerHTML = renderTaskMetadata(s) + flowChipHtml(s);
   document.getElementById('modal-session-title').textContent = s.session_title ? '💬 ' + s.session_title : '';
   document.getElementById('modal-project').textContent = s.project_name || '';
   document.getElementById('modal-meta').textContent =
@@ -1089,9 +1157,9 @@ function bukaDetail(sessionKey) {
 
   const buildModalEl = document.getElementById('modal-build');
   if (buildModalEl) {
-    buildModalEl.innerHTML = s.active_build
+    buildModalEl.innerHTML = (s.active_build
       ? '<div class="modal-sec-title">Status Build &amp; Eksekusi</div>' + renderBuildBox(s.active_build, jNow, s.machine)
-      : '';
+      : '') + renderRefinementHistory(s);
   }
 
   // Plan
@@ -1370,8 +1438,8 @@ function renderHistory(data) {
       versionPill(h) +
       '<span class="task">' + esc(h.task || h.session_title || '(tanpa task)') + '</span></div>' +
       renderTaskMetadata(h) +
-      renderChain(h) +
-      '<div class="meta" style="margin-top:4px">' + esc(h.machine) +
+      flowChipHtml(h) +
+      renderChain(h) +      '<div class="meta" style="margin-top:4px">' + esc(h.machine) +
       (h.project_name ? ' · ' + esc(h.project_name) : '') +
       (h.duration_label ? ' · ⏱ ' + esc(h.duration_label) : ' · durasi tidak tercatat') +
       ' · ' + ago(h.updated_at, jNow) + '</div>' +
@@ -2384,6 +2452,7 @@ const server = http.createServer(async (req, res) => {
 const ensureSessionRepositoryColumnsSql = `
   ALTER TABLE sessions ADD COLUMN IF NOT EXISTS repo_path text NOT NULL DEFAULT '';
   ALTER TABLE sessions ADD COLUMN IF NOT EXISTS repo_remote text NOT NULL DEFAULT '';
+  ALTER TABLE sessions ADD COLUMN IF NOT EXISTS refinement_json jsonb;
 `;
 
 /**
