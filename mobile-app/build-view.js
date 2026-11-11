@@ -15,7 +15,11 @@ export function buildStatusLabel(status) {
 export function buildLocation(build, reporter) {
   const host = typeof build?.buildHost === 'string' ? build.buildHost.trim() : '';
   if (host) return `Build di ${host}`;
-  return reporter ? `Host build belum dilaporkan · Pelapor ${reporter}` : 'Host build belum dilaporkan';
+  // A build host is only claimed when the executor reported one. Without it,
+  // name the machine that sent the report: it answers "where did this come
+  // from" without inventing a builder.
+  if (reporter) return `Dilaporkan dari ${reporter}`;
+  return 'Host build tidak dilaporkan';
 }
 
 export function isRunningBuild(status) {

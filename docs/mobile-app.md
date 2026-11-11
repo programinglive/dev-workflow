@@ -28,6 +28,19 @@ kartu dashboard web. Isinya: status (`MEMBANGUN`/`MENGUJI`/`BERHASIL`/`GAGAL`),
 target build, baris lokasi build (`buildLocation`), stage terakhir, bar progres,
 dan umur laporan yang dihitung dari jam server.
 
+Baris lokasi punya tiga wajah, dan yang membedakannya tetap kejujuran:
+
+| Data yang ada | Teks |
+|---|---|
+| host dilaporkan pelaksana | `Build di <host>` |
+| hanya mesin pelapor | `Dilaporkan dari <machine>` |
+| keduanya tidak ada | `Host build tidak dilaporkan` |
+
+Di kartu sesi, `buildLocation` dipanggil **tanpa pelapor** karena baris meta
+kartu di atasnya sudah menyebut mesin — tanpa itu, "HELLOWORLD" muncul dua kali
+berturut-turut. Tab Build dan modal detail tetap menyebut pelapor, karena
+keduanya dibaca tanpa konteks itu.
+
 Blok ini hanya muncul bila `/api/sessions` mengirim `active_build.target`, dan
 letaknya **di atas diagram flow** supaya build yang sedang berjalan terlihat
 tanpa menggulir. Server hanya menempelkan `active_build` pada kartu terbaru
