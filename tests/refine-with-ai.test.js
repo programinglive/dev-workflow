@@ -90,3 +90,30 @@ test('failed save restores the prior task state', async () => {
   await assert.rejects(() => handleRefineWithAi(revised, workflow), /storage unavailable/);
   assert.deepEqual(workflow.state, before);
 });
+
+test('bugfix refinement requires a concrete investigation brief', async () => {
+  const workflow = fixture();
+  workflow.state.taskType = 'bugfix';
+  const before = structuredClone(workflow.state);
+  const response = await handleRefineWithAi(revised, workflow);
+  assert.equal(response.isError, true);
+  assert.deepEqual(workflow.state, before);
+});
+
+test('bugfix refinement saves reproduction, expected and observed behavior, evidence, and constraints', async () => {
+  const workflow = fixture();
+  workflow.state.taskType = 'bugfix';
+  const bugContext = {
+    symptom: 'Checkout rejects an expired coupon without identifying the coupon.',
+    reproduction: ['Create an expired coupon', 'Apply it in guest checkout'],
+    observed: 'Checkout returns a generic error.',
+    expected: 'Checkout identifies the expired coupon and keeps the cart.',
+    evidence: 'Checkout trace 2026-11-11 and failing regression test.',
+    constraints: 'Preserve valid coupon behavior and cart state.',
+  };
+  const response = await handleRefineWithAi({ ...revised, bugContext }, workflow);
+  assert.equal(response.isError, undefined);
+  assert.deepEqual(workflow.state.refinement.bugContext, bugContext);
+  assert.match(response.content[0].text, /guest checkout/);
+  assert.match(response.content[0].text, /failing regression test/);
+});
