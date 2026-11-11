@@ -85,6 +85,7 @@ function blockFor(state,status,args={}) {
   const id=escape(state.workflowTaskId);
   const plan=safe.plan.map(item=>`[${item.status==='done'?'x':' '}] ${item.text}`).join('\n');
   const dod=safe.dod.map(item=>`[${item.status==='done'?'x':item.status==='waived'?'-':' '}] ${item.text}${item.evidence?' — '+item.evidence:''}`).join('\n');
+  const refinement=sanitize(state.refinement||{});
   const links=externalLinkSummary(state);
   const sessions=renderAiSessions(state);
   // The checkpoint element travels inside the same block so mergeBlock keeps it.
@@ -98,7 +99,7 @@ function blockFor(state,status,args={}) {
     commits:state.checkpoint?.commits??[],
     handover:state.checkpoint?.handover??null,
   });
-  return `<!-- dev-workflow:${id}:start --><section data-dev-workflow-id="${id}"><h3>Dev Workflow</h3><p>Task ID: <code>${id}</code></p><p>Project: ${escape(safe.project)}</p><p>Status: ${escape(status)}</p><p>Implementation language: English</p>${links?`<h4>Connected work</h4><pre>${escape(links)}</pre>`:''}${sessions.length?`<h4>AI sessions</h4><pre>${escape(sessions.join('\n'))}</pre>`:''}<h4>Plan</h4><pre>${escape(plan)}</pre><h4>Definition of done</h4><pre>${escape(dod)}</pre>${safe.commit?`<p>Commit: ${escape(safe.commit)}</p>`:''}${safe.reason?`<p>Reason: ${escape(safe.reason)}</p>`:''}${safe.next.length?`<h4>Next action</h4><pre>${escape(safe.next.join('\n'))}</pre>`:''}${checkpoint}</section><!-- dev-workflow:${id}:end -->`;
+  return `<!-- dev-workflow:${id}:start --><section data-dev-workflow-id="${id}"><h3>Dev Workflow</h3><p>Task ID: <code>${id}</code></p><p>Project: ${escape(safe.project)}</p><p>Status: ${escape(status)}</p><p>Implementation language: English</p>${links?`<h4>Connected work</h4><pre>${escape(links)}</pre>`:''}${sessions.length?`<h4>AI sessions</h4><pre>${escape(sessions.join('\n'))}</pre>`:''}${refinement.context?`<h4>Refined task context</h4><pre>${escape(refinement.context)}</pre>`:''}<h4>Plan</h4><pre>${escape(plan)}</pre><h4>Definition of done</h4><pre>${escape(dod)}</pre>${safe.commit?`<p>Commit: ${escape(safe.commit)}</p>`:''}${safe.reason?`<p>Reason: ${escape(safe.reason)}</p>`:''}${safe.next.length?`<h4>Next action</h4><pre>${escape(safe.next.join('\n'))}</pre>`:''}${checkpoint}</section><!-- dev-workflow:${id}:end -->`;
 }
 function externalLinkSummary(state) {
   const links=sanitize(state.zettly?.externalLinks||{});
