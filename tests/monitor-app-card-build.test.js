@@ -36,9 +36,23 @@ test("the card renders the reported build, guarded by active_build.target", () =
 
 test("the card shows where the build runs and what stage it is in", () => {
   const kartu = kartuSource();
-  assert.match(kartu, /buildLocation\(s\.active_build, s\.machine\)/, "card must show the build host");
+  assert.match(kartu, /buildLocation\(s\.active_build\)/, "card must show the build host");
   assert.match(kartu, /s\.active_build\.stage/, "card must show the current stage");
   assert.match(kartu, /s\.active_build\??\.progress/, "card must show the progress percentage");
+});
+
+test("the card does not repeat the reporting machine inside the build block", () => {
+  const kartu = kartuSource();
+  assert.doesNotMatch(
+    kartu,
+    /buildLocation\(s\.active_build,\s*s\.machine\)/,
+    "the card meta line above already names the machine"
+  );
+});
+
+test("the Build tab and the detail modal still name the reporter", () => {
+  const uses = (app.match(/buildLocation\((?:build|s\.active_build),\s*s\.machine\)/g) || []);
+  assert.equal(uses.length, 2, "Build tab and detail modal pass the reporter; the card does not");
 });
 
 test("the build age on the card uses the server clock", () => {

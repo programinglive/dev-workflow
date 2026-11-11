@@ -4,7 +4,11 @@ import {buildLocation, parseEventDetail, visibleBuilds} from '../mobile-app/buil
 
 test('build location distinguishes an explicit executor from a reporting machine', () => {
   assert.equal(buildLocation({buildHost: 'builder-vm'}, 'HELLOWORLD'), 'Build di builder-vm');
-  assert.equal(buildLocation({}, 'HELLOWORLD'), 'Host build belum dilaporkan · Pelapor HELLOWORLD');
+  // No reported host: name the reporting machine, never claim it as builder.
+  assert.equal(buildLocation({}, 'HELLOWORLD'), 'Dilaporkan dari HELLOWORLD');
+  // No reporter either: say so in three words, not a sentence.
+  assert.equal(buildLocation({}), 'Host build tidak dilaporkan');
+  assert.equal(buildLocation(), 'Host build tidak dilaporkan');
 });
 
 test('mobile build list deduplicates sessions and puts active work first', () => {
