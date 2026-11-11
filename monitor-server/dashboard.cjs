@@ -1747,6 +1747,13 @@ async function cabutYatim(tombol) {
 
 // Delegasi klik pada elemen
 document.getElementById('build-monitor').addEventListener('click', function (e) {
+  // The build card carries a flow chip too, and this handler used to only look
+  // for the card itself, so a chip there did nothing at all.
+  var flowBtn = e.target.closest('[data-flow-id]');
+  if (flowBtn) {
+    openFlowModal(flowBtn.dataset.flowId, flowBtn.dataset.flowTitle, flowBtn.dataset.flowUrl);
+    return;
+  }
   var card = e.target.closest('[data-session-key]');
   if (card) {
     bukaDetail(card.dataset.sessionKey);
@@ -2465,9 +2472,13 @@ const ensureSessionRepositoryColumnsSql = `
 async function ensureSessionRepositoryColumns() {
   const existing = await query(
     `SELECT column_name FROM information_schema.columns
-      WHERE table_name = 'sessions' AND column_name IN ('repo_path', 'repo_remote')`,
+      WHERE table_name = 'sessions'
+        AND column_name IN ('repo_path', 'repo_remote', 'refinement_json')`,
   );
-  if (existing.rows.length >= 2) return;
+  // All three, not two: the check used to stop at the repository columns, so a
+  // database that already had them never received refinement_json and every
+  // session query failed with "column does not exist".
+  if (existing.rows.length >= 3) return;
   await query(ensureSessionRepositoryColumnsSql);
 }
 
