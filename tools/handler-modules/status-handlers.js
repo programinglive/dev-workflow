@@ -108,6 +108,14 @@ export async function handleGetWorkflowStatus(workflowState) {
       : `DoD: ${dod.done}/${dod.total} selesai, ${dod.waived} dilewati, ${dod.open} terbuka${dodSource}\n` +
         renderChecklist(dodItems, status.dodRevision);
 
+  // A Mermaid string is not a canvas. When the code exists but the Zettly
+  // drawing does not, the monitor has nothing to show, so say it here instead
+  // of printing a green check that hides the missing flow.
+  const flowNote =
+    status.featureFlowCreated && !status.zettly?.externalLinks?.drawing?.id
+      ? " (Mermaid tersimpan, drawing Zettly belum ada - jalankan 'create_feature_flow')"
+      : "";
+
   const planBlock = renderPlanFull(status.plan);
   const buildBlock = formatBuildStatusBlock(status.activeBuild, status.buildHistory);
   const mcpBlock = formatMcpRecommendations({
@@ -164,7 +172,7 @@ export async function handleGetWorkflowStatus(workflowState) {
 
 Phase: ${status.currentPhase}
 Task: ${status.taskDescription || "(none)"}
-Feature flow: ${status.featureFlowCreated ? "✅" : "❌"}
+Feature flow: ${status.featureFlowCreated ? "✅" : "❌"}${flowNote}
 Bug fixed: ${status.bugFixed ? "✅" : "❌"}
 Tests created: ${status.testsCreated ? "✅" : "❌"}
 Tests passed: ${status.testsPassed ? "✅" : "❌"}

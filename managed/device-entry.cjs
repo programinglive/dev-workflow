@@ -13,13 +13,17 @@ if(fs.existsSync(config)) {
   const source=JSON.parse(fs.readFileSync(config,'utf8'));
   const record=source.mcp?.['dev-workflow']||source.mcp?.servers?.['dev-workflow'];
   for(const [name,value] of Object.entries(record?.environment||record?.env||{})) {
-    if(typeof value!=='string') continue;
+    if(typeof value!=='string'||name.startsWith('FACTORY_')) continue;
     const canonicalEndpoint=name==='DEVWF_MONITOR_URL'||name==='DEVWF_RELEASE_URL';
     if(env[name]&&!canonicalEndpoint) continue;
     const ref=/^\{env:([A-Za-z_][A-Za-z0-9_]*)\}$/.exec(value);
     env[name]=ref?(process.env[ref[1]]||''):value;
   }
 }
+for(const key of Object.keys(env)) {
+  if(key.startsWith('FACTORY_')) delete env[key];
+}
+env.FACTORY_AUTO_TASK='false';
 env.DEVWF_AGENT=client;
 const child=spawn(process.execPath,[path.join(__dirname,'launcher.cjs'),...process.argv.slice(3)],{env,stdio:'inherit',windowsHide:true});
 child.on('error',()=>{console.error('dev-workflow: managed entry failed');process.exitCode=1;});

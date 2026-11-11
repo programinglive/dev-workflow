@@ -83,7 +83,7 @@ finished.
 | Path | Single responsibility |
 |---|---|
 | `index.js` | MCP entry point: registers the 64 tools, English implementation instructions and handlers |
-| `mcp-index.js` | Central MCP ecosystem index & context-aware recommender for all 12 ecosystem MCP servers |
+| `mcp-index.js` | Central MCP ecosystem index & context-aware recommender for all 11 ecosystem MCP servers |
 | `build-monitor.js`, `monitor-server/build-monitor.cjs` | Real-time build & execution status tracker (`report_build_status`) shared between MCP and the live monitor dashboard |
 | `mobile-app/build-view.js` | Android build tab presentation and truthful build host labeling |
 | `workflow-state.js` | The state machine and its persistence (phase, DoD, plan, history, activeBuild) |

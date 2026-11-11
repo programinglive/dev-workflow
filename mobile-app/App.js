@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   AppState,
+  Image,
   Linking,
   Modal,
   Pressable,
@@ -16,6 +17,7 @@ import {
 } from "react-native";
 import Constants from "expo-constants";
 import { namaSesi } from "./session-name";
+import { punyaTask, relasiFlow, urlThumbnail } from "./flow-relation";
 import { buildLocation, buildStatusLabel, isRunningBuild, parseEventDetail, visibleBuilds } from "./build-view";
 
 /**
@@ -57,6 +59,7 @@ const WARNA = {
   biruMuda: "#79c0ff",
   hijau: "#3fb950",
   kuning: "#e3b341",
+  merah: "#f85149",
   abu: "#8b949e",
 };
 
@@ -365,7 +368,7 @@ export default function App() {
 
           {tab === "build" && (
             <>
-              <Text style={gaya.buildIntro}>Build berjalan ditampilkan lebih dulu. Lokasi hanya disebut sebagai host build bila dilaporkan langsung oleh pelaksana.</Text>
+              <Text style={gaya.buildIntro}>Build berjalan ditampilkan lebih dulu. "Build di …" hanya untuk host yang dilaporkan pelaksananya sendiri; bila tidak, yang tampil adalah mesin pelapor.</Text>
               {builds.length === 0 ? (
                 <Text style={gaya.kosong}>belum ada build yang dilaporkan</Text>
               ) : (
@@ -604,6 +607,11 @@ function Kartu({ s, jamServer, onPress }) {
   const rencana = Array.isArray(s.plan_json) ? s.plan_json : [];
   const label = s.state === "idle" ? (s.phase || "idle").toUpperCase() : g.label;
   const sisaLangkah = Math.max(0, rencana.length - LANGKAH_DI_KARTU);
+  // Build progress is optional: a report may carry no percentage at all, and
+  // "0%" would then claim a build had not started.
+  const buildProgress = Number.isFinite(s.active_build?.progress)
+    ? Math.max(0, Math.min(100, Math.round(s.active_build.progress)))
+    : null;
 
   return (
     <Pressable
@@ -674,6 +682,87 @@ function Kartu({ s, jamServer, onPress }) {
         {s.machine}
         {s.task_type ? " · " + s.task_type : ""} · {ago(s.updated_at, jamServer)}
       </Text>
+
+      {/* Build status. The owner asked why a reported build never showed on the
+          card: /api/sessions already carried active_build and the web card drew
+          the same box, but this component ignored it. Placed above the flow
+          diagram so a running build is visible without scrolling. */}
+      {s.active_build?.target ? (
+        <View style={gaya.kartuBuild}>
+          <View style={gaya.baris}>
+            <Text
+              style={[
+                gaya.buildStatus,
+                {
+                  color:
+                    s.active_build.status === "failed"
+                      ? WARNA.merah
+                      : isRunningBuild(s.active_build.status)
+                        ? WARNA.kuning
+                        : WARNA.hijau,
+                },
+              ]}
+            >
+              {buildStatusLabel(s.active_build.status)}
+            </Text>
+            <Text style={[gaya.buildFooter, { marginTop: 0, marginLeft: "auto" }]}>
+              {ago(s.active_build.updatedAt || s.updated_at, jamServer)}
+            </Text>
+          </View>
+          <Text style={gaya.buildTarget} numberOfLines={2}>
+            🏗️ {s.active_build.target}
+          </Text>
+          {/* No reporter: the card meta line above already names the machine,
+              so repeating it here would say HELLOWORLD twice. */}
+          <Text style={gaya.buildHost} numberOfLines={1}>
+            {buildLocation(s.active_build)}
+          </Text>
+          {s.active_build.stage ? (
+            <Text style={gaya.buildStage} numberOfLines={2}>
+              ▸ {s.active_build.stage}
+            </Text>
+          ) : null}
+          <View style={gaya.barLuar}>
+            <View
+              style={[
+                gaya.barDalam,
+                {
+                  width: `${buildProgress === null ? 0 : buildProgress}%`,
+                  backgroundColor:
+                    s.active_build.status === "failed" ? WARNA.merah : WARNA.biru,
+                },
+              ]}
+            />
+          </View>
+          <Text style={gaya.buildFooter}>
+            {buildProgress === null ? "Progres belum dilaporkan" : `${buildProgress}%`}
+          </Text>
+        </View>
+      ) : null}
+
+      {/* The flow is the plan. Without it the card is just a status line. */}
+      {(() => {
+        const flow = relasiFlow(s);
+        if (!flow) {
+          return punyaTask(s) ? (
+            <Text style={[gaya.flowKosong, { color: WARNA.kuning }]}>
+              📐 Flow belum ada - jalankan create_feature_flow
+            </Text>
+          ) : null;
+        }
+        return (
+          <View style={gaya.flowKotak}>
+            <Text style={gaya.flowJudul}>📐 Flow Diagram</Text>
+            {/* The endpoint returns SVG, which <Image> cannot draw, so the
+                monitor also serves a raster copy at .png. */}
+            <Image
+              source={{ uri: urlThumbnail(MONITOR_URL, flow.id) }}
+              style={gaya.flowGambar}
+              resizeMode="contain"
+            />
+          </View>
+        );
+      })()}
 
       {total > 0 && (
         <>
@@ -835,6 +924,33 @@ function DetailSesi({ s, jamServer, onClose }) {
           })()}
 
           <ScrollView style={gaya.modalIsi}>
+            {/* Same flow as the card, larger, plus the way back to Zettly. */}
+            {(() => {
+              const flow = relasiFlow(s);
+              if (!flow) {
+                return punyaTask(s) ? (
+                  <Text style={[gaya.flowKosong, { color: WARNA.kuning }]}>
+                    📐 Flow belum ada - jalankan create_feature_flow
+                  </Text>
+                ) : null;
+              }
+              return (
+                <View style={gaya.flowKotak}>
+                  <Text style={gaya.bagianJudul}>📐 Flow Diagram</Text>
+                  <Image
+                    source={{ uri: urlThumbnail(MONITOR_URL, flow.id) }}
+                    style={gaya.flowGambarBesar}
+                    resizeMode="contain"
+                  />
+                  {flow.url ? (
+                    <Pressable onPress={() => Linking.openURL(flow.url)} hitSlop={8}>
+                      <Text style={gaya.flowTautan}>Buka di Zettly ↗</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+              );
+            })()}
+
             {s.active_build?.target ? (
               <View style={gaya.buildDetail}>
                 <Text style={gaya.bagianJudul}>Build · {buildStatusLabel(s.active_build.status)}</Text>
@@ -956,6 +1072,9 @@ const gaya = StyleSheet.create({
   buildShortcutMeta: { color: WARNA.teks, fontSize: 12, marginTop: 4 },
   buildIntro: { color: WARNA.redup, fontSize: 12, lineHeight: 18, marginBottom: 14 },
   buildCard: { borderWidth: 1, borderColor: "#2f81f766", backgroundColor: WARNA.card, borderRadius: 14, padding: 14, minHeight: 175 },
+  // Build block inside a session card: same information as the web card, but
+  // compact enough to sit above the flow diagram.
+  kartuBuild: { borderWidth: 1, borderColor: "#2f81f766", backgroundColor: "#0f1a2a", borderRadius: 12, padding: 10, marginTop: 10 },
   buildStatus: { fontSize: 11, fontWeight: "700", letterSpacing: 0.5 },
   buildProject: { color: WARNA.redup, fontSize: 12, flexShrink: 1 },
   buildTarget: { color: WARNA.teks, fontSize: 16, fontWeight: "700", marginTop: 8 },
@@ -1017,6 +1136,27 @@ const gaya = StyleSheet.create({
 
   langkah: { color: "#9da7b3", fontSize: 13, marginTop: 5 },
   langkahBeres: { color: WARNA.hijau, textDecorationLine: "line-through" },
+
+  // Flow diagram: the plan the owner asked to see on the tablet.
+  flowKotak: {
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: "#8b5cf655",
+    backgroundColor: "#0b1020",
+    borderRadius: 10,
+    padding: 8,
+  },
+  flowJudul: {
+    color: "#a78bfa",
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.5,
+    marginBottom: 6,
+  },
+  flowGambar: { width: "100%", height: 120, borderRadius: 6 },
+  flowGambarBesar: { width: "100%", height: 260, borderRadius: 6 },
+  flowKosong: { fontSize: 12, marginTop: 8 },
+  flowTautan: { color: WARNA.biruMuda, fontSize: 12, marginTop: 8, fontWeight: "600" },
 
   kartuKaki: {
     flexDirection: "row",
