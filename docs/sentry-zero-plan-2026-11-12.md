@@ -167,15 +167,25 @@ Order by reported volume, not alphabetically.
 | SHA256 | `823356c3f1b67333d1c5582bb1443fe8ad7af826191cd02f6fdaabea35ce3f87` |
 | Command | `mysqldump --single-transaction --quick --no-tablespaces ... | gzip -1` |
 
-**Off-host copy is NOT done.** `gsutil cp` to
-`gs://bw-server-backups-377312/server_backups_v2/pre-repair/` failed twice with
-`403 Provided scope(s) are not authorized`. The service account on `bw-app` has no
-storage write scope, unlike whatever uploaded the Zettly backup earlier. Until
-this is fixed by granting that scope (or copying the file from a machine that has
-it), the only copy of this backup lives on `bw-app` itself.
+**Off-host copy: DONE.** The file is in
+`gs://bw-server-backups-377312/server_backups_v2/pre-repair/erp_pre_btb_reconcile_20261111T192753Z.sql.gz`
+at 240,702,148 bytes, matching the local copy, with SHA256
+`823356c3f1b67333d1c5582bb1443fe8ad7af826191cd02f6fdaabea35ce3f87`.
 
-Do not treat this backup as sufficient for a destructive write until an off-host
-copy exists.
+Getting there required fixing the actual blocker: the `bw-app` VM had only the
+`devstorage.read_only` access scope, so `gsutil cp` failed with
+`403 Provided scope(s) are not authorized` no matter what IAM said. Scopes cannot
+be changed on a running instance, so `bw-app` was stopped, its service account
+re-scoped to `cloud-platform`, and started again. Verification after restart:
+nginx, php8.3-fpm and supervisor all `active`; `erp.beautyworld.co.id`,
+`zettly.programinglive.com`, `pos.ministrybeauty.com` and
+`finance.ministrybeauty.com` all returned 200.
+
+**Lesson:** an instance access scope is separate from IAM. Granting a role in IAM
+does not fix a read-only storage scope, and the only remedy is a stop/start.
+Check `gcloud compute instances describe --format="value(serviceAccounts)"`
+before blaming permissions.
+
 
 
 
