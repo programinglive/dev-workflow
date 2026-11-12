@@ -20,8 +20,6 @@ async function clients(options) {
  const result={};
  if(Object.hasOwn(options,'zettly'))result.zettly=options.zettly;
  else{const config=await resolveZettlyConfig(env);result.zettly=config?{...createZettlyClient(config),expectedUserId:config.expectedUserId}:null;}
- if(Object.hasOwn(options,'factory'))result.factory=options.factory;
- else{const config=readFactoryConfig(env);result.factory=config?{readWorkspace:()=>readWorkspace(config),findTask:id=>findTask(config,id)}:null;}
  if(Object.hasOwn(options,'sentry'))result.sentry=options.sentry;
  else{const config=readSentryConfig(env);result.sentry=config?{...createSentryClient(config),organization:config.organization}:null;}
  return result;
@@ -51,12 +49,11 @@ export async function handleIntegrationTool(name,args={},workflowState,options={
    return json(context);
   }
   if(name==='get_integration_status'){
-   const [zettly,factory,sentry]=await Promise.all([
+   const [zettly,sentry]=await Promise.all([
     probe(api.zettly,async client=>{const response=await client.request('GET','/user');const user=response.data||response;if(!Number.isSafeInteger(Number(user.id))||Number(user.id)<1||(client.expectedUserId&&Number(user.id)!==Number(client.expectedUserId)))throw Error('Owner mismatch');}),
-    probe(api.factory,async client=>{const workspace=await client.readWorkspace();if(!Array.isArray(workspace?.projects)||!Array.isArray(workspace?.tasks)||workspace.error)throw Error('Invalid Factory workspace');}),
     probe(api.sentry,client=>client.listIssues({limit:1}))
    ]);
-   return json({zettly,factory,sentry,backgroundWorker:'not_managed_by_this_mcp'});
+   return json({zettly,sentry,backgroundWorker:'not_managed_by_this_mcp'});
   }
   if(name==='link_factory_task'){
    const state=workflowState?.state;
