@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
 
@@ -13,6 +14,17 @@ const {
 const ROOT_DIR = path.resolve(import.meta.dirname, "..");
 
 test("Milestone M7: Android APK Release Workflow & Verification", async (t) => {
+  await t.test("M7: mobile-app/App.js maintains balanced Modal and ScrollView JSX tags for Metro bundler", () => {
+    const appSource = fs.readFileSync(path.join(ROOT_DIR, "mobile-app", "App.js"), "utf8");
+    const openModals = (appSource.match(/<Modal\b/g) || []).length;
+    const closeModals = (appSource.match(/<\/Modal>/g) || []).length;
+    assert.equal(openModals, closeModals, "Every <Modal> must have a matching </Modal>");
+
+    const openScrolls = (appSource.match(/<ScrollView\b/g) || []).length;
+    const closeScrolls = (appSource.match(/<\/ScrollView>/g) || []).length;
+    assert.equal(openScrolls, closeScrolls, "Every <ScrollView> must have a matching </ScrollView>");
+  });
+
   await t.test("M7: .github/workflows/android-release.yml enforces locked deps, tests, signing, apksigner, and sha256", () => {
     const result = verifyAndroidReleaseWorkflow(
       path.join(ROOT_DIR, ".github", "workflows", "android-release.yml")

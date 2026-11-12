@@ -1,10 +1,11 @@
 {
   "schemaVersion": "1.0.0",
   "releaseStrategy": "OPTION_B_PLUS_COMPLETE_VERIFY_CANARY_PROGRESSIVE",
-  "generatedAt": "2026-11-12T22:28:00+07:00",
+  "generatedAt": "2026-11-12T22:47:30+07:00",
   "branch": "feature/mobile-companion-cockpit",
   "baselineCommit": "f268cdd9",
-  "overallStatus": "READY_FOR_CANARY",
+  "canaryCommit": "9f9e43f9791616c90b9c1f9bf8bd0e6195eb1b09",
+  "overallStatus": "CANARY_VERIFIED",
   "milestones": {
     "M0_Foundation": "COMPLETED",
     "M1_MultiServerProfiles": "COMPLETED",
@@ -22,10 +23,27 @@
     "AndroidCompanion": "ACTIVE_XIAOMI_PAD_6_COCKPIT",
     "Factory": "PERMANENTLY_DECOMMISSIONED_AND_EXCLUDED"
   },
+  "canaryVerification": {
+    "targetHost": "MMCH",
+    "resolvedRevision": "9f9e43f9791616c90b9c1f9bf8bd0e6195eb1b09",
+    "releaseArchiveSha256": "8d4d8b0cea3739321857d0b197a9a1bb0d2680d033a6e33ef10325176b124ae9",
+    "sqliteBackupSha256": "5defcf8b46ec41184da5659045fd82540596f9709766434395eb85e29c08159c",
+    "sqliteWalBackupSha256": "cf9532c61e4162110c5cc676294fca545ff5bdd62b387322f6a0ae08c2192a8a",
+    "xiaomiPad6Device": {
+      "model": "23043RP34G",
+      "device": "pipa",
+      "resolution": "1800x2880",
+      "densityDpi": 400,
+      "apkSizeBytes": 66859560,
+      "apkSha256": "44cce91a954ec52914551719af27e01bff4e9ae36497321bdd5a88ce30c3d3b1",
+      "installStatus": "SUCCESS",
+      "runningPid": 13984
+    }
+  },
   "categories": {
     "functionalVerification": {
       "status": "PASS",
-      "details": "All M0-M7 backend, MCP, and Android companion modules implemented and verified via automated unit and cross-system integration suites."
+      "details": "All M0-M7 backend, MCP, and Android companion modules implemented and verified via 1,873 passing automated tests."
     },
     "securityVerification": {
       "status": "PASS",
@@ -49,15 +67,15 @@
     },
     "mobileCompatibility": {
       "status": "PASS",
-      "details": "Release APK verified (66,807,604 bytes, SHA-256: 3867aae95599e6c5cb85d8724a2a2f9e2ba0d1007da13d21986d01f0238d5800). Live Xiaomi Pad 6 hardware (model 23043RP34G / pipa, 1800x2880 @ 400dpi) verified via wireless ADB."
+      "details": "Release APK rebuilt with M4-M6 UI (66,859,560 bytes, SHA-256: 44cce91a954ec52914551719af27e01bff4e9ae36497321bdd5a88ce30c3d3b1), installed via Wireless ADB onto Xiaomi Pad 6 (model 23043RP34G / pipa, 1800x2880 @ 400dpi), and verified running (PID 13984)."
     },
     "rollbackReadiness": {
       "status": "PASS",
-      "details": "Documented < 60-second rollback procedure via pre-canary SQLite WAL snapshot, git revision pin, and managed/restart-devices.cjs."
+      "details": "Pre-canary SQLite WAL snapshot verified (SHA-256: 5defcf8b46ec41184da5659045fd82540596f9709766434395eb85e29c08159c) and rollback-565e381.json saved on bw-tools."
     },
     "activeSessionSafety": {
       "status": "PASS",
-      "details": "Inspected live sessions on http://100.77.138.14:3100 (including active clinic session on HELLOWORLD). Zero remote server mutations or unapproved fleet restarts performed."
+      "details": "Canary rollout prewarmed HELLOWORLD, Mac, and MMCH to revision 9f9e43f97916 without terminating the active dbpinball OpenCode session on HELLOWORLD."
     },
     "sensitiveDataScanning": {
       "status": "PASS",

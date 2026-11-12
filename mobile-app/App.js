@@ -1802,12 +1802,6 @@ function ModalServer({
     </Modal>
   );
 }
-          </ScrollView>
-        </View>
-      </View>
-    </Modal>
-  );
-}
 
 const gaya = StyleSheet.create({
   layar: { flex: 1, backgroundColor: WARNA.bg, paddingTop: 28, paddingHorizontal: 18 },
