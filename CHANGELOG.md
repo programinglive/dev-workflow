@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.29.7](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.29.6...v1.29.7) (2026-11-12)
+
+
+### 🐛 Bug Fixes
+
+* **managed:** make the fleet reload finish without a false timeout ([dd07def](https://github.com/programinglive/dev-workflow-mcp-server/commit/dd07def310e15aa1eb9e17c5e4a121db26d22551))
+
 ### [1.29.6](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.29.5...v1.29.6) (2026-11-12)
 
 
