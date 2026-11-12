@@ -2,6 +2,40 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.31.0](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.30.0...v1.31.0) (2026-11-12)
+
+
+### 📝 Documentation
+
+* **architecture:** complete Milestone 0 audit and Zettly integration contract v1 ([dbb3cfc](https://github.com/programinglive/dev-workflow-mcp-server/commit/dbb3cfc3fcf054653401cf3878e0476c742dc00a))
+* **opensource:** complete security discovery, extraction strategy, and release checklist ([3c0d1d9](https://github.com/programinglive/dev-workflow-mcp-server/commit/3c0d1d9561a2e9ef28ae2b8a389b4e5cd10e69d4))
+* update README with unified 3-plane architecture, Zettly separation, and mobile cockpit ([55949bc](https://github.com/programinglive/dev-workflow-mcp-server/commit/55949bc1af0b729cd8866afd8c9299dbb7eec6fa))
+
+
+### ✨ Features
+
+* **fleet:** implement Addendum [#5](https://github.com/programinglive/dev-workflow-mcp-server/issues/5) automated fleet update manager and tool sync ([9974148](https://github.com/programinglive/dev-workflow-mcp-server/commit/9974148f13f8662214fa00169ad7ed32a4154e41))
+* **fleet:** implement Addendum [#6](https://github.com/programinglive/dev-workflow-mcp-server/issues/6)-[#8](https://github.com/programinglive/dev-workflow-mcp-server/issues/8) universal providers, resume, and upgrade CLI ([b836c77](https://github.com/programinglive/dev-workflow-mcp-server/commit/b836c77fad74407190c120d7687b5cc8a26615b7))
+* **mobile:** add IdentityProvider, gateway policy, and Xiaomi Pad 6 M4 UX ([f268cdd](https://github.com/programinglive/dev-workflow-mcp-server/commit/f268cdd9f5aab08ee1cb8ac9e8fbc9a28112779b))
+* **mobile:** complete M5-M7 HITL governance, evidence inspector, and Option B+ gate ([9f9e43f](https://github.com/programinglive/dev-workflow-mcp-server/commit/9f9e43f9791616c90b9c1f9bf8bd0e6195eb1b09))
+* **mobile:** document M0 architecture audit, gap analysis, and Xiaomi Pad 6 specs ([6dab7fe](https://github.com/programinglive/dev-workflow-mcp-server/commit/6dab7fe45862e7c111f63f7a4e08dfde6657225e))
+* **mobile:** implement M1 runtime server configuration and profile switcher ([224d47c](https://github.com/programinglive/dev-workflow-mcp-server/commit/224d47cf2fd68b909cbdc6fd4004a0abf31fa63c))
+* **mobile:** upgrade commiter to ^1.5.1 and apply DW Android Companion icon and splash ([dd3aa1e](https://github.com/programinglive/dev-workflow-mcp-server/commit/dd3aa1ec297c4ed42cb675e9369e2c82f1ae902e))
+* **release:** complete Option B+ phase 3 readiness, detail fix, and web DW badge ([b56a22b](https://github.com/programinglive/dev-workflow-mcp-server/commit/b56a22bf5f9a7a2934e38b528bbdad78fbb431be))
+
+
+### ✅ Tests
+
+* **fleet:** add v1.31.0 real session resume verification and release report ([58b62e7](https://github.com/programinglive/dev-workflow-mcp-server/commit/58b62e79da6ee05f848bab1b10c04506b5d927ce))
+* update cli/args.js, cli/commands.js, docs/mobile-app.md +11 more ([392df2b](https://github.com/programinglive/dev-workflow-mcp-server/commit/392df2b3c202feb07a34e68b4ba12868059cddb2))
+* update docs/mobile-app.md, mobile-app/App.js, mobile-app/connection-manager.js +6 more ([6e2beff](https://github.com/programinglive/dev-workflow-mcp-server/commit/6e2beff118df52ba5ef34dc62f90c3e6404f5be9))
+
+
+### 🐛 Bug Fixes
+
+* **mobile:** resolve App.js JSX syntax and record Option B+ Canary verification ([0649de6](https://github.com/programinglive/dev-workflow-mcp-server/commit/0649de6a6a52f51d312e816beb9befccdbb77ced))
+* **monitor:** replace PAGE version interpolation with runtime token replacement ([7972b53](https://github.com/programinglive/dev-workflow-mcp-server/commit/7972b53c767eef9a91eb7577f0206144cb305b8e))
+
 ## [1.30.0](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.29.10...v1.30.0) (2026-11-12)
 
 

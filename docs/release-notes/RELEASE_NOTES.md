@@ -4,6 +4,7 @@ Authoritative history of user-visible changes for the Development Workflow MCP S
 
 | Version | Date | Notes |
 |---------|------|-------|
+| 1.31.0 | 2026-11-12 | **architecture:** complete Milestone 0 audit and Zettly integration contract v1 (dbb3cfc) |
 | 1.26.0 | 2026-11-08 | **release:** merge origin/main into the monitor reconciliation line (4f37770): start-task now shows which tasks other sessions hold before choosing (#63), managed-rules bw-tools fix; restores a forward-only central release pointer that also contains the unified card-chain monitor of v1.25.0 (56992e9) |
 | 1.25.0 | 2026-11-08 | **monitor:** merge origin/main monitor truth fixes (PR #59) into the unified card-chain upsert; assignWorkflowIdentity is the single parentTask writer (0a414bb) |
 | 1.24.2 | 2026-11-08 | **monitor:** unify task-metadata and card-chain models into one upsert and dashboard (6b3a0f8) |
@@ -69,6 +70,28 @@ Authoritative history of user-visible changes for the Development Workflow MCP S
 
 
 
+
+
+## 1.31.0
+
+Released on **2026-11-12**.
+
+- **architecture:** complete Milestone 0 audit and Zettly integration contract v1 (dbb3cfc)
+- **opensource:** complete security discovery, extraction strategy, and release checklist (3c0d1d9)
+- update README with unified 3-plane architecture, Zettly separation, and mobile cockpit (55949bc)
+- **fleet:** implement Addendum #5 automated fleet update manager and tool sync (9974148)
+- **fleet:** implement Addendum #6-#8 universal providers, resume, and upgrade CLI (b836c77)
+- **mobile:** add IdentityProvider, gateway policy, and Xiaomi Pad 6 M4 UX (f268cdd)
+- **mobile:** complete M5-M7 HITL governance, evidence inspector, and Option B+ gate (9f9e43f)
+- **mobile:** document M0 architecture audit, gap analysis, and Xiaomi Pad 6 specs (6dab7fe)
+- **mobile:** implement M1 runtime server configuration and profile switcher (224d47c)
+- **mobile:** upgrade commiter to ^1.5.1 and apply DW Android Companion icon and splash (dd3aa1e)
+- **release:** complete Option B+ phase 3 readiness, detail fix, and web DW badge (b56a22b)
+- **fleet:** add v1.31.0 real session resume verification and release report (58b62e7)
+- update cli/args.js, cli/commands.js, docs/mobile-app.md +11 more (392df2b)
+- update docs/mobile-app.md, mobile-app/App.js, mobile-app/connection-manager.js +6 more (6e2beff)
+- **mobile:** resolve App.js JSX syntax and record Option B+ Canary verification (0649de6)
+- **monitor:** replace PAGE version interpolation with runtime token replacement (7972b53)
 
 ## 1.12.3 – 📝 Documentation
 
