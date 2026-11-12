@@ -59,6 +59,33 @@ test('a device with no change is reported as a warning, not a success', () => {
   assert.match(source, /rules unchanged/, 'the warning must say nothing changed');
 });
 
+test('the rule block states the verified runner topology, not the retired claim', () => {
+  // Measured 11 November 2026: the block said the MMCH Windows runner was
+  // "fully decommissioned" while runner 58764237 (tag bw-server, platform
+  // windows) was online and was the only runner able to execute ERP jobs.
+  // bw-tools carried only runner 58882401 tagged bw-tools and had no Docker.
+  assert.ok(
+    !/fully decommissioned/.test(source),
+    'the block must not claim the MMCH runner is decommissioned while it is online',
+  );
+  assert.match(
+    source,
+    /CI runner topology \(verified 11 Nov 2026\)/,
+    'the block must carry the verified topology with its date',
+  );
+  assert.match(source, /58764237/, 'the ERP runner id must be named');
+  assert.match(source, /58882401/, 'the bw-tools runner id must be named');
+  assert.match(source, /no Docker/, 'the Docker gap on bw-tools must be stated');
+});
+
+test('the rule block requires registration for read-only work', () => {
+  // Measured 11 November 2026: a full diagnosis ran without start_task, so the
+  // monitor showed no card and the findings were untracked.
+  assert.match(source, /Registration is mandatory for every task, including read-only work/);
+  assert.match(source, /Focus exception/);
+  assert.match(source, /MCP project lock/);
+});
+
 test('stdin is piped whenever the sync sends the script as input', () => {
   // Measured 8 November 2026: `run()` defaulted stdin to 'ignore', so the
   // script was dropped, `python -` read an empty stdin and ssh never returned.
