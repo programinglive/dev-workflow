@@ -26,6 +26,7 @@ import { handleListFactoryTasks, handleClaimFactoryTask, handleSyncTaskStatus, h
 import {handleIntegrationTool,prepareTaskSource} from './integration-handlers.js';
 import {handleRefineWithAi} from './refine-with-ai.js';
 import {handleFocusTool,prepareTaskFocus} from '../../focus-workflow.js';
+import {syncZettlyDrawing} from '../../zettly-drawing.js';
 
 function summarizeResponse(label, response) {
   const text = response?.content?.[0]?.text || "";
@@ -592,6 +593,16 @@ export async function handleToolCall(context) {
         const linked=await handleFocusTool('link_task_to_focus',{focusId:context.workflowState.state.focus.id},context.workflowState,options);
         if(linked.isError)return securityOutputFilter(linked);
         notes.push('The canonical task is linked to its verified active focus.');
+      }
+      if(result.ok&&['start_task','claim_factory_task'].includes(name)&&!context.workflowState.state.zettly?.externalLinks?.drawing?.id&&context.workflowState.state.featureFlowCreated){
+        try{
+          const drawResult=await syncZettlyDrawing(context.workflowState,context.zettlyOptions);
+          if(drawResult?.ok&&drawResult?.id){
+            notes.push(`🎨 Zettly Draw #${drawResult.id}: ${drawResult.url||`https://zettly.programinglive.com/draw/${drawResult.id}`}`);
+          }
+        }catch{
+          // Non-blocking background sync
+        }
       }
       const selectedExistingTodo=args.zettlyTodoId||args.source?.system==='zettly';
       if(result.ok&&selectedExistingTodo&&['start_task','claim_factory_task'].includes(name)){
