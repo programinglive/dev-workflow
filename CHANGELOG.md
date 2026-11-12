@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.29.8](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.29.7...v1.29.8) (2026-11-12)
+
+
+### 🐛 Bug Fixes
+
+* **managed:** request the local restart without a deprecated shell ([a4226c2](https://github.com/programinglive/dev-workflow-mcp-server/commit/a4226c2f52d947844046dc1d841d0f568243e672))
+
 ### [1.29.7](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.29.6...v1.29.7) (2026-11-12)
 
 
