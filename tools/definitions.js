@@ -28,11 +28,7 @@ export function getToolList() {
       description:'Read one Sentry issue summary in the configured organization. Does not return raw event payloads, cookies, request bodies or user records. No Sentry mutation.',
       inputSchema:{type:'object',properties:{issueId:{type:'string',pattern:'^\\d{1,30}$'}},required:['issueId'],additionalProperties:false},
     },
-    {
-      name:'link_factory_task',
-      description:'Verify and link one existing Factory task to the active canonical Zettly Todo and monitor session. Reuses the task without creating a second Todo or worker run.',
-      inputSchema:{type:'object',properties:{factoryTaskId:{type:'string',pattern:'^[0-9a-fA-F]{8}-[0-9a-fA-F-]{27}$'}},required:['factoryTaskId'],additionalProperties:false},
-    },
+    
     {
       name:'link_zettly_drawing',
       description:'Verify an existing Zettly Draw item owned by the canonical Zettly account and link it to the active development workflow without creating a duplicate.',
@@ -1013,149 +1009,11 @@ export function getToolList() {
         required: ["project"],
       },
     },
-    {
-      name: "list_factory_tasks",
-      description:
-        "List tasks from the Factory board (factory.programinglive.com), newest activity first. Defaults to work that still needs attention: running, queued, backlog, review and blocked. Requires FACTORY_URL plus FACTORY_TOKEN, or FACTORY_EMAIL and FACTORY_PASSWORD.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          statuses: {
-            type: "array",
-            items: { type: "string", enum: ["backlog", "queued", "running", "review", "blocked", "done", "cancelled"] },
-            description: "Statuses to include. Defaults to running, queued, backlog, review and blocked.",
-          },
-          project: {
-            type: "string",
-            description: "Optional project name or id to filter by (case-insensitive substring).",
-          },
-          limit: {
-            type: "number",
-            description: "Maximum number of tasks to return (1-200, default 50).",
-          },
-        },
-      },
-    },
-    {
-      name: "list_factory_projects",
-      description:
-        "List projects in the Factory workspace with their UUIDs. Run this before create_factory_task, because Factory requires a real projectId and cannot accept an invented one.",
-      inputSchema: {
-        type: "object",
-        properties: {},
-      },
-    },
-    {
-      name: "create_factory_task",
-      description:
-        "Create a task on the Factory board through the official write path (POST /api/factory create_task). Defaults to status 'backlog', which records the work WITHOUT starting a worker run. Only pass status 'queued' when you really want the worker to execute it - Factory rejects a queued task (409) unless 'acceptance' contains a ```run block. Every task needs a 'definitionOfDone' checklist: the concrete conditions that must be true before it can be marked done. Use list_factory_projects first to get a real projectId.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          projectId: {
-            type: "string",
-            description: "Project UUID from list_factory_projects. Required.",
-          },
-          title: {
-            type: "string",
-            description: "Task title, 3-140 characters.",
-          },
-          description: {
-            type: "string",
-            description: "Optional context: current behaviour, what should change. Max 4000 characters.",
-          },
-          acceptance: {
-            type: "string",
-            description:
-              "What must be true for this task to be done. 3-3000 characters. Required by Factory.",
-          },
-          definitionOfDone: {
-            type: "string",
-            description:
-              "Checklist of the concrete conditions that must be true before the task can be marked done, one per line, for example '- [ ] build lulus'. 3-3000 characters. Required by Factory, and a task cannot move to done while it is empty. Different from 'acceptance', which also carries the ```run block for the worker.",
-          },
-          priority: {
-            type: "string",
-            enum: ["low", "normal", "high"],
-            description: "Defaults to normal.",
-          },
-          status: {
-            type: "string",
-            enum: ["backlog", "queued"],
-            description:
-              "Defaults to backlog. 'queued' also creates a worker run and requires a ```run block in acceptance.",
-          },
-        },
-        required: ["projectId", "title", "acceptance", "definitionOfDone"],
-      },
-    },
-    {
-      name: "update_factory_task",
-      description:
-        "Edit the details of an existing Factory task (title, description, acceptance, definitionOfDone). Use it to fill the definition of done of a task created before Factory required it, because a task cannot move to 'done' while that checklist is empty. It reads the task's current version and lets Factory reject a stale edit with 409 instead of overwriting someone else's change. Supply at least one field.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          recordId: {
-            type: "string",
-            description: "Factory task id (UUID) from list_factory_tasks.",
-          },
-          title: {
-            type: "string",
-            description: "New title, 3-140 characters. Omit to keep the current one.",
-          },
-          description: {
-            type: "string",
-            description: "New context text, max 4000 characters. Omit to keep the current one.",
-          },
-          acceptance: {
-            type: "string",
-            description:
-              "New acceptance text, 3-3000 characters. This is also where the ```run block for the worker lives, so keep it intact unless you mean to change what the runner executes.",
-          },
-          definitionOfDone: {
-            type: "string",
-            description:
-              "New checklist of conditions that must be true before the task can be marked done, 3-3000 characters, one condition per line, for example '- [ ] build lulus'.",
-          },
-        },
-        required: ["recordId"],
-      },
-    },
-    {
-      name: "claim_factory_task",
-      description:
-        "Claim a task by opening a Factory work session. This is what moves the task to 'running' on the board, because Factory has no plain status edit for it. Also starts the local workflow for that task. Use the task id from list_factory_tasks. If the task is held by another device, pass 'takeoverReason' to take it over; Factory records that reason on the board and locks the previous holder out.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          recordId: {
-            type: "string",
-            description: "Factory task id (UUID) to claim.",
-          },
-          projectDir: {
-            type: "string",
-            description:
-              "Optional absolute path to the repository this claimed task works on (e.g. D:\\code\\clinic). " +
-              "When omitted, resolved from the session's active repository or the Factory project name.",
-          },
-          zettlyTodoId: {type:'integer',minimum:1,description:'Reuse the known canonical Zettly Todo for this Factory task instead of creating another tracking Todo.'},
-          focusId: {type:'integer',minimum:1,description:'Verify and link the claimed canonical task to the current focus.'},
-          requireFocus: {type:'boolean',description:'Refuse the claim when no single active focus is available.'},
-          expectedOwnerId: {type:'integer',minimum:1,description:'Expected Zettly owner for focus verification.'},
-          step: {
-            type: "string",
-            description: "Short description of what you are about to do, shown on the device row (max 240 chars).",
-          },
-          takeoverReason: {
-            type: "string",
-            description:
-              "Alasan mengambil alih task yang sedang dipegang perangkat lain (3-500 karakter). Wajib diisi hanya bila task itu dipegang perangkat lain. Alasannya dicatat di papan.",
-          },
-        },
-        required: ["recordId"],
-      },
-    },
+    
+    
+    
+    
+    
     {
       name: "sync_task_status",
       description:
