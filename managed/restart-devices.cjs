@@ -25,6 +25,7 @@
 
 const os = require('node:os');
 const path = require('node:path');
+const fs = require('node:fs');
 const { execFileSync } = require('node:child_process');
 
 const LOCAL = os.hostname();
@@ -56,6 +57,20 @@ const WINDOWS_KILL_CLIENTS = [
 
 const MAC_KILL = 'pkill -f ManagedMCP || true';
 
+// The reconnect module runs from this checkout locally, and is streamed over
+// stdin on remote devices so it never depends on a checkout path there.
+const RECONNECT_SOURCE = fs.readFileSync(path.join(__dirname, 'mcp-reconnect.cjs'), 'utf8');
+
+// Non-interactive shells on a Mac keep node off PATH when nvm manages it.
+const MAC_HEAL = [
+  'if command -v node >/dev/null 2>&1; then',
+  '  node -',
+  'else',
+  '  export PATH="$HOME/.nvm/versions/node/$(ls -1 "$HOME/.nvm/versions/node" 2>/dev/null | tail -1)/bin:$PATH"',
+  '  node -',
+  'fi',
+].join('\n');
+
 // opencode is excluded on purpose: it is reloaded in place through its service.
 const MAC_KILL_CLIENTS = [
   'for n in codex agy antigravity; do',
@@ -73,10 +88,11 @@ const MAC_RELOAD = [
   'fi',
 ].join('\n');
 
-function run(command, args, timeout = 90000) {
+function run(command, args, timeout = 90000, input) {
   return execFileSync(command, args, {
     encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: input === undefined ? ['ignore', 'pipe', 'pipe'] : ['pipe', 'pipe', 'pipe'],
+    ...(input === undefined ? {} : { input }),
     windowsHide: true,
     timeout,
   }).trim();
@@ -84,6 +100,20 @@ function run(command, args, timeout = 90000) {
 
 function encoded(script) {
   return Buffer.from(script, 'utf16le').toString('base64');
+}
+
+// A force-killed MCP server is recorded as "exited with code 255" and marked
+// failed, and OpenCode never retries. Healing reads /api/mcp after the restart,
+// reconnects only the failed servers, and re-reads the status.
+function healOnDevice(device) {
+  const isLocal = device.match.test(LOCAL);
+  if (isLocal) return run(process.execPath, [path.join(__dirname, 'mcp-reconnect.cjs')], 180000);
+  if (device.platform === 'windows') {
+    return run('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', device.host, 'node', '-'], 180000, RECONNECT_SOURCE);
+  }
+  const payload = Buffer.from(MAC_HEAL, 'utf8').toString('base64');
+  const remote = `echo ${payload} | base64 -d | sh`;
+  return run('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', device.host, remote], 180000, RECONNECT_SOURCE);
 }
 
 function onDevice(device, script, macScript) {
@@ -142,6 +172,19 @@ for (const device of DEVICES) {
   } catch (error) {
     failures += 1;
     console.log(`  OpenCode  - reload failed: ${error.message.split('\n')[0]}`);
+  }
+
+  // A green table must mean "connected", not merely "ManagedMCP is running".
+  try {
+    const output = healOnDevice(device);
+    for (const line of output.split(/\r?\n/).filter(Boolean)) console.log(line);
+  } catch (error) {
+    failures += 1;
+    const output = error.stdout ? String(error.stdout).trim() : '';
+    if (output) {
+      for (const line of output.split(/\r?\n/).filter(Boolean)) console.log(line);
+    }
+    console.log(`  MCP       - ! reconnect verification failed: ${error.message.split('\n')[0]}`);
   }
 }
 
