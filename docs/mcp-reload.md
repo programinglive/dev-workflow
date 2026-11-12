@@ -125,6 +125,23 @@ service to fix one server; that bounces every session on the device.
 - `fleet-status.cjs` says "NOT RUNNING" for a device with no session open. That is
   not a fault; the client picks up the promoted revision on its next start.
 
+## The browser server is pinned
+
+`playwright` used to be configured as `@playwright/mcp@latest`, so every reload
+could resolve a different browser server with no record of the change. It is now
+pinned to `@playwright/mcp@0.0.85` — the version that was actually running when
+the pin was made — in the OpenCode config on all three devices:
+
+| Device | Config |
+|---|---|
+| HELLOWORLD | `C:\Users\DHIKA\.config\opencode\opencode.json` |
+| MMCH | `C:\Users\mahardhika\.config\opencode\opencode.json` |
+| Mac | `/Users/mahardhika/.config/opencode/opencode.json` |
+
+To bump it, change the version in all three files, then read the value back on
+each device instead of trusting the write. The pin only takes effect when that
+device's MCP starts again.
+
 ## The monitors that consume this
 
 - Web dashboard: `http://100.77.138.14:3100`
