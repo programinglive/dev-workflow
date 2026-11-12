@@ -53,6 +53,9 @@ const { ensureTableSql } = require('./share-links.cjs');
 const { normalizeBuildState, extractActiveBuildFromEvents } = require('./build-monitor.cjs');
 const { shouldSkipCreate } = require('./empty-session.cjs');
 const { handlePairVerify, handlePairStatus } = require('./mobile-pair-route.cjs');
+const { createEventsStreamManager } = require('./mobile-events-stream.cjs');
+
+const eventsStreamManager = createEventsStreamManager({ heartbeatMs: 15000 });
 
 let pairingEnginePromise = null;
 function getPairingEngine() {
@@ -2096,6 +2099,13 @@ async function upsertSession(body) {
     liveBuildsBySession.delete(buildKey);
   }
 
+  try {
+    eventsStreamManager.broadcast({
+      event: 'session_update',
+      data: { sessionKey: key, taskId, phase: body.phase, task: body.task, machine: body.machine, projectName: body.projectName },
+    });
+  } catch {}
+
   return key;
 }
 
@@ -2122,7 +2132,141 @@ async function insertEvent(body) {
      VALUES ($1,$2,$3,$4,$5)`,
     [sessionKey, str(body.machine, 120), str(body.projectName, 160),
      kind, storedDetail]);
+
+  try {
+    eventsStreamManager.broadcast({
+      event: 'event',
+      data: { sessionKey, kind, detail: storedDetail, machine: body.machine, projectName: body.projectName, at: new Date().toISOString() },
+    });
+  } catch {}
+
   return true;
+}
+
+async function collectDashboardPayload({ query, limit = 20 }) {
+  const { sql, params } = buildSessionsQuery({ limit, idleTtl: IDLE_TTL, emptyIdleTtl: EMPTY_IDLE_TTL });
+  const sessions = await query(sql, params);
+  const events = await query(
+    `SELECT at, session_key, kind, detail, project_name, machine
+       FROM events ORDER BY at DESC LIMIT 20`);
+  const eventBuilds = extractActiveBuildFromEvents(events.rows);
+  const last = await query(
+    `SELECT GREATEST(
+              (SELECT max(updated_at) FROM sessions),
+              (SELECT max(at) FROM events)
+            ) AS last_report_at`);
+  const health = buildHealth({
+    lastReportAt: last.rows[0] ? last.rows[0].last_report_at : null,
+    staleAfterMs: STALE_AFTER_MS,
+  });
+  const mq = buildMachinesQuery({ staleAfterDays: STALE_AFTER_DAYS });
+  const machineRows = await query(mq.sql, mq.params);
+  const machines = visibleMachines(machineRows.rows);
+  const fleet = buildFleetParity(machines);
+  const hq = buildHistoryQuery({ historyDays: HISTORY_DAYS });
+  const nowMs = Date.now();
+  const historyRows = await query(hq.sql, hq.params);
+  const historyKeys = historyRows.rows.map((r) => r.session_key).filter(Boolean);
+  const historyBuildRows = historyKeys.length ? await query(
+    `SELECT DISTINCT ON (session_key) at, session_key, kind, detail, project_name, machine
+       FROM events
+      WHERE session_key = ANY($1::text[])
+        AND (kind LIKE 'build_%' OR kind IN ('tests_passed', 'tests_failed', 'release'))
+      ORDER BY session_key, at DESC`,
+    [historyKeys],
+  ) : { rows: [] };
+  const historyBuilds = extractActiveBuildFromEvents(historyBuildRows.rows);
+  const historyBase = historyRows.rows.map((r) => {
+    const st = classifySession({
+      phase: r.phase,
+      updatedAt: r.updated_at,
+      now: nowMs,
+      liveMs: LIVE_MS,
+      stuckMs: STUCK_MS,
+    });
+    return {
+      ...r,
+      duration_label: formatDuration(r.duration_seconds),
+      state: st.status,
+      state_label: LABELS[st.status] || st.status,
+    };
+  });
+  const sesiTerlihatRiwayat = new Set();
+  const history = historyBase.map((row) => {
+    const kartuTerbaru = !sesiTerlihatRiwayat.has(row.session_key);
+    sesiTerlihatRiwayat.add(row.session_key);
+    const { from, to } = chainLabels(row, historyBase);
+    return {
+      ...row,
+      active_build: kartuTerbaru ? (historyBuilds.get(row.session_key) || null) : null,
+      chain_from: from,
+      chain_to: to,
+    };
+  });
+  const serverNow = new Date().toISOString();
+  const sesiTerlihat = new Set();
+  const rows = sessions.rows.map((row) => {
+    const s = classifySession({
+      phase: row.phase,
+      updatedAt: row.updated_at,
+      now: nowMs,
+      liveMs: LIVE_MS,
+      stuckMs: STUCK_MS,
+    });
+    const terbaru = !sesiTerlihat.has(row.session_key);
+    sesiTerlihat.add(row.session_key);
+    let activeBuild = buildForCard(liveBuildsBySession.get(cardKey(row.session_key, row.task_id)), row);
+    if (!activeBuild && terbaru) {
+      activeBuild =
+        eventBuilds.get(row.session_key) ||
+        (row.machine && row.project_name ? eventBuilds.get(`${row.machine}::${row.project_name}`) : null) ||
+        null;
+    }
+    if (activeBuild && row.started_at) {
+      const buildTime = new Date(activeBuild.updatedAt || activeBuild.startedAt).getTime();
+      const taskTime = new Date(row.started_at).getTime();
+      if (buildTime < taskTime) activeBuild = null;
+    }
+    if (!activeBuild && s.status === 'live' && (row.phase === 'testing' || row.phase === 'release')) {
+      const rencana = Array.isArray(row.plan_json) ? row.plan_json : [];
+      const openStep = rencana.find((p) => p && p.status !== 'done');
+      activeBuild = normalizeBuildState({
+        status: row.phase === 'release' ? 'deploying' : 'testing',
+        target: row.project_name || row.task || 'Active Build / Test',
+        stage: openStep ? openStep.text : `Running ${row.phase} phase`,
+        progress: row.plan_total ? Math.round((Number(row.plan_done || 0) / Number(row.plan_total)) * 100) : null,
+        startedAt: row.updated_at || row.started_at,
+        updatedAt: row.updated_at,
+      });
+    }
+    return { ...withRepoLink(row), state: s.status, state_label: LABELS[s.status] || s.status, active_build: activeBuild };
+  });
+  const bersambung = rows.map((row) => {
+    const { from, to } = chainLabels(row, rows);
+    return from || to ? { ...row, chain_from: from, chain_to: to } : row;
+  });
+  const tampil = dedupeSessions(bersambung);
+  const sq = buildProjectSummaryQuery({ days: SUMMARY_DAYS });
+  const summaryRows = await query(sq.sql, sq.params);
+  const summary = summaryRows.rows.map((r) => ({
+    ...r,
+    total_label: formatDurationSummary(r.total_seconds),
+  }));
+  const alerts = buildAlerts({
+    sessions: tampil,
+    machines,
+    now: nowMs,
+    stuckAlertMs: STUCK_ALERT_MS,
+    machineSilentMs: MACHINE_SILENT_MS,
+  });
+  let shares = [];
+  try {
+    shares = await listLiveShares({ query });
+  } catch (error) {
+    console.error('daftar share gagal:', String((error && error.message) || error));
+  }
+  JSON.stringify({ now: serverNow, sessions: tampil, events: events.rows, health, machines, fleet, history, alerts, summary, shares, summary_days: SUMMARY_DAYS });
+  return { now: serverNow, sessions: tampil, events: events.rows, health, machines, fleet, history, alerts, summary, shares, summary_days: SUMMARY_DAYS };
 }
 
 const server = http.createServer(async (req, res) => {
@@ -2258,6 +2402,46 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(405, { 'content-type': 'application/json' });
       return res.end(JSON.stringify({ ok: false, error: 'method not allowed' }));
     }
+    // Mobile Companion Real-Time SSE Event Stream (M3)
+    if (url.pathname === '/api/v1/mobile/events') {
+      res.setHeader('access-control-allow-origin', '*');
+      res.setHeader('access-control-allow-methods', 'GET, OPTIONS');
+      res.setHeader('access-control-allow-headers', 'content-type, authorization, last-event-id');
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204);
+        return res.end();
+      }
+      if (req.method === 'GET') {
+        const lastEventId = req.headers['last-event-id'] || url.searchParams.get('lastEventId');
+        return eventsStreamManager.registerClient({ req, res, lastEventId });
+      }
+      res.writeHead(405, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ ok: false, error: 'method not allowed' }));
+    }
+    // Mobile Companion Initial State Snapshot (M3)
+    if (url.pathname === '/api/v1/mobile/snapshot') {
+      res.setHeader('access-control-allow-origin', '*');
+      res.setHeader('access-control-allow-methods', 'GET, OPTIONS');
+      res.setHeader('access-control-allow-headers', 'content-type, authorization');
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204);
+        return res.end();
+      }
+      if (req.method === 'GET') {
+        const limit = Math.min(50, Number(url.searchParams.get('limit') || 20));
+        const payload = await collectDashboardPayload({ query, limit });
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+        return res.end(
+          JSON.stringify({
+            ok: true,
+            cursorId: eventsStreamManager.getLatestCursorId(),
+            ...payload,
+          })
+        );
+      }
+      res.writeHead(405, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ ok: false, error: 'method not allowed' }));
+    }
     if (url.pathname === '/api/session' && req.method === 'POST') {
       if (!writeAllowed(req)) {
         return denyWrite(res);
@@ -2352,186 +2536,9 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === '/api/sessions') {
       const limit = Math.min(50, Number(url.searchParams.get('limit') || 20));
-      // Sesi `idle` yang sudah lama tidak melapor disembunyikan: proses MCP
-      // mati bersama sesi OpenCode-nya, jadi barisnya tinggal sebagai sampah
-      // dan memenuhi layar tablet. Sesi yang masih bekerja TIDAK pernah
-      // disembunyikan, seberapa lama pun ia berjalan tanpa menyimpan state.
-      const { sql, params } = buildSessionsQuery({ limit, idleTtl: IDLE_TTL, emptyIdleTtl: EMPTY_IDLE_TTL });
-      const sessions = await query(sql, params);
-      const events = await query(
-        `SELECT at, session_key, kind, detail, project_name, machine
-           FROM events ORDER BY at DESC LIMIT 20`);
-      const eventBuilds = extractActiveBuildFromEvents(events.rows);
-      // Kapan laporan terakhir masuk? Diambil dari kedua tabel supaya satu
-      // laporan pun (sesi atau event) cukup untuk membuktikan jalur hidup.
-      const last = await query(
-        `SELECT GREATEST(
-                  (SELECT max(updated_at) FROM sessions),
-                  (SELECT max(at) FROM events)
-                ) AS last_report_at`);
-      const health = buildHealth({
-        lastReportAt: last.rows[0] ? last.rows[0].last_report_at : null,
-        staleAfterMs: STALE_AFTER_MS,
-      });
-      // Daftar MESIN, terpisah dari daftar sesi.
-      //
-      // Tanpa ini, mesin yang menganggur hilang dari layar dan "tidak ada
-      // pekerjaan" tampak sama dengan "mesin tidak pernah terhubung".
-      const mq = buildMachinesQuery({ staleAfterDays: STALE_AFTER_DAYS });
-      const machineRows = await query(mq.sql, mq.params);
-      const machines = visibleMachines(machineRows.rows);
-      // Kesamaan armada: apakah semua mesin menjalankan rilis dan alat yang
-      // sama. Dihitung dari baris mesin yang SUDAH ditampilkan, jadi angkanya
-      // tidak bisa berbeda dengan yang dilihat pemilik di layar.
-      const fleet = buildFleetParity(machines);
-      // Riwayat sesi SELESAI. Durasi dihitung database supaya sama di semua
-      // perangkat, dan tidak ada data yang dihapus.
-      const hq = buildHistoryQuery({ historyDays: HISTORY_DAYS });
-      // Waktu acuan untuk menurunkan status, dipakai kartu aktif DAN riwayat.
-      const nowMs = Date.now();
-      const historyRows = await query(hq.sql, hq.params);
-      const historyKeys = historyRows.rows.map((r) => r.session_key).filter(Boolean);
-      const historyBuildRows = historyKeys.length ? await query(
-        `SELECT DISTINCT ON (session_key) at, session_key, kind, detail, project_name, machine
-           FROM events
-          WHERE session_key = ANY($1::text[])
-            AND (kind LIKE 'build_%' OR kind IN ('tests_passed', 'tests_failed', 'release'))
-          ORDER BY session_key, at DESC`,
-        [historyKeys],
-      ) : { rows: [] };
-      const historyBuilds = extractActiveBuildFromEvents(historyBuildRows.rows);
-      const historyBase = historyRows.rows.map((r) => {
-        // Status memakai fungsi yang SAMA dengan kartu aktif, supaya riwayat
-        // dan kartu tidak pernah berbeda pendapat soal sesi yang sama.
-        const st = classifySession({
-          phase: r.phase,
-          updatedAt: r.updated_at,
-          now: nowMs,
-          liveMs: LIVE_MS,
-          stuckMs: STUCK_MS,
-        });
-        return {
-          ...r,
-          duration_label: formatDuration(r.duration_seconds),
-          state: st.status,
-          state_label: LABELS[st.status] || st.status,
-        };
-      });
-      // Peristiwa build tidak membawa task id, jadi build dari riwayat hanya
-      // boleh melekat ke kartu TERBARU sebuah sesi (baris pertama, karena
-      // query mengurutkan updated_at DESC). Kalau tidak, build kartu baru
-      // bocor ke kartu lama yang sudah handed-off.
-      // Rantai Zettelkasten: kartu lama jarang masih ada di tab Aktif, jadi
-      // arah "dilanjutkan ke" dibaca dari daftar riwayat yang memuat keduanya.
-      const sesiTerlihatRiwayat = new Set();
-      const history = historyBase.map((row) => {
-        const kartuTerbaru = !sesiTerlihatRiwayat.has(row.session_key);
-        sesiTerlihatRiwayat.add(row.session_key);
-        const { from, to } = chainLabels(row, historyBase);
-        return {
-          ...row,
-          active_build: kartuTerbaru ? (historyBuilds.get(row.session_key) || null) : null,
-          chain_from: from,
-          chain_to: to,
-        };
-      });
-      // Waktu acuan SERVER, dikirim ke klien.
-      //
-      // MENGAPA: aplikasi menghitung "4m lalu" dari jam PERANGKAT. Kalau jam
-      // tablet atau emulator meleset - dan emulator MuMu terbukti bisa
-      // menampilkan tanggal yang jauh berbeda - semua label umur jadi salah
-      // tanpa ada yang tahu sebabnya. Klien kini memakai `now` ini, bukan
-      // jamnya sendiri.
-      const serverNow = new Date().toISOString();
-      // Status diturunkan dari umur laporan, bukan diklaim dari `phase`.
-      // Task yang selesai tanpa mengubah phase menjadi idle akan tampak
-      // "mungkin macet" atau "berakhir", bukan "aktif" selamanya.
-      // Kartu-kartu dikelompokkan per sesi saat menentukan pemilik build.
-      const sesiTerlihat = new Set();
-      const rows = sessions.rows.map((row) => {
-        const s = classifySession({
-          phase: row.phase,
-          updatedAt: row.updated_at,
-          now: nowMs,
-          liveMs: LIVE_MS,
-          stuckMs: STUCK_MS,
-        });
-        // Kartu terbaru sebuah sesi = baris pertama, karena query mengurutkan
-        // updated_at DESC. Build dari event tidak membawa task id, jadi hanya
-        // kartu terbaru yang boleh memakainya; kalau tidak, build lama bocor
-        // ke kartu berikutnya.
-        const terbaru = !sesiTerlihat.has(row.session_key);
-        sesiTerlihat.add(row.session_key);
-        let activeBuild = buildForCard(liveBuildsBySession.get(cardKey(row.session_key, row.task_id)), row);
-        if (!activeBuild && terbaru) {
-          activeBuild =
-            eventBuilds.get(row.session_key) ||
-            (row.machine && row.project_name ? eventBuilds.get(`${row.machine}::${row.project_name}`) : null) ||
-            null;
-        }
-        if (activeBuild && row.started_at) {
-          const buildTime = new Date(activeBuild.updatedAt || activeBuild.startedAt).getTime();
-          const taskTime = new Date(row.started_at).getTime();
-          if (buildTime < taskTime) activeBuild = null;
-        }
-        if (!activeBuild && s.status === 'live' && (row.phase === 'testing' || row.phase === 'release')) {
-          const rencana = Array.isArray(row.plan_json) ? row.plan_json : [];
-          const openStep = rencana.find((p) => p && p.status !== 'done');
-          activeBuild = normalizeBuildState({
-            status: row.phase === 'release' ? 'deploying' : 'testing',
-            target: row.project_name || row.task || 'Active Build / Test',
-            stage: openStep ? openStep.text : `Running ${row.phase} phase`,
-            progress: row.plan_total ? Math.round((Number(row.plan_done || 0) / Number(row.plan_total)) * 100) : null,
-            startedAt: row.updated_at || row.started_at,
-            updatedAt: row.updated_at,
-          });
-        }
-        return { ...withRepoLink(row), state: s.status, state_label: LABELS[s.status] || s.status, active_build: activeBuild };
-      });
-      // Tautan rantai untuk kartu aktif. Arah "dilanjutkan ke" biasanya kosong
-      // di sini karena kartu lama sudah handed-off dan hanya ada di riwayat.
-      const bersambung = rows.map((row) => {
-        const { from, to } = chainLabels(row, rows);
-        return from || to ? { ...row, chain_from: from, chain_to: to } : row;
-      });
-      // Buang kartu kembar (mesin + task sama) sebelum dikirim ke layar.
-      const tampil = dedupeSessions(bersambung);
-      // Rekap durasi per proyek. Hanya sesi yang SUDAH DITUTUP, karena durasi
-      // sesi berjalan masih bertambah dan tidak bisa dibandingkan antar hari.
-      const sq = buildProjectSummaryQuery({ days: SUMMARY_DAYS });
-      const summaryRows = await query(sq.sql, sq.params);
-      const summary = summaryRows.rows.map((r) => ({
-        ...r,
-        total_label: formatDurationSummary(r.total_seconds),
-      }));
-      // Peringatan: satu-satunya bagian dashboard yang berbicara lebih dulu.
-      // Dihitung dari baris yang SUDAH ditampilkan, jadi angkanya tidak bisa
-      // berbeda dengan yang dilihat pemilik di layar.
-      const alerts = buildAlerts({
-        sessions: tampil,
-        machines,
-        now: nowMs,
-        stuckAlertMs: STUCK_ALERT_MS,
-        machineSilentMs: MACHINE_SILENT_MS,
-      });
-      /**
-       * Tautan share yang sedang hidup, untuk tombol di kartu.
-       *
-       * DI TRY SENDIRI: tabel `share_links` baru dibuat sesudah deploy, dan
-       * dashboard yang sudah berjalan harus tetap menampilkan sesi walau
-       * tabelnya belum ada. Kegagalan di sini tidak boleh menghapus seluruh
-       * layar tablet.
-       */
-      let shares = [];
-      try {
-        shares = await listLiveShares({ query });
-      } catch (error) {
-        console.error('daftar share gagal:', String((error && error.message) || error));
-      }
+      const payload = await collectDashboardPayload({ query, limit });
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
-      return res.end(
-        JSON.stringify({ now: serverNow, sessions: tampil, events: events.rows, health, machines, fleet, history, alerts, summary, shares, summary_days: SUMMARY_DAYS }),
-      );
+      return res.end(JSON.stringify(payload));
     }
     if (url.pathname === '/api/builds/report') {
       // Duration report for the build box and the Build tab. Read-only, and the

@@ -100,6 +100,31 @@ Perintah ini menghasilkan:
 4. Ketuk **🔒 Pasangkan Perangkat**.
 5. Klien memvalidasi handshake ke `/api/v1/mobile/pair/verify`, menerima token autentikasi, menyimpan profil dengan badge `🔒 PAIRED`, dan langsung mengaktifkan pemantauan real-time.
 
+## Real-Time SSE Event Streaming Engine (Milestone M3)
+
+Mulai Milestone M3, polling periodik HTTP setiap 3 detik telah digantikan oleh arsitektur hibrida **Server-Sent Events (SSE) + Snapshot Synchronization** yang hemat daya, latensi rendah (<100ms), dan tangguh terhadap gangguan jaringan:
+
+### 1. Endpoints Monitor Server
+- `GET /api/v1/mobile/snapshot`: Mengembalikan snapshot state penuh saat inisialisasi atau pemulihan koneksi, dilengkapi cursor sequence terkini (`cursorId`).
+- `GET /api/v1/mobile/events`: Stream SSE persisten (`text/event-stream`) yang menyiarkan update task, perubahan build progress, dan event aktivitas secara real-time.
+  - Mendukung header `Last-Event-ID: <id>` untuk pemutaran ulang (replay) otomatis terhadap event yang terlewat saat terjadi gangguan jaringan singkat.
+  - Mengirimkan heartbeat komentar (`: heartbeat <timestamp>`) setiap 15 detik agar koneksi tetap aktif melewati NAT/proxy timeout.
+
+### 2. Client-Side ConnectionManager (`mobile-app/connection-manager.js`)
+- Mengatur siklus hidup koneksi secara otonom:
+  - **Foreground:** Membuka socket streaming SSE persisten dengan cursor replay.
+  - **Background:** Memutuskan koneksi secara bersih saat aplikasi diminimalkan guna menghemat baterai tablet.
+  - **Auto-Reconnect:** Melakukan rekoneksi otomatis dengan backoff eksponensial (1s, 2s, 4s, s.d. 10s).
+  - **Graceful Polling Fallback:** Bila koneksi SSE gagal berturut-turut sebanyak 3 kali (misal akibat proxy kantor atau VPN yang memotong chunked streaming), ConnectionManager otomatis beralih ke mode polling adaptif `/api/sessions` setiap 3 detik tanpa mengganggu tampilan pengguna.
+
+### 3. Indikator Status Konektivitas di Header
+Di samping judul dashboard terdapat pil status live dengan kode warna:
+- 🟢 `LIVE`: Terhubung langsung ke stream real-time SSE.
+- 🟡 `RECONNECTING`: Sedang mencoba rekoneksi otomatis akibat fluktuasi jaringan.
+- 🔵 `POLLING`: Mode cadangan aktif setelah 3 kali percobaan streaming gagal.
+- ⚪ `OFFLINE`: Aplikasi dalam status terputus atau mode latar belakang.
+
+
 
 ## Membangun APK
 

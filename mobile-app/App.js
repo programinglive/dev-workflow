@@ -30,6 +30,7 @@ import {
   executePairingHandshake,
   completePairingAndSaveProfile,
 } from "./pairing-service";
+import { ConnectionManager } from "./connection-manager";
 
 /**
  * Aplikasi monitor sesi dev-workflow.
@@ -120,6 +121,45 @@ function gayaStatus(state) {
   }
 }
 
+function gayaConnStatus(status) {
+  switch (status) {
+    case "LIVE":
+      return { borderColor: "#3fb95066", backgroundColor: "#3fb95015" };
+    case "RECONNECTING":
+      return { borderColor: "#d2992266", backgroundColor: "#d2992215" };
+    case "POLLING":
+      return { borderColor: "#1f6feb66", backgroundColor: "#1f6feb15" };
+    default:
+      return { borderColor: "#8b949e66", backgroundColor: "#8b949e15" };
+  }
+}
+
+function gayaConnDot(status) {
+  switch (status) {
+    case "LIVE":
+      return { backgroundColor: WARNA.hijau };
+    case "RECONNECTING":
+      return { backgroundColor: WARNA.kuning };
+    case "POLLING":
+      return { backgroundColor: WARNA.biruMuda };
+    default:
+      return { backgroundColor: WARNA.abu };
+  }
+}
+
+function gayaConnText(status) {
+  switch (status) {
+    case "LIVE":
+      return { color: WARNA.hijau };
+    case "RECONNECTING":
+      return { color: WARNA.kuning };
+    case "POLLING":
+      return { color: WARNA.biruMuda };
+    default:
+      return { color: WARNA.abu };
+  }
+}
+
 /** Umur dari jam SERVER bila tersedia. */
 function ago(iso, nowMs) {
   if (!iso) return "";
@@ -156,6 +196,8 @@ export default function App() {
   const [monitorUrl, setMonitorUrl] = useState(() => globalActiveMonitorUrl);
   const [modalServer, setModalServer] = useState(false);
   const [profiles, setProfiles] = useState(() => profileStore.getProfiles());
+  const [connStatus, setConnStatus] = useState("CONNECTING");
+  const connMgrRef = useRef(null);
 
   const MONITOR_URL = monitorUrl;
 
@@ -232,21 +274,56 @@ export default function App() {
 
   useEffect(() => {
     hidup.current = true;
-    ambil();
-    const timer = setInterval(ambil, POLL_MS);
-    const sub = AppState.addEventListener("change", (s) => {
-      if (s === "active") ambil();
+    const mgr = new ConnectionManager({
+      getBaseUrl: () => monitorUrl,
+      getToken: () => {
+        const p = profileStore.getActiveProfile();
+        return p ? p.token : null;
+      },
+      onStatusChange: (st) => {
+        if (!hidup.current) return;
+        setConnStatus(st);
+      },
+      onData: (d) => {
+        if (!hidup.current) return;
+        if (d && (d.sessions || d.events)) {
+          setData((prev) => ({ ...(prev || {}), ...d }));
+        }
+        setGalat(null);
+        setMemuat(false);
+        setMenyegarkan(false);
+      },
+      onError: (e) => {
+        if (!hidup.current) return;
+        const pesan = e && e.message ? e.message : String(e);
+        setGalat(pesan);
+      },
     });
+    connMgrRef.current = mgr;
+    mgr.start();
+
+    const sub = AppState.addEventListener("change", (s) => {
+      if (s === "active") {
+        mgr.start();
+      } else if (s === "background") {
+        mgr.stop();
+      }
+    });
+
     return () => {
       hidup.current = false;
-      clearInterval(timer);
+      mgr.stop();
       sub.remove();
     };
-  }, [ambil]);
+  }, [monitorUrl]);
 
   const tarik = useCallback(() => {
     setMenyegarkan(true);
-    ambil();
+    if (connMgrRef.current) {
+      connMgrRef.current.start();
+    } else {
+      ambil();
+    }
   }, [ambil]);
 
   const sesi = (data && data.sessions) || [];
@@ -295,8 +372,14 @@ export default function App() {
   return (
     <View style={gaya.layar}>
       <View style={gaya.header}>
-        <Text style={gaya.judul}>Dev Workflow Monitor</Text>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+          <Text style={gaya.judul}>Dev Workflow Monitor</Text>
+          <View style={[gaya.connPill, gayaConnStatus(connStatus)]}>
+            <View style={[gaya.connDot, gayaConnDot(connStatus)]} />
+            <Text style={[gaya.connPillTeks, gayaConnText(connStatus)]}>{connStatus}</Text>
+          </View>
+        </View>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 10, marginTop: 4 }}>
           <Pressable onPress={() => Linking.openURL(MONITOR_URL)}>
             <Text style={[gaya.sub, { textDecorationLine: "underline" }]}>
               {sesi.length} sesi · {MONITOR_URL.replace(/^https?:\/\//, "")}
@@ -1782,6 +1865,25 @@ const gaya = StyleSheet.create({
   tabModeTeksAktif: {
     color: WARNA.biruMuda,
     fontWeight: "700",
+  },
+  connPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  connDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 999,
+  },
+  connPillTeks: {
+    fontSize: 10,
+    fontWeight: "700",
+    letterSpacing: 0.5,
   },
 });
 
