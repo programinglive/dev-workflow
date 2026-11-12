@@ -45,7 +45,6 @@ test("MCP_ECOSYSTEM_INDEX covers all core MCP servers in the ecosystem", () => {
     "pocketbase",
     "infra-knowledge",
     "notify",
-    "factory",
     "zettly",
     "clinic-helper",
     "playwright",
@@ -58,6 +57,7 @@ test("MCP_ECOSYSTEM_INDEX covers all core MCP servers in the ecosystem", () => {
   for (const id of requiredIds) {
     assert.ok(ids.includes(id), `Expected MCP_ECOSYSTEM_INDEX to include '${id}'`);
   }
+  assert.equal(ids.includes("factory"), false, "Retired factory MCP server must not be in MCP_ECOSYSTEM_INDEX");
 
   for (const entry of MCP_ECOSYSTEM_INDEX) {
     assert.ok(typeof entry.id === "string" && entry.id.length > 0);
@@ -106,13 +106,12 @@ test("recommendMcpTools ranks notify for Discord/Pusher/Email alert tasks", () =
   assert.ok(notifyRec.matchedTools.some((t) => t.name.includes("notify_send")));
 });
 
-test("recommendMcpTools ranks factory and zettly for kanban/todo coordination tasks", () => {
+test("recommendMcpTools ranks zettly for todo and outcome coordination tasks", () => {
   const result = recommendMcpTools({
-    query: "How do I claim a Factory kanban task and sync Zettly todo outcome?",
+    query: "How do I sync Zettly todo outcome and active focus?",
   });
 
   const topIds = result.recommendations.map((r) => r.id);
-  assert.ok(topIds.includes("factory"), `Expected factory in [${topIds.join(", ")}]`);
   assert.ok(topIds.includes("zettly"), `Expected zettly in [${topIds.join(", ")}]`);
 });
 

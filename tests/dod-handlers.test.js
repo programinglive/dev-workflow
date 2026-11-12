@@ -373,6 +373,7 @@ async function readyState(state) {
   state.state.currentPhase = "ready";
   state.state.taskDescription = "Task siap";
   state.state.featureFlowCreated = true;
+  state.state.zettly = { todoId: 1, externalLinks: { drawing: { id: 1, url: "https://zettly.programinglive.com/draw/1" } } };
   state.state.bugFixed = true;
   state.state.testsCreated = true;
   state.state.testsPassed = true;

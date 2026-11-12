@@ -15,6 +15,11 @@ test("monitor deploy runs only after successful main branch CI", () => {
   assert.match(workflow, /concurrency:/);
 });
 
+test("monitor deployment skips commits without monitor artifacts", () => {
+  assert.match(workflow, /git diff --name-only HEAD\^ HEAD -- monitor-server\/ scripts\/deploy-monitor\.sh/);
+  assert.match(workflow, /Monitor artifacts unchanged; skip deployment/);
+});
+
 test("monitor deploy uses a dedicated secret and pinned host key", () => {
   assert.match(workflow, /secrets\.MONITOR_DEPLOY_SSH_KEY/);
   const script = readFileSync(scriptPath, "utf8");

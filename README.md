@@ -56,7 +56,8 @@ An MCP server that enforces development workflow discipline: **start (mandatory 
 ```mermaid
 graph LR
     A[start_task] --> F[Auto Zettly Draw Canvas & Flow Gate]
-    F --> S[Optional search_project discovery]
+    F --> R[refine_with_ai]
+    R --> S[Optional search_project discovery]
     S --> B[Implement]
     B --> C[mark_bug_fixed]
     C --> D[create_tests]
@@ -81,8 +82,8 @@ finished.
 
 | Path | Single responsibility |
 |---|---|
-| `index.js` | MCP entry point: registers the 60 tools, English implementation instructions and handlers |
-| `mcp-index.js` | Central MCP ecosystem index & context-aware recommender for all 12 ecosystem MCP servers |
+| `index.js` | MCP entry point: registers the 64 tools, English implementation instructions and handlers |
+| `mcp-index.js` | Central MCP ecosystem index & context-aware recommender for all 11 ecosystem MCP servers |
 | `build-monitor.js`, `monitor-server/build-monitor.cjs` | Real-time build & execution status tracker (`report_build_status`) shared between MCP and the live monitor dashboard |
 | `mobile-app/build-view.js` | Android build tab presentation and truthful build host labeling |
 | `workflow-state.js` | The state machine and its persistence (phase, DoD, plan, history, activeBuild) |
@@ -95,7 +96,7 @@ finished.
 | `tools/handler-modules/integration-handlers.js` | Verified service connection states and canonical Zettly/Factory/Sentry links |
 | `db/` | Storage adapters: SQLite (default), PostgreSQL, MySQL, plus migration and replication |
 | `monitor.js` | Best-effort reporting of workflow changes to the live dashboard; the MCP process also sends a small heartbeat while its client session stays connected |
-| `monitor-server/` | The dashboard process (`dashboard.cjs`), the public share process (`share-server.cjs`), their SQL builders, and their systemd units. Includes responsive bottom navigation bar (Aktif, Riwayat, Rekap, Mesin, Info) and interactive session detail modals. Session cards show the repository (`repo_path` plus `repo_remote`) and warn when a task has no Mermaid flow yet. A card, a history row and a recap line all require **both** a task and a project; see [strict task and project identity](docs/strict-task-identity.md). Reopening a session detail restores its close control. The machine view excludes one identified retired synthetic report while preserving later reports from the same machine name. Main-branch CI deploys reviewed monitor artifacts through a dedicated key after tests pass. |
+| `monitor-server/` | The dashboard process (`dashboard.cjs`), the public share process (`share-server.cjs`), their SQL builders, and their systemd units. Includes responsive bottom navigation bar (Aktif, Riwayat, Rekap, Mesin, Info) and interactive session detail modals. Session cards show the repository (`repo_path` plus `repo_remote`) and warn when a task has no Mermaid flow yet. A card, a history row and a recap line all require **both** a task and a project; see [strict task and project identity](docs/strict-task-identity.md). Reopening a session detail restores its close control. The machine view excludes one identified retired synthetic report while preserving later reports from the same machine name. Main-branch CI deploys reviewed monitor artifacts through a dedicated key after tests pass when monitor files changed. |
 | `web/` | The public marketing site: Next.js static export published to `devworkflow.programinglive.com` |
 | `mobile-app/` | The tablet client (Expo/React Native) that shows the same sessions on a wall screen. Includes a **"Buka di Browser"** button (Info tab) and a tappable header URL that open the dashboard in the device browser via `Linking.openURL`. |
 | `security/` | Secret references, output scanning, and the audit |
@@ -148,7 +149,7 @@ See [MCP client configuration](#mcp-client-configuration).
 
 ## Available Tools
 
-60 tools. See [service connections and proactive Zettly direction](docs/service-integrations.md) and [focus-first development](docs/focus-workflow.md).
+64 tools. See [service connections and proactive Zettly direction](docs/service-integrations.md) and [focus-first development](docs/focus-workflow.md).
 
 | Tool | Purpose |
 |---|---|
@@ -163,8 +164,9 @@ See [MCP client configuration](#mcp-client-configuration).
 | `get_sentry_issue` | Retrieve one bounded issue summary without raw event payloads |
 | `link_sentry_issue` | Link a verified issue and optional existing Factory task to the current canonical Zettly Todo |
 | `start_task` | Begin a task; requires `definitionOfDone` and `plan`; automatically creates or links its Zettly Todo |
+| `refine_with_ai` | After the flow gate, submit complete AI-rewritten task instructions using new and prior context; bugfixes require reproduction, expected and observed behavior, evidence, and constraints; updates the same task and Todo, retaining proven evidence |
 | `recommend_mcp_tools` | Central discovery index and context-aware recommender for all MCP servers and tools (`central-gateway`, `pocketbase`, `infra-knowledge`, `notify`, `factory`, `zettly`, `clinic-helper`, `playwright`, `gcp`, `cloudflare`, `netlify`, `mermaid`) |
-| `report_build_status` | Report live build, test, security scan, or deployment progress (`building`, `testing`, `scanning`, `deploying`, `succeeded`, `failed`, `idle`) with target, command, stage, progress percentage, and output snippet |
+| `report_build_status` | Report live build, test, security scan, or deployment progress (`building`, `testing`, `scanning`, `deploying`, `succeeded`, `failed`, `idle`) with target, command, stage, progress percentage, output snippet, and runner job URL |
 | `sync_zettly_task` | Retry pending Zettly task/outcome synchronization or link an existing Todo |
 | `set_plan` | Replace the work plan of the running task |
 | `search_project` | Search bounded local text in the active repo; returns sanitized path:line citations |
@@ -315,6 +317,8 @@ When a session runs a build, test suite, container image build, security scan, o
 {
   "status": "building",
   "target": "clinic-app:v0.2.11 + Trivy Scan",
+  "buildHost": "builder-vm",
+  "jobUrl": "https://gitlab.com/beautyworld_repository/clinic/-/jobs/12345",
   "command": "docker build -t clinic-app:v0.2.11 . && trivy image clinic-app:v0.2.11",
   "stage": "Step 2/4: Compiling Vite frontend assets",
   "progress": 50,

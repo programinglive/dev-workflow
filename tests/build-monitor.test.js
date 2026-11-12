@@ -262,3 +262,73 @@ test("parseEventDetail safely parses JSON build event details and plain text", (
   assert.equal(empty.isBuild, false);
   assert.equal(empty.text, "");
 });
+
+test("normalizeBuildState handles valid jobUrl, rejects invalid URLs, and preserves across updates", () => {
+  const valid = normalizeBuildState({
+    status: "building",
+    target: "CI Test Suite",
+    jobUrl: "https://gitlab.com/beautyworld_repository/erp.beautyworld.co.id/-/jobs/12345",
+  });
+  assert.equal(valid.jobUrl, "https://gitlab.com/beautyworld_repository/erp.beautyworld.co.id/-/jobs/12345");
+
+  // Preserved across status update of the same build
+  const updated = normalizeBuildState({
+    status: "testing",
+    progress: 80,
+  }, valid);
+  assert.equal(updated.jobUrl, "https://gitlab.com/beautyworld_repository/erp.beautyworld.co.id/-/jobs/12345");
+
+  // Rejects javascript: or invalid protocols
+  const unsafe = normalizeBuildState({
+    status: "building",
+    target: "Unsafe",
+    jobUrl: "javascript:alert(1)",
+  });
+  assert.equal(unsafe.jobUrl, "");
+
+  // Graceful fallback when missing
+  const noUrl = normalizeBuildState({
+    status: "building",
+    target: "No URL",
+  });
+  assert.equal(noUrl.jobUrl, "");
+
+  // Supports aliases buildUrl and url
+  const withBuildUrl = normalizeBuildState({
+    status: "building",
+    target: "Alias Test",
+    buildUrl: "https://github.com/programinglive/repo/actions/runs/123",
+  });
+  assert.equal(withBuildUrl.jobUrl, "https://github.com/programinglive/repo/actions/runs/123");
+});
+
+test("formatBuildStatusBlock includes Runner / Job URL when available and omits when absent", () => {
+  const withLink = normalizeBuildState({
+    status: "building",
+    target: "Test Target",
+    jobUrl: "https://gitlab.com/job/42",
+  });
+  const blockWith = formatBuildStatusBlock(withLink, []);
+  assert.match(blockWith, /\*\*Runner \/ Job URL\*\*: https:\/\/gitlab\.com\/job\/42/);
+
+  const withoutLink = normalizeBuildState({
+    status: "building",
+    target: "Test Target",
+  });
+  const blockWithout = formatBuildStatusBlock(withoutLink, []);
+  assert.doesNotMatch(blockWithout, /Runner \/ Job URL/);
+});
+
+test("dashboard.cjs renders clickable runner/build job link with valid URL and graceful fallback when absent", () => {
+  const dash = readFileSync(path.join(ROOT, "monitor-server", "dashboard.cjs"), "utf8");
+  assert.match(dash, /class="build-job-link"/, "must define build-job-link style or element");
+  assert.match(dash, /ab\.jobUrl/, "renderBuildBox must check ab.jobUrl");
+  assert.match(dash, /target="_blank"/, "link must open in new tab");
+  assert.match(dash, /noopener noreferrer/, "link must include secure rel attributes");
+  assert.match(dash, /stopPropagation/, "clicking job link must not bubble to card modal");
+});
+
+test("report_build_status tool definition includes jobUrl parameter", () => {
+  const toolDef = getToolList().find((t) => t.name === "report_build_status");
+  assert.ok(toolDef.inputSchema.properties.jobUrl, "jobUrl must be in report_build_status inputSchema");
+});
