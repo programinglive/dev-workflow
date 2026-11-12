@@ -28,6 +28,8 @@ const {spawnSync}=require('node:child_process');
 const DEFAULT_ATTEMPTS=3;
 const DEFAULT_INTERVAL_MS=1000;
 const DEFAULT_SINCE_HOURS=24;
+const DEFAULT_READY_ATTEMPTS=60;
+const DEFAULT_READY_INTERVAL_MS=500;
 
 /** Normalise the `/api/mcp` payload into `{name, state}` records. */
 function parseServers(payload) {
@@ -108,6 +110,29 @@ async function reconnectMcp({
   return {ok:stillFailed.length===0,healed,stillFailed,connected:connectedNames(current)};
 }
 
+/**
+ * Wait until the OpenCode service answers again.
+ *
+ * The reload restarts the service that hosts it, so the first reads after the
+ * restart fail with a connection error. Measured on HELLOWORLD on 12 November
+ * 2026: `opencode service restart` returns in ~0.4s and `/api/mcp` answers
+ * again in ~0.9s. A bounded poll therefore costs about a second, while a fixed
+ * sleep would be either too short or needlessly slow.
+ */
+async function waitForReady({read,wait=sleep,attempts=DEFAULT_READY_ATTEMPTS,intervalMs=DEFAULT_READY_INTERVAL_MS}={}) {
+  const rounds=Math.max(1,Number(attempts)||1);
+  let lastError;
+  for(let round=1; round<=rounds; round+=1) {
+    try {
+      return await read();
+    } catch(error) {
+      lastError=error;
+    }
+    if(round<rounds) await wait(intervalMs);
+  }
+  throw new Error(`OpenCode service did not answer after ${rounds} attempts: ${lastError?.message||'unknown error'}`);
+}
+
 /** Heal every directory and flatten the failures into `directory:server` lines. */
 async function reconnectAll({directories,reconnect}) {
   const list=Array.isArray(directories)?directories:[];
@@ -148,7 +173,7 @@ function mcpPath(directory) {
   return `/api/mcp?${directoryParam(directory)}`;
 }
 
-function main(argv) {
+async function main(argv) {
   const directoryIndex=argv.indexOf('--directory');
   const explicitDirectory=directoryIndex>=0?argv[directoryIndex+1]:null;
   if(directoryIndex>=0&&!explicitDirectory) throw new Error('--directory requires a value');
@@ -166,35 +191,36 @@ function main(argv) {
   const heal=directory=>reconnectMcp({directory,read:()=>read(directory),connect:name=>connect(name,directory),attempts,intervalMs});
 
   if(explicitDirectory) {
-    return heal(explicitDirectory).then(result=>{
-      if(result.ok) {
-        console.log(`  MCP       - connected: ${result.connected.join(', ')||'none'}`);
-        return 0;
-      }
-      console.log(`  MCP       - ! still failed after reconnect: ${result.stillFailed.join(', ')}`);
-      console.log(`  MCP       - run manually: opencode api post "/api/experimental/mcp/<name>/connect?location[directory]=${explicitDirectory}"`);
-      return 1;
-    });
+    // The reload restarts the service that hosts this check, so the first read
+    // can still hit a closed port. Wait for an answer before judging anything.
+    await waitForReady({read:()=>read(explicitDirectory)});
+    const result=await heal(explicitDirectory);
+    if(result.ok) {
+      console.log(`  MCP       - connected: ${result.connected.join(', ')||'none'}`);
+      return 0;
+    }
+    console.log(`  MCP       - ! still failed after reconnect: ${result.stillFailed.join(', ')}`);
+    console.log(`  MCP       - run manually: opencode api post "/api/experimental/mcp/<name>/connect?location[directory]=${explicitDirectory}"`);
+    return 1;
   }
 
-  const projects=JSON.parse(runOpc(['api','get','/api/project']));
+  const projects=await waitForReady({read:async()=>JSON.parse(runOpc(['api','get','/api/project']))});
   const directories=activeDirectories(projects,{maxAgeMs:sinceHours*60*60*1000});
   if(directories.length===0) {
     console.log(`  MCP       - no OpenCode project active in the last ${sinceHours}h; nothing to reconnect`);
-    return Promise.resolve(0);
+    return 0;
   }
-  return reconnectAll({
+  const result=await reconnectAll({
     directories,
     reconnect:({directory})=>heal(directory),
-  }).then(result=>{
-    for(const entry of result.results) {
-      const state=entry.ok?'connected':'still failed';
-      console.log(`  MCP       - ${entry.directory}: ${state}${entry.stillFailed.length?` (${entry.stillFailed.join(', ')})`:''}`);
-    }
-    if(result.ok) return 0;
-    console.log('  MCP       - ! reconnect verification failed; the reload is not finished');
-    return 1;
   });
+  for(const entry of result.results) {
+    const state=entry.ok?'connected':'still failed';
+    console.log(`  MCP       - ${entry.directory}: ${state}${entry.stillFailed.length?` (${entry.stillFailed.join(', ')})`:''}`);
+  }
+  if(result.ok) return 0;
+  console.log('  MCP       - ! reconnect verification failed; the reload is not finished');
+  return 1;
 }
 
 if(require.main===module) run();
@@ -226,4 +252,4 @@ function run() {
  */
 const STDIN_RUNNER='\nrun();\n';
 
-module.exports={parseServers,failedNames,reconnectMcp,activeDirectories,reconnectAll,STDIN_RUNNER,DEFAULT_ATTEMPTS,DEFAULT_INTERVAL_MS,DEFAULT_SINCE_HOURS};
+module.exports={parseServers,failedNames,reconnectMcp,activeDirectories,reconnectAll,waitForReady,STDIN_RUNNER,DEFAULT_ATTEMPTS,DEFAULT_INTERVAL_MS,DEFAULT_SINCE_HOURS,DEFAULT_READY_ATTEMPTS,DEFAULT_READY_INTERVAL_MS};

@@ -26,7 +26,7 @@
 const os = require('node:os');
 const path = require('node:path');
 const fs = require('node:fs');
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawn } = require('node:child_process');
 
 const LOCAL = os.hostname();
 const SKIP_VERIFY = process.argv.includes('--no-verify');
@@ -116,6 +116,26 @@ function healOnDevice(device) {
   return run('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', device.host, MAC_HEAL], 180000, RECONNECT_SOURCE);
 }
 
+/**
+ * Ask the local OpenCode service to restart without waiting for it.
+ *
+ * The service hosts this script, so waiting for the restart means waiting for
+ * the process that would report the result to be killed. Measured on
+ * HELLOWORLD: the command itself returns in ~0.4s, but the shell that ran it
+ * dies with the service, and the caller then sits on a dead pipe until the
+ * 90s timeout and reports a failure that never happened. Detached with no
+ * pipes, nothing can hang; the readiness poll in the heal step is the verdict.
+ */
+function requestLocalRestart() {
+  const child = spawn('opencode', ['service', 'restart'], {
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true,
+    shell: process.platform === 'win32',
+  });
+  child.unref();
+}
+
 function onDevice(device, script, macScript) {
   const isLocal = device.match.test(LOCAL);
   if (device.platform === 'windows') {
@@ -163,11 +183,16 @@ for (const device of DEVICES) {
 
   // OpenCode reloads through its own service; nothing is closed.
   try {
-    const output = onDevice(device, WINDOWS_RELOAD, MAC_RELOAD);
-    if (output.includes('OPENCODE_MISSING')) {
-      console.log('  OpenCode  - not installed on this device');
+    if (isLocal) {
+      requestLocalRestart();
+      console.log('  OpenCode  - restart requested (detached; this session reconnects on its own)');
     } else {
-      console.log('  OpenCode  - reloaded via `opencode service restart`');
+      const output = onDevice(device, WINDOWS_RELOAD, MAC_RELOAD);
+      if (output.includes('OPENCODE_MISSING')) {
+        console.log('  OpenCode  - not installed on this device');
+      } else {
+        console.log('  OpenCode  - reloaded via `opencode service restart`');
+      }
     }
   } catch (error) {
     failures += 1;

@@ -15,7 +15,35 @@ node managed/fleet-status.cjs     # prove which revision each client resolves
 
 Run them from a checkout of this repository. Expect **exactly one interrupted tool
 call** on the device you run `restart-devices.cjs` from: the reload bounces the
-OpenCode service, and that session reconnects on the new build by itself.
+OpenCode service, and that session reconnects on the new build by itself. The
+command no longer hangs waiting for that bounce; see "Why the reload is smooth"
+below.
+
+## Why the reload is smooth
+
+Two measurements on HELLOWORLD, 12 November 2026, decided the design:
+
+| Measurement | Value |
+|---|---|
+| `opencode service restart` returns to its caller | ~0.4 s |
+| `GET /api/mcp` answers again after the restart | ~0.9 s |
+
+The command is fast, but the shell that ran it dies with the service it
+restarted. Waiting on that shell therefore waits on a dead pipe until the 90 s
+timeout and reports `spawnSync powershell ETIMEDOUT` — a failure that never
+happened. So:
+
+- **The local restart is requested detached**, with no pipes attached
+  (`spawn(..., { detached: true, stdio: 'ignore' })`). Nothing can hang, and the
+  script moves on immediately.
+- **The reconnect step waits for the service to answer** before judging it:
+  `waitForReady` polls `GET /api/mcp` every 500 ms for up to 30 s. A fixed sleep
+  would be either too short on a cold start or needlessly slow.
+- **The verdict is the reconnect line**, not the exit status of a command that
+  killed its own parent. `MCP - <directory>: connected` is the proof.
+
+Remote devices keep the blocking call, because their restart does not kill the
+caller.
 
 ## Exit code 255 is a force-kill, not a crash
 
@@ -89,6 +117,9 @@ service to fix one server; that bounces every session on the device.
   the process and the resolved revision; only `/api/mcp` proves the connection.
 - Never call a `failed` MCP a crash until the exit code and the log line before it
   have been read. 255 means someone killed it on purpose.
+- Never wait on a command that restarts the service hosting it. Detach it and
+  poll for readiness instead; a timeout there is a measurement artefact, not a
+  fault.
 - Never fix it by editing `releases/` or the ManagedMCP cache. Ship from git,
   publish through `rollout.cjs`.
 - `fleet-status.cjs` says "NOT RUNNING" for a device with no session open. That is

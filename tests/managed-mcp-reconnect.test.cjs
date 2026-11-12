@@ -3,7 +3,7 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const path=require('node:path');
 const {spawnSync}=require('node:child_process');
-const {parseServers,failedNames,reconnectMcp,activeDirectories,reconnectAll,STDIN_RUNNER}=require('../managed/mcp-reconnect.cjs');
+const {parseServers,failedNames,reconnectMcp,activeDirectories,reconnectAll,waitForReady,STDIN_RUNNER}=require('../managed/mcp-reconnect.cjs');
 
 const connected=(name)=>({name,status:{status:'connected'}});
 const failed=(name)=>({name,status:{status:'failed',error:'MCP server process exited with code 255'}});
@@ -132,4 +132,46 @@ test('the stdin runner makes a streamed remote run actually execute',()=>{
   });
   assert.equal(result.status,1,'a streamed run must report the failure, not exit silently');
   assert.match(result.stderr,/reconnect check failed: --directory requires a value/);
+});
+
+test('waitForReady returns the first answer without waiting',async()=>{
+  let waits=0;
+  const payload=await waitForReady({
+    read:async()=>({data:[{name:'dev-workflow',status:{status:'connected'}}]}),
+    wait:async()=>{waits+=1;},
+  });
+  assert.equal(waits,0);
+  assert.deepEqual(parseServers(payload),[{name:'dev-workflow',state:'connected'}]);
+});
+
+test('waitForReady retries while the service is still coming up',async()=>{
+  let calls=0;
+  const waits=[];
+  const payload=await waitForReady({
+    read:async()=>{
+      calls+=1;
+      if(calls<3) throw new Error('connect ECONNREFUSED 127.0.0.1:4096');
+      return {data:[{name:'dev-workflow',status:{status:'connected'}}]};
+    },
+    wait:async(ms)=>waits.push(ms),
+    attempts:5,
+    intervalMs:250,
+  });
+  assert.equal(calls,3);
+  assert.deepEqual(waits,[250,250],'no wait after the successful attempt');
+  assert.equal(parseServers(payload).length,1);
+});
+
+test('waitForReady gives up with the last error instead of hanging forever',async()=>{
+  let calls=0;
+  await assert.rejects(
+    waitForReady({
+      read:async()=>{calls+=1;throw new Error('connect ECONNREFUSED 127.0.0.1:4096');},
+      wait:async()=>{},
+      attempts:3,
+      intervalMs:100,
+    }),
+    /did not answer after 3 attempts: connect ECONNREFUSED/,
+  );
+  assert.equal(calls,3);
 });
