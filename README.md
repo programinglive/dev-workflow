@@ -1,4 +1,6 @@
-# Dev Workflow MCP Server
+# DevWorkflow — The Governance Layer for AI Coding Agents
+
+> **Let agents write code. Make every change accountable.**
 
 ## Credential isolation
 
@@ -115,7 +117,61 @@ flowchart TD
     Core -->|"Contextual Diagnostics"| Sentry
 ```
 
-### 2. The Strict Step-by-Step Discipline Lifecycle
+### 2. The Three-Plane Architecture Model
+
+DevWorkflow operates under a strict separation of concerns across three distinct planes:
+
+```mermaid
+flowchart TD
+    subgraph Plane1 ["Plane 1: Human Planning & Control Plane (Zettly)"]
+        Ideation["Task Ideation & Requirements"]
+        Matrix["Eisenhower Matrix Priority Board"]
+        Notes["Context & Design Notes"]
+        Canvas["Visual TLDraw Workspace"]
+        HumanSignoff["Human Review & Policy Approval"]
+    end
+
+    subgraph Plane2 ["Plane 2: AI Execution & Governance Plane (DevWorkflow Core)"]
+        TaskContract["Canonical Task Contracts & Scopes"]
+        PolicyEngine["Policy Evaluator (devworkflow.yaml)"]
+        StateMachine["Enforced Discipline State Machine"]
+        WorktreeMgr["Git Worktree Workspace Isolation"]
+        EvidenceVault["Tamper-Proof Test Evidence Vault"]
+        AuditJournal["Immutable Event Journal & Hash Chain"]
+    end
+
+    subgraph Plane3 ["Plane 3: Execution Layer (Coding Agents)"]
+        Agents["Claude Code · Codex · OpenCode · Antigravity"]
+    end
+
+    subgraph Companion ["Companion Plane: Android Command Center (mobile-app/)"]
+        Tablet["Xiaomi Pad 6 Desk Cockpit (2880×1800 Landscape)"]
+        SSEStream["Real-Time SSE Event Stream"]
+        QRPairing["Cryptographic QR Pairing"]
+        HumanGates["Interactive Approval Gates & Emergency Stop"]
+    end
+
+    Plane1 <-->|"Canonical Task Identity & Sync"| Plane2
+    Plane2 <-->|"Governed MCP Interfaces & Fencing"| Plane3
+    Plane2 <-->|"Low-Latency Telemetry & Signed Actions"| Companion
+```
+
+1. **Zettly (Human Planning & Control Plane):**
+   - Owned by human engineers. Handles requirements discovery, Eisenhower priority matrix, Kanban tracking, and interactive visual planning (Zettly Draw).
+   - DevWorkflow remains 100% operational offline even when Zettly is not running.
+2. **DevWorkflow Core (AI Execution & Governance Plane):**
+   - Enforces Task Contracts, file scope boundaries, policy evaluation, test evidence verification, Git worktree isolation, and release governance.
+   - Operates local-first using SQLite persistence, with zero mandatory cloud dependencies.
+3. **AI Coding Agents (Execution Layer):**
+   - External autonomous agents (Claude Code, Antigravity, OpenCode, Codex) execute code changes strictly within boundaries enforced by DevWorkflow's MCP tools.
+4. **DevWorkflow Android Companion (`mobile-app/`):**
+   - Dedicated landscape desk cockpit optimized for **Xiaomi Pad 6** (2880×1800).
+   - **Runtime Server Configuration (M1):** Dynamically connect and switch between local, Tailnet, or homelab servers without rebuilding APKs.
+   - **Cryptographic QR Pairing (M2):** Handshake between workstation and tablet using ephemeral QR challenges and hardware-backed device keys.
+   - **Real-Time Event Streaming (M3):** Server-Sent Events (SSE) with sequence cursor replay and fallback polling.
+   - **Interactive Governance:** Review changed files, approve commits, waive gates, or trigger a 4-stage Emergency Stop directly from the tablet desk display.
+
+### 3. The Strict Step-by-Step Discipline Lifecycle
 
 DevWorkflow enforces a non-bypassable phase-based state machine:
 
@@ -154,7 +210,7 @@ stateDiagram-v2
 - Enforces `@programinglive/commiter` conventional commit specifications.
 - Validates clean working trees, verified tags, and triggers CI/CD builds on the universal self-hosted Linux runner (`bw-tools: 100.77.138.14`).
 
-### 3. Key Operational Innovations
+### 4. Key Operational Innovations
 
 - **Central Fleet Monitor (`http://100.77.138.14:3100`):**
   Provides a single pane of glass showing live heartbeat cards across all agent sessions (OpenCode, Codex, Antigravity) running on all workstations (`HELLOWORLD`, `Mac`, `MMCH`). Displays active phase, live build stepper, DoD progress, and builder VM indicators.
@@ -183,6 +239,7 @@ finished.
 | `mcp-index.js` | Central MCP ecosystem index & context-aware recommender for all 11 ecosystem MCP servers |
 | `build-monitor.js`, `monitor-server/build-monitor.cjs` | Real-time build & execution status tracker (`report_build_status`) shared between MCP and the live monitor dashboard |
 | `mobile-app/build-view.js` | Android build tab presentation and truthful build host labeling |
+| `mobile-app/server-profile.js` | Headless server profile management, URL normalization, and connection health probe |
 | `workflow-state.js` | The state machine and its persistence (phase, DoD, plan, history, activeBuild) |
 | `workflow-guidance.js` | English implementation instructions delivered at connection and workflow checkpoints |
 | `zettly-client.js` | Device-local owner credentials, account checks and bounded authenticated Zettly requests |
@@ -195,7 +252,7 @@ finished.
 | `monitor.js` | Best-effort reporting of workflow changes to the live dashboard; the MCP process also sends a small heartbeat while its client session stays connected |
 | `monitor-server/` | The dashboard process (`dashboard.cjs`), the public share process (`share-server.cjs`), their SQL builders, and their systemd units. Includes responsive bottom navigation bar (Aktif, Riwayat, Rekap, Mesin, Info) and interactive session detail modals. Session cards show the repository (`repo_path` plus `repo_remote`) and warn when a task has no Mermaid flow yet. A card, a history row and a recap line all require **both** a task and a project; see [strict task and project identity](docs/strict-task-identity.md). Reopening a session detail restores its close control. The machine view excludes one identified retired synthetic report while preserving later reports from the same machine name. Main-branch CI deploys reviewed monitor artifacts through a dedicated key after tests pass when monitor files changed. |
 | `web/` | The public marketing site: Next.js static export published to `devworkflow.programinglive.com` |
-| `mobile-app/` | The tablet client (Expo/React Native) that shows the same sessions on a wall screen. Includes a **"Buka di Browser"** button (Info tab) and a tappable header URL that open the dashboard in the device browser via `Linking.openURL`. |
+| `mobile-app/` | Dedicated Android tablet cockpit (Expo/React Native) optimized for Xiaomi Pad 6 (2880×1800 landscape). Features runtime server profile switching (`server-profile.js`), live build monitoring, flow previews, and "Buka di Browser" integration. |
 | `security/` | Secret references, output scanning, and the audit |
 | `factory-*.js`, `db/` | Software Factory integration: claiming board tasks, pushing results |
 | `managed/` | Central release distribution, bootstrap launcher, protocol validation, and automated multi-device rollout (`managed/rollout.cjs`) |
