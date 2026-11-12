@@ -469,7 +469,7 @@ const PAGE = `<!doctype html>
     <div>
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
         <h1>Dev Workflow Monitor</h1>
-        <span class="proj-pill" id="app-version-badge">v${APP_VERSION}</span>
+        <span class="proj-pill" id="app-version-badge">v__APP_VERSION__</span>
         <span class="phase" style="background:#06e6d018;color:#38bdf8;border-color:#06e6d055;text-transform:none">📱 Companion &amp; HITL v2</span>
       </div>
       <div class="sub" id="sub">menyambung…</div>
@@ -2311,7 +2311,7 @@ const server = http.createServer(async (req, res) => {
   try {
     if (url.pathname === '/' || url.pathname === '/index.html') {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
-      return res.end(PAGE);
+      return res.end(PAGE.replace('__APP_VERSION__', APP_VERSION));
     }
     if (url.pathname === '/health') {
       res.writeHead(200, { 'content-type': 'application/json' });
