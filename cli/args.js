@@ -14,7 +14,7 @@
  * only `list` runs without one.
  */
 
-const COMMANDS = ["list", "close", "share", "drop", "complete", "help", "version"];
+const COMMANDS = ["list", "close", "share", "drop", "complete", "help", "version", "doctor"];
 
 /** A refusal the CLI reports to the user and turns into a non-zero exit. */
 export class CliError extends Error {
@@ -28,6 +28,7 @@ export class CliError extends Error {
 export const USAGE = `devwf - close sessions and cards without the web monitor
 
 Usage:
+  devwf doctor                                 Check environment, node, and storage diagnostics
   devwf list                                  List sessions from the monitor
   devwf close --session <key> [--dry-run]      Mark one session closed
   devwf share list                             List live share links

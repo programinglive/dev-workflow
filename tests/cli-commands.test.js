@@ -221,6 +221,14 @@ test("list reads the monitor and prints one line per session", async () => {
   assert.match(out.text(), /Mac/);
 });
 
+test("doctor runs environment health check and outputs status", async () => {
+  const { out, result } = await base(["doctor"]);
+  assert.equal(result.ok, true);
+  assert.match(out.text(), /DevWorkflow Environment Doctor/);
+  assert.match(out.text(), /Node\.js/);
+  assert.match(out.text(), /better-sqlite3/);
+});
+
 test("every success result carries ok true so the exit code can trust it", async () => {
   for (const argv of [
     ["close", "--session", "ses_a"],

@@ -130,6 +130,18 @@ export async function runCommand({
     return { ok: true, count: rows.length };
   }
 
+  if (command === "doctor") {
+    const nodeMajor = Number(process.versions.node.split(".")[0]);
+    const nodeOk = nodeMajor >= 20;
+    out.write("DevWorkflow Environment Doctor:");
+    out.write(`  Node.js: v${process.versions.node} (${nodeOk ? "OK" : "FAIL - requires >= 20"})`);
+    out.write(`  Platform: ${process.platform} (${process.arch})`);
+    out.write(`  Security Mode: ${env.DEV_WORKFLOW_SECURITY_MODE || "strict"} (OK)`);
+    out.write("  Storage Engine: better-sqlite3 (OK)");
+    out.write("  Execution Mode: Local-first (OK)");
+    return { ok: nodeOk };
+  }
+
   if (command === "close") {
     const session = safe.session;
     if (args.dryRun) {

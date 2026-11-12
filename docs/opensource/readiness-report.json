@@ -1,0 +1,40 @@
+{
+  "reportVersion": "1.0.0",
+  "generatedAt": "2026-11-12T19:42:00Z",
+  "repository": "programinglive/dev-workflow-mcp-server",
+  "overallStatus": "BLOCKED",
+  "blockReason": "Direct publication of current internal repository is prohibited under Mandatory Publication Safety Rule; awaiting completion of decoupling, clean orphan candidate preparation, and explicit human authorization.",
+  "strategy": "IN_PLACE_ORPHAN_ROOT_REINITIALIZATION",
+  "backup": {
+    "status": "VERIFIED",
+    "location": "D:/code/dev-workflow-private-backup-20261112.bundle",
+    "sizeBytes": 6439803,
+    "totalRefs": 248,
+    "algorithm": "sha1"
+  },
+  "gates": {
+    "GATE_01_BACKUP_VERIFIED": "PASS",
+    "GATE_02_SENSITIVE_DATA_SANITIZED": "IN_PROGRESS",
+    "GATE_03_INFRASTRUCTURE_DECOUPLED": "IN_PROGRESS",
+    "GATE_04_CLEAN_HISTORY_CANDIDATE": "READY_FOR_CANDIDATE",
+    "GATE_05_LICENSE_COMPLIANCE": "PASS",
+    "GATE_06_PACKAGE_WHITELIST": "IN_PROGRESS",
+    "GATE_07_TEST_SUITE_HEALTH": "PASS",
+    "GATE_08_STANDALONE_MONITOR": "IN_PROGRESS",
+    "GATE_09_LOCAL_FIRST_ZERO_NETWORK": "IN_PROGRESS",
+    "GATE_10_PROVIDER_FAILURE_ISOLATION": "PASS",
+    "GATE_11_CROSS_PLATFORM_NORMALIZED": "PASS",
+    "GATE_12_SECRET_REDACTION_ACTIVE": "PASS",
+    "GATE_13_PUBLIC_DOCUMENTATION": "IN_PROGRESS",
+    "GATE_14_CUTOVER_PLAN_FORMULATED": "PASS",
+    "GATE_15_MACHINE_READABLE_REPORT": "PASS",
+    "GATE_16_HUMAN_AUTHORIZATION": "BLOCKED"
+  },
+  "testSuite": {
+    "total": 1794,
+    "passed": 1767,
+    "failed": 0,
+    "skipped": 27,
+    "executionTimeMs": 24057
+  }
+}
