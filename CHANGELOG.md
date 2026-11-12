@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.29.10](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.29.9...v1.29.10) (2026-11-12)
+
+
+### 📝 Documentation
+
+* **managed:** record the pinned Playwright MCP version ([eaf9552](https://github.com/programinglive/dev-workflow-mcp-server/commit/eaf9552f276914e98ec5f7c0fcb2120691f5e672))
+
+
+### ✨ Features
+
+* **perf:** token diet and immediate zettly draw integration in start_task ([738e469](https://github.com/programinglive/dev-workflow-mcp-server/commit/738e469d3940b7844f615cc785c4fdd851268f49))
+
 ### [1.29.9](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.29.8...v1.29.9) (2026-11-12)
 
 
