@@ -36,9 +36,10 @@ test("a card stores its task id and parent card", () => {
   assert.match(sql, /task_id/);
   assert.match(sql, /parent_task_id/);
   assert.match(sql, /parent_task_title/);
-  assert.equal(params.at(-3), "task-b");
-  assert.equal(params.at(-2), "task-a");
-  assert.equal(params.at(-1), "first topic");
+  assert.equal(params.at(-4), "task-b");
+  assert.equal(params.at(-3), "task-a");
+  assert.equal(params.at(-2), "first topic");
+  assert.equal(params.at(-1), null, "no refinement in this payload");
 });
 
 test("a card without a parent stores empty parent columns", () => {
@@ -49,7 +50,7 @@ test("a card without a parent stores empty parent columns", () => {
 
 test("a card without a task id keeps working like the old single-card row", () => {
   const { params } = buildSessionUpsert({ ...CARD, taskId: undefined, parentTask: null });
-  assert.equal(params.at(-3), "");
+  assert.equal(params.at(-4), "");
 });
 
 test("starting a child card hands the parent card off", () => {
@@ -109,13 +110,14 @@ test("the upsert unifies the task-metadata and the card-chain models", () => {
   assert.match(sql, /workflow_task_id=CASE WHEN \(/);
   assert.match(sql, /task_relations_json=CASE/);
   assert.match(sql, /repo_path=COALESCE\(NULLIF\(EXCLUDED\.repo_path, ''\), sessions\.repo_path\)/);
-  // 17 base + 5 metadata + 2 release + 1 toolchain + 3 chain = 28.
-  assert.equal(params.length, 28, "the unified upsert takes 28 params");
+  // 17 base + 5 metadata + 2 release + 1 toolchain + 3 chain + 1 refinement = 29.
+  assert.equal(params.length, 29, "the unified upsert takes 29 params");
   assert.equal(params.at(17), "task-x");
   assert.equal(params.at(18), JSON.stringify({ system: "factory", id: "45489f0d", url: "", label: "" }));
   assert.equal(params.at(20), "/code/x");
   assert.equal(params.at(21), "git@github.com:x.git");
-  assert.equal(params.at(-3), "task-b");
+  assert.equal(params.at(-4), "task-b");
+  assert.equal(params.at(-1), null, "no refinement in this payload");
 });
 
 test("the upsert fills metadata defaults when no metadata is sent", () => {

@@ -157,6 +157,53 @@ async function fetchDrawing(id) {
   return null;
 }
 
+/** Zettly stores the drawing as an SVG data URI; unwrap it to plain markup. */
+function drawingSvg(thumbnail) {
+  let svg = String(thumbnail || '');
+  if (svg.startsWith('data:image/svg+xml;charset=utf-8,')) {
+    svg = decodeURIComponent(svg.slice('data:image/svg+xml;charset=utf-8,'.length));
+  } else if (svg.startsWith('data:image/svg+xml;base64,')) {
+    svg = Buffer.from(svg.slice('data:image/svg+xml;base64,'.length), 'base64').toString('utf8');
+  }
+  return svg;
+}
+
+/**
+ * Raster copy of a drawing.
+ *
+ * The tablet app draws the flow with React Native's <Image>, which cannot
+ * render SVG at all. It asks for /thumbnail.png, and that route did not exist,
+ * so the flow was a 404 on the one device the owner actually carries. sharp is
+ * loaded lazily: a host without it still serves the SVG and the browser
+ * dashboard keeps working.
+ */
+let sharpModule;
+function getSharp() {
+  if (sharpModule === undefined) {
+    try {
+      sharpModule = require('sharp');
+    } catch {
+      sharpModule = null;
+    }
+  }
+  return sharpModule;
+}
+
+const pngCache = new Map();
+
+async function renderDrawingPng(id, svg) {
+  const cached = pngCache.get(id);
+  if (cached && cached.svgLength === svg.length) return cached.buffer;
+
+  const sharp = getSharp();
+  if (!sharp) throw new Error('sharp tidak tersedia untuk merender PNG');
+
+  const buffer = await sharp(Buffer.from(svg), { density: 144 }).png().toBuffer();
+  pngCache.set(id, { svgLength: svg.length, buffer });
+  if (pngCache.size > 50) pngCache.delete(pngCache.keys().next().value);
+  return buffer;
+}
+
 const PAGE = `<!doctype html>
 <html lang="id"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -208,6 +255,14 @@ const PAGE = `<!doctype html>
   .build-badge.succeeded { background:#2ea04326; color:#3fb950; border:1px solid #2ea04366; }
   .build-badge.failed { background:#f8514926; color:#ff7b72; border:1px solid #f8514966; }
   .build-target { font-weight:700; font-size:14px; color:#f0f6fc; margin-top:6px; }
+  .build-job-link {
+    display:inline-flex; align-items:center; gap:4px; font-size:11px; font-weight:600;
+    color:#58a6ff; text-decoration:none; padding:2px 7px; border-radius:6px;
+    background:#1f6feb22; border:1px solid #1f6feb44; transition:background .15s, border-color .15s;
+  }
+  .build-job-link:hover {
+    background:#1f6feb44; border-color:#58a6ff; text-decoration:none; color:#79c0ff;
+  }
   .build-location { color:#a5d6ff; font-size:12px; font-weight:600; margin-top:7px; overflow-wrap:anywhere; }
   .build-stage { font-size:12px; color:#a5d6ff; margin-top:3px; }
   .build-cmd { margin-top:8px; padding:7px 9px; background:#05080c; border:1px solid #1b222c;
@@ -556,6 +611,70 @@ function repoLinkHtml(s) {
   return '<a class="repo-link" href="' + esc(s.repo_url) + '" target="_blank" rel="noopener noreferrer"' +
     ' title="' + esc(s.repo_url) + '">🔗 ' + esc(label) + ' ↗</a>';
 }
+/**
+ * The approved flow diagram of this task, taken from task_relations_json.
+ *
+ * The monitor has rendered flow thumbnails through /api/drawings/:id/thumbnail
+ * and openFlowModal for a while, but nothing ever emitted an element with
+ * data-flow-id, so there was no way to open the modal: the diagram existed and
+ * was unreachable. The relation is already stored - it just was never read.
+ */
+function flowRelation(s) {
+  const raw = s && s.task_relations_json;
+  const list = Array.isArray(raw) ? raw : (raw && typeof raw === 'object' ? [raw] : []);
+  for (let i = 0; i < list.length; i += 1) {
+    const item = list[i];
+    if (item && item.system === 'zettly_draw' && item.id) {
+      return {
+        id: String(item.id),
+        label: String(item.label || ('Draw #' + item.id)),
+        url: String(item.url || ''),
+      };
+    }
+  }
+  return null;
+}
+
+function flowChipHtml(s) {
+  const rel = flowRelation(s);
+  if (!rel) return '';
+  return '<button type="button" data-flow-id="' + esc(rel.id) + '"' +
+    ' data-flow-title="' + esc(rel.label) + '"' +
+    ' data-flow-url="' + esc(rel.url) + '"' +
+    ' style="margin:6px 0 0;padding:5px 12px;border-radius:999px;cursor:pointer;' +
+    'background:#1f6feb22;border:1px solid #1f6feb66;color:#79c0ff;font-size:12px">' +
+    'Lihat diagram flow</button>';
+}
+
+/**
+ * What refine_with_ai actually asked for, revision by revision.
+ *
+ * Without this the monitor can only show the CURRENT description, so a task
+ * refined four times looks like it was always described that way.
+ */
+function renderRefinementHistory(s) {
+  const r = s && s.refinement_json;
+  if (!r || !Array.isArray(r.history) || r.history.length === 0) return '';
+
+  const entries = r.history.slice(-10).reverse().map(function(entry) {
+    const when = entry.at ? new Date(entry.at).toLocaleString('id-ID') : 'waktu tidak tercatat';
+    const plan = Array.isArray(entry.plan) ? entry.plan.length : 0;
+    const dod = Array.isArray(entry.definitionOfDone) ? entry.definitionOfDone.length : 0;
+    return '<div class="event-card" style="margin-top:8px">' +
+      '<div class="row" style="justify-content:space-between;align-items:center">' +
+        '<span class="phase" style="background:#2ea04322;color:#7ee787;border-color:#2ea04355">revisi ' +
+          esc(String(entry.revision || '?')) + '</span>' +
+        '<span class="meta">' + esc(when) + '</span>' +
+      '</div>' +
+      '<div style="margin-top:6px">' + esc(entry.description || '') + '</div>' +
+      (entry.newContext ? '<div class="meta" style="margin-top:4px">Konteks baru: ' + esc(entry.newContext) + '</div>' : '') +
+      '<div class="meta" style="margin-top:4px">' + plan + ' langkah rencana / ' + dod + ' item DoD</div>' +
+      '</div>';
+  }).join('');
+
+  return '<div class="modal-sec-title">Riwayat Refinement AI (' + r.history.length + ' revisi)</div>' + entries;
+}
+
 function ago(iso, nowMs) {
   if (!iso) return '';
   const d = ((nowMs || Date.now()) - new Date(iso).getTime()) / 1000;
@@ -636,10 +755,27 @@ function renderBuildBox(ab, jNow, machine) {
   const elapsed = ab.startedAt ? durasiDetik(ab.startedAt, ab.finishedAt ? new Date(ab.finishedAt).getTime() : jNow) : '';
   const liveAttr = (isRunning && ab.startedAt) ? ' data-live-start="' + esc(ab.startedAt) + '"' : '';
   const eta = renderEta(ab, jNow);
+  const rawJobUrl = ab.jobUrl || ab.url || ab.buildUrl || '';
+  let validJobUrl = '';
+  if (rawJobUrl) {
+    try {
+      const u = new URL(rawJobUrl);
+      if (u.protocol === 'http:' || u.protocol === 'https:') validJobUrl = u.href;
+    } catch {}
+  }
+  const jobLink = validJobUrl
+    ? '<a href="' + esc(validJobUrl) + '" target="_blank" rel="noopener noreferrer" class="build-job-link" onclick="event.stopPropagation()">' +
+      'Buka job' +
+      '<span style="font-weight:400;opacity:.85;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' +
+      esc(validJobUrl.replace('https://', '').replace('http://', '')) + '</span></a>'
+    : '';
   return '<div class="build-card ' + esc(st) + '" style="margin-top:10px">' +
     '<div class="row" style="justify-content:space-between;align-items:center">' +
       '<span class="build-badge ' + esc(st) + '">' + labelBuildStatus(st) + '</span>' +
-      (elapsed ? '<span class="meta"' + liveAttr + '>⏱ ' + esc(elapsed) + '</span>' : '') +
+      '<div style="display:flex;align-items:center;gap:8px">' +
+        jobLink +
+        (elapsed ? '<span class="meta"' + liveAttr + '>⏱ ' + esc(elapsed) + '</span>' : '') +
+      '</div>' +
     '</div>' +
     '<div class="build-target">🏗️ ' + esc(ab.target) + '</div>' +
     renderBuildLocation(ab, machine) +
@@ -857,13 +993,20 @@ function renderBuildMonitor(activeSessions, jNow) {
         const barCls = (!hasPct && isRunning) ? 'build-bar indeterminate' : 'build-bar';
         const elapsed = ab.startedAt ? durasiDetik(ab.startedAt, ab.finishedAt ? new Date(ab.finishedAt).getTime() : jNow) : '';
         const liveAttr = (isRunning && ab.startedAt) ? ' data-live-start="' + esc(ab.startedAt) + '"' : '';
+        const heroJobLink = ab.jobUrl
+          ? '<a href="' + esc(ab.jobUrl) + '" target="_blank" rel="noopener noreferrer" class="build-job-link" onclick="event.stopPropagation()">🔗 Job ↗</a>'
+          : '';
         return '<div class="build-card ' + esc(st) + '" data-session-key="' + esc(s.session_key) + '">' +
           '<div class="row" style="justify-content:space-between;align-items:center">' +
             '<span class="build-badge ' + esc(st) + '">' + labelBuildStatus(st) + '</span>' +
-            '<span class="proj-pill">' + esc(s.machine) + ' · ' + esc(s.project_name || 'proyek') + '</span>' +
+            '<div style="display:flex;align-items:center;gap:6px">' +
+              heroJobLink +
+              '<span class="proj-pill">' + esc(s.machine) + ' · ' + esc(s.project_name || 'proyek') + '</span>' +
+            '</div>' +
           '</div>' +
           '<div class="build-target">' + esc(ab.target) + '</div>' +
           renderBuildLocation(ab, s.machine) +
+          flowChipHtml(s) +
           (ab.stage ? '<div class="build-stage">▸ ' + esc(ab.stage) + (hasPct ? ' (' + pct + '%)' : '') + '</div>' : '') +
           '<div class="' + barCls + '"><i style="width:' + pct + '%"></i></div>' +
           (ab.command ? '<div class="build-cmd">$ ' + esc(ab.command) + '</div>' : '') +
@@ -1042,7 +1185,7 @@ function bukaDetail(sessionKey) {
     '<span class="phase" style="background:#a371f71a;color:#d2a8ff;border-color:#a371f755">' + agentText + '</span>' + versionPill(s);
 
   document.getElementById('modal-task').textContent = s.task || s.session_title || '(tanpa task)';
-  document.getElementById('modal-task-metadata').innerHTML = renderTaskMetadata(s);
+  document.getElementById('modal-task-metadata').innerHTML = renderTaskMetadata(s) + flowChipHtml(s);
   document.getElementById('modal-session-title').textContent = s.session_title ? '💬 ' + s.session_title : '';
   document.getElementById('modal-project').textContent = s.project_name || '';
   document.getElementById('modal-meta').textContent =
@@ -1061,9 +1204,9 @@ function bukaDetail(sessionKey) {
 
   const buildModalEl = document.getElementById('modal-build');
   if (buildModalEl) {
-    buildModalEl.innerHTML = s.active_build
+    buildModalEl.innerHTML = (s.active_build
       ? '<div class="modal-sec-title">Status Build &amp; Eksekusi</div>' + renderBuildBox(s.active_build, jNow, s.machine)
-      : '';
+      : '') + renderRefinementHistory(s);
   }
 
   // Plan
@@ -1342,8 +1485,8 @@ function renderHistory(data) {
       versionPill(h) +
       '<span class="task">' + esc(h.task || h.session_title || '(tanpa task)') + '</span></div>' +
       renderTaskMetadata(h) +
-      renderChain(h) +
-      '<div class="meta" style="margin-top:4px">' + esc(h.machine) +
+      flowChipHtml(h) +
+      renderChain(h) +      '<div class="meta" style="margin-top:4px">' + esc(h.machine) +
       (h.project_name ? ' · ' + esc(h.project_name) : '') +
       (h.duration_label ? ' · ⏱ ' + esc(h.duration_label) : ' · durasi tidak tercatat') +
       ' · ' + ago(h.updated_at, jNow) + '</div>' +
@@ -1651,6 +1794,13 @@ async function cabutYatim(tombol) {
 
 // Delegasi klik pada elemen
 document.getElementById('build-monitor').addEventListener('click', function (e) {
+  // The build card carries a flow chip too, and this handler used to only look
+  // for the card itself, so a chip there did nothing at all.
+  var flowBtn = e.target.closest('[data-flow-id]');
+  if (flowBtn) {
+    openFlowModal(flowBtn.dataset.flowId, flowBtn.dataset.flowTitle, flowBtn.dataset.flowUrl);
+    return;
+  }
   var card = e.target.closest('[data-session-key]');
   if (card) {
     bukaDetail(card.dataset.sessionKey);
@@ -2102,9 +2252,14 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'content-type': 'application/json' });
       return res.end(JSON.stringify({ ok: true, closed: true, sessionKey: row.session_key }));
     }
-    const drawingMatch = /^\/api\/drawings\/(\d+)\/thumbnail$/.exec(url.pathname);
+    const drawingMatch = /^\/api\/drawings\/(\d+)\/thumbnail(\.png)?$/.exec(url.pathname);
     if (drawingMatch && (req.method === 'GET' || req.method === 'HEAD')) {
       const drawingId = Number(drawingMatch[1]);
+      const wantsPng = Boolean(drawingMatch[2]);
+      // Logged because "the image does not appear" is otherwise unanswerable:
+      // the browser and the tablet hit the same route and only one of them
+      // fails, and without the caller address there is no way to tell which.
+      console.log(`[drawing] ${req.method} ${url.pathname} from ${req.socket.remoteAddress} ua=${String(req.headers['user-agent'] || '').slice(0, 60)}`);
       if (!Number.isSafeInteger(drawingId) || drawingId < 1) {
         res.writeHead(400, { 'content-type': 'application/json' });
         return res.end(JSON.stringify({ ok: false, error: 'invalid drawing id' }));
@@ -2115,12 +2270,18 @@ const server = http.createServer(async (req, res) => {
           res.writeHead(404, { 'content-type': 'application/json' });
           return res.end(JSON.stringify({ ok: false, error: 'drawing thumbnail not found' }));
         }
-        let svg = String(row.thumbnail);
-        if (svg.startsWith('data:image/svg+xml;charset=utf-8,')) {
-          svg = decodeURIComponent(svg.slice('data:image/svg+xml;charset=utf-8,'.length));
-        } else if (svg.startsWith('data:image/svg+xml;base64,')) {
-          svg = Buffer.from(svg.slice('data:image/svg+xml;base64,'.length), 'base64').toString('utf8');
+        const svg = drawingSvg(row.thumbnail);
+
+        if (wantsPng) {
+          const png = await renderDrawingPng(drawingId, svg);
+          res.writeHead(200, {
+            'content-type': 'image/png',
+            'cache-control': 'public, max-age=3600',
+          });
+          if (req.method === 'HEAD') return res.end();
+          return res.end(png);
         }
+
         res.writeHead(200, {
           'content-type': 'image/svg+xml; charset=utf-8',
           'cache-control': 'public, max-age=3600',
@@ -2356,6 +2517,7 @@ const server = http.createServer(async (req, res) => {
 const ensureSessionRepositoryColumnsSql = `
   ALTER TABLE sessions ADD COLUMN IF NOT EXISTS repo_path text NOT NULL DEFAULT '';
   ALTER TABLE sessions ADD COLUMN IF NOT EXISTS repo_remote text NOT NULL DEFAULT '';
+  ALTER TABLE sessions ADD COLUMN IF NOT EXISTS refinement_json jsonb;
 `;
 
 /**
@@ -2368,9 +2530,13 @@ const ensureSessionRepositoryColumnsSql = `
 async function ensureSessionRepositoryColumns() {
   const existing = await query(
     `SELECT column_name FROM information_schema.columns
-      WHERE table_name = 'sessions' AND column_name IN ('repo_path', 'repo_remote')`,
+      WHERE table_name = 'sessions'
+        AND column_name IN ('repo_path', 'repo_remote', 'refinement_json')`,
   );
-  if (existing.rows.length >= 2) return;
+  // All three, not two: the check used to stop at the repository columns, so a
+  // database that already had them never received refinement_json and every
+  // session query failed with "column does not exist".
+  if (existing.rows.length >= 3) return;
   await query(ensureSessionRepositoryColumnsSql);
 }
 

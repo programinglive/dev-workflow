@@ -174,6 +174,17 @@ async function captureDirtyAtStart(git) {
 
 export async function handleStartTask(args, workflowState, git, zettlyOptions = {}) {
   const env = zettlyOptions?.env || process.env;
+  // `task` is a natural alias for `description`. Accepting it as an unknown key
+  // silently created an empty task, which then had no Todo and no drawing, so
+  // the monitor showed no flow. Normalise it, and refuse an empty description.
+  if ((args.description === undefined || args.description === "") && typeof args.task === "string") {
+    args = { ...args, description: args.task };
+  }
+  if (typeof args.description !== "string" || args.description.trim() === "") {
+    return textResponse(
+      "⚠️ 'description' is required. Pass the task description as 'description' (not 'task'). The task was not started."
+    );
+  }
   const zettlyArgumentError=validateZettlyTaskArguments(args);
   if(zettlyArgumentError)return textResponse(`⚠️ ${zettlyArgumentError} The existing task was not changed.`);
   // A task handed over to another machine must not be silently continued here:
@@ -491,7 +502,7 @@ export async function handleStartTask(args, workflowState, git, zettlyOptions = 
       const persisted=await workflowState.save();
       if(persisted?.verified===false||persisted?.conflict)throw Error('Factory link persistence was not verified');
       factoryNote = `\n\n🏭 ${hasil.reused?'Linked existing':'Recorded in'} Factory: ${hasil.id}`;
-    } else if (hasil.reason) {
+    } else if (hasil.reason && hasil.reason !== "dimatikan" && hasil.reason !== "kredensial Factory tidak lengkap") {
       factoryNote = `\n\n⚠️ Factory TIDAK mencatat task ini: ${hasil.reason}`;
     }
   } catch (e) {
@@ -504,7 +515,13 @@ export async function handleStartTask(args, workflowState, git, zettlyOptions = 
     if (drawing.ok) {
       drawNote = `\n\n🎨 Zettly Draw #${drawing.id}: ${drawing.url || `https://zettly.programinglive.com/draw/${drawing.id}`}`;
     } else if (drawing.note) {
-      drawNote = `\n\n⚠️ Zettly Draw: ${drawing.note}`;
+      // A pending drawing means the monitor has no flow to show. Say so in the
+      // start_task reply, because an agent that never sees this will work
+      // through the whole task with an invisible plan.
+      drawNote =
+        `\n\n⚠️ FLOW BELUM TERLIHAT DI MONITOR: ${drawing.note}\n` +
+        `   Jalankan 'create_feature_flow' sekarang (sebelum menulis kode) supaya konteksnya lengkap. ` +
+        `Setiap balasan tool akan mengingatkan sampai drawing-nya ada.`;
     }
   } catch (e) {
     drawNote = `\n\n⚠️ Zettly Draw sync error: ${String(e && e.message).slice(0, 120)}`;
@@ -1069,7 +1086,14 @@ export async function handleReportBuildStatus(args = {}, workflowState) {
   await reportEventSafe(workflowState.state, eventKind, JSON.stringify(next), workflowState._sessionKey().key);
 
   const block = formatBuildStatusBlock(next, workflowState.state.buildHistory);
-  return textResponse(`✅ Build status recorded!\n\n${block}`);
+  // A build card without a URL is a dead end: the reader can see that something
+  // ran but cannot open it. Say so at the moment the report is made, while the
+  // caller still has the pipeline page in hand.
+  const urlHint = next.jobUrl
+    ? ''
+    : '\n\nNo job URL recorded, so the monitor card has no link. Pass `jobUrl` ' +
+      '(the pipeline or job page) when the build runs in CI.';
+  return textResponse(`? Build status recorded!\n\n${block}${urlHint}`);
 }
 
 

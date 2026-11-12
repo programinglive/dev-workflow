@@ -14,6 +14,7 @@
  */
 
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from "fs";
+import { execFileSync } from "child_process";
 import os from "os";
 import path from "path";
 
@@ -117,6 +118,38 @@ function defaultIsAlive(pid) {  if (!Number.isFinite(pid) || pid <= 0) return fa
 }
 
 /**
+ * Apakah proses dengan PID itu benar-benar pemegang lock dev-workflow?
+ *
+ * Kenapa perlu: `process.kill(pid, 0)` menjawab "ada proses dengan PID ini",
+ * bukan "proses itu adalah MCP kita". PID dipakai ulang oleh sistem, dan pada
+ * 11 November 2026 lock sisa 7 November menunjuk PID 831 yang saat itu sudah
+ * menjadi perluasan Calendar.app. Tanpa pemeriksaan identitas, lock mati
+ * terlihat hidup: proses MCP baru memperingatkan "proses lain masih berjalan"
+ * padahal tidak ada, dan pengguna disuruh menutup OpenCode tanpa sebab.
+ *
+ * Mengembalikan true/false bila bisa dipastikan, null bila tidak - dan null
+ * diperlakukan sebagai "masih hidup" supaya perilaku aman tidak berubah di
+ * platform yang tidak bisa diperiksa.
+ */
+export function defaultIsHolderProcess(pid) {
+  if (!Number.isFinite(pid) || pid <= 0) return null;
+  if (process.platform === "win32") return null;
+
+  try {
+    const out = execFileSync("ps", ["-p", String(pid), "-o", "command="], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 2000,
+    });
+    const command = String(out || "").trim();
+    if (!command) return false;
+    return /ManagedMCP|dev-workflow/i.test(command);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Mencoba menjadi pemegang lock.
  *
  * Mengembalikan:
@@ -129,6 +162,7 @@ export function acquireProcessLock({
   pid = process.pid,
   now = Date.now(),
   isAlive = defaultIsAlive,
+  isHolderProcess = defaultIsHolderProcess,
   writeFileImpl = writeFileSync,
 }) {
   const existing = readProcessLock({ dir });
@@ -144,7 +178,15 @@ export function acquireProcessLock({
   rememberLockDir(dir);
 
   if (existing && existing.pid !== pid && isAlive(existing.pid)) {
-    return { acquired: false, holder: existing };
+    // PID yang masih ada belum tentu pemegang lock: PID dipakai ulang. Periksa
+    // identitas hanya bila lock ditulis di host yang sama, karena `ps` di sini
+    // tidak bisa melihat proses host lain.
+    const sameHost = !existing.host || existing.host === safeHostname();
+    const holderIsOurs = sameHost ? isHolderProcess(existing.pid) : null;
+
+    if (holderIsOurs !== false) {
+      return { acquired: false, holder: existing };
+    }
   }
 
   const tookOverFrom = existing && existing.pid !== pid ? existing.pid : undefined;

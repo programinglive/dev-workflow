@@ -34,7 +34,7 @@ test('focus tools dispatch structured JSON and guarded start links the persisted
   const started=await handleToolCall({...ctx,request:createRequest('start_task',{...startArgs,focusId:7,requireFocus:true})});
   assert.ok(!started.isError,started.content[0].text);
   assert.equal(state.state.focus.id,7);assert.equal(state.state.focus.todoId,1);
-  assert.match(client.tasks.get(1).description,/dev-workflow-focus:7/);
+  assert.equal(client.tasks.get(1).focus_id,7);
   await state.load();assert.equal(state.state.focus.id,7);
   state.reset();assert.equal(state.state.focus,null);
  });

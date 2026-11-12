@@ -136,6 +136,36 @@ export function getToolList() {
       },
     },
     {
+      name: "refine_with_ai",
+      description: "Immediately after start_task and its required feature flow, use the AI agent to re-read prior task context and submit a complete revised description, ordered plan, and definition of done. Repeat when new evidence appears. Updates the same canonical task and Todo, retains earlier context and proven evidence; never creates a duplicate task.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          taskId: { type: "string", minLength: 3, description: "Current canonical workflow task ID, used to reject stale refinements." },
+          newContext: { type: "string", minLength: 10, maxLength: 4000, description: "New findings, decisions, or bug evidence to add to prior context; exclude secrets." },
+          description: { type: "string", minLength: 20, maxLength: 2000, description: "Complete AI-rewritten task description using previous and new context." },
+          plan: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 15, description: "Complete revised ordered plan, including still-relevant prior work." },
+          definitionOfDone: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 20, description: "Complete revised acceptance checklist; retain all proven or waived items verbatim." },
+          bugContext: {
+            type: "object",
+            description: "Required for bugfix tasks. Concrete investigation details that make the revised plan reproducible and measurable.",
+            properties: {
+              symptom: { type: "string", minLength: 10, maxLength: 1000 },
+              reproduction: { type: "array", items: { type: "string", minLength: 5, maxLength: 300 }, minItems: 1, maxItems: 10 },
+              observed: { type: "string", minLength: 10, maxLength: 1000 },
+              expected: { type: "string", minLength: 10, maxLength: 1000 },
+              evidence: { type: "string", minLength: 10, maxLength: 1000 },
+              constraints: { type: "string", minLength: 10, maxLength: 1000 },
+            },
+            required: ["symptom", "reproduction", "observed", "expected", "evidence", "constraints"],
+            additionalProperties: false,
+          },
+        },
+        required: ["taskId", "newContext", "description", "plan", "definitionOfDone"],
+        additionalProperties: false,
+      },
+    },
+    {
       name: "set_definition_of_done",
       description:
         "Add or replace the definition-of-done checklist of the CURRENT task. Use it to fill the checklist of a task started before this feature existed, because a task cannot be committed or closed while any item is open. Replacing a list that already contains proven or waived items is refused unless 'append' is true. Items that are not proven must be waived with a written reason instead of quietly dropped.",
@@ -1211,6 +1241,11 @@ export function getToolList() {
             type: "string",
             maxLength: 120,
             description: "Actual machine or server executing the build. Set explicitly for remote builds; do not use the deploy destination unless it also executes the build.",
+          },
+          jobUrl: {
+            type: "string",
+            maxLength: 500,
+            description: "Direct URL to the active CI/CD runner or build job (e.g. 'https://gitlab.com/.../-/jobs/12345', 'https://github.com/.../actions/runs/...').",
           },
           command: {
             type: "string",
