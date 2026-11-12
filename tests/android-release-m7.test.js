@@ -75,4 +75,29 @@ test("Milestone M7: Android APK Release Workflow & Verification", async (t) => {
     assert.equal(parsedEmpty.deviceCount, 0);
     assert.equal(parsedEmpty.xiaomiPad6Detected, false);
   });
+
+  await t.test("Commiter v2 (^1.5.1) and DW Android Companion icon & splash assets are configured", () => {
+    const pkg = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, "package.json"), "utf8"));
+    assert.equal(pkg.devDependencies["@programinglive/commiter"], "^1.5.1");
+    assert.equal(pkg.scripts.release, "commiter release");
+    assert.equal(pkg.commiter?.release?.branch, "main");
+
+    const requiredAssets = [
+      path.join(ROOT_DIR, "mobile-app", "assets", "icon.png"),
+      path.join(ROOT_DIR, "mobile-app", "assets", "splash-icon.png"),
+      path.join(ROOT_DIR, "mobile-app", "assets", "android-icon-foreground.png"),
+      path.join(ROOT_DIR, "mobile-app", "android", "app", "src", "main", "res", "mipmap-xxxhdpi", "ic_launcher.webp"),
+      path.join(ROOT_DIR, "mobile-app", "android", "app", "src", "main", "res", "drawable-xxxhdpi", "splashscreen_logo.png"),
+    ];
+    for (const assetPath of requiredAssets) {
+      assert.equal(fs.existsSync(assetPath), true, `Missing asset: ${assetPath}`);
+      assert.ok(fs.statSync(assetPath).size > 1000, `Asset unexpectedly small: ${assetPath}`);
+    }
+
+    const colorsXml = fs.readFileSync(
+      path.join(ROOT_DIR, "mobile-app", "android", "app", "src", "main", "res", "values", "colors.xml"),
+      "utf8"
+    );
+    assert.match(colorsXml, /#080b12/);
+  });
 });

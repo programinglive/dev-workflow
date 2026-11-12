@@ -30,12 +30,12 @@
     "check": "node --check index.js",
     "prepare": "node scripts/install-husky.js",
     "postinstall": "node install.js",
-    "release": "node scripts/release.cjs",
-    "release:major": "node scripts/release.cjs major",
-    "release:minor": "node scripts/release.cjs minor",
-    "release:patch": "node scripts/release.cjs patch",
+    "release": "commiter release",
+    "release:major": "commiter release major",
+    "release:minor": "commiter release minor",
+    "release:patch": "commiter release patch",
     "web": "npm start --prefix web",
-    "release:first": "node scripts/release.cjs --first-release",
+    "release:first": "commiter release --first-release",
     "verify:bundle": "node scripts/verify-bundle.mjs",
     "ci:test": "npm test && npm run test:security && node --test tests/setup-stack.test.js",
     "ci:build": "npm run build:server && npm run verify:bundle",
@@ -70,7 +70,7 @@
   "devDependencies": {
     "@commitlint/cli": "^21.2.4",
     "@commitlint/config-conventional": "^21.2.4",
-    "@programinglive/commiter": "^1.2.17",
+    "@programinglive/commiter": "^1.5.1",
     "@types/node": "^26.6.5",
     "autoprefixer": "^10.6.1",
     "cross-env": "^10.1.0",
@@ -128,5 +128,10 @@
         "section": "⏪ Reverts"
       }
     ]
+  },
+  "commiter": {
+    "release": {
+      "branch": "main"
+    }
   }
 }

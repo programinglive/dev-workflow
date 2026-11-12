@@ -34,10 +34,10 @@
       "device": "pipa",
       "resolution": "1800x2880",
       "densityDpi": 400,
-      "apkSizeBytes": 66859560,
-      "apkSha256": "44cce91a954ec52914551719af27e01bff4e9ae36497321bdd5a88ce30c3d3b1",
+      "apkSizeBytes": 67733396,
+      "apkSha256": "a9230481846c7032d3138a2149fa2fb564aa12cc73d43ccf16f639fb73d57a38",
       "installStatus": "SUCCESS",
-      "runningPid": 13984
+      "runningPid": 18538
     }
   },
   "categories": {

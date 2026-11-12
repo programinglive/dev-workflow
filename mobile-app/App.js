@@ -473,7 +473,14 @@ export default function App() {
     <View style={gaya.layar}>
       <View style={gaya.header}>
         <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-          <Text style={gaya.judul}>Dev Workflow Monitor</Text>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+            <Image
+              source={require("./assets/icon.png")}
+              style={{ width: 32, height: 32, borderRadius: 8 }}
+              resizeMode="contain"
+            />
+            <Text style={gaya.judul}>Dev Workflow Monitor</Text>
+          </View>
           <View style={[gaya.connPill, gayaConnStatus(connStatus)]}>
             <View style={[gaya.connDot, gayaConnDot(connStatus)]} />
             <Text style={[gaya.connPillTeks, gayaConnText(connStatus)]}>{connStatus}</Text>
@@ -549,7 +556,14 @@ export default function App() {
       ) : null}
 
       {memuat && !data ? (
-        <ActivityIndicator size="large" color={WARNA.biru} style={{ marginTop: 60 }} />
+        <View style={{ flex: 1, justifyContent: "center", alignItems: "center", paddingVertical: 24 }}>
+          <Image
+            source={require("./assets/splash-icon.png")}
+            style={{ width: "100%", height: 320 }}
+            resizeMode="contain"
+          />
+          <ActivityIndicator size="large" color={WARNA.biru} style={{ marginTop: 16 }} />
+        </View>
       ) : (
         <ScrollView
           contentContainerStyle={gaya.daftar}
