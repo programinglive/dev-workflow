@@ -1,11 +1,13 @@
 {
-  "schemaVersion": "1.0.0",
+  "schemaVersion": "1.1.0",
   "releaseStrategy": "OPTION_B_PLUS_COMPLETE_VERIFY_CANARY_PROGRESSIVE",
-  "generatedAt": "2026-11-12T22:47:30+07:00",
+  "generatedAt": "2026-11-12T23:18:00+07:00",
   "branch": "feature/mobile-companion-cockpit",
   "baselineCommit": "f268cdd9",
   "canaryCommit": "9f9e43f9791616c90b9c1f9bf8bd0e6195eb1b09",
-  "overallStatus": "CANARY_VERIFIED",
+  "phase2Commit": "0649de6a",
+  "brandingAndCommiterCommit": "dd3aa1ec",
+  "overallStatus": "READY_FOR_MERGE",
   "milestones": {
     "M0_Foundation": "COMPLETED",
     "M1_MultiServerProfiles": "COMPLETED",
@@ -29,21 +31,30 @@
     "releaseArchiveSha256": "8d4d8b0cea3739321857d0b197a9a1bb0d2680d033a6e33ef10325176b124ae9",
     "sqliteBackupSha256": "5defcf8b46ec41184da5659045fd82540596f9709766434395eb85e29c08159c",
     "sqliteWalBackupSha256": "cf9532c61e4162110c5cc676294fca545ff5bdd62b387322f6a0ae08c2192a8a",
+    "isolatedRestoreTest": {
+      "walCheckpointBusy": 0,
+      "integrityCheck": "ok",
+      "tableCount": 10,
+      "workflowStateRows": 5,
+      "workflowHistoryRows": 50,
+      "tempCleaned": true
+    },
     "xiaomiPad6Device": {
       "model": "23043RP34G",
       "device": "pipa",
       "resolution": "1800x2880",
       "densityDpi": 400,
-      "apkSizeBytes": 67733396,
-      "apkSha256": "a9230481846c7032d3138a2149fa2fb564aa12cc73d43ccf16f639fb73d57a38",
+      "apkSizeBytes": 67733460,
+      "apkSha256": "9d27310bf284b7d0531d0d4ab6582a700165fb64755a0bde24da1242accb2477",
       "installStatus": "SUCCESS",
-      "runningPid": 18538
+      "runningPid": 20072,
+      "crashLogCount": 0
     }
   },
   "categories": {
     "functionalVerification": {
       "status": "PASS",
-      "details": "All M0-M7 backend, MCP, and Android companion modules implemented and verified via 1,873 passing automated tests."
+      "details": "All M0-M7 backend, MCP, Web Monitor DW header, and Android companion modules implemented and verified via 1,873+ passing automated tests."
     },
     "securityVerification": {
       "status": "PASS",
@@ -59,7 +70,7 @@
     },
     "databaseCompatibility": {
       "status": "PASS",
-      "details": "Additive schema migrations on SQLite WAL (dev-workflow.db) preserve existing active sessions, task contracts, and Zettly relations without destructive schema resets."
+      "details": "Additive schema migrations on SQLite WAL (dev-workflow.db) verified via isolated non-destructive backup restore test (PRAGMA integrity_check = ok across all 10 tables)."
     },
     "integrationCompatibility": {
       "status": "PASS",
@@ -67,15 +78,15 @@
     },
     "mobileCompatibility": {
       "status": "PASS",
-      "details": "Release APK rebuilt with M4-M6 UI (66,859,560 bytes, SHA-256: 44cce91a954ec52914551719af27e01bff4e9ae36497321bdd5a88ce30c3d3b1), installed via Wireless ADB onto Xiaomi Pad 6 (model 23043RP34G / pipa, 1800x2880 @ 400dpi), and verified running (PID 13984)."
+      "details": "Release APK rebuilt with official DW icon/splash and DetailSesi crash fix (67,733,460 bytes, SHA-256: 9d27310bf284b7d0531d0d4ab6582a700165fb64755a0bde24da1242accb2477), installed via Wireless ADB onto Xiaomi Pad 6 (model 23043RP34G / pipa, 1800x2880 @ 400dpi), verified running (PID 20072) with 0 crashes in adb logcat -b crash."
     },
     "rollbackReadiness": {
       "status": "PASS",
-      "details": "Pre-canary SQLite WAL snapshot verified (SHA-256: 5defcf8b46ec41184da5659045fd82540596f9709766434395eb85e29c08159c) and rollback-565e381.json saved on bw-tools."
+      "details": "Pre-canary SQLite WAL snapshot verified via isolated temp-directory restore test and rollback-565e381.json verified intact on bw-tools."
     },
     "activeSessionSafety": {
       "status": "PASS",
-      "details": "Canary rollout prewarmed HELLOWORLD, Mac, and MMCH to revision 9f9e43f97916 without terminating the active dbpinball OpenCode session on HELLOWORLD."
+      "details": "Session safety audit completed across HELLOWORLD, Mac, and MMCH; active dbpinball OpenCode session on HELLOWORLD classified as REQUIRES_DRAIN and left undisturbed."
     },
     "sensitiveDataScanning": {
       "status": "PASS",

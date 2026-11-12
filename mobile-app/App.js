@@ -1469,7 +1469,7 @@ function DetailSesi({ s, jamServer, onClose, monitorUrl }) {
             <Text style={gaya.langkah}>
               revisi kontrak: {s.contractRevision || "rev_1"} · kepatuhan scope: {s.scope_violation ? "VIOLATION" : "COMPLIANT"}
             </Text>
-            {paginateAuditEvents(s.approvals || [], 1, 5).events.map((ev, idx) => (
+            {(paginateAuditEvents(s.approvals || [], { page: 1, pageSize: 5 }).items || []).map((ev, idx) => (
               <Text key={ev.id || idx} style={gaya.langkah}>
                 • [{ev.action || ev.status}] oleh {ev.actorId || "human"} ({ev.recordedAt || "-"})
               </Text>

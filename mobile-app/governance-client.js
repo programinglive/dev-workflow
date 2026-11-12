@@ -178,10 +178,14 @@ function redactClientText(text) {
 /**
  * Paginates audit timeline entries so unlimited history is never loaded into Android memory.
  */
-export function paginateAuditEvents(events = [], { page = 1, pageSize = 25 } = {}) {
+export function paginateAuditEvents(events = [], optionsOrPage = {}, maybePageSize = 25) {
   const safeEvents = Array.isArray(events) ? events : [];
-  const safeSize = Math.max(1, Math.min(50, Number(pageSize) || 25));
-  const safePage = Math.max(1, Number(page) || 1);
+  const opts =
+    typeof optionsOrPage === "number"
+      ? { page: optionsOrPage, pageSize: maybePageSize }
+      : optionsOrPage || {};
+  const safeSize = Math.max(1, Math.min(50, Number(opts.pageSize) || 25));
+  const safePage = Math.max(1, Number(opts.page) || 1);
 
   const totalItems = safeEvents.length;
   const totalPages = Math.max(1, Math.ceil(totalItems / safeSize));
@@ -193,6 +197,7 @@ export function paginateAuditEvents(events = [], { page = 1, pageSize = 25 } = {
 
   return {
     items: slice,
+    events: slice,
     page: safePage,
     pageSize: safeSize,
     totalItems,

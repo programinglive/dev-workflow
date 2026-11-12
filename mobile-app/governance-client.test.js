@@ -131,8 +131,15 @@ test("mobile-app governance-client & evidence inspector (M5 & M6)", async (t) =>
 
     const page1 = paginateAuditEvents(raw, { page: 1, pageSize: 20 });
     assert.equal(page1.items.length, 20);
+    assert.equal(page1.events.length, 20);
     assert.equal(page1.totalPages, 3);
     assert.equal(page1.hasMore, true);
     assert.ok(!page1.items[0].reason.includes("tok_secret999"));
+
+    // Positional signature compatibility for DetailSesi modal: paginateAuditEvents(list, 1, 5).events.map(...)
+    const positional = paginateAuditEvents(raw, 1, 5);
+    assert.equal(positional.items.length, 5);
+    assert.equal(positional.events.length, 5);
+    assert.equal(positional.pageSize, 5);
   });
 });

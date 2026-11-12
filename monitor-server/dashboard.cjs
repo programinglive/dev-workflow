@@ -59,6 +59,14 @@ const { createMobileGovernanceEngine } = require('./mobile-governance.cjs');
 const eventsStreamManager = createEventsStreamManager({ heartbeatMs: 15000 });
 const mobileGovernanceEngine = createMobileGovernanceEngine();
 
+let APP_VERSION = '1.30.0';
+try {
+  const pkg = require('../package.json');
+  if (pkg && pkg.version) APP_VERSION = String(pkg.version);
+} catch {
+  // Standalone deployment fallback
+}
+
 let pairingEnginePromise = null;
 function getPairingEngine() {
   if (!pairingEnginePromise) {
@@ -442,9 +450,28 @@ const PAGE = `<!doctype html>
 </style></head><body>
 <header class="topbar">
   <div class="brand">
+    <svg width="36" height="36" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" style="border-radius:9px;background:#070a10;border:1px solid #1f2937;flex-shrink:0">
+      <defs>
+        <linearGradient id="dwGrad" x1="6" y1="14" x2="58" y2="50" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stop-color="#06e6d0"/>
+          <stop offset="50%" stop-color="#1d9bf0"/>
+          <stop offset="100%" stop-color="#7c5cff"/>
+        </linearGradient>
+      </defs>
+      <path d="M10 16H23C31.5 16 37 21.8 37 32C37 42.2 31.5 48 23 48H10V16ZM16.5 22V42H22.5C27.8 42 30.8 38.4 30.8 32C30.8 25.6 27.8 22 22.5 22H16.5Z" fill="url(#dwGrad)"/>
+      <path d="M33 16H39.2L43.4 36.5L47.8 23H53.2L57.6 36.5L61.8 16H56.5L53.2 33.5L49.2 21H44.8L40.8 33.5L36.5 16H33Z" fill="url(#dwGrad)" transform="translate(-3, 0) scale(0.95, 1)"/>
+      <circle cx="19" cy="36" r="2.3" fill="#06e6d0"/>
+      <circle cx="23" cy="32" r="2.3" fill="#2f81f7"/>
+      <circle cx="27" cy="28" r="2.3" fill="#8b5cf6"/>
+      <path d="M19 36H23V32H27V28" stroke="#38bdf8" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
     <span class="live-dot"></span>
     <div>
-      <h1>Dev Workflow Monitor</h1>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <h1>Dev Workflow Monitor</h1>
+        <span class="proj-pill" id="app-version-badge">v${APP_VERSION}</span>
+        <span class="phase" style="background:#06e6d018;color:#38bdf8;border-color:#06e6d055;text-transform:none">📱 Companion &amp; HITL v2</span>
+      </div>
       <div class="sub" id="sub">menyambung…</div>
     </div>
   </div>
