@@ -1734,10 +1734,18 @@ function render(data) {
     const missing = (p && p.missingTools && p.missingTools.length)
       ? '<div class="meta" style="margin-top:4px;color:#f85149">tidak terpasang: ' + esc(p.missingTools.join(', ')) + '</div>' : '';
 
+    const convStatus = p && p.convergenceStatus ? p.convergenceStatus : 'CONVERGED';
+    const convBadge = '<span class="phase" style="margin-left:6px;font-size:10px">' + esc(convStatus) + '</span>';
+    const verSummary = p
+      ? '<div class="meta" style="margin-top:4px">Installed: <b>' + esc(p.installedVersion || '-') + '</b> · Running: <b>' + esc(p.runningVersion || '-') + '</b> · Target: <b>' + esc(p.targetVersion || '-') + '</b>' +
+        (p.toolCatalogDigest ? ' · Catalog: <code>' + esc(String(p.toolCatalogDigest).slice(0, 19)) + '</code>' : '') + '</div>'
+      : '';
+
     return '<div class="card"><div class="row"><b style="color:' + (m.stale ? '#d29922' : '#3fb950') + '">' + (m.stale ? '⚠ ' : '● ') + '</b> ' +
-    '<b>' + esc(m.machine) + '</b>' +
+    '<b>' + esc(m.machine) + '</b>' + convBadge +
     '<span class="meta" style="margin-left:auto">' + esc(p && p.version ? 'v' + p.version : 'versi ?') +
     ' · <span style="color:' + statusColour + '">' + vState + ' · ' + tState + '</span></span></div>' +
+    verSummary +
     '<div class="meta" style="margin-top:4px">' + m.sessions + ' sesi · fase terakhir ' + esc(m.last_phase || '-') +
     (m.last_project ? ' · ' + esc(m.last_project) : '') +
     (m.stale ? ' · sudah lama tidak melapor' : ' · terakhir melapor ' + ago(m.last_seen, jNow)) + '</div>' +

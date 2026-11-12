@@ -14,7 +14,8 @@
  * only `list` runs without one.
  */
 
-const COMMANDS = ["list", "close", "share", "drop", "complete", "help", "version", "doctor", "pair"];
+const COMMANDS = ["list", "close", "share", "drop", "complete", "help", "version", "doctor", "pair", "fleet"];
+const FLEET_VERBS = ["status", "check", "plan", "stage", "activate", "verify", "rollback", "doctor"];
 
 /** A refusal the CLI reports to the user and turns into a non-zero exit. */
 export class CliError extends Error {
@@ -61,8 +62,9 @@ const FLAGS_WITH_VALUE = new Set([
   "--token",
   "--next-steps",
   "--url",
+  "--mode",
 ]);
-const BOOLEAN_FLAGS = new Set(["--dry-run", "--orphans", "--help", "--version", "--json"]);
+const BOOLEAN_FLAGS = new Set(["--dry-run", "--orphans", "--help", "--version", "--json", "--authorize"]);
 
 /**
  * Parses argv (without the node and script entries).
@@ -98,6 +100,15 @@ export function parseArgs(argv = []) {
     }
     args.shareVerb = verb;
     index = 2;
+  } else if (command === "fleet") {
+    const verb = words[1] && !words[1].startsWith("--") ? words[1] : "status";
+    if (!FLEET_VERBS.includes(verb)) {
+      throw new CliError(
+        `"fleet" needs a valid verb: ${FLEET_VERBS.join(", ")}.`
+      );
+    }
+    args.fleetVerb = verb;
+    index = words[1] && !words[1].startsWith("--") ? 2 : 1;
   }
 
   for (; index < words.length; index += 1) {
@@ -109,6 +120,7 @@ export function parseArgs(argv = []) {
       if (word === "--dry-run") args.dryRun = true;
       if (word === "--orphans") args.orphans = true;
       if (word === "--json") args.json = true;
+      if (word === "--authorize") args.authorize = true;
       continue;
     }
 
@@ -122,6 +134,7 @@ export function parseArgs(argv = []) {
       else if (word === "--reason") args.reason = value;
       else if (word === "--token") args.token = value;
       else if (word === "--url") args.url = value;
+      else if (word === "--mode") args.mode = value;
       else if (word === "--next-steps") args.nextSteps.push(value);
       continue;
     }

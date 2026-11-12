@@ -132,10 +132,25 @@ function buildFleetParity(machines = []) {
           ? 'unreported'
           : 'in-sync';
 
+    const convergenceStatus = row.stale
+      ? 'OFFLINE'
+      : versionDiffers || revisionDiffers
+        ? (row.last_phase && row.last_phase !== 'idle' ? 'PINNED_ACTIVE_SESSION' : 'VERSION_MISMATCH')
+        : status === 'in-sync'
+          ? 'CONVERGED'
+          : 'CLIENT_REFRESH_REQUIRED';
+
     return {
       machine: row.machine,
       version: row.release_version || null,
+      installedVersion: row.installed_version || row.release_version || null,
+      runningVersion: row.release_version || null,
+      targetVersion: version || row.release_version || null,
       revision: row.release_revision || null,
+      toolCatalogDigest: row.tool_catalog_digest || (toolchain && toolchain.toolCatalogDigest) || null,
+      convergenceStatus,
+      activeSessionCount: Number(row.active_sessions ?? (row.last_phase && row.last_phase !== 'idle' ? 1 : 0)),
+      updateFailureReason: row.update_failure_reason || null,
       stale: Boolean(row.stale),
       status,
       versionStatus,

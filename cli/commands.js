@@ -19,6 +19,15 @@
  */
 import { CliError } from "./args.js";
 import { createPairingChallenge } from "../pairing/challenge.js";
+import { createRequire } from "node:module";
+
+const requireCjs = createRequire(import.meta.url);
+const {
+  createMachineUpdateSupervisor,
+  evaluateFleetConvergence,
+  runFleetDoctor,
+  UPDATE_MODES,
+} = requireCjs("../managed/fleet-update-manager.cjs");
 
 function requireSession(args, command) {
   const session = typeof args.session === "string" ? args.session.trim() : "";
@@ -162,6 +171,110 @@ export async function runCommand({
     out.write("");
     out.write("Waiting for device handshake...");
     return { ok: true, challenge };
+  }
+
+  if (command === "fleet") {
+    const verb = args.fleetVerb || "status";
+    const localOnly = env.DEVWF_FLEET_LOCAL_ONLY === "1" || !env.DEVWF_RELEASE_URL;
+    const sup = createMachineUpdateSupervisor({
+      mode: args.mode || UPDATE_MODES.SAFE_AUTOMATIC,
+      localFirstStandalone: localOnly && !env.DEVWF_MANAGED_CACHE,
+    });
+
+    if (verb === "doctor") {
+      const report = runFleetDoctor([sup.getStatus()]);
+      if (args.json) {
+        out.write(JSON.stringify(report, null, 2));
+      } else {
+        out.write(`DevWorkflow Fleet Update Doctor (${report.ok ? "HEALTHY" : "ACTION_REQUIRED"})`);
+        for (const f of report.findings) {
+          out.write(`  [${f.severity.toUpperCase()}] ${f.machine} (${f.code}): ${f.message}`);
+          out.write(`    -> Remediation: ${f.remediation}`);
+        }
+        out.write(`  Recommended Next Action: ${report.recommendedNextAction.command} (${report.recommendedNextAction.reason})`);
+      }
+      return { ok: report.ok, report };
+    }
+
+    if (verb === "plan") {
+      const st = sup.getStatus();
+      const planPayload = {
+        ok: true,
+        verb: "plan",
+        machine: st.machine,
+        currentState: st.state,
+        convergenceStatus: st.convergenceStatus,
+        activeSessionCount: st.activeSessionCount,
+        plannedSteps:
+          st.activeSessionCount > 0
+            ? ["Stage artifact side-by-side", "Pin active session(s)", "Wait for session completion before cutover"]
+            : ["Stage artifact side-by-side", "Activate target runtime", "Refresh idle client connections", "Verify convergence"],
+      };
+      if (args.json) out.write(JSON.stringify(planPayload, null, 2));
+      else {
+        out.write(`Fleet Update Plan for ${st.machine} (${st.convergenceStatus}):`);
+        for (const step of planPayload.plannedSteps) out.write(`  - ${step}`);
+      }
+      return planPayload;
+    }
+
+    if (verb === "stage") {
+      const st = sup.getStatus();
+      if (args.dryRun) {
+        reportDryRun(out, `would stage target release on ${st.machine}.`);
+        return { ok: true, dryRun: true };
+      }
+      const res = { ok: true, verb: "stage", status: st };
+      if (args.json) out.write(JSON.stringify(res, null, 2));
+      else out.write(`Staged runtime verified on ${st.machine} (${st.installedRevision || "local"}).`);
+      return res;
+    }
+
+    if (verb === "activate") {
+      const st = sup.getStatus();
+      if (args.dryRun) {
+        reportDryRun(out, `would activate staged release on ${st.machine}.`);
+        return { ok: true, dryRun: true };
+      }
+      const res = {
+        ok: true,
+        verb: "activate",
+        authorized: Boolean(args.authorize),
+        status: st,
+      };
+      if (args.json) out.write(JSON.stringify(res, null, 2));
+      else out.write(`Activation evaluated on ${st.machine}: ${st.convergenceStatus}.`);
+      return res;
+    }
+
+    if (verb === "rollback") {
+      if (!args.authorize && !args.dryRun) {
+        throw new CliError(`"fleet rollback" requires --authorize (or --dry-run). Nothing was changed.`);
+      }
+      const st = sup.getStatus();
+      if (args.dryRun) {
+        reportDryRun(out, `would roll back ${st.machine} to ${st.rollbackRevision || "previous release"}.`);
+        return { ok: true, dryRun: true };
+      }
+      const res = await sup.rollbackRelease({ authorized: true });
+      if (args.json) out.write(JSON.stringify(res, null, 2));
+      else out.write(`Rolled back ${st.machine} to ${res.activeManifest?.revision || "previous"}.`);
+      return { ok: true, ...res };
+    }
+
+    // status, check, verify
+    const fleet = evaluateFleetConvergence({ machines: [sup.getStatus()] });
+    if (args.json) {
+      out.write(JSON.stringify(fleet, null, 2));
+    } else {
+      out.write(`DevWorkflow Fleet Convergence: ${fleet.overallStatus} (Fully Converged: ${fleet.fullyConverged})`);
+      for (const m of fleet.machines) {
+        out.write(
+          `  ${m.machine} [${m.convergenceStatus}] installed=${m.installedVersion || "-"} running=${m.runningVersion || "-"} target=${m.targetVersion || "-"} activeSessions=${m.activeSessionCount}`
+        );
+      }
+    }
+    return { ok: true, fleet };
   }
 
   if (command === "close") {

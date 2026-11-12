@@ -156,6 +156,7 @@ async function main() {
       // Without this, "connected" cannot distinguish a current build from an
       // old one, and finding out needs an SSH session per device.
       ...(release.version?{DEVWF_RELEASE_VERSION:release.version}:{}),
+      ...(release.toolCatalogDigest?{DEVWF_TOOL_CATALOG_DIGEST:release.toolCatalogDigest}:{}),
     },
     stdio:'inherit',
     windowsHide:true,

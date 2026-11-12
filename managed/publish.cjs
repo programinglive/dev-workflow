@@ -22,6 +22,16 @@ execFileSync('git',['archive','--format=tar.gz','--output='+archive,revision],{c
 const body=fs.readFileSync(archive);
 const sha256=createHash('sha256').update(body).digest('hex');
 const manifest={revision,sha256,size:body.length,version};
+const {computeToolCatalogDigest}=require('./fleet-update-manager.cjs');
+Object.assign(manifest,{
+  schemaVersion:1,
+  releaseId:'release-'+version+'-'+revision.slice(0,12),
+  artifactDigest:'sha256:'+sha256,
+  channel:'stable',
+  minimumCompatibleClient:'1.0.0',
+  toolCatalogDigest:computeToolCatalogDigest(repo),
+  rolloutStatus:'available',
+});
 require('./protocol.cjs').validateManifest(manifest);
 fs.renameSync(archive,path.join(output,'releases',sha256+'.tar.gz'));
 fs.writeFileSync(path.join(output,'current.json'),JSON.stringify(manifest)+'\n');

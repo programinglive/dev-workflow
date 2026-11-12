@@ -29,6 +29,13 @@ function validateManifest(value) {
   }
   const manifest = {revision:value.revision,sha256:value.sha256,size:value.size};
   if (value.version !== undefined) manifest.version = value.version;
+  if (Number.isSafeInteger(value.schemaVersion)) manifest.schemaVersion = value.schemaVersion;
+  if (typeof value.releaseId === 'string' && value.releaseId) manifest.releaseId = value.releaseId;
+  if (typeof value.artifactDigest === 'string' && /^sha256:[a-f0-9]{64}$/.test(value.artifactDigest)) manifest.artifactDigest = value.artifactDigest;
+  if (typeof value.channel === 'string' && value.channel) manifest.channel = value.channel;
+  if (typeof value.minimumCompatibleClient === 'string' && value.minimumCompatibleClient) manifest.minimumCompatibleClient = value.minimumCompatibleClient;
+  if (typeof value.toolCatalogDigest === 'string' && /^sha256:[a-f0-9]{64}$/.test(value.toolCatalogDigest)) manifest.toolCatalogDigest = value.toolCatalogDigest;
+  if (typeof value.rolloutStatus === 'string' && value.rolloutStatus) manifest.rolloutStatus = value.rolloutStatus;
   return manifest;
 }
 
