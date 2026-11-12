@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.29.6](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.29.5...v1.29.6) (2026-11-12)
+
+
+### 📝 Documentation
+
+* **managed:** record the reload procedure and fix the silent remote heal ([2150134](https://github.com/programinglive/dev-workflow-mcp-server/commit/2150134c98a56060e5518061d8f7a9088be59b1d))
+
 ### [1.29.5](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.29.4...v1.29.5) (2026-11-12)
 
 
