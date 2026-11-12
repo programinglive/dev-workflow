@@ -1,18 +1,19 @@
 # Focus-first development
 
-Use one Zettly focus to describe the current outcome. Tasks are concrete units inside that outcome. Complete the tasks and save their evidence, close the focus, then select the next focus.
+Use Zettly focus containers to describe overarching outcomes. Multiple focuses can be active concurrently. Tasks are concrete units inside those outcomes. Complete the tasks and save their evidence, close the completed focus, and track other active focuses without interference.
 
 ## Tools and ownership
 
-- `get_current_focus`: returns the authenticated owner and its active focus across all dates. Multiple active records are reported as a conflict.
-- `set_focus`: creates a focus only if none is active. Repeating the exact existing title reuses it; another title cannot replace unfinished work.
-- `link_task_to_focus`: links the active canonical Todo and local workflow to the active focus. It preserves owner text, the original source and existing service relations.
-- `complete_focus`: requires concrete evidence, a finished local workflow and at least one linked Todo, all completed. It records the reason through Zettly's completion API and verifies the resulting state. It never creates the next focus automatically.
+- `get_current_focus`: returns the authenticated owner, the primary/selected focus, and all active focuses in `activeFoci`. Pass optional `focusId` to inspect a specific focus.
+- `set_focus`: creates a new active focus or reuses an existing active focus by title. Multiple focuses can be active simultaneously without replacing or mutating existing ones.
+- `link_task_to_focus`: links the active canonical Todo and local workflow to the specified active focus by `focusId`. It preserves owner text, the original source and existing service relations.
+- `complete_focus`: requires concrete evidence, a finished local workflow (if linked to this focus) and at least one linked Todo, all completed. It records the reason through Zettly's completion API and verifies the resulting state. Leaves other active focuses untouched.
 
 Every tool accepts `expectedOwnerId`. Use it when comparing a browser session with MCP: an account mismatch stops operations before task data is changed. These tools do not migrate ownership, rotate credentials or silently merge accounts.
 
 ```sh
 node index.js call get_current_focus --args '{"expectedOwnerId":42}'
+node index.js call get_current_focus --args '{"focusId":7,"expectedOwnerId":42}'
 node index.js call set_focus --args '{"title":"Verify existing Sentry fixes","expectedOwnerId":42}'
 node index.js call start_task --args '{"description":"Verify the deployed fix","type":"bugfix","focusId":7,"requireFocus":true,"expectedOwnerId":42,"definitionOfDone":["Regression and deployment evidence verified"],"plan":["Reproduce and verify the existing fix"]}'
 node index.js call link_task_to_focus --args '{"focusId":7,"expectedOwnerId":42}'

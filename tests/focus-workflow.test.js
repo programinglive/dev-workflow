@@ -119,3 +119,36 @@ test('task identity changes during local save do not leave stale focus metadata'
  assert.equal((await handleFocusTool('link_task_to_focus',{focusId:7},f.state,f.options)).isError,true);
  assert.equal(f.state.state.focus,undefined);
 });
+
+test('current focus can select a specific active focus by focusId',async()=>{
+ const f=fixture();
+ f.setFocuses([{id:7,user_id:1,title:'One',completed_at:null},{id:8,user_id:1,title:'Two',completed_at:null}]);
+ const r=data(await handleFocusTool('get_current_focus',{focusId:8},f.state,f.options));
+ assert.equal(r.focus.id,8);
+ assert.equal(r.activeFocusCount,2);
+ const notFound=await handleFocusTool('get_current_focus',{focusId:99},f.state,f.options);
+ assert.equal(notFound.isError,true);
+ assert.equal(data(notFound).error,'FOCUS_CHANGED');
+});
+
+test('ambiguous focus error includes activeFoci and focusIds',async()=>{
+ const f=fixture();
+ f.setFocuses([{id:7,user_id:1,title:'One',completed_at:null},{id:8,user_id:1,title:'Two',completed_at:null}]);
+ const r=await prepareTaskFocus({requireFocus:true},f.options);
+ assert.equal(r.response.isError,true);
+ const d=data(r.response);
+ assert.equal(d.error,'FOCUS_AMBIGUOUS');
+ assert.deepEqual(d.focusIds,[7,8]);
+ assert.equal(d.activeFoci.length,2);
+ assert.equal(d.activeFoci[0].title,'One');
+});
+
+test('completion allows closing one focus when local task belongs to a different focus',async()=>{
+ const f=fixture();
+ f.state.state.taskDescription='Other task';
+ f.state.state.currentPhase='coding';
+ f.state.state.focus={id:9,todoId:30};
+ f.getTodos().push({id:25,user_id:1,focus_id:7,is_completed:true,title:'Completed work for focus 7'});
+ const r=await handleFocusTool('complete_focus',{focusId:7,evidence:'Tests and deployed version were verified'},f.state,f.options);
+ assert.equal(data(r).completed,true);
+});
