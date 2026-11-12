@@ -9,7 +9,7 @@ test('workflow initialization instructions require English implementation artifa
  for(const term of ['identifiers','comments','docstrings','test descriptions','developer documentation','commit messages']) assert.ok(WORKFLOW_INSTRUCTIONS.includes(term));
  assert.match(WORKFLOW_INSTRUCTIONS,/Zettly/);
  assert.match(WORKFLOW_INSTRUCTIONS,/Sentry/);
- assert.match(WORKFLOW_INSTRUCTIONS,/Factory/);
+ assert.doesNotMatch(WORKFLOW_INSTRUCTIONS,/Factory/,'Factory sudah dipensiunkan dan tidak boleh disebut lagi');
  assert.match(WORKFLOW_INSTRUCTIONS,/verified fix/);
 });
 
