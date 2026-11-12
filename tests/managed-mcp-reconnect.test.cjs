@@ -1,6 +1,9 @@
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
-const {parseServers,failedNames,reconnectMcp,activeDirectories,reconnectAll}=require('../managed/mcp-reconnect.cjs');
+const fs=require('node:fs');
+const path=require('node:path');
+const {spawnSync}=require('node:child_process');
+const {parseServers,failedNames,reconnectMcp,activeDirectories,reconnectAll,STDIN_RUNNER}=require('../managed/mcp-reconnect.cjs');
 
 const connected=(name)=>({name,status:{status:'connected'}});
 const failed=(name)=>({name,status:{status:'failed',error:'MCP server process exited with code 255'}});
@@ -114,4 +117,19 @@ test('reconnectAll heals every directory and reports the union of failures',asyn
   assert.equal(result.ok,false);
   assert.deepEqual(result.stillFailed,['D:\\code\\dev-workflow-mcp-server:dev-workflow']);
   assert.equal(result.results.length,2);
+});
+
+test('the stdin runner makes a streamed remote run actually execute',()=>{
+  // A program fed to `node -` never satisfies require.main === module, so the
+  // remote heal once exited with no output and looked like a healthy check.
+  // Measured on MMCH and the Mac: without the tail, zero lines of output.
+  const source=fs.readFileSync(path.join(__dirname,'../managed/mcp-reconnect.cjs'),'utf8');
+  const result=spawnSync(process.execPath,['-','--directory'],{
+    input:source+STDIN_RUNNER,
+    encoding:'utf8',
+    timeout:60000,
+    windowsHide:true,
+  });
+  assert.equal(result.status,1,'a streamed run must report the failure, not exit silently');
+  assert.match(result.stderr,/reconnect check failed: --directory requires a value/);
 });

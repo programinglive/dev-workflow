@@ -55,6 +55,9 @@ node managed/mcp-reconnect.cjs
 node managed/mcp-reconnect.cjs --directory "C:\\Users\\DHIKA"
 ```
 
+The measured reload procedure, the exit code table and the recovery commands live
+in `docs/mcp-reload.md`.
+
 **Expect one interrupted tool call on the device you run it from.** Restarting
 the OpenCode service bounces the connection of the session that issued the
 command. The session reconnects and the MCP comes back on the new release; the

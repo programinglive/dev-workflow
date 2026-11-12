@@ -132,6 +132,39 @@ isinya di emulator Android 35 (`google_apis;x86_64`):
 Yang **belum** teruji adalah pemasangan di kedua tablet MIUI, karena alasan di
 atas. Tampilan dan jaringan sudah terbukti bekerja.
 
+### Terverifikasi di Xiaomi Pad 6 (12 November 2026)
+
+Pemasangan lewat adb sekarang **berhasil** di Xiaomi Pad 6, jadi bagian "belum
+teruji" di atas sudah tidak berlaku untuk tablet ini:
+
+```bash
+adb devices -l
+# 192.168.21.247:34497  device product:pipa_id model:23043RP34G
+adb -s 192.168.21.247:34497 install -r android/app/build/outputs/apk/release/app-release.apk
+# Performing Streamed Install -> Success
+```
+
+Yang diukur, bukan diasumsikan:
+
+| Pemeriksaan | Hasil |
+|---|---|
+| APK terpasang identik dengan hasil build repo | `sha256` `3867AAE9...8D5800` sama untuk `base.apk` yang di-`adb pull` dan `app-release.apk` lokal |
+| Aplikasi berjalan | `pidof com.programinglive.devwfmonitor` mengembalikan PID |
+| Tablet menjangkau monitor | `ping 100.77.138.14` 10.2 ms, port 3100 terbuka |
+| Identitas terpasang | `versionName=1.0.0`, `versionCode=1`, `lastUpdateTime` bergerak setelah `install -r` |
+
+Cara memeriksa ulang bahwa tablet benar-benar memakai build terbaru, tanpa
+menebak dari tanggal berkas:
+
+```bash
+adb -s <serial> shell pm path com.programinglive.devwfmonitor
+adb -s <serial> pull <path base.apk> /tmp/installed.apk
+sha256sum /tmp/installed.apk android/app/build/outputs/apk/release/app-release.apk
+```
+
+Dua nilai `sha256` yang sama berarti build di tablet adalah build di repo. Bila
+berbeda, ulangi `gradlew assembleRelease` lalu `adb install -r`.
+
 ### Catatan emulator
 
 AVD lama `Pixel_7_Pro_API_35` menunjuk `google_apis_playstore` yang tidak

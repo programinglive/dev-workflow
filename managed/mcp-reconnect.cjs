@@ -197,8 +197,17 @@ function main(argv) {
   });
 }
 
-if(require.main===module) {
-  main(process.argv.slice(2))
+if(require.main===module) run();
+
+/**
+ * Entry point shared by the local script and the streamed remote run.
+ *
+ * Promise.resolve() first, so a synchronous throw inside main() is reported as
+ * a message instead of escaping as an unhandled stack trace.
+ */
+function run() {
+  return Promise.resolve()
+    .then(()=>main(process.argv.slice(2)))
     .then(code=>{process.exitCode=code;})
     .catch(error=>{
       console.error(`  MCP       - ! reconnect check failed: ${error.message}`);
@@ -206,4 +215,15 @@ if(require.main===module) {
     });
 }
 
-module.exports={parseServers,failedNames,reconnectMcp,activeDirectories,reconnectAll,DEFAULT_ATTEMPTS,DEFAULT_INTERVAL_MS,DEFAULT_SINCE_HOURS};
+/**
+ * Tail appended when this file is streamed to a remote `node -`.
+ *
+ * A program fed to `node -` never satisfies `require.main === module`, so the
+ * guard above does not fire and the remote run exits silently with no output.
+ * That looks exactly like a successful verification, which is the failure this
+ * module exists to prevent. The reload appends this tail so the remote run has
+ * an explicit entry point.
+ */
+const STDIN_RUNNER='\nrun();\n';
+
+module.exports={parseServers,failedNames,reconnectMcp,activeDirectories,reconnectAll,STDIN_RUNNER,DEFAULT_ATTEMPTS,DEFAULT_INTERVAL_MS,DEFAULT_SINCE_HOURS};
