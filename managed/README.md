@@ -37,6 +37,24 @@ It stops stale ManagedMCP processes on HELLOWORLD, Mac and MMCH, then runs
 needing their own restart rather than being silently skipped. Finally it runs
 `managed/fleet-status.cjs` and prints the table.
 
+The force-kill is deliberate, and it is also why a reload can look successful
+while the session has no dev-workflow tools: Windows reports the kill as exit
+code 255, OpenCode records it as a transport error and marks the server
+`failed`, and OpenCode never retries a failed server. `opencode service restart`
+usually reconnects it, but "usually" is not a check. So after the restart the
+reload runs `managed/mcp-reconnect.cjs` on each device: it reads `/api/mcp` for
+every project OpenCode touched in the last 24 hours, reconnects only the servers
+that report `failed`, re-reads the status, and exits non-zero when one is still
+down. A green table now means connected, not merely "ManagedMCP is running".
+
+Run the same check by hand at any time, and add `--directory` when you want a
+single project instead of every active one:
+
+```bash
+node managed/mcp-reconnect.cjs
+node managed/mcp-reconnect.cjs --directory "C:\\Users\\DHIKA"
+```
+
 **Expect one interrupted tool call on the device you run it from.** Restarting
 the OpenCode service bounces the connection of the session that issued the
 command. The session reconnects and the MCP comes back on the new release; the
