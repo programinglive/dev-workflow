@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.29.9](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.29.8...v1.29.9) (2026-11-12)
+
+
+### ✨ Features
+
+* **focus:** support multiple active Zettly focuses across MCP tools and guidance ([9a0dbc3](https://github.com/programinglive/dev-workflow-mcp-server/commit/9a0dbc35cf0c733b70e2e1b76ce9bb76fc9bee71))
+* **managed:** update focus exception rule for multiple concurrent active focuses ([33a81a3](https://github.com/programinglive/dev-workflow-mcp-server/commit/33a81a3aae64910dce1b6a2fca650849aa142370))
+
 ### [1.29.8](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.29.7...v1.29.8) (2026-11-12)
 
 
