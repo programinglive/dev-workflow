@@ -757,7 +757,7 @@ export async function handleRunTests(args, workflowState) {
       status: args.passed ? "succeeded" : "failed",
       target: workflowState.state.activeBuild?.target || "Test Suite Execution",
       command: args.testCommand,
-      machine: workflowState.state.machine || process.env.DEVWF_BUILD_HOST || os.hostname(),
+      machine: args.buildHost || process.env.DEVWF_BUILD_HOST || workflowState.state.machine || os.hostname(),
       stage: args.passed ? "All tests passed" : "Tests failed",
       progress: args.passed ? 100 : workflowState.state.activeBuild?.progress ?? null,
       output: typeof args.details === "string" ? args.details : "",
@@ -1057,7 +1057,7 @@ export async function handleReportBuildStatus(args = {}, workflowState) {
   const prev = workflowState.state.activeBuild || null;
   const buildInput = {
     ...args,
-    machine: args.machine || workflowState.state.machine || process.env.DEVWF_BUILD_HOST || os.hostname(),
+    machine: args.buildHost || args.machine || process.env.DEVWF_BUILD_HOST || workflowState.state.machine || os.hostname(),
   };
   const next = normalizeBuildState(buildInput, prev);
   workflowState.state.activeBuild = next;
