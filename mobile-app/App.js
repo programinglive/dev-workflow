@@ -31,6 +31,15 @@ import {
   completePairingAndSaveProfile,
 } from "./pairing-service";
 import { ConnectionManager } from "./connection-manager";
+import {
+  COCKPIT_MODES,
+  MIN_TOUCH_TARGET_DP,
+  MIN_DESTRUCTIVE_GAP_DP,
+  computeCockpitKpis,
+  selectFocusDiagrams,
+  selectGovernanceItems,
+  nextZoomScale,
+} from "./cockpit-mode";
 
 /**
  * Aplikasi monitor sesi dev-workflow.
@@ -208,6 +217,8 @@ export default function App() {
   const [dipilih, setDipilih] = useState(null);
   const [tab, setTab] = useState("aktif");
   const [filter, setFilter] = useState("semua");
+  const [cockpitMode, setCockpitMode] = useState("cockpit");
+  const [focusZoom, setFocusZoom] = useState(1);
   const hidup = useRef(true);
   const { width } = useWindowDimensions();
 
@@ -369,6 +380,19 @@ export default function App() {
   // Jumlah hari ikut dari server supaya layar tidak menebak sendiri.
   const rekapHari = (data && data.summary_days) || 7;
 
+  const kpis = useMemo(
+    () => computeCockpitKpis({ sessions: sesi, builds, alerts, machines: mesin }),
+    [sesi, builds, alerts, mesin],
+  );
+  const focusDiagrams = useMemo(
+    () => selectFocusDiagrams(sesi, MONITOR_URL),
+    [sesi, MONITOR_URL],
+  );
+  const governanceItems = useMemo(
+    () => selectGovernanceItems({ sessions: sesi, alerts }),
+    [sesi, alerts],
+  );
+
   return (
     <View style={gaya.layar}>
       <View style={gaya.header}>
@@ -459,19 +483,138 @@ export default function App() {
         >
           {tab === "aktif" && (
             <>
-              <Pressable onPress={() => setTab("build")} style={gaya.buildShortcut}>
-                <Text style={gaya.buildShortcutTitle}>Build &amp; eksekusi</Text>
-                <Text style={gaya.buildShortcutMeta}>{builds.length ? `${builds.length} tercatat · lihat status dan lokasi ›` : "Belum ada build dilaporkan ›"}</Text>
-              </Pressable>
-              {sesi.length === 0 ? (
-                <Text style={gaya.kosong}>belum ada sesi melapor</Text>
-              ) : (
-                <View style={[gaya.grid, !duaKolom && gaya.gridSatu]}>
-                  {sesi.map((s) => (
-                    <View key={s.session_key} style={duaKolom ? gaya.sel : gaya.selPenuh}>
-                      <Kartu s={s} jamServer={jamServer} onPress={() => setDipilih(s.session_key)} monitorUrl={MONITOR_URL} />
+              <View style={gaya.kpiStrip}>
+                <View style={gaya.kpiBox}>
+                  <Text style={gaya.kpiVal}>{kpis.activeSessions}</Text>
+                  <Text style={gaya.kpiLabel}>Sesi Aktif</Text>
+                </View>
+                <View style={gaya.kpiBox}>
+                  <Text style={[gaya.kpiVal, { color: WARNA.hijau }]}>{kpis.liveSessions}</Text>
+                  <Text style={gaya.kpiLabel}>Live</Text>
+                </View>
+                <View style={gaya.kpiBox}>
+                  <Text style={[gaya.kpiVal, { color: WARNA.kuning }]}>{kpis.runningBuilds}</Text>
+                  <Text style={gaya.kpiLabel}>Build Jalan</Text>
+                </View>
+                <View style={gaya.kpiBox}>
+                  <Text style={[gaya.kpiVal, { color: kpis.governanceAttention > 0 ? WARNA.merah : WARNA.biruMuda }]}>
+                    {kpis.governanceAttention}
+                  </Text>
+                  <Text style={gaya.kpiLabel}>Governance</Text>
+                </View>
+                <View style={gaya.kpiBox}>
+                  <Text style={gaya.kpiVal}>{kpis.onlineMachines}</Text>
+                  <Text style={gaya.kpiLabel}>Mesin Online</Text>
+                </View>
+              </View>
+
+              <View style={gaya.cockpitModeBar}>
+                {COCKPIT_MODES.map((m) => {
+                  const aktifMode = cockpitMode === m.id;
+                  return (
+                    <Pressable
+                      key={m.id}
+                      onPress={() => setCockpitMode(m.id)}
+                      style={[gaya.cockpitModeBtn, aktifMode && gaya.cockpitModeBtnAktif]}
+                    >
+                      <Text style={[gaya.cockpitModeTeks, aktifMode && gaya.cockpitModeTeksAktif]}>
+                        {m.icon} {m.label}
+                        {m.id === "governance" && governanceItems.length > 0 ? ` (${governanceItems.length})` : ""}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+
+              {cockpitMode === "cockpit" && (
+                <>
+                  <Pressable onPress={() => setTab("build")} style={gaya.buildShortcut}>
+                    <Text style={gaya.buildShortcutTitle}>Build &amp; eksekusi</Text>
+                    <Text style={gaya.buildShortcutMeta}>{builds.length ? `${builds.length} tercatat · lihat status dan lokasi ›` : "Belum ada build dilaporkan ›"}</Text>
+                  </Pressable>
+                  {sesi.length === 0 ? (
+                    <Text style={gaya.kosong}>belum ada sesi melapor</Text>
+                  ) : (
+                    <View style={[gaya.grid, !duaKolom && gaya.gridSatu]}>
+                      {sesi.map((s) => (
+                        <View key={s.session_key} style={duaKolom ? gaya.sel : gaya.selPenuh}>
+                          <Kartu s={s} jamServer={jamServer} onPress={() => setDipilih(s.session_key)} monitorUrl={MONITOR_URL} />
+                        </View>
+                      ))}
                     </View>
-                  ))}
+                  )}
+                </>
+              )}
+
+              {cockpitMode === "focus" && (
+                <View style={gaya.focusWadah}>
+                  <View style={gaya.baris}>
+                    <Text style={gaya.aktivitasJudul}>Focus Mode · Diagram Arsitektur &amp; Bukti</Text>
+                    <Pressable
+                      onPress={() => setFocusZoom((z) => nextZoomScale(z))}
+                      style={[gaya.cockpitActionBtn, { marginLeft: "auto" }]}
+                    >
+                      <Text style={gaya.cockpitActionTeks}>🔍 Zoom {focusZoom}x</Text>
+                    </Pressable>
+                  </View>
+                  {focusDiagrams.length === 0 ? (
+                    <Text style={gaya.kosong}>Belum ada sesi aktif dengan diagram Zettly Draw</Text>
+                  ) : (
+                    focusDiagrams.map((fd) => (
+                      <View key={fd.sessionKey} style={gaya.focusKartu}>
+                        <View style={gaya.baris}>
+                          <Text style={gaya.proyek}>{fd.projectName} · {fd.machine}</Text>
+                          <Text style={gaya.meta}>{fd.planDone}/{fd.planTotal} langkah</Text>
+                        </View>
+                        <Text style={gaya.task}>{fd.task}</Text>
+                        <View style={gaya.flowKotak}>
+                          <Text style={gaya.flowJudul}>📐 {fd.drawTitle} (#{fd.drawId})</Text>
+                          <Image
+                            source={{ uri: fd.thumbnailUrl }}
+                            style={{ width: "100%", height: Math.round(240 * focusZoom), borderRadius: 8 }}
+                            resizeMode="contain"
+                          />
+                        </View>
+                        <Pressable
+                          onPress={() => setDipilih(fd.sessionKey)}
+                          style={[gaya.cockpitActionBtn, { marginTop: 10, alignSelf: "flex-start" }]}
+                        >
+                          <Text style={gaya.cockpitActionTeks}>Buka Rencana &amp; DoD Lengkap ›</Text>
+                        </Pressable>
+                      </View>
+                    ))
+                  )}
+                </View>
+              )}
+
+              {cockpitMode === "governance" && (
+                <View style={gaya.focusWadah}>
+                  <Text style={gaya.aktivitasJudul}>Human-in-the-Loop Governance &amp; Perhatian</Text>
+                  {governanceItems.length === 0 ? (
+                    <Text style={gaya.kosong}>Semua sesi berjalan normal · tidak ada antrean persetujuan atau sesi macet</Text>
+                  ) : (
+                    governanceItems.map((gItem) => (
+                      <View key={gItem.sessionKey} style={gaya.govKartu}>
+                        <View style={gaya.baris}>
+                          <View style={[gaya.chip, { borderColor: WARNA.kuning, backgroundColor: "#d2992222" }]}>
+                            <Text style={[gaya.chipTeks, { color: WARNA.kuning }]}>{gItem.badgeLabel}</Text>
+                          </View>
+                          <Text style={gaya.meta}>{gItem.machine} · {ago(gItem.updatedAt, jamServer)}</Text>
+                        </View>
+                        <Text style={gaya.task}>{gItem.task}</Text>
+                        <Text style={gaya.proyek}>{gItem.projectName}</Text>
+                        <Text style={[gaya.catatan, { color: WARNA.teks }]}>{gItem.reason}</Text>
+                        <View style={gaya.govActionBar}>
+                          <Pressable
+                            onPress={() => setDipilih(gItem.sessionKey)}
+                            style={gaya.cockpitActionBtn}
+                          >
+                            <Text style={gaya.cockpitActionTeks}>Inspeksi Bukti &amp; Tindakan ›</Text>
+                          </Pressable>
+                        </View>
+                      </View>
+                    ))
+                  )}
                 </View>
               )}
 
@@ -1705,7 +1848,104 @@ const gaya = StyleSheet.create({
     paddingBottom: 10,
     paddingTop: 8,
   },
-  tabItem: { flex: 1, minHeight: 44, alignItems: "center", justifyContent: "center", paddingVertical: 4 },
+  tabItem: { flex: 1, minHeight: 48, alignItems: "center", justifyContent: "center", paddingVertical: 4 },
+  kpiStrip: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    marginBottom: 12,
+  },
+  kpiBox: {
+    flex: 1,
+    minWidth: 96,
+    backgroundColor: WARNA.card,
+    borderWidth: 1,
+    borderColor: WARNA.garis,
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    alignItems: "center",
+  },
+  kpiVal: {
+    color: WARNA.teks,
+    fontSize: 18,
+    fontWeight: "700",
+    fontVariant: ["tabular-nums"],
+  },
+  kpiLabel: {
+    color: WARNA.redup,
+    fontSize: 11,
+    marginTop: 2,
+    fontWeight: "600",
+  },
+  cockpitModeBar: {
+    flexDirection: "row",
+    gap: 10,
+    marginBottom: 14,
+  },
+  cockpitModeBtn: {
+    flex: 1,
+    minHeight: MIN_TOUCH_TARGET_DP,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: WARNA.card,
+    borderWidth: 1,
+    borderColor: WARNA.garis,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+  },
+  cockpitModeBtnAktif: {
+    backgroundColor: "#1f6feb22",
+    borderColor: WARNA.biru,
+  },
+  cockpitModeTeks: {
+    color: WARNA.redup,
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  cockpitModeTeksAktif: {
+    color: WARNA.biruMuda,
+    fontWeight: "700",
+  },
+  focusWadah: {
+    marginBottom: 14,
+  },
+  focusKartu: {
+    backgroundColor: WARNA.card,
+    borderWidth: 1,
+    borderColor: WARNA.garis,
+    borderRadius: 12,
+    padding: 14,
+    marginTop: 10,
+  },
+  govKartu: {
+    backgroundColor: WARNA.card,
+    borderWidth: 1,
+    borderColor: "#d2992266",
+    borderRadius: 12,
+    padding: 14,
+    marginTop: 10,
+  },
+  govActionBar: {
+    flexDirection: "row",
+    gap: MIN_DESTRUCTIVE_GAP_DP,
+    marginTop: 12,
+  },
+  cockpitActionBtn: {
+    minHeight: MIN_TOUCH_TARGET_DP,
+    paddingHorizontal: 16,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#1f6feb22",
+    borderWidth: 1,
+    borderColor: WARNA.biru,
+    borderRadius: 10,
+  },
+  cockpitActionTeks: {
+    color: WARNA.biruMuda,
+    fontSize: 13,
+    fontWeight: "700",
+  },
   tabIkon: { color: WARNA.redup, fontSize: 18, lineHeight: 22 },
   tabIkonAktif: { color: WARNA.biruMuda },
   tabLabel: { color: WARNA.redup, fontSize: 10, marginTop: 2 },

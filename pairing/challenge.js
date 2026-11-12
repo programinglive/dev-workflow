@@ -119,6 +119,8 @@ export function verifyPairingChallenge({
   deviceName = "Android Companion",
   clientPublicKey = "",
   providedCode = "",
+  identityClaims = null,
+  requestedScopes = ["monitor:read"],
 } = {}) {
   if (!challengeId || !challenges.has(challengeId)) {
     return { ok: false, error: "Invalid challenge or challenge not found." };
@@ -147,21 +149,46 @@ export function verifyPairingChallenge({
     return { ok: false, error: "Verification code mismatch." };
   }
 
+  // If identityClaims were supplied by an IdentityProvider, verify them before consuming challenge
+  if (identityClaims !== null && typeof identityClaims === "object") {
+    if (identityClaims.ok === false || !identityClaims.subjectId) {
+      return {
+        ok: false,
+        error: identityClaims.error || "Developer identity verification failed.",
+      };
+    }
+    if (identityClaims.subjectType === "service") {
+      return {
+        ok: false,
+        error: "Service credentials cannot be used to pair a personal companion device.",
+      };
+    }
+  }
+
   // Mark challenge as consumed
   ch.status = "consumed";
 
-  // Register device
+  // Register device with least-privilege monitoring scopes (never administrative by default)
   const deviceId = `dev_${crypto.randomBytes(8).toString("hex")}`;
   const deviceToken = `tok_${crypto.randomBytes(24).toString("hex")}`;
   const cleanDeviceName = (typeof deviceName === "string" && deviceName.trim().length > 0)
     ? deviceName.trim()
     : "Android Companion";
 
+  const safeScopes = Array.isArray(requestedScopes)
+    ? requestedScopes.filter((s) => s === "monitor:read" || s === "governance:approve")
+    : ["monitor:read"];
+  if (safeScopes.length === 0) safeScopes.push("monitor:read");
+
+  const ownerId = identityClaims?.subjectId ? String(identityClaims.subjectId) : "local-owner";
+
   const device = {
     deviceId,
     deviceName: cleanDeviceName,
     deviceToken,
     clientPublicKey: String(clientPublicKey || ""),
+    ownerId,
+    scopes: safeScopes,
     pairedAt: Date.now(),
     lastSeenAt: Date.now(),
     revoked: false,
@@ -174,6 +201,8 @@ export function verifyPairingChallenge({
     deviceId,
     deviceToken,
     deviceName: cleanDeviceName,
+    ownerId,
+    scopes: safeScopes,
   };
 }
 

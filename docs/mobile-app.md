@@ -252,3 +252,15 @@ emulator -avd <nama> -no-snapshot-load -no-boot-anim -no-window -gpu swiftshader
 
 Ubah `App.js`, lalu ulangi `gradlew assembleRelease`. Naikkan `versionCode` di
 `app.json` bila perlu (Android menolak versi yang sama dengan isi berbeda).
+
+## Milestone M4: Xiaomi Pad 6 Cockpit UX & Identity Integration
+
+Aplikasi tablet kini dilengkapi dengan `mobile-app/cockpit-mode.js` yang dirancang khusus untuk ergonomi **Xiaomi Pad 6** (11" 2880×1800, landscape):
+
+1. **Real-Time KPI Strip:** Menampilkan ringkasan metrik instan di bagian atas tab Aktif (`Sesi Aktif`, `Live`, `Build Jalan`, `Governance`, dan `Mesin Online`).
+2. **Tiga Mode Cockpit (`COCKPIT_MODES`):**
+   - **Cockpit (`⊞ Cockpit`):** Tampilan utama 2 kolom untuk memantau seluruh sesi aktif beserta aliran event terbaru.
+   - **Focus (`📐 Focus`):** Kanvas khusus diagram arsitektur Zettly Draw / Mermaid dengan kontrol perbesaran (`Zoom 1x / 1.5x / 2x`) dan ringkasan langkah/DoD.
+   - **Governance (`🛡️ Governance`):** Menampilkan sesi yang membutuhkan perhatian manusia (*Human-in-the-Loop*), seperti sesi macet (`possibly_stuck`), build gagal, atau fase siap rilis (`ready` / `commit`).
+3. **Standar Ergonomi Sentuh (`>= 48dp`):** Seluruh tombol navigasi dan kontrol mode memenuhi standar tinggi sentuh minimum `48dp` (`MIN_TOUCH_TARGET_DP = 48`) dan pemisahan aksi `24dp` (`MIN_DESTRUCTIVE_GAP_DP = 24`).
+4. **Integrasi `IdentityProvider`:** Pairing perangkat memverifikasi klaim identitas pengembang (`LocalIdentityProvider` / `PocketBaseIdentityProvider`) dengan hak akses berlingkup terbatas (`monitor:read`), dan tidak pernah mengekspos token layanan backend ke perangkat Android.
