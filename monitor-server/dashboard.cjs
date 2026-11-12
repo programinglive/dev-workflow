@@ -2259,7 +2259,7 @@ const server = http.createServer(async (req, res) => {
       // Logged because "the image does not appear" is otherwise unanswerable:
       // the browser and the tablet hit the same route and only one of them
       // fails, and without the caller address there is no way to tell which.
-      console.log(`[drawing] ${req.method} ${url.pathname} from ${req.socket.remoteAddress} ua=${String(req.headers['user-agent'] || '').slice(0, 60)}`);
+      console.log(`[drawing] ${req.method} ${url.pathname}${url.search} from ${req.socket.remoteAddress} ua=${String(req.headers['user-agent'] || '').slice(0, 60)}`);
       if (!Number.isSafeInteger(drawingId) || drawingId < 1) {
         res.writeHead(400, { 'content-type': 'application/json' });
         return res.end(JSON.stringify({ ok: false, error: 'invalid drawing id' }));

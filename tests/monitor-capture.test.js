@@ -124,3 +124,10 @@ test('the monitor serves a PNG copy for clients that cannot draw SVG', () => {
   assert.match(DASHBOARD, /'content-type': 'image\/png'/);
   assert.match(DASHBOARD, /require\('sharp'\)/);
 });
+
+test('the drawing access log carries the query string', () => {
+  // Without the search part, a cache-busted request (?v=...) and a plain one are
+  // indistinguishable in the log, so the server cannot prove the tablet asked
+  // for a fresh image.
+  assert.match(DASHBOARD, /\$\{url\.pathname\}\$\{url\.search\}/);
+});
