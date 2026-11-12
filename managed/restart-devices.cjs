@@ -127,12 +127,14 @@ function healOnDevice(device) {
  * pipes, nothing can hang; the readiness poll in the heal step is the verdict.
  */
 function requestLocalRestart() {
-  const child = spawn('opencode', ['service', 'restart'], {
-    detached: true,
-    stdio: 'ignore',
-    windowsHide: true,
-    shell: process.platform === 'win32',
-  });
+  // cmd.exe is invoked explicitly instead of the deprecated shell option, which
+  // Node warns about on every reload because it concatenates arguments.
+  const windows = process.platform === 'win32';
+  const child = spawn(
+    windows ? (process.env.ComSpec || 'cmd.exe') : 'opencode',
+    windows ? ['/d', '/s', '/c', 'opencode service restart'] : ['service', 'restart'],
+    { detached: true, stdio: 'ignore', windowsHide: true },
+  );
   child.unref();
 }
 

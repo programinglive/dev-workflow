@@ -175,3 +175,11 @@ test('waitForReady gives up with the last error instead of hanging forever',asyn
   );
   assert.equal(calls,3);
 });
+
+test('the reload never spawns with shell:true',()=>{
+  // Node deprecates shell:true for argument concatenation (DEP0190) and warns on
+  // every reload. The local restart invokes cmd.exe explicitly instead.
+  const source=fs.readFileSync(path.join(__dirname,'../managed/restart-devices.cjs'),'utf8');
+  assert.doesNotMatch(source,/shell\s*:\s*true/);
+  assert.match(source,/process\.env\.ComSpec/);
+});
