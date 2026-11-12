@@ -52,6 +52,18 @@ const {
 const { ensureTableSql } = require('./share-links.cjs');
 const { normalizeBuildState, extractActiveBuildFromEvents } = require('./build-monitor.cjs');
 const { shouldSkipCreate } = require('./empty-session.cjs');
+const { handlePairVerify, handlePairStatus } = require('./mobile-pair-route.cjs');
+
+let pairingEnginePromise = null;
+function getPairingEngine() {
+  if (!pairingEnginePromise) {
+    pairingEnginePromise = import('../pairing/challenge.js').catch((err) => {
+      console.error('Failed to load pairing challenge engine:', err);
+      return null;
+    });
+  }
+  return pairingEnginePromise;
+}
 
 const liveBuildsBySession = new Map();
 
@@ -2199,6 +2211,51 @@ const server = http.createServer(async (req, res) => {
         return res.end(JSON.stringify(hasil.body));
       }
       res.writeHead(405, { 'content-type': 'application/json', allow: 'GET, POST, DELETE' });
+      return res.end(JSON.stringify({ ok: false, error: 'method not allowed' }));
+    }
+    // Mobile Companion QR Device Pairing (M2)
+    if (url.pathname === '/api/v1/mobile/pair/verify') {
+      res.setHeader('access-control-allow-origin', '*');
+      res.setHeader('access-control-allow-methods', 'POST, OPTIONS');
+      res.setHeader('access-control-allow-headers', 'content-type, authorization, x-device-token');
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204);
+        return res.end();
+      }
+      if (req.method === 'POST') {
+        const pairingEngine = await getPairingEngine();
+        if (!pairingEngine) {
+          res.writeHead(500, { 'content-type': 'application/json' });
+          return res.end(JSON.stringify({ ok: false, error: 'Pairing engine unavailable' }));
+        }
+        const body = bacaJson(await readBody(req), res);
+        if (body === null) return undefined;
+        const result = await handlePairVerify({ body, pairingEngine });
+        res.writeHead(result.status, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify(result.body));
+      }
+      res.writeHead(405, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ ok: false, error: 'method not allowed' }));
+    }
+    if (url.pathname === '/api/v1/mobile/pair/status') {
+      res.setHeader('access-control-allow-origin', '*');
+      res.setHeader('access-control-allow-methods', 'GET, OPTIONS');
+      res.setHeader('access-control-allow-headers', 'content-type');
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204);
+        return res.end();
+      }
+      if (req.method === 'GET') {
+        const pairingEngine = await getPairingEngine();
+        if (!pairingEngine) {
+          res.writeHead(500, { 'content-type': 'application/json' });
+          return res.end(JSON.stringify({ ok: false, error: 'Pairing engine unavailable' }));
+        }
+        const result = await handlePairStatus({ queryParams: url.searchParams, pairingEngine });
+        res.writeHead(result.status, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify(result.body));
+      }
+      res.writeHead(405, { 'content-type': 'application/json' });
       return res.end(JSON.stringify({ ok: false, error: 'method not allowed' }));
     }
     if (url.pathname === '/api/session' && req.method === 'POST') {

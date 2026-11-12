@@ -68,6 +68,39 @@ Bila ingin menimpa nilai bawaan awal saat build:
 EXPO_PUBLIC_MONITOR_URL=http://100.77.138.14:3100 npx expo prebuild -p android
 ```
 
+## Pemasangan Perangkat Kriptografis (Cryptographic QR Pairing - M2)
+
+Mulai Milestone M2, Android Companion mendukung pairing kriptografis otomatis antara tablet Xiaomi Pad 6 dan monitor server tanpa perlu input token manual:
+
+### 1. Perintah CLI di Sisi Server
+Jalankan perintah berikut di mesin host / server:
+```bash
+devwf pair
+# atau tentukan URL eksplisit:
+devwf pair --url http://100.77.138.14:3100
+# atau format JSON untuk integrasi script:
+devwf pair --json
+```
+
+Perintah ini menghasilkan:
+- Ephemeral Challenge ID (`ch_...`) dengan TTL 3 menit (180 detik).
+- Nonce kriptografis 32-karakter acak (`crypto.randomBytes(16)`).
+- Kode verifikasi 6 digit visual (`XXX-XXX`).
+- Fingerprint SHA-256 server host.
+- QR Payload URI kanonikal: `devwf://pair?v=1&url=...&ch=...&nonce=...&fp=...&code=...`.
+
+### 2. Monitor Server REST Endpoints
+- `POST /api/v1/mobile/pair/verify`: Menerima payload challenge, memvalidasi single-use constraint & TTL, mencocokkan nonce/code, mendaftarkan device ke registry, dan menerbitkan `deviceId` serta `deviceToken` bertingkat Bearer.
+- `GET /api/v1/mobile/pair/status?ch=<id>`: Memeriksa status tantangan pairing (`pending`, `consumed`, `expired`).
+
+### 3. Alur Pairing pada Tablet (Xiaomi Pad 6)
+1. Buka modal pengaturan server (ketuk pil `⚙ Server` di header).
+2. Pilih tab `🔒 QR Pairing (devwf pair)`.
+3. Tempelkan URI `devwf://pair?...` yang dihasilkan server.
+4. Ketuk **🔒 Pasangkan Perangkat**.
+5. Klien memvalidasi handshake ke `/api/v1/mobile/pair/verify`, menerima token autentikasi, menyimpan profil dengan badge `🔒 PAIRED`, dan langsung mengaktifkan pemantauan real-time.
+
+
 ## Membangun APK
 
 Butuh JDK 17 dan Android SDK (build-tools + platform). Di mesin ini keduanya

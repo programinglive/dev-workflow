@@ -25,6 +25,11 @@ import {
   normalizeServerUrl,
   testServerConnection,
 } from "./server-profile";
+import {
+  parsePairingPayload,
+  executePairingHandshake,
+  completePairingAndSaveProfile,
+} from "./pairing-service";
 
 /**
  * Aplikasi monitor sesi dev-workflow.
@@ -208,8 +213,8 @@ export default function App() {
     }
   };
 
-  const handleAddProfile = ({ name, url }) => {
-    const p = profileStore.addProfile({ name, url, isDefault: true });
+  const handleAddProfile = ({ name, url, token = null, deviceId = null }) => {
+    const p = profileStore.addProfile({ name, url, token, deviceId, isDefault: true });
     globalActiveMonitorUrl = p.url;
     setMonitorUrl(p.url);
     setProfiles(profileStore.getProfiles());
@@ -1166,11 +1171,19 @@ function ModalServer({
   onAddProfile,
   onDeleteProfile,
 }) {
+  const [tabMode, setTabMode] = useState("manual"); // "manual" | "pair"
   const [namaBaru, setNamaBaru] = useState("");
   const [urlBaru, setUrlBaru] = useState("");
   const [sedangTes, setSedangTes] = useState(false);
   const [hasilTes, setHasilTes] = useState(null);
   const [galatForm, setGalatForm] = useState(null);
+
+  // Pairing state
+  const [qrPayloadInput, setQrPayloadInput] = useState("");
+  const [namaPerangkat, setNamaPerangkat] = useState("Xiaomi Pad 6 Cockpit");
+  const [sedangPairing, setSedangPairing] = useState(false);
+  const [galatPairing, setGalatPairing] = useState(null);
+  const [suksesPairing, setSuksesPairing] = useState(false);
 
   const handleTest = async () => {
     if (!urlBaru.trim()) {
@@ -1217,6 +1230,41 @@ function ModalServer({
     }
   };
 
+  const handlePairing = async () => {
+    if (!qrPayloadInput.trim()) {
+      setGalatPairing("Tempelkan atau ketik payload devwf://pair terlebih dahulu");
+      return;
+    }
+    setGalatPairing(null);
+    setSedangPairing(true);
+    setSuksesPairing(false);
+    try {
+      const res = await executePairingHandshake({
+        qrPayload: qrPayloadInput.trim(),
+        deviceName: namaPerangkat.trim() || "Xiaomi Pad 6 Cockpit",
+      });
+      if (!res.ok) {
+        setGalatPairing(res.error || "Pemasangan perangkat ditolak server");
+        return;
+      }
+      setSuksesPairing(true);
+      setTimeout(() => {
+        onAddProfile({
+          name: `Paired (${res.deviceName || "Server"})`,
+          url: res.serverUrl,
+          token: res.deviceToken,
+          deviceId: res.deviceId,
+        });
+        setQrPayloadInput("");
+        setSuksesPairing(false);
+      }, 400);
+    } catch (err) {
+      setGalatPairing(err.message || String(err));
+    } finally {
+      setSedangPairing(false);
+    }
+  };
+
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={gaya.modalLatar}>
@@ -1228,10 +1276,10 @@ function ModalServer({
             </Pressable>
           </View>
           <Text style={[gaya.meta, { marginBottom: 12 }]}>
-            Pilih server yang terhubung atau tambahkan server baru (IP, Domain, atau Localhost).
+            Pilih server yang terhubung atau tambahkan server baru (IP, Domain, atau QR Pairing).
           </Text>
 
-          <ScrollView style={{ maxHeight: 420 }}>
+          <ScrollView style={{ maxHeight: 460 }}>
             <Text style={[gaya.kotakJudul, { marginTop: 8, marginBottom: 8 }]}>Daftar Server Tersimpan</Text>
             {profiles.map((p) => {
               const aktif = p.url === activeUrl;
@@ -1246,6 +1294,11 @@ function ModalServer({
                   <View style={{ flex: 1 }}>
                     <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
                       <Text style={[gaya.profilNama, aktif && { color: WARNA.biruMuda }]}>{p.name}</Text>
+                      {p.token && (
+                        <View style={[gaya.chip, { backgroundColor: "#3fb95022", borderColor: WARNA.hijau, paddingVertical: 1 }]}>
+                          <Text style={[gaya.chipTeks, { color: WARNA.hijau, fontSize: 10 }]}>🔒 PAIRED</Text>
+                        </View>
+                      )}
                       {aktif && (
                         <View style={[gaya.chip, { backgroundColor: "#1f6feb22", borderColor: WARNA.biru, paddingVertical: 2 }]}>
                           <Text style={[gaya.chipTeks, { color: WARNA.biruMuda, fontSize: 11 }]}>AKTIF</Text>
@@ -1271,49 +1324,135 @@ function ModalServer({
             })}
 
             <View style={[gaya.kotak, { marginTop: 16, borderColor: WARNA.garis }]}>
-              <Text style={gaya.kotakJudul}>Tambah Server Baru</Text>
-              <Text style={gaya.labelInput}>Nama Server (Opsional):</Text>
-              <TextInput
-                value={namaBaru}
-                onChangeText={setNamaBaru}
-                placeholder="misal: Homelab, Laptop Kantor"
-                placeholderTextColor={WARNA.redup}
-                style={gaya.inputTeks}
-              />
-
-              <Text style={[gaya.labelInput, { marginTop: 10 }]}>Alamat URL / IP:</Text>
-              <TextInput
-                value={urlBaru}
-                onChangeText={(t) => {
-                  setUrlBaru(t);
-                  setHasilTes(null);
-                  setGalatForm(null);
-                }}
-                placeholder="100.77.138.14:3100 atau http://..."
-                placeholderTextColor={WARNA.redup}
-                autoCapitalize="none"
-                autoCorrect={false}
-                style={gaya.inputTeks}
-              />
-
-              {galatForm ? <Text style={gaya.galatFormTeks}>⚠ {galatForm}</Text> : null}
-              {hasilTes && hasilTes.ok ? (
-                <Text style={gaya.suksesTesTeks}>✓ Tersambung ({hasilTes.latencyMs}ms)</Text>
-              ) : null}
-
-              <View style={[gaya.barisTombol, { marginTop: 14 }]}>
+              {/* Tab Selector Mode */}
+              <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>
                 <Pressable
-                  disabled={sedangTes}
-                  onPress={handleTest}
-                  style={[gaya.tombolTutup, gaya.tombolTutupKecil, sedangTes && gaya.tombolMati]}
+                  onPress={() => setTabMode("manual")}
+                  style={[
+                    gaya.tabModeBtn,
+                    tabMode === "manual" && gaya.tabModeBtnAktif,
+                  ]}
                 >
-                  <Text style={gaya.tombolTutupTeks}>{sedangTes ? "Menguji..." : "Uji Koneksi"}</Text>
+                  <Text style={[gaya.tabModeTeks, tabMode === "manual" && gaya.tabModeTeksAktif]}>
+                    📡 Manual URL
+                  </Text>
                 </Pressable>
-                <Pressable onPress={handleSimpan} style={gaya.tombolBagikan}>
-                  <Text style={gaya.tombolBagikanTeks}>Simpan &amp; Hubungkan</Text>
+                <Pressable
+                  onPress={() => setTabMode("pair")}
+                  style={[
+                    gaya.tabModeBtn,
+                    tabMode === "pair" && gaya.tabModeBtnAktif,
+                  ]}
+                >
+                  <Text style={[gaya.tabModeTeks, tabMode === "pair" && gaya.tabModeTeksAktif]}>
+                    🔒 QR Pairing (devwf pair)
+                  </Text>
                 </Pressable>
               </View>
+
+              {tabMode === "manual" ? (
+                <View>
+                  <Text style={gaya.kotakJudul}>Tambah Server Manual</Text>
+                  <Text style={gaya.labelInput}>Nama Server (Opsional):</Text>
+                  <TextInput
+                    value={namaBaru}
+                    onChangeText={setNamaBaru}
+                    placeholder="misal: Homelab, Laptop Kantor"
+                    placeholderTextColor={WARNA.redup}
+                    style={gaya.inputTeks}
+                  />
+
+                  <Text style={[gaya.labelInput, { marginTop: 10 }]}>Alamat URL / IP:</Text>
+                  <TextInput
+                    value={urlBaru}
+                    onChangeText={(t) => {
+                      setUrlBaru(t);
+                      setHasilTes(null);
+                      setGalatForm(null);
+                    }}
+                    placeholder="100.77.138.14:3100 atau http://..."
+                    placeholderTextColor={WARNA.redup}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    style={gaya.inputTeks}
+                  />
+
+                  {galatForm ? <Text style={gaya.galatFormTeks}>⚠ {galatForm}</Text> : null}
+                  {hasilTes && hasilTes.ok ? (
+                    <Text style={gaya.suksesTesTeks}>✓ Tersambung ({hasilTes.latencyMs}ms)</Text>
+                  ) : null}
+
+                  <View style={[gaya.barisTombol, { marginTop: 14 }]}>
+                    <Pressable
+                      disabled={sedangTes}
+                      onPress={handleTest}
+                      style={[gaya.tombolTutup, gaya.tombolTutupKecil, sedangTes && gaya.tombolMati]}
+                    >
+                      <Text style={gaya.tombolTutupTeks}>{sedangTes ? "Menguji..." : "Uji Koneksi"}</Text>
+                    </Pressable>
+                    <Pressable onPress={handleSimpan} style={gaya.tombolBagikan}>
+                      <Text style={gaya.tombolBagikanTeks}>Simpan &amp; Hubungkan</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              ) : (
+                <View>
+                  <Text style={gaya.kotakJudul}>Pasangkan Perangkat (QR Pairing)</Text>
+                  <Text style={[gaya.meta, { marginBottom: 8 }]}>
+                    Jalankan <Text style={{ color: WARNA.biruMuda, fontFamily: "monospace" }}>devwf pair</Text> di terminal server untuk memunculkan kode pairing ephemeral (TTL 3 menit).
+                  </Text>
+
+                  <Text style={gaya.labelInput}>Payload QR (devwf://pair?...):</Text>
+                  <TextInput
+                    value={qrPayloadInput}
+                    onChangeText={(t) => {
+                      setQrPayloadInput(t);
+                      setGalatPairing(null);
+                    }}
+                    placeholder="Tempel devwf://pair?v=1&url=... atau JSON di sini"
+                    placeholderTextColor={WARNA.redup}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    style={[gaya.inputTeks, { height: 60 }]}
+                    multiline
+                  />
+
+                  <Text style={[gaya.labelInput, { marginTop: 10 }]}>Nama Tablet Ini:</Text>
+                  <TextInput
+                    value={namaPerangkat}
+                    onChangeText={setNamaPerangkat}
+                    placeholder="Xiaomi Pad 6 Cockpit"
+                    placeholderTextColor={WARNA.redup}
+                    style={gaya.inputTeks}
+                  />
+
+                  {galatPairing ? <Text style={gaya.galatFormTeks}>⚠ {galatPairing}</Text> : null}
+                  {suksesPairing ? <Text style={gaya.suksesTesTeks}>✓ Berhasil terpasang! Menyimpan profil aman...</Text> : null}
+
+                  <View style={[gaya.barisTombol, { marginTop: 14 }]}>
+                    <Pressable
+                      disabled={sedangPairing}
+                      onPress={handlePairing}
+                      style={[
+                        gaya.tombolBagikan,
+                        { flex: 1, backgroundColor: WARNA.hijau, borderColor: WARNA.hijau },
+                        sedangPairing && gaya.tombolMati,
+                      ]}
+                    >
+                      <Text style={gaya.tombolBagikanTeks}>
+                        {sedangPairing ? "Memverifikasi..." : "🔒 Pasangkan Perangkat"}
+                      </Text>
+                    </Pressable>
+                  </View>
+                </View>
+              )}
             </View>
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+}
           </ScrollView>
         </View>
       </View>
@@ -1621,5 +1760,28 @@ const gaya = StyleSheet.create({
   },
   galatFormTeks: { color: WARNA.kuning, fontSize: 13, marginTop: 8 },
   suksesTesTeks: { color: WARNA.hijau, fontSize: 13, marginTop: 8, fontWeight: "600" },
+  tabModeBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: WARNA.garis,
+    backgroundColor: WARNA.card,
+  },
+  tabModeBtnAktif: {
+    backgroundColor: "#1f6feb22",
+    borderColor: WARNA.biru,
+  },
+  tabModeTeks: {
+    color: WARNA.redup,
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  tabModeTeksAktif: {
+    color: WARNA.biruMuda,
+    fontWeight: "700",
+  },
 });
 

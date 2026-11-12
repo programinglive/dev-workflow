@@ -18,6 +18,7 @@
  * decides *whether* to call, never *what* closing means.
  */
 import { CliError } from "./args.js";
+import { createPairingChallenge } from "../pairing/challenge.js";
 
 function requireSession(args, command) {
   const session = typeof args.session === "string" ? args.session.trim() : "";
@@ -140,6 +141,27 @@ export async function runCommand({
     out.write("  Storage Engine: better-sqlite3 (OK)");
     out.write("  Execution Mode: Local-first (OK)");
     return { ok: nodeOk };
+  }
+
+  if (command === "pair") {
+    const targetUrl = args.url || env.DEVWF_MONITOR_URL || "http://127.0.0.1:3100";
+    const challenge = createPairingChallenge({ serverUrl: targetUrl });
+    if (args.json) {
+      out.write(JSON.stringify({ ok: true, ...challenge }));
+      return { ok: true, challenge };
+    }
+    out.write("📱 DevWorkflow Mobile Companion Pairing Challenge");
+    out.write("");
+    out.write(`  Server URL:        ${challenge.serverUrl}`);
+    out.write(`  Verification Code: ${challenge.verificationCode}`);
+    out.write(`  Challenge Nonce:   ${challenge.nonce}`);
+    out.write(`  Expires In:        3 minutes`);
+    out.write("");
+    out.write("Scan this QR payload or enter it in your Xiaomi Pad 6 companion app:");
+    out.write(`  ${challenge.qrPayload}`);
+    out.write("");
+    out.write("Waiting for device handshake...");
+    return { ok: true, challenge };
   }
 
   if (command === "close") {

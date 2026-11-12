@@ -14,7 +14,7 @@
  * only `list` runs without one.
  */
 
-const COMMANDS = ["list", "close", "share", "drop", "complete", "help", "version", "doctor"];
+const COMMANDS = ["list", "close", "share", "drop", "complete", "help", "version", "doctor", "pair"];
 
 /** A refusal the CLI reports to the user and turns into a non-zero exit. */
 export class CliError extends Error {
@@ -29,6 +29,7 @@ export const USAGE = `devwf - close sessions and cards without the web monitor
 
 Usage:
   devwf doctor                                 Check environment, node, and storage diagnostics
+  devwf pair [--url <url>] [--json]            Generate pairing challenge for mobile companion
   devwf list                                  List sessions from the monitor
   devwf close --session <key> [--dry-run]      Mark one session closed
   devwf share list                             List live share links
@@ -59,8 +60,9 @@ const FLAGS_WITH_VALUE = new Set([
   "--reason",
   "--token",
   "--next-steps",
+  "--url",
 ]);
-const BOOLEAN_FLAGS = new Set(["--dry-run", "--orphans", "--help", "--version"]);
+const BOOLEAN_FLAGS = new Set(["--dry-run", "--orphans", "--help", "--version", "--json"]);
 
 /**
  * Parses argv (without the node and script entries).
@@ -83,7 +85,7 @@ export function parseArgs(argv = []) {
     );
   }
 
-  const args = { command, dryRun: false, nextSteps: [] };
+  const args = { command, dryRun: false, nextSteps: [], json: false };
 
   // `share` takes one nested verb: list or revoke.
   let index = 1;
@@ -106,6 +108,7 @@ export function parseArgs(argv = []) {
       if (word === "--version") return { command: "version" };
       if (word === "--dry-run") args.dryRun = true;
       if (word === "--orphans") args.orphans = true;
+      if (word === "--json") args.json = true;
       continue;
     }
 
@@ -118,6 +121,7 @@ export function parseArgs(argv = []) {
       if (word === "--session") args.session = value;
       else if (word === "--reason") args.reason = value;
       else if (word === "--token") args.token = value;
+      else if (word === "--url") args.url = value;
       else if (word === "--next-steps") args.nextSteps.push(value);
       continue;
     }

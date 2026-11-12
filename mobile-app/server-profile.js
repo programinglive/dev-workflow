@@ -66,10 +66,10 @@ export function normalizeServerUrl(rawInput) {
 /**
  * Creates a validated server profile object.
  *
- * @param {{ name?: string, url: string, isDefault?: boolean }} params
- * @returns {{ id: string, name: string, url: string, isDefault: boolean, createdAt: string, lastConnectedAt: string | null }}
+ * @param {{ name?: string, url: string, isDefault?: boolean, token?: string, deviceId?: string }} params
+ * @returns {{ id: string, name: string, url: string, token: string | null, deviceId: string | null, isDefault: boolean, createdAt: string, lastConnectedAt: string | null }}
  */
-export function createProfile({ name, url, isDefault = false }) {
+export function createProfile({ name, url, isDefault = false, token = null, deviceId = null }) {
   const norm = normalizeServerUrl(url);
   if (!norm.ok) {
     throw new Error(norm.error);
@@ -82,6 +82,8 @@ export function createProfile({ name, url, isDefault = false }) {
     id,
     name: cleanName,
     url: norm.url,
+    token: token ? String(token) : null,
+    deviceId: deviceId ? String(deviceId) : null,
     isDefault: Boolean(isDefault),
     createdAt: new Date().toISOString(),
     lastConnectedAt: null,
@@ -154,8 +156,8 @@ export class ServerProfileStore {
     return true;
   }
 
-  addProfile({ name, url, isDefault = false }) {
-    const profile = createProfile({ name, url, isDefault });
+  addProfile({ name, url, isDefault = false, token = null, deviceId = null }) {
+    const profile = createProfile({ name, url, isDefault, token, deviceId });
     if (isDefault || this.profiles.length === 0) {
       this.profiles.forEach((p) => {
         p.isDefault = false;
