@@ -2,6 +2,66 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.29.5](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.29.4...v1.29.5) (2026-11-12)
+
+
+### 🧹 Chores
+
+* **ci:** migrate runner from mmch to bw-tools and modernize workflows ([d63454c](https://github.com/programinglive/dev-workflow-mcp-server/commit/d63454c42643380f41f1cfde5ae4d776e5ccef5f))
+
+
+### ✨ Features
+
+* **focus:** allow several focuses to be active at once ([b4c0dbf](https://github.com/programinglive/dev-workflow-mcp-server/commit/b4c0dbf7fbd899e9397a325da86330a3ba0306b7))
+* **focus:** attach the active focus to created artifacts ([41e3cf2](https://github.com/programinglive/dev-workflow-mcp-server/commit/41e3cf2d163704000af3555f9b6a0bb705227027))
+* **focus:** write focus_id instead of a description marker ([56ced82](https://github.com/programinglive/dev-workflow-mcp-server/commit/56ced82a4fc2cfa3ee3f4619cb5ce374d191768c))
+* **managed:** add fleet status and make restart instructions explicit ([418aeef](https://github.com/programinglive/dev-workflow-mcp-server/commit/418aeefdc4781918642875e868dd993e431ae8b2))
+* **managed:** close Codex and Antigravity instead of skipping them ([65a7226](https://github.com/programinglive/dev-workflow-mcp-server/commit/65a722663adb33f0fd5ceebbbfeec99d6da658cf))
+* **managed:** reload OpenCode in place and verify the whole fleet ([570e8b5](https://github.com/programinglive/dev-workflow-mcp-server/commit/570e8b5b992a04782b616179ce1733631e70f19e))
+* **mobile:** render the Zettly Draw flow on the Android monitor ([5a52f54](https://github.com/programinglive/dev-workflow-mcp-server/commit/5a52f54078b73eef9c2477831dc2d0cb1ac9e65b))
+* **monitor:** add clickable runner job link to session cards ([b7bdba1](https://github.com/programinglive/dev-workflow-mcp-server/commit/b7bdba1d30fc66eb425d1174cb2e88a638e34329))
+* **monitor:** capture every refinement and make the flow diagram reachable ([#83](https://github.com/programinglive/dev-workflow-mcp-server/issues/83)) ([b492568](https://github.com/programinglive/dev-workflow-mcp-server/commit/b492568df9855f13f8df877a51bd8bc84fce3c00))
+* **workflow:** add context-aware task refinement tool ([8f4d4bb](https://github.com/programinglive/dev-workflow-mcp-server/commit/8f4d4bbf193eadbd36555446a6df3310f157f8a6))
+* **workflow:** require bug investigation context during refinement ([577fd86](https://github.com/programinglive/dev-workflow-mcp-server/commit/577fd86504f43f3b6003a251b407faf4a46a96fa))
+
+
+### ♻️ Refactors
+
+* **mcp:** remove retired Factory MCP from ecosystem index and device bootstrap ([e8eaee7](https://github.com/programinglive/dev-workflow-mcp-server/commit/e8eaee7689907d62ae94ebc3ab02ec4fce4f46e9))
+* **mcp:** retire Factory from the MCP surface ([#89](https://github.com/programinglive/dev-workflow-mcp-server/issues/89)) ([63ca009](https://github.com/programinglive/dev-workflow-mcp-server/commit/63ca0096634f7830d362bc1f89bdd34301bd11cb))
+
+
+### 📝 Documentation
+
+* handover for the sentry cleanup session ([539c0bb](https://github.com/programinglive/dev-workflow-mcp-server/commit/539c0bb2e45d3081eee64c03cd354bf2304e409e))
+* **rules:** document universal bw-tools runner and sync rules across all devices ([46aa8dd](https://github.com/programinglive/dev-workflow-mcp-server/commit/46aa8dd33c748709dc40356dd9ade5561a01ede0))
+* **rules:** stop telling sessions the MMCH runner is still online ([#90](https://github.com/programinglive/dev-workflow-mcp-server/issues/90)) ([2b764bc](https://github.com/programinglive/dev-workflow-mcp-server/commit/2b764bc86bbd8e0e809fdb3b60b34c669fc0dacb))
+* **sentry:** add the phase 2 plan with ownership map ([fe9c72e](https://github.com/programinglive/dev-workflow-mcp-server/commit/fe9c72eb5dcc1bf59d763fd6399c81636531d966))
+* **sentry:** add the zero-issue execution plan ([4ca7696](https://github.com/programinglive/dev-workflow-mcp-server/commit/4ca76965cef27f4c27f13ac1549af087b42cd69f))
+* **sentry:** harden the zero-issue plan with the traps found in practice ([735799a](https://github.com/programinglive/dev-workflow-mcp-server/commit/735799ae73eef6a55739341b5490b086c3a87855))
+* **sentry:** note the ERP backup is off-host ([558a53e](https://github.com/programinglive/dev-workflow-mcp-server/commit/558a53eae7bded789a6b449ab7a38de93e4ea30e))
+* **sentry:** rebuild the status and plan after v2.41.43 ([460c50c](https://github.com/programinglive/dev-workflow-mcp-server/commit/460c50cd293d18f95f76d94f730ff2bb0ebab341))
+* **sentry:** record the ERP pre-reconcile backup and its off-host gap ([23e1b06](https://github.com/programinglive/dev-workflow-mcp-server/commit/23e1b068bbfe25b992a040811867b1abd23cccd7))
+* **workflow:** correct the CI runner topology and record the parity audit ([#77](https://github.com/programinglive/dev-workflow-mcp-server/issues/77)) ([b8badea](https://github.com/programinglive/dev-workflow-mcp-server/commit/b8badea777a67a1200da6975c477efdb5a797a0f))
+
+
+### 🐛 Bug Fixes
+
+* **managed:** reconnect failed MCP servers after a fleet reload ([#92](https://github.com/programinglive/dev-workflow-mcp-server/issues/92)) ([433999b](https://github.com/programinglive/dev-workflow-mcp-server/commit/433999b2ef6a5f8fa212cf04cc1c18c3a7b8a145))
+* **mobile:** cache-bust the flow image per app launch ([#86](https://github.com/programinglive/dev-workflow-mcp-server/issues/86)) ([6e19222](https://github.com/programinglive/dev-workflow-mcp-server/commit/6e19222225f284cfa04d0de5a90b90243f581504))
+* **mobile:** claim a build host only when the executor reported one ([f5aff5c](https://github.com/programinglive/dev-workflow-mcp-server/commit/f5aff5cb8d61a7ea210ba5a6259cdc4a0a01f17f))
+* **mobile:** show the reported build on the Android monitor card ([43543c1](https://github.com/programinglive/dev-workflow-mcp-server/commit/43543c183011c88d302c4c718537fb02c0913542))
+* **monitor:** attribute builds to the real build host, not the session machine ([ad1e381](https://github.com/programinglive/dev-workflow-mcp-server/commit/ad1e381845d55c5425c355ef742b452c86cb4e1b))
+* **monitor:** log the drawing query string so cache-busting is visible ([#88](https://github.com/programinglive/dev-workflow-mcp-server/issues/88)) ([0ce8d62](https://github.com/programinglive/dev-workflow-mcp-server/commit/0ce8d62f966eaa63f3e73e20073922b3502d534f))
+* **monitor:** serve the flow as PNG for the tablet ([#84](https://github.com/programinglive/dev-workflow-mcp-server/issues/84)) ([357ada6](https://github.com/programinglive/dev-workflow-mcp-server/commit/357ada676ab04644d69a8ba9d8e2eb0a0174b662))
+* **monitor:** serve the flow as PNG for the tablet ([#85](https://github.com/programinglive/dev-workflow-mcp-server/issues/85)) ([9abf242](https://github.com/programinglive/dev-workflow-mcp-server/commit/9abf242bc6474f50b3f8e4f7eb4a12953dd2a200))
+* **process-lock:** verify the holder is a workflow process before treating a lock as live ([3c19136](https://github.com/programinglive/dev-workflow-mcp-server/commit/3c191366f2727c9b5016ecba8d3583cc6becc910))
+* **release:** call git without a shell so the caret in ^{commit} survives ([ad87bfa](https://github.com/programinglive/dev-workflow-mcp-server/commit/ad87bfa731faf1f12dba55dd22885b3ff9b05ec7))
+* **release:** run the deployment tag checks inside the pinned repo ([91ebfb4](https://github.com/programinglive/dev-workflow-mcp-server/commit/91ebfb41f4aa5d50e53c835e64178b2aa0c61e43))
+* **rules:** restore the database backup rule in the source of truth ([#82](https://github.com/programinglive/dev-workflow-mcp-server/issues/82)) ([c3ac20a](https://github.com/programinglive/dev-workflow-mcp-server/commit/c3ac20a3cfdbcb6add941688ab3d8b7b62b570bd))
+* **workflow:** refuse an empty start_task description instead of creating a blank task ([8fc22e1](https://github.com/programinglive/dev-workflow-mcp-server/commit/8fc22e19504d0f06c458944ec49d871b931c9e53))
+* **workflow:** remind the agent on every reply while the Zettly drawing is missing ([cd26299](https://github.com/programinglive/dev-workflow-mcp-server/commit/cd26299df79bc3f85373706b209eb1f35578baf0))
+
 ### [1.29.4](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.29.3...v1.29.4) (2026-11-10)
 
 
