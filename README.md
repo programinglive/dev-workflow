@@ -153,10 +153,10 @@ See [MCP client configuration](#mcp-client-configuration).
 
 | Tool | Purpose |
 |---|---|
-| `get_current_focus` | Read the configured owner and single active Zettly focus |
-| `set_focus` | Set one focus without replacing unfinished work |
-| `link_task_to_focus` | Associate the active canonical task while preserving its source |
-| `complete_focus` | Close focus only after linked work is complete and evidence is recorded |
+| `get_current_focus` | Read the configured owner and active Zettly focuses |
+| `set_focus` | Create or reuse an active focus without replacing others |
+| `link_task_to_focus` | Associate the active canonical task with a focus by focusId |
+| `complete_focus` | Close a specific focus only after linked work is complete and evidence is recorded |
 | `get_integration_status` | Verify authenticated access to Zettly, Factory and Sentry without exposing credentials |
 | `get_zettly_task_context` | Read bounded linked task/note context, cycles and incoming/outgoing coverage |
 | `list_sentry_issues` | Read bounded Sentry issue summaries in the configured organization |

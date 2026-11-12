@@ -61,7 +61,7 @@ export async function prepareTaskFocus(args,options={}) {
  try {
   const ctx=await context(args,options);
   const all=await activeFoci(ctx);
-  if(!args.focusId&&all.length>1)throw fail('FOCUS_AMBIGUOUS','Several focuses are active; pass focusId explicitly to choose which one this task belongs to.',{focusIds:all.slice(0,10).map(f=>f.id)});
+  if(!args.focusId&&all.length>1)throw fail('FOCUS_AMBIGUOUS','Several focuses are active; pass focusId explicitly to choose which one this task belongs to.',{focusIds:all.slice(0,10).map(f=>f.id),focuses:all.slice(0,10).map(f=>projection(f,ctx))});
   const focus=selected(all,args.focusId||Number(all[0]?.id));
   return {args:{...prepared,_verifiedFocus:projection(focus,ctx)}};
  }catch(error){return {response:focusError(error)};}
@@ -69,7 +69,7 @@ export async function prepareTaskFocus(args,options={}) {
 
 function focusError(error) {
  const known=typeof error.code==='string'&&/^FOCUS_[A-Z_]+$/.test(error.code);
- return {...result({error:known?error.code:'FOCUS_UNAVAILABLE',message:known?error.message:'The focus operation could not be verified. Read current focus before retrying.',...(known&&error.ownerId?{ownerId:error.ownerId,expectedOwnerId:error.expectedOwnerId}:{}),...(known&&error.focusIds?{focusIds:error.focusIds}:{})}),isError:true};
+ return {...result({error:known?error.code:'FOCUS_UNAVAILABLE',message:known?error.message:'The focus operation could not be verified. Read current focus before retrying.',...(known&&error.ownerId?{ownerId:error.ownerId,expectedOwnerId:error.expectedOwnerId}:{}),...(known&&error.focusIds?{focusIds:error.focusIds}:{}),...(known&&error.focuses?{activeFoci:error.focuses}:{})}),isError:true};
 }
 
 export async function handleFocusTool(name,args={},workflowState,options={}) {
@@ -92,18 +92,19 @@ export async function handleFocusTool(name,args={},workflowState,options={}) {
   const ctx=await context(args,options);
   let all=await activeFoci(ctx);
   if(name==='get_current_focus'){
-   return result({owner:ctx.owner,focus:projection(all[0],ctx),activeFoci:all.slice(0,50).map(f=>projection(f,ctx)),activeFocusCount:all.length,status:all.length?'active':'none',instruction:all.length>1?'Several focuses are active. Pass the intended focusId explicitly so work is not attached to the wrong container.':(all.length?'Keep work within this focus. Complete linked tasks and record evidence before closing it.':'Set a focus before starting work.')});
+   const target=args.focusId?selected(all,args.focusId):all[0];
+   return result({owner:ctx.owner,focus:projection(target,ctx),activeFoci:all.slice(0,50).map(f=>projection(f,ctx)),activeFocusCount:all.length,status:all.length?'active':'none',instruction:all.length>1?`Several focuses are active (${all.map(f=>f.id).join(', ')}). Pass the intended focusId explicitly so work is not attached to the wrong container.`:(all.length?'Keep work within this focus. Complete linked tasks and record evidence before closing it.':'Set a focus before starting work.')});
   }
   if(name==='set_focus') {
    const title=text(args.title,255).trim();
    if(!title||typeof args.title!=='string'||args.title.length>255)throw fail('FOCUS_INVALID_TITLE','Provide a focus title of 1–255 characters.');
    const sameFocus=all.find(item=>item.title===title);
-   if(sameFocus)return result({owner:ctx.owner,focus:projection(sameFocus,ctx),reused:true});
+   if(sameFocus)return result({owner:ctx.owner,focus:projection(sameFocus,ctx),activeFoci:all.slice(0,50).map(f=>projection(f,ctx)),activeFocusCount:all.length,reused:true});
    const created=await ctx.client.request('POST','/focus',{title,description:text(args.description,4000)});
    const id=Number(created.data?.id);
    all=await activeFoci(ctx);
    const createdFocus=selected(all,id);
-   return result({owner:ctx.owner,focus:projection(createdFocus,ctx),created:true});
+   return result({owner:ctx.owner,focus:projection(createdFocus,ctx),activeFoci:all.slice(0,50).map(f=>projection(f,ctx)),activeFocusCount:all.length,created:true});
   }
   selected(all,args.focusId);
   if(name==='link_task_to_focus') {
@@ -147,7 +148,7 @@ export async function handleFocusTool(name,args={},workflowState,options={}) {
    const evidence=text(args.evidence,1000).trim();
    if(evidence.length<10||typeof args.evidence!=='string'||args.evidence.length>1000)throw fail('FOCUS_EVIDENCE_REQUIRED','Provide concrete completion evidence, up to 1,000 characters.');
    const local=workflowState?.state;
-   if(local?.taskDescription&&local.currentPhase!=='idle')throw fail('FOCUS_WORKFLOW_OPEN','Complete the active workflow task before closing its focus.');
+   if(local?.taskDescription&&local.currentPhase!=='idle'&&(!local.focus?.id||Number(local.focus.id)===Number(args.focusId)))throw fail('FOCUS_WORKFLOW_OPEN','Complete the active workflow task before closing its focus.');
    const tasks=await linkedTasks(ctx,args.focusId);
    if(!tasks.length)throw fail('FOCUS_NO_LINKED_TASKS','Link and complete actual work before closing this focus.');
    if(tasks.some(t=>!t.is_completed))throw fail('FOCUS_OPEN_TASKS','Linked tasks are still open; finish them before closing the focus.');
@@ -167,8 +168,8 @@ export async function handleFocusTool(name,args={},workflowState,options={}) {
 }
 
 export const focusToolDefinitions=[
- {name:'get_current_focus',description:'Read the configured Zettly owner and its single active focus across all dates. Never assume browser and MCP accounts match. No writes.',inputSchema:{type:'object',properties:{expectedOwnerId:{type:'integer',minimum:1}},additionalProperties:false}},
- {name:'set_focus',description:'Set one new Zettly focus only when none is active, or reuse the exact existing title. Never replaces unfinished focus. Read back after creation.',inputSchema:{type:'object',properties:{title:{type:'string',minLength:1,maxLength:255},description:{type:'string',maxLength:4000},expectedOwnerId:{type:'integer',minimum:1}},required:['title'],additionalProperties:false}},
- {name:'link_task_to_focus',description:'Link the active canonical workflow Todo to the selected active focus, preserving source identity and owner text. Rejects relinking to another focus.',inputSchema:{type:'object',properties:{focusId:{type:'integer',minimum:1},expectedOwnerId:{type:'integer',minimum:1}},required:['focusId'],additionalProperties:false}},
- {name:'complete_focus',description:'Complete a focus only after the local workflow and all linked Todos are finished and concrete evidence is supplied. Rechecks remote state; never starts another focus.',inputSchema:{type:'object',properties:{focusId:{type:'integer',minimum:1},evidence:{type:'string',minLength:10,maxLength:1000},expectedOwnerId:{type:'integer',minimum:1}},required:['focusId','evidence'],additionalProperties:false}}
+ {name:'get_current_focus',description:'Read the configured Zettly owner and active focuses. Multiple focuses can be active concurrently; inspect activeFoci list or pass focusId to view a specific container. Never assume browser and MCP accounts match. No writes.',inputSchema:{type:'object',properties:{focusId:{type:'integer',minimum:1,description:'Optional specific focus ID to view as primary focus; if omitted, returns all active foci in activeFoci and the default active focus.'},expectedOwnerId:{type:'integer',minimum:1}},additionalProperties:false}},
+ {name:'set_focus',description:'Create a new active Zettly focus or reuse an existing active focus by title. Multiple focuses can be active concurrently. Never mutates or replaces other active focuses. Read back after creation.',inputSchema:{type:'object',properties:{title:{type:'string',minLength:1,maxLength:255},description:{type:'string',maxLength:4000},expectedOwnerId:{type:'integer',minimum:1}},required:['title'],additionalProperties:false}},
+ {name:'link_task_to_focus',description:'Link the active canonical workflow Todo to the selected active focus by focusId, preserving source identity and owner text. Rejects relinking to another focus.',inputSchema:{type:'object',properties:{focusId:{type:'integer',minimum:1,description:'Target active focus ID to link this task to.'},expectedOwnerId:{type:'integer',minimum:1}},required:['focusId'],additionalProperties:false}},
+ {name:'complete_focus',description:'Complete a specific active focus by focusId only after the local workflow (if linked to this focus) and all linked Todos are finished and concrete evidence is supplied. Does not affect other active focuses.',inputSchema:{type:'object',properties:{focusId:{type:'integer',minimum:1,description:'Target active focus ID to complete.'},evidence:{type:'string',minLength:10,maxLength:1000,description:'Concrete verification evidence proving focus completion.'},expectedOwnerId:{type:'integer',minimum:1}},required:['focusId','evidence'],additionalProperties:false}}
 ];

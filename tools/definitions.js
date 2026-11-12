@@ -68,8 +68,8 @@ export function getToolList() {
             type: "string",
             description: "Clear description of what you're going to code",
           },
-          focusId: {type:'integer',minimum:1,description:'Current Zettly focus to verify and link before work starts.'},
-          requireFocus: {type:'boolean',description:'Refuse task creation when there is no verified single active focus.'},
+          focusId: {type:'integer',minimum:1,description:'Target active Zettly focus ID to link this task to. Required when multiple active focuses exist and requireFocus is true.'},
+          requireFocus: {type:'boolean',description:'Refuse task creation when no active focus exists or when multiple focuses are active without specifying focusId.'},
           expectedOwnerId: {type:'integer',minimum:1,description:'Expected Zettly owner; prevents linking a browser focus from another account.'},
           classification: {
             type:'string',enum:['PUBLIC','INTERNAL','CONFIDENTIAL','SECRET'],
