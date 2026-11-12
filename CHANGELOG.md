@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.30.0](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.29.10...v1.30.0) (2026-11-12)
+
+
+### ✨ Features
+
+* **rules:** enforce CLI-first architecture and document core MCP mechanics ([cdaa505](https://github.com/programinglive/dev-workflow-mcp-server/commit/cdaa5056c3e24fee6018bf5709e061ff9db09ac2))
+
 ### [1.29.10](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.29.9...v1.29.10) (2026-11-12)
 
 
