@@ -63,19 +63,26 @@ test('the rule block states the verified runner topology, not the retired claim'
   // Measured 11 November 2026: the block said the MMCH Windows runner was
   // "fully decommissioned" while runner 58764237 (tag bw-server, platform
   // windows) was online and was the only runner able to execute ERP jobs.
-  // bw-tools carried only runner 58882401 tagged bw-tools and had no Docker.
+  // Measured again 12 November 2026: the opposite error - the block still
+  // demanded the MMCH runner be treated as live while GitLab returned 404 for
+  // 58764237 and every ERP job already used tags: [bw-tools].
   assert.ok(
     !/fully decommissioned/.test(source),
-    'the block must not claim the MMCH runner is decommissioned while it is online',
+    'the block must not use the retired wording',
   );
   assert.match(
     source,
-    /CI runner topology \(verified 11 Nov 2026\)/,
+    /CI runner topology \(verified 12 Nov 2026\)/,
     'the block must carry the verified topology with its date',
   );
-  assert.match(source, /58764237/, 'the ERP runner id must be named');
+  assert.match(source, /58764237/, 'the MMCH runner id must be named as removed');
   assert.match(source, /58882401/, 'the bw-tools runner id must be named');
   assert.match(source, /no Docker/, 'the Docker gap on bw-tools must be stated');
+  assert.ok(
+    !/still reports online/.test(source) && !/still exists and reports online/.test(source),
+    'the block must not claim the MMCH runner still reports online',
+  );
+  assert.match(source, /deleted on 12 Nov 2026/, 'the removal must be recorded with its date');
 });
 
 test('the rule block requires registration for read-only work', () => {
