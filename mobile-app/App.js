@@ -12,6 +12,7 @@ import {
   Share,
   StyleSheet,
   Text,
+  TextInput,
   useWindowDimensions,
   View,
 } from "react-native";
@@ -19,6 +20,11 @@ import Constants from "expo-constants";
 import { namaSesi } from "./session-name";
 import { punyaTask, relasiFlow, urlThumbnail } from "./flow-relation";
 import { buildLocation, buildStatusLabel, isRunningBuild, parseEventDetail, visibleBuilds } from "./build-view";
+import {
+  ServerProfileStore,
+  normalizeServerUrl,
+  testServerConnection,
+} from "./server-profile";
 
 /**
  * Aplikasi monitor sesi dev-workflow.
@@ -39,10 +45,43 @@ import { buildLocation, buildStatusLabel, isRunningBuild, parseEventDetail, visi
  * 4. Kartu bisa ditekan untuk membuka detail lengkap.
  */
 
-const MONITOR_URL =
+const DEFAULT_MONITOR_URL =
   process.env.EXPO_PUBLIC_MONITOR_URL ||
   (Constants.expoConfig && Constants.expoConfig.extra && Constants.expoConfig.extra.monitorUrl) ||
   "http://100.77.138.14:3100";
+
+const memoryStorage = {};
+const persistentStorage = {
+  getItem: (k) => {
+    try {
+      if (typeof globalThis.localStorage !== "undefined" && globalThis.localStorage?.getItem) {
+        return globalThis.localStorage.getItem(k);
+      }
+    } catch {}
+    return memoryStorage[k] || null;
+  },
+  setItem: (k, v) => {
+    try {
+      if (typeof globalThis.localStorage !== "undefined" && globalThis.localStorage?.setItem) {
+        globalThis.localStorage.setItem(k, v);
+      }
+    } catch {}
+    memoryStorage[k] = String(v);
+  },
+};
+
+export const profileStore = new ServerProfileStore({ storage: persistentStorage });
+if (profileStore.getProfiles().length === 0) {
+  try {
+    profileStore.addProfile({
+      name: "Default Monitor",
+      url: DEFAULT_MONITOR_URL,
+      isDefault: true,
+    });
+  } catch {}
+}
+
+let globalActiveMonitorUrl = profileStore.resolveActiveUrl(DEFAULT_MONITOR_URL);
 
 const POLL_MS = 3000;
 
@@ -109,6 +148,12 @@ function durasi(mulaiIso, nowMs) {
 }
 
 export default function App() {
+  const [monitorUrl, setMonitorUrl] = useState(() => globalActiveMonitorUrl);
+  const [modalServer, setModalServer] = useState(false);
+  const [profiles, setProfiles] = useState(() => profileStore.getProfiles());
+
+  const MONITOR_URL = monitorUrl;
+
   const [data, setData] = useState(null);
   const [galat, setGalat] = useState(null);
   const [memuat, setMemuat] = useState(true);
@@ -150,7 +195,35 @@ export default function App() {
         setMenyegarkan(false);
       }
     }
-  }, []);
+  }, [MONITOR_URL]);
+
+  const handleSelectProfile = (id) => {
+    profileStore.setActiveProfile(id);
+    const active = profileStore.getActiveProfile();
+    if (active) {
+      globalActiveMonitorUrl = active.url;
+      setMonitorUrl(active.url);
+      setProfiles(profileStore.getProfiles());
+      setModalServer(false);
+    }
+  };
+
+  const handleAddProfile = ({ name, url }) => {
+    const p = profileStore.addProfile({ name, url, isDefault: true });
+    globalActiveMonitorUrl = p.url;
+    setMonitorUrl(p.url);
+    setProfiles(profileStore.getProfiles());
+    setModalServer(false);
+  };
+
+  const handleDeleteProfile = (id) => {
+    profileStore.deleteProfile(id);
+    const active = profileStore.getActiveProfile();
+    const nextUrl = active ? active.url : DEFAULT_MONITOR_URL;
+    globalActiveMonitorUrl = nextUrl;
+    setMonitorUrl(nextUrl);
+    setProfiles(profileStore.getProfiles());
+  };
 
   useEffect(() => {
     hidup.current = true;
@@ -218,11 +291,16 @@ export default function App() {
     <View style={gaya.layar}>
       <View style={gaya.header}>
         <Text style={gaya.judul}>Dev Workflow Monitor</Text>
-        <Pressable onPress={() => Linking.openURL(MONITOR_URL)}>
-          <Text style={[gaya.sub, { textDecorationLine: "underline" }]}>
-            {sesi.length} sesi · {MONITOR_URL.replace(/^https?:\/\//, "")}
-          </Text>
-        </Pressable>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+          <Pressable onPress={() => Linking.openURL(MONITOR_URL)}>
+            <Text style={[gaya.sub, { textDecorationLine: "underline" }]}>
+              {sesi.length} sesi · {MONITOR_URL.replace(/^https?:\/\//, "")}
+            </Text>
+          </Pressable>
+          <Pressable onPress={() => setModalServer(true)} style={gaya.btnGantiServerHeader}>
+            <Text style={gaya.btnGantiServerHeaderTeks}>⚙ Server</Text>
+          </Pressable>
+        </View>
       </View>
 
       {galat ? (
@@ -230,8 +308,14 @@ export default function App() {
           <Text style={gaya.kotakJudul}>Tidak bisa menghubungi monitor</Text>
           <Text style={gaya.kotakTeks}>
             {galat}
-            {"\n"}Periksa apakah perangkat ini tersambung ke Tailscale.
+            {"\n"}Periksa apakah perangkat ini tersambung ke jaringan atau Tailscale.
           </Text>
+          <Pressable
+            onPress={() => setModalServer(true)}
+            style={[gaya.tombolBrowser, { marginTop: 10, alignSelf: "flex-start", paddingHorizontal: 16 }]}
+          >
+            <Text style={gaya.tombolBrowserTeks}>⚙ Ganti Alamat Server</Text>
+          </Pressable>
         </View>
       ) : health.stale ? (
         <View style={[gaya.kotak, gaya.kotakPeringatan]}>
@@ -297,7 +381,7 @@ export default function App() {
                 <View style={[gaya.grid, !duaKolom && gaya.gridSatu]}>
                   {sesi.map((s) => (
                     <View key={s.session_key} style={duaKolom ? gaya.sel : gaya.selPenuh}>
-                      <Kartu s={s} jamServer={jamServer} onPress={() => setDipilih(s.session_key)} />
+                      <Kartu s={s} jamServer={jamServer} onPress={() => setDipilih(s.session_key)} monitorUrl={MONITOR_URL} />
                     </View>
                   ))}
                 </View>
@@ -552,6 +636,12 @@ export default function App() {
                   diperbarui tiap {Math.round(POLL_MS / 1000)} detik
                 </Text>
                 <Pressable
+                  onPress={() => setModalServer(true)}
+                  style={[gaya.tombolBrowser, { backgroundColor: "#1f6feb", marginBottom: 8 }]}
+                >
+                  <Text style={gaya.tombolBrowserTeks}>⚙ Ganti Server Monitor</Text>
+                </Pressable>
+                <Pressable
                   onPress={() => Linking.openURL(MONITOR_URL)}
                   style={gaya.tombolBrowser}
                 >
@@ -591,6 +681,17 @@ export default function App() {
         s={sesiDipilih}
         jamServer={jamServer}
         onClose={() => setDipilih(null)}
+        monitorUrl={MONITOR_URL}
+      />
+
+      <ModalServer
+        visible={modalServer}
+        onClose={() => setModalServer(false)}
+        profiles={profiles}
+        activeUrl={MONITOR_URL}
+        onSelectProfile={handleSelectProfile}
+        onAddProfile={handleAddProfile}
+        onDeleteProfile={handleDeleteProfile}
       />
     </View>
   );
@@ -599,7 +700,8 @@ export default function App() {
 /** Batas langkah yang ditampilkan di kartu; sisanya lewat detail. */
 const LANGKAH_DI_KARTU = 2;
 
-function Kartu({ s, jamServer, onPress }) {
+function Kartu({ s, jamServer, onPress, monitorUrl }) {
+  const MONITOR_URL = monitorUrl || globalActiveMonitorUrl;
   const g = gayaStatus(s.state);
   const total = s.plan_total || 0;
   const selesai = s.plan_done || 0;
@@ -803,7 +905,8 @@ function Kartu({ s, jamServer, onPress }) {
   );
 }
 
-function DetailSesi({ s, jamServer, onClose }) {
+function DetailSesi({ s, jamServer, onClose, monitorUrl }) {
+  const MONITOR_URL = monitorUrl || globalActiveMonitorUrl;
   /**
    * Hook harus dipanggil SEBELUM `return null` di bawah.
    *
@@ -1048,6 +1151,170 @@ function DetailSesi({ s, jamServer, onClose }) {
               <Text style={gaya.tombolTutupTeks}>Tutup</Text>
             </Pressable>
           </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function ModalServer({
+  visible,
+  onClose,
+  profiles,
+  activeUrl,
+  onSelectProfile,
+  onAddProfile,
+  onDeleteProfile,
+}) {
+  const [namaBaru, setNamaBaru] = useState("");
+  const [urlBaru, setUrlBaru] = useState("");
+  const [sedangTes, setSedangTes] = useState(false);
+  const [hasilTes, setHasilTes] = useState(null);
+  const [galatForm, setGalatForm] = useState(null);
+
+  const handleTest = async () => {
+    if (!urlBaru.trim()) {
+      setGalatForm("Masukkan alamat server terlebih dahulu");
+      return;
+    }
+    setGalatForm(null);
+    setSedangTes(true);
+    setHasilTes(null);
+    try {
+      const res = await testServerConnection(urlBaru.trim());
+      setHasilTes(res);
+      if (!res.ok) {
+        setGalatForm(res.error || "Gagal menghubungi server");
+      }
+    } catch (e) {
+      setGalatForm(e.message || String(e));
+    } finally {
+      setSedangTes(false);
+    }
+  };
+
+  const handleSimpan = () => {
+    if (!urlBaru.trim()) {
+      setGalatForm("Alamat server tidak boleh kosong");
+      return;
+    }
+    const norm = normalizeServerUrl(urlBaru.trim());
+    if (!norm.ok) {
+      setGalatForm(norm.error);
+      return;
+    }
+    try {
+      onAddProfile({
+        name: namaBaru.trim() || norm.host,
+        url: norm.url,
+      });
+      setNamaBaru("");
+      setUrlBaru("");
+      setHasilTes(null);
+      setGalatForm(null);
+    } catch (err) {
+      setGalatForm(err.message || String(err));
+    }
+  };
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <View style={gaya.modalLatar}>
+        <View style={[gaya.modalKotak, { maxHeight: "90%" }]}>
+          <View style={gaya.baris}>
+            <Text style={gaya.modalJudul}>Pengaturan Server Monitor</Text>
+            <Pressable onPress={onClose} hitSlop={16} style={gaya.tutup}>
+              <Text style={gaya.tutupTeks}>✕</Text>
+            </Pressable>
+          </View>
+          <Text style={[gaya.meta, { marginBottom: 12 }]}>
+            Pilih server yang terhubung atau tambahkan server baru (IP, Domain, atau Localhost).
+          </Text>
+
+          <ScrollView style={{ maxHeight: 420 }}>
+            <Text style={[gaya.kotakJudul, { marginTop: 8, marginBottom: 8 }]}>Daftar Server Tersimpan</Text>
+            {profiles.map((p) => {
+              const aktif = p.url === activeUrl;
+              return (
+                <View
+                  key={p.id}
+                  style={[
+                    gaya.profilKartu,
+                    aktif && { borderColor: WARNA.biru, backgroundColor: "#1f6feb15" },
+                  ]}
+                >
+                  <View style={{ flex: 1 }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                      <Text style={[gaya.profilNama, aktif && { color: WARNA.biruMuda }]}>{p.name}</Text>
+                      {aktif && (
+                        <View style={[gaya.chip, { backgroundColor: "#1f6feb22", borderColor: WARNA.biru, paddingVertical: 2 }]}>
+                          <Text style={[gaya.chipTeks, { color: WARNA.biruMuda, fontSize: 11 }]}>AKTIF</Text>
+                        </View>
+                      )}
+                    </View>
+                    <Text style={gaya.profilUrl}>{p.url}</Text>
+                  </View>
+                  <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+                    {!aktif && (
+                      <Pressable onPress={() => onSelectProfile(p.id)} style={gaya.btnGunakan}>
+                        <Text style={gaya.btnGunakanTeks}>Gunakan</Text>
+                      </Pressable>
+                    )}
+                    {profiles.length > 1 && !aktif && (
+                      <Pressable onPress={() => onDeleteProfile(p.id)} style={gaya.btnHapus}>
+                        <Text style={gaya.btnHapusTeks}>Hapus</Text>
+                      </Pressable>
+                    )}
+                  </View>
+                </View>
+              );
+            })}
+
+            <View style={[gaya.kotak, { marginTop: 16, borderColor: WARNA.garis }]}>
+              <Text style={gaya.kotakJudul}>Tambah Server Baru</Text>
+              <Text style={gaya.labelInput}>Nama Server (Opsional):</Text>
+              <TextInput
+                value={namaBaru}
+                onChangeText={setNamaBaru}
+                placeholder="misal: Homelab, Laptop Kantor"
+                placeholderTextColor={WARNA.redup}
+                style={gaya.inputTeks}
+              />
+
+              <Text style={[gaya.labelInput, { marginTop: 10 }]}>Alamat URL / IP:</Text>
+              <TextInput
+                value={urlBaru}
+                onChangeText={(t) => {
+                  setUrlBaru(t);
+                  setHasilTes(null);
+                  setGalatForm(null);
+                }}
+                placeholder="100.77.138.14:3100 atau http://..."
+                placeholderTextColor={WARNA.redup}
+                autoCapitalize="none"
+                autoCorrect={false}
+                style={gaya.inputTeks}
+              />
+
+              {galatForm ? <Text style={gaya.galatFormTeks}>⚠ {galatForm}</Text> : null}
+              {hasilTes && hasilTes.ok ? (
+                <Text style={gaya.suksesTesTeks}>✓ Tersambung ({hasilTes.latencyMs}ms)</Text>
+              ) : null}
+
+              <View style={[gaya.barisTombol, { marginTop: 14 }]}>
+                <Pressable
+                  disabled={sedangTes}
+                  onPress={handleTest}
+                  style={[gaya.tombolTutup, gaya.tombolTutupKecil, sedangTes && gaya.tombolMati]}
+                >
+                  <Text style={gaya.tombolTutupTeks}>{sedangTes ? "Menguji..." : "Uji Koneksi"}</Text>
+                </Pressable>
+                <Pressable onPress={handleSimpan} style={gaya.tombolBagikan}>
+                  <Text style={gaya.tombolBagikanTeks}>Simpan &amp; Hubungkan</Text>
+                </Pressable>
+              </View>
+            </View>
+          </ScrollView>
         </View>
       </View>
     </Modal>
@@ -1302,5 +1569,57 @@ const gaya = StyleSheet.create({
   tombolMati: { opacity: 0.55 },
   galatBagikan: { color: WARNA.kuning, fontSize: 13, marginTop: 12 },
   tautanTeks: { color: WARNA.biruMuda, fontSize: 13, marginTop: 10, lineHeight: 18 },
+  btnGantiServerHeader: {
+    backgroundColor: "#21262d",
+    borderWidth: 1,
+    borderColor: "#30363d",
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  btnGantiServerHeaderTeks: { color: WARNA.teks, fontSize: 13, fontWeight: "600" },
+  profilKartu: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: WARNA.card,
+    borderWidth: 1,
+    borderColor: WARNA.garis,
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 8,
+  },
+  profilNama: { color: WARNA.teks, fontSize: 15, fontWeight: "700" },
+  profilUrl: { color: WARNA.redup, fontSize: 13, marginTop: 2 },
+  btnGunakan: {
+    backgroundColor: "#1f6feb33",
+    borderWidth: 1,
+    borderColor: "#1f6feb88",
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  btnGunakanTeks: { color: WARNA.biruMuda, fontSize: 13, fontWeight: "700" },
+  btnHapus: {
+    backgroundColor: "#f8514915",
+    borderWidth: 1,
+    borderColor: "#f8514944",
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  btnHapusTeks: { color: "#ff7b72", fontSize: 13, fontWeight: "600" },
+  labelInput: { color: WARNA.teks, fontSize: 13, fontWeight: "600", marginBottom: 4 },
+  inputTeks: {
+    backgroundColor: "#0b0f14",
+    borderWidth: 1,
+    borderColor: WARNA.garis,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    color: WARNA.teks,
+    fontSize: 14,
+  },
+  galatFormTeks: { color: WARNA.kuning, fontSize: 13, marginTop: 8 },
+  suksesTesTeks: { color: WARNA.hijau, fontSize: 13, marginTop: 8, fontWeight: "600" },
 });
 

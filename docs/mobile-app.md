@@ -49,9 +49,20 @@ sebuah sesi, jadi kartu lama di tab Riwayat memang tidak menampilkan build.
 Dijaga `tests/monitor-app-card-build.test.js`: kartu wajib memakai
 `buildStatusLabel`, `buildLocation`, stage, progres, dan `ago(..., jamServer)`.
 
-## Alamat server
+## Alamat server dinamis (Runtime Configuration)
 
-Bawaan `http://100.77.138.14:3100`, bisa ditimpa saat build:
+Bawaan default mengarah ke `http://100.77.138.14:3100`. Namun mulai Milestone M1, alamat server **tidak lagi terkunci saat build**. Anda dapat mengubah, menambah, menguji koneksi (ping latency), dan berpindah profil server langsung dari aplikasi Android tanpa perlu build ulang APK:
+
+1. **Tombol Header:** Ketuk pil `⚙ Server` di samping jumlah sesi aktif di bagian atas layar.
+2. **Tab Info:** Buka tab `Info` (ikon `ⓘ`) dan ketuk tombol biru `⚙ Ganti Server Monitor`.
+3. **Banner Error:** Bila koneksi terputus, muncul banner merah yang langsung menyediakan tombol `⚙ Ganti Alamat Server`.
+
+Di modal pengaturan server:
+- Masukkan URL atau IP server (misal: `192.168.1.100:3100` atau `https://monitor.example.com`).
+- Ketuk **Uji Koneksi** untuk memverifikasi probe `/health` dan melihat latensi riil (misal `✓ Tersambung (12ms)`).
+- Ketuk **Simpan & Hubungkan** untuk menyimpan profil ke penyimpanan lokal perangkat dan langsung beralih ke server tersebut.
+
+Bila ingin menimpa nilai bawaan awal saat build:
 
 ```bash
 EXPO_PUBLIC_MONITOR_URL=http://100.77.138.14:3100 npx expo prebuild -p android
