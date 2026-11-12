@@ -548,8 +548,13 @@ export async function handleStartTask(args, workflowState, git, zettlyOptions = 
     || "";
   const claimBlock = await describeActiveClaims({sessionKey: ownSessionKey});
 
+  const cliTip = args.type === "feature"
+    ? `💡 Multiplatform / CLI-First Standard: Build core business logic into headless services/actions first and expose an executable CLI command before or alongside UI components. Verify CLI execution in your DoD.\n\n`
+    : "";
+
   return textResponse(
     `✅ Task Started: ${args.description}\n\n${project.message}${warningBlock}${claimBlock}${factoryNote}${drawNote}\n\n` +
+      cliTip +
       `📋 Definition of Done (${workflowState.state.definitionOfDone.length} item, semua masih terbuka):\n${dodLines}\n` +
       `   Buktikan tiap item dengan 'mark_dod_item' { id, evidence } setelah benar-benar terbukti,\n` +
       `   atau kecualikan dengan 'waive_dod_item' { id, reason } bila memang tidak relevan.\n\n` +

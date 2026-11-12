@@ -72,6 +72,103 @@ graph LR
 
 ---
 
+## How DevWorkflow Works (Architecture & Core Mechanics)
+
+DevWorkflow (`dev-workflow-mcp-server`) is the centralized engineering governance and discipline engine designed for autonomous and interactive AI coding agents (Antigravity CLI/IDE, OpenCode, Codex, Claude Code) working alongside human developers across distributed workstations.
+
+It solves the fundamental failure modes of autonomous AI software development:
+1. **Hallucination & Scope Creep**: Agents jumping straight into guessing implementations, writing bloated unneeded files, and drifting from original goals.
+2. **Untracked & Conflicting Work**: Agents modifying the same repo/worktree simultaneously without locks, causing race conditions and lost work.
+3. **Skipping Quality Gates**: Agents claiming code works without running empirical tests, skipping documentation, or executing untested direct-to-production hotfixes.
+4. **Platform Lock-in / Monolithic UI Coupling**: Developing business logic trapped inside web controllers instead of headless, reusable core layers.
+
+### 1. High-Level Architecture Overview
+
+```mermaid
+flowchart TD
+    subgraph Clients["AI Coding Agents & IDEs"]
+        AGY["Antigravity CLI & IDE"]
+        OC["OpenCode"]
+        CDX["Codex"]
+    end
+
+    subgraph Core["DevWorkflow MCP Server (v1.29+)"]
+        Engine["Workflow State Machine<br/>(SQLite / In-Memory Session)"]
+        Guard["Quality & Discipline Gates<br/>(TDD, Doc Gate, Git Attribution)"]
+        Lock["Project & Worktree Lock Engine"]
+        Index["Context-Aware MCP Discovery<br/>(recommend_mcp_tools)"]
+    end
+
+    subgraph Integrations["Connected Ecosystem"]
+        Zettly["Zettly Focus & Todo Tracking<br/>(Task #, Outcomes, Foci)"]
+        Draw["Zettly Draw API<br/>(Visual Mermaid Canvas)"]
+        Monitor["Central Monitor Dashboard<br/>(http://100.77.138.14:3100)"]
+        Runner["Universal CI/CD Runner<br/>(bw-tools 100.77.138.14)"]
+        Sentry["Sentry Error Intelligence"]
+    end
+
+    Clients <-->|"MCP Protocol (stdio/IPC)"| Core
+    Core -->|"Sync Task & Outcomes"| Zettly
+    Core -->|"Generate Flow Diagram"| Draw
+    Core -->|"Real-time Heartbeat & Status"| Monitor
+    Core -->|"Dispatch Central Builds/Tests"| Runner
+    Core -->|"Contextual Diagnostics"| Sentry
+```
+
+### 2. The Strict Step-by-Step Discipline Lifecycle
+
+DevWorkflow enforces a non-bypassable phase-based state machine:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Idle
+    Idle --> FlowGate: start_task (Description, DoD, Plan, Mermaid Flow)
+    FlowGate --> Implementation: refine_with_ai (Contextual Scope Lock)
+    Implementation --> Testing: mark_bug_fixed / mark_dod_item
+    Testing --> DocGate: create_tests & run_tests (Must be Green!)
+    DocGate --> ReadyToCommit: create_documentation / waive_documentation
+    ReadyToCommit --> ReleaseLock: check_ready_to_commit & commit_and_push
+    ReleaseLock --> Completed: perform_release / skip_release
+    Completed --> [*]: complete_task (Outcome Synced to Zettly)
+```
+
+#### Step 1: Registration, Focus & Token/Scope Lock (`start_task`)
+- **Exclusive Project Lock:** Ensures only one agent works on a project directory at a time, preventing split-brain code mutations.
+- **Mandatory Mermaid Flow Gate:** The agent MUST provide a structured Mermaid flowchart (`flowchart TD` / `graph TD`) representing the logic/architecture. DevWorkflow immediately converts this into an editable Zettly Draw canvas linked to the project's canonical task. AI agents are strictly forbidden from writing code before this visual gate is locked.
+- **Focus Hierarchy:** Every task is bound to an active container focus in Zettly (e.g. multi-clinic, ERP stock, notification overhaul), ensuring tasks never float disconnected from business objectives.
+
+#### Step 2: Refinement & Scope Locking (`refine_with_ai`)
+- Before touching code, agents refine their execution plan, reproduction steps, observed vs expected behavior, and concrete Definition of Done (DoD) items with empirical evidence criteria.
+
+#### Step 3: CLI-First & Headless-First Architecture Standard
+- **Multiplatform Readiness:** Core business capabilities must reside in headless domain services/actions (e.g., `app/Services/`, `app/Actions/`, `src/core/`) and expose an executable CLI command interface (e.g., via Artisan in Laravel, Commander/yargs in Node, Click/Typer in Python) before or alongside presentation layers.
+- **Thin Presentation Adapters:** Controllers, Web UIs, Mobile apps, and PWAs act solely as presentation wrappers around these headless services. Every feature DoD requires verified execution via the CLI interface.
+
+#### Step 4: Red-Green-Refactor TDD (`create_tests` & `run_tests`)
+- Code cannot proceed to commit without verified test execution. Failing tests hard-block the workflow. All tests must be recorded with concrete test commands and inspected output.
+
+#### Step 5: The Documentation Gate (`create_documentation`)
+- Code changes without corresponding documentation updates are rejected. When business logic, endpoints, or CLI commands change, documentation (`README.md`, `PRD.md`, `RELEASE_NOTES.md`, or API docs) must be updated and verified against git status.
+
+#### Step 6: Clean Stage, Conventional Commit & Guarded Release (`commit_and_push` & `perform_release`)
+- Enforces `@programinglive/commiter` conventional commit specifications.
+- Validates clean working trees, verified tags, and triggers CI/CD builds on the universal self-hosted Linux runner (`bw-tools: 100.77.138.14`).
+
+### 3. Key Operational Innovations
+
+- **Central Fleet Monitor (`http://100.77.138.14:3100`):**
+  Provides a single pane of glass showing live heartbeat cards across all agent sessions (OpenCode, Codex, Antigravity) running on all workstations (`HELLOWORLD`, `Mac`, `MMCH`). Displays active phase, live build stepper, DoD progress, and builder VM indicators.
+- **Multi-Device Parity & Hot Sync (`node managed/rollout.cjs`):**
+  A centralized, forward-only distribution mechanism on `bw-tools:3101`. Any MCP updates or rule changes are automatically deployed and hot-reloaded across all fleet devices and AI clients via `managed/restart-devices.cjs` and `managed/mcp-reconnect.cjs`.
+- **Context-Aware MCP Discovery (`recommend_mcp_tools`):**
+  Acts as the directory index for the entire ecosystem (Playwright, Mermaid, Central-Gateway, PocketBase, Infra-Knowledge, Notify, Clinic-Helper, etc.), matching task context and keywords to appropriate tools without token-bloating the prompt.
+- **Token Diet Architecture:**
+  Intelligently suppresses massive static workflow instructions on repetitive turns, only delivering full guidance during session initialization, resume, and critical checkpoints—saving thousands of tokens per task.
+
+---
+
+---
+
 ## What lives where
 
 For one approved release shared by HELLOWORLD, MMCH and Mac, see [central managed MCP deployment](docs/central-managed-mcp.md). Device launchers update the local executor automatically from the private release service; existing connections pin their version until reconnect.

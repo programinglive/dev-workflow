@@ -59,6 +59,11 @@ test('a device with no change is reported as a warning, not a success', () => {
   assert.match(source, /rules unchanged/, 'the warning must say nothing changed');
 });
 
+test('the rule block includes CLI-First architecture policy', () => {
+  assert.match(source, /CLI-First \/ Headless-First Architecture/);
+  assert.match(source, /Multiplatform Ready/);
+});
+
 test('the rule block states the verified runner topology, not the retired claim', () => {
   // Measured 11 November 2026: the block said the MMCH Windows runner was
   // "fully decommissioned" while runner 58764237 (tag bw-server, platform

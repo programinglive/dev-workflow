@@ -11,6 +11,13 @@ test('workflow initialization instructions require English implementation artifa
  assert.match(WORKFLOW_INSTRUCTIONS,/Sentry/);
  assert.doesNotMatch(WORKFLOW_INSTRUCTIONS,/Factory/,'Factory sudah dipensiunkan dan tidak boleh disebut lagi');
  assert.match(WORKFLOW_INSTRUCTIONS,/verified fix/);
+ assert.match(WORKFLOW_INSTRUCTIONS,/CLI-First & Headless Architecture/);
+});
+
+test('workflow guidance exports CLI_FIRST_RULE', async () => {
+  const { CLI_FIRST_RULE } = await import('../workflow-guidance.js');
+  assert.match(CLI_FIRST_RULE, /headless domain logic/);
+  assert.match(CLI_FIRST_RULE, /executable CLI command interface/);
 });
 
 test('start and status responses remind the AI about English code and localized product text',async()=>{

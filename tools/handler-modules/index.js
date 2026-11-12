@@ -596,12 +596,14 @@ export async function handleToolCall(context) {
       }
       if(result.ok&&['start_task','claim_factory_task'].includes(name)&&!context.workflowState.state.zettly?.externalLinks?.drawing?.id&&context.workflowState.state.featureFlowCreated){
         try{
-          const drawResult=await syncZettlyDrawing(context.workflowState,context.zettlyOptions);
+          const drawPromise=syncZettlyDrawing(context.workflowState,context.zettlyOptions);
+          const timeoutPromise=new Promise((_,reject)=>setTimeout(()=>reject(new Error('timeout')),5000));
+          const drawResult=await Promise.race([drawPromise,timeoutPromise]);
           if(drawResult?.ok&&drawResult?.id){
             notes.push(`🎨 Zettly Draw #${drawResult.id}: ${drawResult.url||`https://zettly.programinglive.com/draw/${drawResult.id}`}`);
           }
         }catch{
-          // Non-blocking background sync
+          // Non-blocking background sync - timeout or network delay does not block task start
         }
       }
       const selectedExistingTodo=args.zettlyTodoId||args.source?.system==='zettly';
