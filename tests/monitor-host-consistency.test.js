@@ -32,9 +32,13 @@ const SKIP_DIRS = new Set([
 const SELF = "tests/monitor-host-consistency.test.js";
 
 // Dated records are history, not live configuration.
+// Git worktrees are separate checkouts of the same repository: scanning them
+// reports violations from code that is not part of this tree, which is how a
+// local `npm test` failed while CI stayed green.
 const HISTORICAL_PATHS = [
   /^docs[\\/]superpowers[\\/]/,
   /^docs[\\/]20\d\d-\d\d-\d\d-/,
+  /^\.worktrees[\\/]/,
 ];
 
 // Binary and lock artefacts.
