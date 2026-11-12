@@ -15,7 +15,7 @@
  */
 
 const COMMANDS = ["list", "close", "share", "drop", "complete", "help", "version", "doctor", "pair", "fleet"];
-const FLEET_VERBS = ["status", "check", "plan", "stage", "activate", "verify", "rollback", "doctor"];
+const FLEET_VERBS = ["status", "check", "plan", "stage", "activate", "verify", "rollback", "doctor", "upgrade"];
 
 /** A refusal the CLI reports to the user and turns into a non-zero exit. */
 export class CliError extends Error {
@@ -64,7 +64,7 @@ const FLAGS_WITH_VALUE = new Set([
   "--url",
   "--mode",
 ]);
-const BOOLEAN_FLAGS = new Set(["--dry-run", "--orphans", "--help", "--version", "--json", "--authorize"]);
+const BOOLEAN_FLAGS = new Set(["--dry-run", "--orphans", "--help", "--version", "--json", "--authorize", "--all", "--resume", "--force"]);
 
 /**
  * Parses argv (without the node and script entries).
@@ -121,6 +121,9 @@ export function parseArgs(argv = []) {
       if (word === "--orphans") args.orphans = true;
       if (word === "--json") args.json = true;
       if (word === "--authorize") args.authorize = true;
+      if (word === "--all") args.all = true;
+      if (word === "--resume") args.resume = true;
+      if (word === "--force") args.force = true;
       continue;
     }
 

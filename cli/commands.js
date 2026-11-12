@@ -28,6 +28,12 @@ const {
   runFleetDoctor,
   UPDATE_MODES,
 } = requireCjs("../managed/fleet-update-manager.cjs");
+const {
+  createFleetInventory,
+  createFleetOrchestrator,
+  createAgentLifecycleAdapter,
+  UPGRADE_PERMISSIONS,
+} = requireCjs("../managed/fleet-providers.cjs");
 
 function requireSession(args, command) {
   const session = typeof args.session === "string" ? args.session.trim() : "";
@@ -260,6 +266,48 @@ export async function runCommand({
       if (args.json) out.write(JSON.stringify(res, null, 2));
       else out.write(`Rolled back ${st.machine} to ${res.activeManifest?.revision || "previous"}.`);
       return { ok: true, ...res };
+    }
+
+    if (verb === "upgrade") {
+      const inv = createFleetInventory({ env });
+      const st = sup.getStatus();
+      const adapter = createAgentLifecycleAdapter();
+      const orch = createFleetOrchestrator({
+        machines: inv.machines,
+      });
+      const permissions = [
+        UPGRADE_PERMISSIONS.CHECK,
+        UPGRADE_PERMISSIONS.STAGE,
+        UPGRADE_PERMISSIONS.ACTIVATE,
+        ...(args.force ? [UPGRADE_PERMISSIONS.FORCE_RESTART] : []),
+      ];
+      const report = await orch.runFleetUpgrade({
+        all: Boolean(args.all),
+        resume: Boolean(args.resume),
+        force: Boolean(args.force),
+        dryRun: Boolean(args.dryRun),
+        actor: { role: "operator", permissions },
+      });
+      const payload = {
+        ok: true,
+        verb: "upgrade",
+        mode: inv.mode,
+        all: Boolean(args.all),
+        resume: Boolean(args.resume),
+        dryRun: Boolean(args.dryRun),
+        capabilities: adapter.getCapabilities(),
+        machineStatus: st,
+        upgradeReport: report,
+      };
+      if (args.json) {
+        out.write(JSON.stringify(payload, null, 2));
+      } else {
+        out.write(`DevWorkflow Fleet Upgrade (${inv.mode}) — all=${Boolean(args.all)} resume=${Boolean(args.resume)} dryRun=${Boolean(args.dryRun)}`);
+        for (const r of report.results) {
+          out.write(`  [${r.outcomeStatus}] ${r.machine} (${r.transport})`);
+        }
+      }
+      return payload;
     }
 
     // status, check, verify
