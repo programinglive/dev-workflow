@@ -54,8 +54,10 @@ const { normalizeBuildState, extractActiveBuildFromEvents } = require('./build-m
 const { shouldSkipCreate } = require('./empty-session.cjs');
 const { handlePairVerify, handlePairStatus } = require('./mobile-pair-route.cjs');
 const { createEventsStreamManager } = require('./mobile-events-stream.cjs');
+const { createMobileGovernanceEngine } = require('./mobile-governance.cjs');
 
 const eventsStreamManager = createEventsStreamManager({ heartbeatMs: 15000 });
+const mobileGovernanceEngine = createMobileGovernanceEngine();
 
 let pairingEnginePromise = null;
 function getPairingEngine() {
@@ -2438,6 +2440,74 @@ const server = http.createServer(async (req, res) => {
             ...payload,
           })
         );
+      }
+      res.writeHead(405, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ ok: false, error: 'method not allowed' }));
+    }
+    // Mobile Companion HITL Governance & Emergency Stop (M5)
+    if (url.pathname === '/api/v1/mobile/governance/action') {
+      res.setHeader('access-control-allow-origin', '*');
+      res.setHeader('access-control-allow-methods', 'POST, OPTIONS');
+      res.setHeader('access-control-allow-headers', 'content-type, authorization');
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204);
+        return res.end();
+      }
+      if (req.method === 'POST') {
+        const body = bacaJson(await readBody(req), res);
+        if (body === null) return undefined;
+        const result = mobileGovernanceEngine.executeGovernanceAction({
+          sessionKey: body.sessionKey,
+          action: body.action,
+          idempotencyKey: body.idempotencyKey,
+          actor: body.actor || { subjectId: 'human-operator', subjectType: 'human', roles: ['developer'] },
+          device: body.device || { deviceId: 'dev_pad6', scopes: ['monitor:read', 'governance:approve'], revoked: false },
+          contractRevision: body.contractRevision,
+          evidenceDigest: body.evidenceDigest,
+          policyDigest: body.policyDigest,
+          stepUpConfirmed: body.stepUpConfirmed,
+          reason: body.reason,
+        });
+        eventsStreamManager.broadcast('governance_action', result.body);
+        res.writeHead(result.status, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify(result.body));
+      }
+      res.writeHead(405, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ ok: false, error: 'method not allowed' }));
+    }
+    // Mobile Companion Evidence & Audit Inspector (M6)
+    if (url.pathname === '/api/v1/mobile/evidence') {
+      res.setHeader('access-control-allow-origin', '*');
+      res.setHeader('access-control-allow-methods', 'GET, OPTIONS');
+      res.setHeader('access-control-allow-headers', 'content-type, authorization');
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204);
+        return res.end();
+      }
+      if (req.method === 'GET') {
+        const sessionKey = String(url.searchParams.get('sessionKey') || '');
+        const report = mobileGovernanceEngine.inspectSessionEvidence(sessionKey);
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+        return res.end(JSON.stringify({ ok: true, ...report }));
+      }
+      res.writeHead(405, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ ok: false, error: 'method not allowed' }));
+    }
+    if (url.pathname === '/api/v1/mobile/audit') {
+      res.setHeader('access-control-allow-origin', '*');
+      res.setHeader('access-control-allow-methods', 'GET, OPTIONS');
+      res.setHeader('access-control-allow-headers', 'content-type, authorization');
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204);
+        return res.end();
+      }
+      if (req.method === 'GET') {
+        const limit = Number(url.searchParams.get('limit') || 25);
+        const cursor = url.searchParams.get('cursor');
+        const sessionKey = url.searchParams.get('sessionKey');
+        const page = mobileGovernanceEngine.getAuditTimeline({ limit, cursor, sessionKey });
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+        return res.end(JSON.stringify({ ok: true, ...page }));
       }
       res.writeHead(405, { 'content-type': 'application/json' });
       return res.end(JSON.stringify({ ok: false, error: 'method not allowed' }));

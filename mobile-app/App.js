@@ -40,6 +40,13 @@ import {
   selectGovernanceItems,
   nextZoomScale,
 } from "./cockpit-mode";
+import {
+  GOVERNANCE_ACTIONS,
+  buildGovernanceRequest,
+  submitGovernanceAction,
+  classifyClientEvidence,
+  paginateAuditEvents,
+} from "./governance-client";
 
 /**
  * Aplikasi monitor sesi dev-workflow.
@@ -219,6 +226,7 @@ export default function App() {
   const [filter, setFilter] = useState("semua");
   const [cockpitMode, setCockpitMode] = useState("cockpit");
   const [focusZoom, setFocusZoom] = useState(1);
+  const [govFeedback, setGovFeedback] = useState({});
   const hidup = useRef(true);
   const { width } = useWindowDimensions();
 
@@ -391,6 +399,74 @@ export default function App() {
   const governanceItems = useMemo(
     () => selectGovernanceItems({ sessions: sesi, alerts }),
     [sesi, alerts],
+  );
+
+  const jalankanAksiGovernance = useCallback(
+    async (sessionObj, actionId, stepUp = false) => {
+      const meta = GOVERNANCE_ACTIONS[actionId];
+      if (!meta || !sessionObj) return;
+      if (meta.requiresStepUp && !stepUp) {
+        Alert.alert(
+          meta.label,
+          `${meta.riskDescription}\n\nSesi: ${sessionObj.session_key}`,
+          [
+            { text: "Batal", style: "cancel" },
+            {
+              text: "Konfirmasi Eksekusi",
+              style: "destructive",
+              onPress: () => jalankanAksiGovernance(sessionObj, actionId, true),
+            },
+          ]
+        );
+        return;
+      }
+
+      setGovFeedback((prev) => ({
+        ...prev,
+        [sessionObj.session_key]: { pending: true, text: `Mengirim ${meta.label}...` },
+      }));
+
+      const activeProf = profileStore.getActiveProfile();
+      const payload = buildGovernanceRequest({
+        sessionKey: sessionObj.session_key,
+        action: actionId,
+        reason: `Xiaomi Pad 6 HITL: ${meta.label}`,
+        stepUpConfirmed: stepUp,
+        contractRevision: sessionObj.contractRevision || "rev_1",
+        evidenceDigest: sessionObj.evidence?.stdoutDigest || "",
+        policyDigest: sessionObj.policyDigest || "default_policy",
+      });
+
+      const res = await submitGovernanceAction({
+        baseUrl: MONITOR_URL,
+        token: activeProf ? activeProf.token : null,
+        payload,
+      });
+
+      if (!res.ok) {
+        setGovFeedback((prev) => ({
+          ...prev,
+          [sessionObj.session_key]: {
+            pending: false,
+            error: true,
+            text: `Ditolak: ${res.error || "Gagal otorisasi"}`,
+          },
+        }));
+        return;
+      }
+
+      setGovFeedback((prev) => ({
+        ...prev,
+        [sessionObj.session_key]: {
+          pending: false,
+          error: false,
+          text: res.stopState
+            ? `Status Supervisor: ${res.stopState}`
+            : `Tercatat: ${res.outcome || "OK"}`,
+        },
+      }));
+    },
+    [MONITOR_URL],
   );
 
   return (
@@ -593,27 +669,59 @@ export default function App() {
                   {governanceItems.length === 0 ? (
                     <Text style={gaya.kosong}>Semua sesi berjalan normal · tidak ada antrean persetujuan atau sesi macet</Text>
                   ) : (
-                    governanceItems.map((gItem) => (
-                      <View key={gItem.sessionKey} style={gaya.govKartu}>
-                        <View style={gaya.baris}>
-                          <View style={[gaya.chip, { borderColor: WARNA.kuning, backgroundColor: "#d2992222" }]}>
-                            <Text style={[gaya.chipTeks, { color: WARNA.kuning }]}>{gItem.badgeLabel}</Text>
+                    governanceItems.map((gItem) => {
+                      const evStatus = classifyClientEvidence(gItem.session);
+                      const fb = govFeedback[gItem.sessionKey];
+                      return (
+                        <View key={gItem.sessionKey} style={gaya.govKartu}>
+                          <View style={gaya.baris}>
+                            <View style={[gaya.chip, { borderColor: WARNA.kuning, backgroundColor: "#d2992222" }]}>
+                              <Text style={[gaya.chipTeks, { color: WARNA.kuning }]}>{gItem.badgeLabel}</Text>
+                            </View>
+                            <View style={[gaya.chip, { borderColor: WARNA.biru, backgroundColor: "#1f6feb22" }]}>
+                              <Text style={[gaya.chipTeks, { color: WARNA.biruMuda }]}>EVIDENCE: {evStatus}</Text>
+                            </View>
+                            <Text style={gaya.meta}>{gItem.machine} · {ago(gItem.updatedAt, jamServer)}</Text>
                           </View>
-                          <Text style={gaya.meta}>{gItem.machine} · {ago(gItem.updatedAt, jamServer)}</Text>
+                          <Text style={gaya.task}>{gItem.task}</Text>
+                          <Text style={gaya.proyek}>{gItem.projectName}</Text>
+                          <Text style={[gaya.catatan, { color: WARNA.teks }]}>{gItem.reason}</Text>
+                          {fb ? (
+                            <Text style={[gaya.catatan, { color: fb.error ? WARNA.merah : WARNA.hijau, fontWeight: "700" }]}>
+                              {fb.text}
+                            </Text>
+                          ) : null}
+                          <View style={gaya.govActionBar}>
+                            <Pressable
+                              onPress={() => jalankanAksiGovernance(gItem.session, "approve_gate")}
+                              style={gaya.cockpitActionBtn}
+                            >
+                              <Text style={gaya.cockpitActionTeks}>{GOVERNANCE_ACTIONS.approve_gate.label}</Text>
+                            </Pressable>
+                            <Pressable
+                              onPress={() => jalankanAksiGovernance(gItem.session, "pause_task")}
+                              style={gaya.cockpitActionBtn}
+                            >
+                              <Text style={gaya.cockpitActionTeks}>{GOVERNANCE_ACTIONS.pause_task.label}</Text>
+                            </Pressable>
+                            <Pressable
+                              onPress={() => setDipilih(gItem.sessionKey)}
+                              style={gaya.cockpitActionBtn}
+                            >
+                              <Text style={gaya.cockpitActionTeks}>Inspeksi Bukti ›</Text>
+                            </Pressable>
+                            <Pressable
+                              onPress={() => jalankanAksiGovernance(gItem.session, "emergency_stop")}
+                              style={[gaya.cockpitActionBtn, { borderColor: WARNA.merah, backgroundColor: "#f8514922" }]}
+                            >
+                              <Text style={[gaya.cockpitActionTeks, { color: "#ff7b72" }]}>
+                                {GOVERNANCE_ACTIONS.emergency_stop.label}
+                              </Text>
+                            </Pressable>
+                          </View>
                         </View>
-                        <Text style={gaya.task}>{gItem.task}</Text>
-                        <Text style={gaya.proyek}>{gItem.projectName}</Text>
-                        <Text style={[gaya.catatan, { color: WARNA.teks }]}>{gItem.reason}</Text>
-                        <View style={gaya.govActionBar}>
-                          <Pressable
-                            onPress={() => setDipilih(gItem.sessionKey)}
-                            style={gaya.cockpitActionBtn}
-                          >
-                            <Text style={gaya.cockpitActionTeks}>Inspeksi Bukti &amp; Tindakan ›</Text>
-                          </Pressable>
-                        </View>
-                      </View>
-                    ))
+                      );
+                    })
                   )}
                 </View>
               )}
@@ -1337,6 +1445,21 @@ function DetailSesi({ s, jamServer, onClose, monitorUrl }) {
             {(s.dod_total || 0) === 0 && (
               <Text style={gaya.langkah}>(belum ada item DoD)</Text>
             )}
+
+            <Text style={gaya.bagianJudul}>
+              Evidence & Audit Inspector · {classifyClientEvidence(s)}
+            </Text>
+            <Text style={gaya.langkah}>
+              integritas bukti: {classifyClientEvidence(s)} (rev: {s.currentRevision || s.git_sha || "untracked"})
+            </Text>
+            <Text style={gaya.langkah}>
+              revisi kontrak: {s.contractRevision || "rev_1"} · kepatuhan scope: {s.scope_violation ? "VIOLATION" : "COMPLIANT"}
+            </Text>
+            {paginateAuditEvents(s.approvals || [], 1, 5).events.map((ev, idx) => (
+              <Text key={ev.id || idx} style={gaya.langkah}>
+                • [{ev.action || ev.status}] oleh {ev.actorId || "human"} ({ev.recordedAt || "-"})
+              </Text>
+            ))}
 
             <Text style={gaya.bagianJudul}>Sesi</Text>
             <Text style={gaya.langkah}>kunci: {s.session_key}</Text>

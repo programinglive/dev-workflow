@@ -240,6 +240,12 @@ finished.
 | `build-monitor.js`, `monitor-server/build-monitor.cjs` | Real-time build & execution status tracker (`report_build_status`) shared between MCP and the live monitor dashboard |
 | `mobile-app/build-view.js` | Android build tab presentation and truthful build host labeling |
 | `mobile-app/server-profile.js` | Headless server profile management, URL normalization, and connection health probe |
+| `mobile-app/cockpit-mode.js` | Xiaomi Pad 6 landscape cockpit KPI strip, 3-mode selector (`Cockpit`, `Focus`, `Governance`), and `>= 48dp` ergonomic constants |
+| `mobile-app/governance-client.js` | M5 Human-in-the-Loop governance client (`approve_gate`, `reject_gate`, `request_changes`, `pause_task`, `resume_task`, `cancel_task`, `emergency_stop`, `waive_gate`) and M6 evidence classifier |
+| `mobile-app/verify-apk-release.cjs` | M7 CLI verifier for Android release workflow, APK SHA-256 integrity, and Xiaomi Pad 6 ADB hardware detection |
+| `monitor-server/mobile-governance.cjs` | M5/M6 backend governance engine, Emergency Stop state machine (`STOP_REQUESTED` → `STOP_DISPATCHED` → `STOP_CONFIRMED`) with worker epoch fencing, and revision-bound Evidence & Audit Inspector |
+| `security/identity-provider.js` | `LocalIdentityProvider` (100% offline standalone) and `PocketBaseIdentityProvider` (`activity_users`) plus default-deny Central Gateway (`pb_*`) policy guard |
+| `docs/releases/` | Machine-readable Option B+ Release Readiness Report (`release-readiness-report.json`) and Canary Rollout Plan (`canary-rollout-plan.md`) |
 | `workflow-state.js` | The state machine and its persistence (phase, DoD, plan, history, activeBuild) |
 | `workflow-guidance.js` | English implementation instructions delivered at connection and workflow checkpoints |
 | `zettly-client.js` | Device-local owner credentials, account checks and bounded authenticated Zettly requests |
