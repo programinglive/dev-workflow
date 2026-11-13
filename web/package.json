@@ -7,6 +7,7 @@
     "predev": "node scripts/generate-version.mjs && node scripts/generate-docs-data.mjs",
     "dev": "node server.js",
     "build": "next build",
+    "postbuild": "node scripts/normalize-static-export.mjs",
     "start": "cross-env NODE_ENV=production node server.js",
     "lint": "eslint ."
   },
