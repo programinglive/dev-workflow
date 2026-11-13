@@ -1,5 +1,6 @@
 import { textResponse, isReleaseSatisfied, resetToCommitIfWorkingChanges, summarizeHistory } from "./shared.js";
 import { resolveProjectDir, setActiveProjectDir, getActiveProjectDir } from "../../exec.js";
+import { assertMutationRepository } from "./commit-handlers.js";
 import { acquireReleaseLock, releaseReleaseLock, readReleaseLock } from "../release-lock.js";
 
 /**
@@ -177,6 +178,20 @@ export async function handleRecordDeployment(args, context) {
       return textResponse(`❌ projectDir tidak valid: ${error.message}`);
     }
     workflowState.state.projectDir = getActiveProjectDir();
+  }
+
+  // A deployment record is a claim about one repository. Recording it against a
+  // checkout this task never started in would attach the claim to the wrong
+  // project, so the identity contract is checked first.
+  {
+    const repoGuard = await assertMutationRepository({
+      workflowState,
+      dir: workflowState.state.projectDir || getActiveProjectDir() || "",
+      operation: "record_deployment",
+    });
+    if (!repoGuard.ok) {
+      return textResponse(repoGuard.message);
+    }
   }
 
   let tagSha = "";
@@ -387,6 +402,20 @@ export async function handlePerformRelease(args, context) {
       return textResponse(`❌ projectDir tidak valid: ${error.message}`);
     }
     workflowState.state.projectDir = getActiveProjectDir();
+  }
+
+  // A release is the most destructive mutation in the workflow. It must run in
+  // the checkout this task started in, never in another clone that happens to
+  // share the remote.
+  {
+    const repoGuard = await assertMutationRepository({
+      workflowState,
+      dir: workflowState.state.projectDir || getActiveProjectDir() || "",
+      operation: "perform_release",
+    });
+    if (!repoGuard.ok) {
+      return textResponse(repoGuard.message);
+    }
   }
 
   // Release lock: a second session must not run the release script at the same
