@@ -69,3 +69,7 @@ scripts/probe-*.sh
 scripts/verify-share*.sh
 scripts/verify-orphan*.sh
 mobile-app/
+.managed-publish/
+**/__pycache__/
+*.pyc
+.netlify/
