@@ -5,6 +5,7 @@ import { containsTestFilesInStatus } from "../../git-helpers.js";
 import { reportEventSafe } from "../../monitor.js";
 import { validateAiSuggestions, collectSignals, buildRecommendations, renderRecommendations } from "./next-steps.js";
 import { resolveProjectDir, setActiveProjectDir, getActiveProjectDir } from "../../exec.js";
+import { captureRepositoryIdentity, assertTaskRepository } from "../../repository-identity.js";
 import path from "path";
 import fs from "fs";
 import { updateTaskStatus, isConfigured, readFactoryConfig } from "../../factory-client.js";
@@ -92,6 +93,27 @@ function applyProjectDirOverride(args) {
 }
 
 /**
+ * Repository identity preflight for a task-bound mutation.
+ *
+ * `commit_and_push` accepts a `projectDir` override and runs git in it. Without
+ * this check a task started in repository A could commit into repository B by
+ * passing B's directory - the same class of defect as the 13 November 2026
+ * incident, one step later in the workflow.
+ *
+ * A task started before identity contracts existed has no contract; it is
+ * allowed through so in-flight work is not broken.
+ */
+export async function assertMutationRepository({ workflowState, dir, operation }) {
+  const contract = workflowState?.state?.identityContract;
+  if (!contract || !contract.repository) {
+    return { ok: true, legacy: true };
+  }
+
+  const actual = await captureRepositoryIdentity({ dir });
+  return assertTaskRepository({ contract, actual, operation });
+}
+
+/**
  * Branch yang benar-benar dipakai untuk push.
  *
  * Urutan: `branch` eksplisit -> branch aktif -> primary branch.
@@ -174,6 +196,20 @@ export async function handleCommitAndPush(args, context) {
   }
 
   workflowState.state.projectDir = getActiveProjectDir() || workflowState.state.projectDir || "";
+
+  // Repository identity preflight: a task is bound to the checkout it started
+  // in. A `projectDir` override that points at another checkout must not commit
+  // there, even when the remote matches.
+  {
+    const repoGuard = await assertMutationRepository({
+      workflowState,
+      dir: workflowState.state.projectDir,
+      operation: "commit_and_push",
+    });
+    if (!repoGuard.ok) {
+      return textResponse(repoGuard.message);
+    }
+  }
 
   // Guard DoD yang eksplisit. `handleReadyCheck` di bawah sudah menutupi ini
   // secara transitif, tetapi pesannya generik ("NOT READY"); di sini kita bisa
