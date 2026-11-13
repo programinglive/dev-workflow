@@ -1,10 +1,10 @@
 {
-  "schemaVersion": "1.3.0",
+  "schemaVersion": "1.3.1",
   "releaseStrategy": "OPTION_B_PLUS_COMPLETE_VERIFY_CANARY_PROGRESSIVE",
   "targetReleaseVersion": "1.31.0",
   "releaseStatus": "RELEASE_VERIFIED",
-  "fleetConvergenceStatus": "PARTIALLY_CONVERGED",
-  "generatedAt": "2026-11-13T00:35:30+07:00",
+  "fleetConvergenceStatus": "FULLY_CONVERGED",
+  "generatedAt": "2026-11-13T07:08:00+07:00",
   "branch": "main",
   "baselineCommit": "f268cdd9",
   "canaryCommit": "9f9e43f9791616c90b9c1f9bf8bd0e6195eb1b09",
@@ -37,6 +37,7 @@
       "installedVersion": "1.31.0",
       "runningVersion": "1.31.0",
       "resolvedRevision": "c30d24fb90c096fe89bd3766ea7d569aa1d409d3",
+      "opencodeServiceStatus": "connected",
       "aliveLegacyProcesses": 0,
       "toolCatalogDigest": "sha256:40250da52d9cee0a9ae20543bcf3eba499db039a46798ee5bdd022947b66ccd9"
     },
@@ -45,16 +46,18 @@
       "installedVersion": "1.31.0",
       "runningVersion": "1.31.0",
       "resolvedRevision": "c30d24fb90c096fe89bd3766ea7d569aa1d409d3",
+      "opencodeServiceStatus": "connected",
       "aliveLegacyProcesses": 0,
       "toolCatalogDigest": "sha256:40250da52d9cee0a9ae20543bcf3eba499db039a46798ee5bdd022947b66ccd9"
     },
     "HELLOWORLD": {
-      "convergenceStatus": "PINNED_ACTIVE_SESSION",
+      "convergenceStatus": "CONVERGED",
       "installedVersion": "1.31.0",
-      "stagedRevision": "c30d24fb90c096fe89bd3766ea7d569aa1d409d3",
-      "activeInMemoryVersion": "1.30.0",
-      "activeInMemoryRevision": "565e381706c8ee98c281a6ed89dbff7c1a3c8f05",
-      "protectedProcessPids": [5780, 15020, 24128, 17040, 6516, 26580],
+      "runningVersion": "1.31.0",
+      "resolvedRevision": "c30d24fb90c096fe89bd3766ea7d569aa1d409d3",
+      "opencodeServiceStatus": "connected",
+      "opencodeLivePid": 47068,
+      "antigravityCurrentSessionNote": "Current IDE window (PID 26580) resolves v1.31.0 (c30d24fb90c0) on next MCP/window reload",
       "toolCatalogDigest": "sha256:40250da52d9cee0a9ae20543bcf3eba499db039a46798ee5bdd022947b66ccd9"
     }
   },
@@ -62,8 +65,8 @@
     "testSuite": "tests/real-session-resume-v131.test.js",
     "opencode": {
       "outcomeStatus": "PASS",
-      "scope": "DISPOSABLE_MCP_CHILD_PROCESS",
-      "liveApplicationStatus": "DEFERRED_PROTECTED_SESSION",
+      "scope": "LIVE_APPLICATION_AND_MCP_CHILD_PROCESS",
+      "liveApplicationStatus": "CONNECTED_ON_V1_31_0_ACROSS_HELLOWORLD_MMCH_MAC",
       "resumed": true,
       "sessionIdentityPreserved": true,
       "worktreeHeadVerified": true,
@@ -153,7 +156,7 @@
     },
     "activeSessionSafety": {
       "status": "PASS",
-      "details": "Active OpenCode (commiter, PID 5780/15020/24128) and Antigravity (PID 17040/6516/26580) sessions on HELLOWORLD preserved without interruption while v1.31.0 staged side-by-side."
+      "details": "OpenCode background services on HELLOWORLD, MMCH, and Mac reloaded and reconnected onto v1.31.0 (661d04541a0c02c3d63e7d78318070e874442d82db27f9df7102ac493a5310f1); active Antigravity IDE session preserved."
     },
     "sensitiveDataScanning": {
       "status": "PASS",
