@@ -10,7 +10,7 @@
 
 | Gate ID | Security & Compliance Gate | Status | Evidence / Notes |
 |---|---|---|---|
-| **GATE-01** | Full Private Backup Created & Verified | ✅ **PASS** | Bundle verified: `D:\code\dev-workflow-private-backup-20261112.bundle` (6.4 MB, 248 refs). |
+| **GATE-01** | Full Private Backup Created & Verified | ✅ **PASS** | Offline backup verified: `<PRIVATE_BACKUP_PATH>` (6.4 MB, 248 refs). |
 | **GATE-02** | Source Code Sensitive Data Sanitized | 🔄 **IN_PROGRESS** | `docs/opensource/sensitive-data-inventory.md` created; templates parameterized. |
 | **GATE-03** | Internal Infrastructure Coupling Decoupled | 🔄 **IN_PROGRESS** | Fleet rollout decoupled into optional extensions; local-first defaults active. |
 | **GATE-04** | Historical Git Commit Objects Detached | 🔄 **READY_FOR_CANDIDATE**| In-place orphan root branch protocol prepared. |

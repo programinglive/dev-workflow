@@ -2,7 +2,7 @@
 
 **Document Version:** 1.0.0  
 **Target:** Reinitialize `origin/main` in-place with a clean orphan root commit  
-**Precondition:** Complete private backup bundle verified (`dev-workflow-private-backup-20261112.bundle`)  
+**Precondition:** Complete offline private backup verified (`<PRIVATE_BACKUP_PATH>`)  
 
 ---
 

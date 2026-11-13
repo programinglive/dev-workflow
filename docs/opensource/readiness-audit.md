@@ -14,7 +14,7 @@ The repository `@programinglive/dev-workflow-mcp-server` currently contains batt
 
 ### Current Publication Gate: **BLOCKED**
 Under the **Mandatory Publication Safety Rule**, direct publication, changing repository visibility to public, pushing historical commits to public remotes, or publishing public npm packages is strictly blocked until:
-1. Complete private backup is created and verified (✅ Done: `D:\code\dev-workflow-private-backup-20261112.bundle`).
+1. Complete private backup is created and verified (✅ Done: `<PRIVATE_BACKUP_PATH>`).
 2. Sensitive data inventory is recorded and sanitized.
 3. Internal infrastructure coupling is refactored into pluggable adapters.
 4. Clean orphan-root Git candidate is prepared and verified in an isolated workspace.

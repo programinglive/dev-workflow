@@ -22,9 +22,8 @@
 When explicit authorization is granted by the repository owner:
 
 ```bash
-# 1. Verify dual offline durable bundles exist outside git tree
-test -f "D:/code/dev-workflow-private-backup-20261112.bundle" || exit 1
-test -f "D:/code/dev-workflow-private-backup-20261113-s3b.bundle" || exit 1
+# 1. Verify offline durable backup bundle exists outside git tree
+test -f "<PRIVATE_BACKUP_PATH>" || exit 1
 
 # 2. Checkout the verified clean-history candidate (v1.31.0-oss.0)
 git checkout clean-history-root
@@ -76,7 +75,7 @@ git remote prune origin
 If the reinitialization must be reversed for any operational reason:
 ```bash
 # Restore entire legacy repository from the verified private bundle:
-git clone "D:/code/dev-workflow-private-backup-20261113-s3b.bundle" dev-workflow-restored
+git clone "<PRIVATE_BACKUP_PATH>" dev-workflow-restored
 cd dev-workflow-restored
 
 # Force-restore original history back to origin:

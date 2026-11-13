@@ -2,7 +2,7 @@
 
 **Document Version:** 1.0.0  
 **Target Approach:** In-Place Repository Sanitization + Clean Orphan Root Reinitialization  
-**Backup Reference:** `D:\code\dev-workflow-private-backup-20261112.bundle` (Verified, 6.4 MB, 248 refs)  
+**Backup Reference:** `<PRIVATE_BACKUP_PATH>` (Verified, 6.4 MB, 248 refs)  
 
 ---
 
@@ -13,7 +13,7 @@ Rather than abandoning the established GitHub repository (`github.com/programing
 ```text
 [Legacy Private History: v1.0.0 ... v1.30.0 (248 refs)]
                        |
-                       | (Backed up to dev-workflow-private-backup-20261112.bundle)
+                       | (Backed up to <PRIVATE_BACKUP_PATH>)
                        v
          [DISCONNECTED / RETAINED PRIVATELY]
 
@@ -36,8 +36,8 @@ Rather than abandoning the established GitHub repository (`github.com/programing
 ## 2. Extraction & Reinitialization Steps
 
 ### Step 1: Immutable Full Backup (COMPLETED & VERIFIED)
-- Created full git bundle: `git bundle create D:\code\dev-workflow-private-backup-20261112.bundle --all`.
-- Verified bundle integrity: `git bundle verify D:\code\dev-workflow-private-backup-20261112.bundle` confirms 248 refs and complete history.
+- Created full git bundle: `git bundle create <PRIVATE_BACKUP_PATH> --all`.
+- Verified bundle integrity: `git bundle verify <PRIVATE_BACKUP_PATH>` confirms 248 refs and complete history.
 
 ### Step 2: Source Code Sanitization
 - Relocate proprietary fleet scripts (`managed/rollout.cjs`, `managed/restart-devices.cjs`) into private adapter modules.

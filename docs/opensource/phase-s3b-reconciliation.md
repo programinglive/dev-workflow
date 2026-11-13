@@ -38,7 +38,7 @@ This phase integrates comprehensive client registration health checks into `devw
 - Per Section 8 security boundaries, no password authentication was attempted.
 
 ### 6. Safety Guardrails & Reconciled Cutover Protocol
-- **No Public Legacy Branches:** Historical backup refs remain strictly offline in durable bundles (`D:\code\dev-workflow-private-backup-20261113-s3b.bundle`). Never create a `main-private-archive` branch on the public remote.
+- **No Public Legacy Branches:** Historical backup refs remain strictly offline in durable private backups (`<PRIVATE_BACKUP_PATH>`). Never create a `main-private-archive` branch on the public remote.
 - **GitHub Object Pruning Reality:** Clean root overwrite does not instantly delete historical objects from GitHub server caches until GitHub GC runs or repo is reset.
 - **No Automated Fleet Bouncing:** Internal fleet devices remain on pinned bootstrap and are migrated deliberately.
 - **Version Continuity:** Replaced confusing `v1.0.0-oss` with harmonized `v1.31.0-oss.0`.
@@ -47,6 +47,6 @@ This phase integrates comprehensive client registration health checks into `devw
 - Full test suite: `1943` tests across 29 test suites (`1917` passed, 0 failed, 26 skipped).
 - Security test suite: `47/47` passed.
 - Pack verification: Clean tarball `485 kB` (188 files), clean test consumer install with operational CLI.
-- Durable backup bundles created:
-  - `D:\code\dev-workflow-private-backup-20261112.bundle` (6.4 MB)
-  - `D:\code\dev-workflow-private-backup-20261113-s3b.bundle` (278 refs verified)
+- Durable offline backups verified:
+  - `<PRIVATE_BACKUP_PATH>` (initial mirror)
+  - `<PRIVATE_BACKUP_PATH>` (278 refs verified)

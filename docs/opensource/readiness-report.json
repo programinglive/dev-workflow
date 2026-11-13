@@ -7,7 +7,7 @@
   "strategy": "IN_PLACE_ORPHAN_ROOT_REINITIALIZATION",
   "backup": {
     "status": "VERIFIED",
-    "location": "D:/code/dev-workflow-private-backup-20261112.bundle",
+    "location": "<PRIVATE_BACKUP_PATH>",
     "sizeBytes": 6439803,
     "totalRefs": 248,
     "algorithm": "sha1"
