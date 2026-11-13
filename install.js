@@ -9,6 +9,7 @@ import { safeLog } from './security/sanitizer.js';
 import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { runOnboardingSetup } from './cli/onboarding.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -71,4 +72,25 @@ async function install() {
   }
 }
 
-install();
+async function ensureOnboardingProfile() {
+  try {
+    const projectRoot = process.env.INIT_CWD || process.cwd();
+    if (projectRoot.includes(`node_modules${path.sep}`)) return;
+    const setup = await runOnboardingSetup({
+      env: process.env,
+      skipZettly: process.env.DEVWF_SKIP_ZETTLY === '1',
+    });
+    if (setup.action === 'PRESERVED_EXISTING_CONNECTION') {
+      safeLog('info', '✓ Preserved existing Zettly connection.');
+    } else if (setup.action === 'ZETTLY_SKIPPED') {
+      safeLog('info', '✓ Initialized local-first standalone profile (Zettly skipped).');
+    } else if (setup.action === 'INITIALIZED_LOCAL_FIRST') {
+      safeLog('info', '✓ Initialized local-first standalone profile (Zettly optional).');
+    }
+  } catch (error) {
+    safeLog('warn', `⚠️ Onboarding profile note: ${error.message}`);
+  }
+}
+
+await install();
+await ensureOnboardingProfile();

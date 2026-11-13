@@ -19,6 +19,15 @@
  */
 import { CliError } from "./args.js";
 import { createPairingChallenge } from "../pairing/challenge.js";
+import {
+  connectZettlyAccount,
+  disconnectZettlyAccount,
+  getZettlyStatus,
+  runOnboardingSetup,
+  runZettlyDoctor,
+  skipZettlySetup,
+  switchZettlyAccount,
+} from "./onboarding.js";
 import { createRequire } from "node:module";
 import os from "node:os";
 
@@ -150,13 +159,84 @@ export async function runCommand({
   if (command === "doctor") {
     const nodeMajor = Number(process.versions.node.split(".")[0]);
     const nodeOk = nodeMajor >= 20;
+    const zettlyStatus = await getZettlyStatus({ env });
     out.write("DevWorkflow Environment Doctor:");
     out.write(`  Node.js: v${process.versions.node} (${nodeOk ? "OK" : "FAIL - requires >= 20"})`);
     out.write(`  Platform: ${process.platform} (${process.arch})`);
     out.write(`  Security Mode: ${env.DEV_WORKFLOW_SECURITY_MODE || "strict"} (OK)`);
     out.write("  Storage Engine: better-sqlite3 (OK)");
     out.write("  Execution Mode: Local-first (OK)");
-    return { ok: nodeOk };
+    out.write(`  Zettly Mode: ${zettlyStatus.mode}`);
+    return { ok: nodeOk, zettlyMode: zettlyStatus.mode };
+  }
+
+  if (command === "setup") {
+    const result = await runOnboardingSetup({
+      env,
+      skipZettly: Boolean(args.skipZettly),
+      dryRun: Boolean(args.dryRun),
+    });
+    if (args.json) {
+      out.write(JSON.stringify(result, null, 2));
+    } else {
+      out.write(`DevWorkflow Setup: ${result.action} (${result.mode})`);
+    }
+    return result;
+  }
+
+  if (command === "zettly") {
+    const verb = args.zettlyVerb || "status";
+    if (verb === "status") {
+      const status = await getZettlyStatus({ env });
+      if (args.json) out.write(JSON.stringify(status, null, 2));
+      else out.write(`Zettly Status: mode=${status.mode} connected=${status.connected} base=${status.base || "-"}`);
+      return status;
+    }
+    if (verb === "doctor") {
+      const diag = await runZettlyDoctor({ env });
+      if (args.json) out.write(JSON.stringify(diag, null, 2));
+      else out.write(`Zettly Doctor: ok=${diag.ok} mode=${diag.mode} standalone=${diag.standalone}`);
+      return diag;
+    }
+    if (verb === "skip") {
+      const res = await skipZettlySetup({ env, dryRun: Boolean(args.dryRun) });
+      if (args.json) out.write(JSON.stringify(res, null, 2));
+      else out.write(`Zettly Setup: ${res.action} (${res.mode})`);
+      return res;
+    }
+    if (verb === "connect") {
+      const res = await connectZettlyAccount({
+        env,
+        url: args.url,
+        token: args.token,
+        dryRun: Boolean(args.dryRun),
+      });
+      if (args.json) out.write(JSON.stringify(res, null, 2));
+      else out.write(`Zettly Connected: ${res.accountLabel} (userId=${res.expectedUserId}) @ ${res.base}`);
+      return res;
+    }
+    if (verb === "switch") {
+      const res = await switchZettlyAccount({
+        env,
+        url: args.url,
+        token: args.token,
+        confirm: Boolean(args.confirm),
+        dryRun: Boolean(args.dryRun),
+      });
+      if (args.json) out.write(JSON.stringify(res, null, 2));
+      else out.write(`Zettly Switched: ${res.accountLabel} (userId=${res.expectedUserId}) @ ${res.base}`);
+      return res;
+    }
+    if (verb === "disconnect") {
+      const res = await disconnectZettlyAccount({
+        env,
+        confirm: Boolean(args.confirm),
+        dryRun: Boolean(args.dryRun),
+      });
+      if (args.json) out.write(JSON.stringify(res, null, 2));
+      else out.write(`Zettly Disconnected: localHistoryPreserved=${res.localHistoryPreserved}`);
+      return res;
+    }
   }
 
   if (command === "pair") {
