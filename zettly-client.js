@@ -45,15 +45,39 @@ async function readMacKeychainToken({service,account}) {
   return result.stdout.trim();
 }
 
+function readDevwfProfile(env=process.env,home=os.homedir()) {
+  const dir=typeof env.DEVWF_PROFILE_DIR==='string'&&env.DEVWF_PROFILE_DIR.trim()?path.resolve(env.DEVWF_PROFILE_DIR.trim()):path.join(home,'.devworkflow');
+  let profile=null;
+  let creds=null;
+  try{profile=JSON.parse(readFileSync(path.join(dir,'profile.json'),'utf8'));}catch{}
+  try{
+    const parsed=JSON.parse(readFileSync(path.join(dir,'zettly-credentials.json'),'utf8'));
+    if(parsed&&parsed.base&&parsed.token) creds=parsed;
+  }catch{}
+  return {profile,creds};
+}
+
 export async function resolveZettlyConfig(env=process.env,{platform=process.platform,home=os.homedir(),dpapiReader=readWindowsDpapiToken,keychainReader=readMacKeychainToken}={}) {
+  const {profile,creds}=readDevwfProfile(env,home);
+  if(profile&&(profile.mode==='ZETTLY_SKIPPED'||profile.mode==='ZETTLY_DISCONNECTED')){
+    return null;
+  }
   let fallback=readZettlyConfig(env);
   let cli={};try{cli=JSON.parse(readFileSync(path.join(home,'.zettly','config.json'),'utf8'));}catch{}
-  const base=env.ZETTLY_API_BASE||cli.host||fallback?.base||'https://zettly.programinglive.com';
+  const base=env.ZETTLY_API_BASE||cli.host||creds?.base||profile?.zettly?.base||fallback?.base||'';
   const owner=cli.managedOwnerCredential||{};
-  const requestedOwner=env.ZETTLY_EXPECTED_USER_ID||owner.expectedUserId;
+  const profileOwner=profile?.zettly?.expectedUserId;
+  const envOwner=env.ZETTLY_EXPECTED_USER_ID;
+  if(envOwner&&profileOwner&&Number(envOwner)!==Number(profileOwner))return null;
+  const requestedOwner=envOwner||profileOwner||owner.expectedUserId;
   const expectedUserId=requestedOwner?Number(requestedOwner):undefined;
   if(requestedOwner&&(!Number.isSafeInteger(expectedUserId)||expectedUserId<1))return null;
   if(env.ZETTLY_API_TOKEN&&fallback)return {...fallback,source:'environment',expectedUserId};
+  if(profile?.mode==='ZETTLY_CONNECTED'&&creds){
+    const profileBase=env.ZETTLY_API_BASE||creds.base;
+    const config=readZettlyConfig({...env,ZETTLY_API_BASE:profileBase,ZETTLY_API_TOKEN:creds.token});
+    return config?{...config,source:'devworkflow-profile',expectedUserId}:null;
+  }
   if(platform==='win32'){
     const file=path.join(home,'.zettly','token.dpapi');
     try{
@@ -65,9 +89,9 @@ export async function resolveZettlyConfig(env=process.env,{platform=process.plat
       if(existsSync(file))return null;
     }
   }
-  if(platform==='darwin'&&owner.source==='macos-keychain'){
+  if(platform==='darwin'&&owner.source==='macos-keychain'&&owner.service&&owner.account){
     try{
-      const token=await keychainReader({service:owner.service||'programinglive.zettly',account:owner.account||'zettly-owner'});
+      const token=await keychainReader({service:owner.service,account:owner.account});
       const config=token&&readZettlyConfig({...env,ZETTLY_API_BASE:base,ZETTLY_API_TOKEN:token});
       return config?{...config,source:'macos-keychain',expectedUserId}:null;
     }catch{return null;}

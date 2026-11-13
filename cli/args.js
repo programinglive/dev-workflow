@@ -14,8 +14,9 @@
  * only `list` runs without one.
  */
 
-const COMMANDS = ["list", "close", "share", "drop", "complete", "help", "version", "doctor", "pair", "fleet", "identity"];
+const COMMANDS = ["list", "close", "share", "drop", "complete", "help", "version", "doctor", "pair", "fleet", "identity", "setup", "zettly"];
 const FLEET_VERBS = ["status", "check", "plan", "stage", "activate", "verify", "rollback", "doctor", "upgrade"];
+const ZETTLY_VERBS = ["status", "skip", "connect", "switch", "disconnect", "doctor"];
 
 /** A refusal the CLI reports to the user and turns into a non-zero exit. */
 export class CliError extends Error {
@@ -30,6 +31,9 @@ export const USAGE = `devwf - close sessions and cards without the web monitor
 
 Usage:
   devwf doctor                                 Check environment, node, and storage diagnostics
+  devwf setup [--skip-zettly] [--json]         Initialize local-first profile (preserves existing Zettly)
+  devwf zettly status|skip|connect|switch|disconnect|doctor
+                                               Manage optional per-user Zettly integration
   devwf pair [--url <url>] [--json]            Generate pairing challenge for mobile companion
   devwf list                                  List sessions from the monitor
   devwf close --session <key> [--dry-run]      Mark one session closed
@@ -69,7 +73,7 @@ const FLAGS_WITH_VALUE = new Set([
   "--dir",
   "--against",
 ]);
-const BOOLEAN_FLAGS = new Set(["--dry-run", "--orphans", "--help", "--version", "--json", "--authorize", "--all", "--resume", "--force"]);
+const BOOLEAN_FLAGS = new Set(["--dry-run", "--orphans", "--help", "--version", "--json", "--authorize", "--all", "--resume", "--force", "--skip-zettly", "--confirm", "--token-stdin"]);
 
 /**
  * Parses argv (without the node and script entries).
@@ -114,6 +118,15 @@ export function parseArgs(argv = []) {
     }
     args.fleetVerb = verb;
     index = words[1] && !words[1].startsWith("--") ? 2 : 1;
+  } else if (command === "zettly") {
+    const verb = words[1] && !words[1].startsWith("--") ? words[1] : "status";
+    if (!ZETTLY_VERBS.includes(verb)) {
+      throw new CliError(
+        `"zettly" needs a valid verb: ${ZETTLY_VERBS.join(", ")}.`
+      );
+    }
+    args.zettlyVerb = verb;
+    index = words[1] && !words[1].startsWith("--") ? 2 : 1;
   }
 
   for (; index < words.length; index += 1) {
@@ -129,6 +142,9 @@ export function parseArgs(argv = []) {
       if (word === "--all") args.all = true;
       if (word === "--resume") args.resume = true;
       if (word === "--force") args.force = true;
+      if (word === "--skip-zettly") args.skipZettly = true;
+      if (word === "--confirm") args.confirm = true;
+      if (word === "--token-stdin") args.tokenStdin = true;
       continue;
     }
 

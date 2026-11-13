@@ -37,11 +37,23 @@ npx devwf doctor`,
           headers: ["Mode", "Command", "When to Use"],
           rows: [
             ["Source checkout", "npm ci", "Reproducible install from package-lock.json in a cloned repository"],
+            ["Local-first init", "npx devwf setup", "Initialize LOCAL_FIRST_STANDALONE profile (preserves existing Zettly)"],
+            ["Skip Zettly", "npx devwf setup --skip-zettly", "Explicitly skip Zettly on fresh install (never resets connected accounts)"],
             ["Local CLI invocation", "npx devwf doctor", "Run devwf from the local checkout without modifying global PATH"],
             ["Global local link", "npm install -g . && devwf doctor", "Expose devwf globally on your machine from the local clone"],
             ["Public npm registry", "Pending Gate C", "Public npm install is not yet active; verify on /releases/ before using"],
           ],
         },
+      },
+      {
+        heading: "2b. Optional Per-User Zettly Integration & Isolation",
+        body: [
+          "DevWorkflow requires no Zettly account, PocketBase, Tailscale, or external monitor. If you choose to connect your own Zettly account, credentials are stored per-user in ~/.devworkflow/ (or DEVWF_PROFILE_DIR) with zero shared owner defaults. Supply tokens securely via interactive hidden prompt, --token-stdin, or ZETTLY_API_TOKEN (raw --token CLI arguments are disabled).",
+        ],
+        code: `npx devwf zettly status --json
+printf '%s' "$ZETTLY_API_TOKEN" | npx devwf zettly connect --url https://your-zettly.example --token-stdin
+printf '%s' "$ZETTLY_NEW_TOKEN" | npx devwf zettly switch --url https://other-zettly.example --token-stdin --confirm
+npx devwf zettly disconnect --confirm`,
       },
       {
         heading: "3. Register an AI Coding Client & Verify MCP Tools",
@@ -73,6 +85,8 @@ npx devwf doctor`,
           headers: ["Command", "Purpose", "Key Flags"],
           rows: [
             ["devwf doctor", "Verify Node.js, security mode, SQLite storage, and local-first execution", "--json"],
+            ["devwf setup", "Initialize local-first profile while preserving any existing Zettly connection", "--skip-zettly, --dry-run, --json"],
+            ["devwf zettly status|skip|connect|switch|disconnect|doctor", "Manage optional per-user Zettly integration without affecting local history", "--url <url>, --token-stdin, --confirm, --json"],
             ["devwf pair", "Generate pairing challenge for the optional Android Companion", "--url <url>, --json"],
             ["devwf fleet doctor", "Inspect MCP client configs and stdio health", "--json"],
             ["devwf fleet status", "Inspect machine convergence and toolCatalogDigest", "--json"],
