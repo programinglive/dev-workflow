@@ -70,7 +70,7 @@ import {
 const DEFAULT_MONITOR_URL =
   process.env.EXPO_PUBLIC_MONITOR_URL ||
   (Constants.expoConfig && Constants.expoConfig.extra && Constants.expoConfig.extra.monitorUrl) ||
-  "http://100.77.138.14:3100";
+  "http://127.0.0.1:3100";
 
 const memoryStorage = {};
 const persistentStorage = {
@@ -1733,7 +1733,7 @@ function ModalServer({
                       setHasilTes(null);
                       setGalatForm(null);
                     }}
-                    placeholder="100.77.138.14:3100 atau http://..."
+                    placeholder="127.0.0.1:3100 atau http://..."
                     placeholderTextColor={WARNA.redup}
                     autoCapitalize="none"
                     autoCorrect={false}

@@ -10,7 +10,7 @@ const ACTIVE_ID_KEY = "devwf_active_profile_id_v1";
 
 /**
  * Normalizes a user-provided or discovered server address string.
- * Supports "100.77.138.14:3100", "localhost:3100", "https://host:port/path".
+ * Supports "192.0.2.10:3100", "localhost:3100", "https://host:port/path".
  *
  * @param {string} rawInput
  * @returns {{ ok: boolean, url?: string, host?: string, isSecure?: boolean, error?: string }}

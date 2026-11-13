@@ -20,7 +20,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 const RETIRED_HOST = "100.107.65.21";
 const RETIRED_MONITOR_URL = "http://100.107.65.21:3100";
-const LIVE_MONITOR_URL = "http://100.77.138.14:3100";
+const PUBLIC_DEFAULT_MONITOR_URL = "http://127.0.0.1:3100";
 
 // Generated or vendored trees that would only add noise.
 const SKIP_DIRS = new Set([
@@ -44,18 +44,12 @@ const HISTORICAL_PATHS = [
 // Binary and lock artefacts.
 const SKIP_FILE = /(package-lock\.json|CHANGELOG\.md|\.env$|\.(png|ico|jpg|jpeg|gif|webp|apk|tgz|gz|zip))$/i;
 
-// Files that must name the live monitor address. Each entry is checked for
-// the value that makes it matter, not merely for any mention of the host.
-const FILES_WITH_LIVE_MONITOR_URL = [
+// Public runtime surfaces that must default to environment-agnostic local-first URLs.
+const FILES_WITH_PUBLIC_MONITOR_DEFAULT = [
   "monitor-server/dashboard.cjs",
-  "monitor-server/devwf-monitor.service",
-  "monitor-server/devwf-monitor.env.example",
   "mobile-app/App.js",
   "mobile-app/app.json",
-  "managed/rollout.cjs",
-  "docs/monitor-dashboard.md",
-  "docs/central-managed-mcp.md",
-  "docs/mobile-app.md",
+  "cli/monitor-client.js",
 ];
 
 function walk(dir, prefix = "") {
@@ -149,15 +143,15 @@ test("no live file escapes the retired host into a regex that still asserts it",
   assert.deepEqual(offenders, [], `escaped retired host still asserted at: ${offenders.join(", ")}`);
 });
 
-test("every live configuration surface names the bw-tools monitor URL", () => {
-  const missing = FILES_WITH_LIVE_MONITOR_URL.filter((rel) => {
+test("every public runtime configuration surface uses local-first default monitor URL", () => {
+  const missing = FILES_WITH_PUBLIC_MONITOR_DEFAULT.filter((rel) => {
     try {
-      return !read(rel).includes(LIVE_MONITOR_URL);
+      return !read(rel).includes(PUBLIC_DEFAULT_MONITOR_URL);
     } catch {
       return true;
     }
   });
-  assert.deepEqual(missing, [], `missing ${LIVE_MONITOR_URL} in: ${missing.join(", ")}`);
+  assert.deepEqual(missing, [], `missing ${PUBLIC_DEFAULT_MONITOR_URL} in: ${missing.join(", ")}`);
 });
 
 test("the managed rule block tells every device where the monitor lives", () => {

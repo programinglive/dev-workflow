@@ -8,7 +8,7 @@
  * Port 3100 hanya terjangkau dari dalam tailnet, jadi penyerang di internet
  * tidak bisa memanggilnya. Yang tetap bisa adalah HALAMAN WEB LAIN yang
  * dibuka di browser pemilik, di perangkat yang memang ada di tailnet: cukup
- * `fetch('http://100.77.138.14:3100/api/share', { method:'POST' })`, dan
+ * `fetch('http://127.0.0.1:3100/api/share', { method:'POST' })`, dan
  * tautan share baru saja dibuat atas nama pemilik.
  *
  * Karena itu ada dua syarat:

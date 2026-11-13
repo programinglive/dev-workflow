@@ -57,8 +57,8 @@ test("the default share origin does not name a retired host", () => {
   assert.equal(SUMBER.includes(retired), false, "the retired database host must not appear in the dashboard");
   assert.match(
     SUMBER,
-    /DEVWF_SHARE_ORIGINS \|\| 'http:\/\/100\.77\.138\.14:3100/,
-    "the default must point at the live monitor host"
+    /DEVWF_SHARE_ORIGINS \|\| 'http:\/\/127\.0\.0\.1:3100,http:\/\/localhost:3100'/,
+    "the default must use local-first open-source origins and allow DEVWF_SHARE_ORIGINS override"
   );
 });
 

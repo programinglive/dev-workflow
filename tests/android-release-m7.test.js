@@ -39,23 +39,50 @@ test("Milestone M7: Android APK Release Workflow & Verification", async (t) => {
     assert.equal(result.checks.noCommittedKeystoreSecret, true);
   });
 
-  await t.test("M7: verifyReleaseApkArtifact computes SHA-256 and verifies APK zip magic header", () => {
-    const apkPath = path.join(
-      ROOT_DIR,
-      "mobile-app",
-      "android",
-      "app",
-      "build",
-      "outputs",
-      "apk",
-      "release",
-      "app-release.apk"
-    );
-    const report = verifyReleaseApkArtifact(apkPath);
-    assert.equal(report.exists, true);
-    assert.equal(report.validZipHeader, true);
-    assert.ok(report.sizeBytes > 1_000_000);
-    assert.match(report.sha256, /^[a-f0-9]{64}$/);
+  await t.test("M7: verifyReleaseApkArtifact computes SHA-256 and verifies APK zip magic header", async () => {
+    const os = await import("node:os");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "devwf-m7-apk-"));
+    try {
+      const validApk = path.join(tmpDir, "valid-fixture.apk");
+      const validBuf = Buffer.alloc(1_050_000, 0x41);
+      validBuf[0] = 0x50; // P
+      validBuf[1] = 0x4b; // K
+      validBuf[2] = 0x03;
+      validBuf[3] = 0x04;
+      fs.writeFileSync(validApk, validBuf);
+      const tmpReport = verifyReleaseApkArtifact(validApk);
+      assert.equal(tmpReport.exists, true);
+      assert.equal(tmpReport.validZipHeader, true);
+      assert.ok(tmpReport.sizeBytes > 1_000_000);
+      assert.match(tmpReport.sha256, /^[a-f0-9]{64}$/);
+
+      const badApk = path.join(tmpDir, "bad-header.apk");
+      fs.writeFileSync(badApk, Buffer.alloc(16, 0x00));
+      const badReport = verifyReleaseApkArtifact(badApk);
+      assert.equal(badReport.exists, true);
+      assert.equal(badReport.validZipHeader, false);
+
+      const builtApkPath = path.join(
+        ROOT_DIR,
+        "mobile-app",
+        "android",
+        "app",
+        "build",
+        "outputs",
+        "apk",
+        "release",
+        "app-release.apk"
+      );
+      if (fs.existsSync(builtApkPath)) {
+        const builtReport = verifyReleaseApkArtifact(builtApkPath);
+        assert.equal(builtReport.exists, true);
+        assert.equal(builtReport.validZipHeader, true);
+        assert.ok(builtReport.sizeBytes > 1_000_000);
+        assert.match(builtReport.sha256, /^[a-f0-9]{64}$/);
+      }
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 
   await t.test("M7: parseAdbDevicesOutput identifies Xiaomi Pad 6 (pipa / 23043RP34G) accurately", () => {
@@ -86,18 +113,31 @@ test("Milestone M7: Android APK Release Workflow & Verification", async (t) => {
       path.join(ROOT_DIR, "mobile-app", "assets", "icon.png"),
       path.join(ROOT_DIR, "mobile-app", "assets", "splash-icon.png"),
       path.join(ROOT_DIR, "mobile-app", "assets", "android-icon-foreground.png"),
-      path.join(ROOT_DIR, "mobile-app", "android", "app", "src", "main", "res", "mipmap-xxxhdpi", "ic_launcher.webp"),
-      path.join(ROOT_DIR, "mobile-app", "android", "app", "src", "main", "res", "drawable-xxxhdpi", "splashscreen_logo.png"),
     ];
     for (const assetPath of requiredAssets) {
       assert.equal(fs.existsSync(assetPath), true, `Missing asset: ${assetPath}`);
       assert.ok(fs.statSync(assetPath).size > 1000, `Asset unexpectedly small: ${assetPath}`);
     }
 
-    const colorsXml = fs.readFileSync(
-      path.join(ROOT_DIR, "mobile-app", "android", "app", "src", "main", "res", "values", "colors.xml"),
-      "utf8"
+    const appJson = JSON.parse(
+      fs.readFileSync(path.join(ROOT_DIR, "mobile-app", "app.json"), "utf8")
     );
-    assert.match(colorsXml, /#080b12/);
+    assert.equal(appJson.expo?.splash?.backgroundColor, "#080b12");
+    assert.equal(appJson.expo?.android?.adaptiveIcon?.backgroundColor, "#080b12");
+
+    // Prebuild-generated native Android resources are gitignored; verify when present locally.
+    const androidResDir = path.join(ROOT_DIR, "mobile-app", "android", "app", "src", "main", "res");
+    if (fs.existsSync(androidResDir)) {
+      const prebuildAssets = [
+        path.join(androidResDir, "mipmap-xxxhdpi", "ic_launcher.webp"),
+        path.join(androidResDir, "drawable-xxxhdpi", "splashscreen_logo.png"),
+      ];
+      for (const assetPath of prebuildAssets) {
+        assert.equal(fs.existsSync(assetPath), true, `Missing prebuild asset: ${assetPath}`);
+        assert.ok(fs.statSync(assetPath).size > 1000, `Asset unexpectedly small: ${assetPath}`);
+      }
+      const colorsXml = fs.readFileSync(path.join(androidResDir, "values", "colors.xml"), "utf8");
+      assert.match(colorsXml, /#080b12/);
+    }
   });
 });

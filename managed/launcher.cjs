@@ -139,7 +139,7 @@ async function resolveRelease({url,token,cacheRoot,fetchImpl=fetch,install=insta
 }
 async function main() {
   const cacheRoot=process.env.DEVWF_MANAGED_CACHE||path.join(process.env.LOCALAPPDATA||path.join(os.homedir(),'.local','share'),'ProgramingLive','ManagedMCP');
-  const release=await resolveRelease({url:process.env.DEVWF_RELEASE_URL||'http://100.77.138.14:3101',token:process.env.DEVWF_MONITOR_TOKEN,cacheRoot});
+  const release=await resolveRelease({url:process.env.DEVWF_RELEASE_URL||'http://127.0.0.1:3101',token:process.env.DEVWF_MONITOR_TOKEN,cacheRoot});
   if(process.argv.includes('--resolve-only')) {console.log(JSON.stringify({revision:release.revision,version:release.version??null,runtimeRoot:release.runtimeRoot,offline:release.offline}));return;}
   console.error('dev-workflow: managed release '+release.revision.slice(0,12)+(release.version?' ('+release.version+')':''));
   const child=spawn(process.execPath,[path.join(release.runtimeRoot,'index.js')],{

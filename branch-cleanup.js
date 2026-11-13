@@ -63,7 +63,7 @@ function realOrSame(target) {
   try {
     // `.native` matters on Windows: the JavaScript implementation returns the
     // 8.3 short form (C:\Users\MAHARD~1\...) while git prints the long form
-    // (C:/Users/mahardhika/...). Comparing those two says "different directory"
+    // (C:/Users/<username>/...). Comparing those two says "different directory"
     // for the same place, which marks the main worktree removable.
     return fs.realpathSync.native(target);
   } catch {
