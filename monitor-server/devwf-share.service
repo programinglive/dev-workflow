@@ -1,0 +1,23 @@
+[Unit]
+Description=Dev Workflow public share pages
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/devwf-monitor
+# Kredensial TIDAK ditulis di unit ini: `systemctl cat` bisa dibaca siapa pun,
+# sedangkan berkas EnvironmentFile bermode 600 hanya root.
+EnvironmentFile=/etc/devwf-monitor.env
+# Bind 127.0.0.1, BUKAN 0.0.0.0. Jalur publiknya lewat Cloudflare Tunnel;
+# membuka port ini langsung ke internet berarti melewati TLS dan proteksi
+# Cloudflare sekaligus.
+Environment=PORT=3200
+Environment=HOST=127.0.0.1
+ExecStart=/usr/bin/env node /opt/devwf-monitor/share-server.cjs
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

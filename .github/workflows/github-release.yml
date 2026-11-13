@@ -1,0 +1,248 @@
+name: Create GitHub Release
+
+# Build runs on the self-hosted bw-tools runner (no GitHub minutes).
+#
+# Publish runs on a GitHub-hosted runner because Trusted Publishing (OIDC)
+# needs a cloud-hosted runner to exchange the token:
+# https://docs.npmjs.com/trusted-publishers
+# The hosted job is a single publish step and only runs on a v* tag.
+#
+# `--provenance` is deliberately NOT used. npm rejects provenance bundles
+# when the source repository is private ("Only public source repositories are
+# supported when publishing with provenance"), and this repo is private by
+# policy (see docs/homelab/security-rules.md).
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag (e.g., v1.5.3) to create/update the release for"
+        required: true
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  build:
+    name: Build and verify package
+    runs-on: [self-hosted, linux, bw-tools]
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          tag="${{ github.event.inputs.tag }}"
+          if [[ -z "$tag" ]]; then tag="$GITHUB_REF_NAME"; fi
+          if [[ -z "$tag" ]]; then echo "ERROR: Unable to determine tag name" >&2; exit 1; fi
+          version="${tag#v}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag version=$version"
+
+      # Checkout memakai `ref: main`, sedangkan versi yang diterbitkan diambil
+      # dari nama tag. Kalau tag dibuat dari commit yang tidak ada di main,
+      # keduanya berbeda dan npm akan menolak dengan pesan yang tidak menyebut
+      # tag sama sekali (kasus v1.15.1 pada 31 Oktober 2026). Gagal di sini
+      # jauh lebih murah daripada gagal setelah build.
+      - name: Verify the tag matches package.json
+        shell: bash
+        run: node scripts/check-release-version.mjs --tag "${{ steps.version.outputs.tag }}"
+
+      - name: Install dependencies
+        shell: bash
+        run: npm ci --no-audit --no-fund
+
+      - name: Run tests
+        shell: bash
+        run: npm test
+
+      - name: Build package
+        shell: bash
+        run: npm run build:server
+
+      - name: Verify the built bundle starts
+        shell: bash
+        run: |
+          # A stdio MCP server exits cleanly when its stdin closes, so "process
+          # has exited" is not a failure by itself. Judge by the startup banner,
+          # the same rule setup-stack.js uses.
+          err_file="${RUNNER_TEMP}/rel-err.txt"
+          out_file="${RUNNER_TEMP}/rel-out.txt"
+          node dist/index.mjs >"$out_file" 2>"$err_file" &
+          pid=$!
+          sleep 5
+
+          if kill -0 "$pid" 2>/dev/null; then
+            kill "$pid" 2>/dev/null || true
+            echo "Bundle stayed alive - started successfully."
+          else
+            output=$(cat "$err_file" 2>/dev/null || true)
+            echo "Bundle exited. Output: $output"
+            if ! echo "$output" | grep -q 'running on stdio'; then
+              echo "ERROR: Built bundle did not report that it started." >&2; exit 1
+            fi
+            echo "Bundle started and exited cleanly (stdin closed)."
+          fi
+
+      - name: Pack tarball
+        id: pack
+        shell: bash
+        run: |
+          # npm prints the `prepare` script output and warnings before the JSON,
+          # so pipe through a sed that strips everything before the opening '['.
+          raw=$(npm pack --json 2>&1)
+          json=$(echo "$raw" | sed -n '/^\[/,$ p')
+          if [[ -z "$json" ]]; then echo "ERROR: Could not find JSON in npm pack output" >&2; exit 1; fi
+          name=$(echo "$json" | node -e "const d=require('fs').readFileSync('/dev/stdin','utf8'); process.stdout.write(JSON.parse(d)[0].filename)")
+          if [[ ! -f "$name" ]]; then echo "ERROR: npm pack did not produce $name" >&2; exit 1; fi
+          echo "packed $name"
+          echo "tarball=$name" >> "$GITHUB_OUTPUT"
+
+      - name: Write version metadata
+        shell: bash
+        env:
+          REL_TAG: ${{ steps.version.outputs.tag }}
+          REL_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          echo "{\"tag\":\"$REL_TAG\",\"version\":\"$REL_VERSION\"}" > release-meta.json
+          cat release-meta.json
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: npm-package
+          path: ${{ steps.pack.outputs.tarball }}
+          retention-days: 7
+
+      - name: Upload version metadata
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-meta
+          path: release-meta.json
+          retention-days: 7
+          if-no-files-found: error
+
+  publish:
+    name: Publish to npm and create release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          # Node 24 so `npm@latest` (12.x, requires >=22) can install.
+          # npm 11.5.1+ is the floor for Trusted Publishing, but tracking
+          # latest keeps the OIDC exchange on a current client.
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Update npm
+        run: npm install -g npm@latest
+
+      - name: Download package artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: npm-package
+
+      - name: Download version metadata
+        uses: actions/download-artifact@v8
+        with:
+          name: release-meta
+
+      - name: Read version
+        id: meta
+        run: |
+          VERSION=$(node -p "require('./release-meta.json').version")
+          TAG=$(node -p "require('./release-meta.json').tag")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Publishing $VERSION for $TAG"
+
+      - name: Publish to npm
+        run: npm publish *.tgz --access public
+
+      - name: Generate release notes
+        run: |
+          echo "Extracting release notes for version ${{ steps.meta.outputs.version }}"
+          node scripts/extract-release-notes.cjs "${{ steps.meta.outputs.version }}" > release-notes.md
+          echo "--- Release notes content ---"
+          cat release-notes.md
+          echo "--- End of release notes ---"
+
+      - name: Publish GitHub release
+        uses: actions/github-script@v9
+        env:
+          RELEASE_TAG: ${{ steps.meta.outputs.tag }}
+        with:
+          script: |
+            const fs = require('fs');
+            const tag = process.env.RELEASE_TAG;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const name = `Release ${tag}`;
+            let body = '';
+            try {
+              body = fs.readFileSync('release-notes.md', 'utf8').trim();
+            } catch (error) {
+              core.warning(`Unable to read release notes file: ${error.message}`);
+            }
+
+            const fallbackBody = 'Release notes are unavailable. Please refer to CHANGELOG.md.';
+            const payloadBody = body.length > 0 ? body : fallbackBody;
+
+            async function createRelease() {
+              core.info(`Creating release ${tag}`);
+              await github.rest.repos.createRelease({
+                owner,
+                repo,
+                tag_name: tag,
+                name,
+                body: payloadBody,
+                make_latest: 'true'
+              });
+            }
+
+            async function updateRelease(releaseId) {
+              core.info(`Updating existing release ${tag}`);
+              await github.rest.repos.updateRelease({
+                owner,
+                repo,
+                release_id: releaseId,
+                tag_name: tag,
+                name,
+                body: payloadBody,
+                make_latest: 'true'
+              });
+            }
+
+            try {
+              const existing = await github.rest.repos.getReleaseByTag({ owner, repo, tag });
+              await updateRelease(existing.data.id);
+            } catch (error) {
+              if (error.status === 404) {
+                await createRelease();
+              } else {
+                core.error(`Failed to publish release: ${error.message}`);
+                throw error;
+              }
+            }

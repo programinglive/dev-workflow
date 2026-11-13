@@ -1,0 +1,299 @@
+import fs from "fs/promises";
+import { existsSync } from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+import { sanitize } from '../../security/sanitizer.js';
+import { parseStatusEntries as defaultParseStatusEntries } from "../../git-helpers.js";
+
+export const PROJECT_SUMMARY_FILENAME = "project-summary.json";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+export const textResponse = (text) => ({
+  content: [
+    {
+      type: "text",
+      text: sanitize(text),
+    },
+  ],
+});
+
+export function isReleaseSatisfied(state) {
+  return Boolean(state?.released || state?.releaseSkipped);
+}
+
+export function isErrorResponse(response) {
+  const text = response?.content?.[0]?.text || "";
+  return /^\s*[⚠️❌]/u.test(text);
+}
+
+export async function resetToCommitIfWorkingChanges(workflowState, git) {
+  if (!workflowState.state.commitAndPushCompleted) {
+    return false;
+  }
+
+  const hasWorkingChanges = await git.hasWorkingChanges();
+  const hasStagedChanges = await git.hasStagedChanges();
+
+  if (!hasWorkingChanges && !hasStagedChanges) {
+    return false;
+  }
+
+  // Berkas yang SUDAH kotor sejak `start_task` sengaja ditinggalkan
+  // `commit_and_push` (pekerjaan sesi lain). Itu bukan alasan untuk membatalkan
+  // rilis: kalau dihitung sebagai "perubahan baru", rilis menolak selamanya dan
+  // menyarankan meng-commit berkas yang justru tidak boleh di-commit.
+  if (typeof git.hasOnlyForeignChanges === "function" &&
+      typeof git.getStatusOutput === "function") {
+    let statusOutput = "";
+    try {
+      statusOutput = await git.getStatusOutput();
+    } catch {
+      statusOutput = "";
+    }
+    if (git.hasOnlyForeignChanges(workflowState.state.dirtyAtStart, statusOutput)) {
+      return false;
+    }
+  }
+
+  workflowState.state.commitAndPushCompleted = false;
+  workflowState.state.released = false;
+  workflowState.state.releaseSkipped = false;
+  workflowState.state.releaseSkippedReason = "";
+  workflowState.state.currentPhase = "commit";
+  workflowState.state.releaseCommand = "";
+  workflowState.state.releaseNotes = "";
+  // Perubahan kerja baru berarti bukti DoD yang lama tidak lagi membuktikan
+  // kode yang akan di-commit. Menaikkan revisi membuat setiap item `done`
+  // otomatis tidak memenuhi sampai dibuktikan ulang - tanpa menulis ulang
+  // statusnya, sehingga penggabungan antar-proses tidak saling menghapus.
+  workflowState.state.dodRevision = (Number(workflowState.state.dodRevision) || 0) + 1;
+  await workflowState.save();
+  return true;
+}
+
+export function formatChecklist(checks) {
+  return checks.map((c) => `${c.done ? "✅" : "❌"} ${c.name}`).join("\n");
+}
+
+export function summarizeHistory(history, limit) {
+  history = sanitize(history);
+  const recent = history.slice(-limit).reverse();
+  if (recent.length === 0) {
+    return null;
+  }
+
+  const historyText = recent
+    .map(
+      (entry, index) =>
+        `${index + 1}. [${new Date(entry.timestamp).toLocaleString()}]\n   Task: ${entry.taskDescription}\n   Type: ${entry.taskType}\n   Commit: ${entry.commitMessage}\n`
+    )
+    .join("\n");
+
+  return `📜 Workflow History (last ${recent.length} tasks)\n\n${historyText}`;
+}
+
+export function generateProjectSummary(history) {
+  history = sanitize(history);
+  if (!history || history.length === 0) {
+    return "No workflow history available.";
+  }
+
+  const taskTypes = {};
+  const recentTasks = history.slice(-20);
+
+  for (const entry of recentTasks) {
+    const type = entry.taskType || "other";
+    taskTypes[type] = (taskTypes[type] || 0) + 1;
+  }
+
+  const typeSummary = Object.entries(taskTypes)
+    .map(([type, count]) => `${type}: ${count}`)
+    .join(", ");
+
+  const totalTasks = history.length;
+  const lastTask = history[history.length - 1];
+  const lastActive = lastTask ? new Date(lastTask.timestamp).toLocaleDateString() : "Never";
+
+  return `🧠 Project Knowledge Summary\n\n📊 Stats\n- Total tasks completed: ${totalTasks}\n- Recent task mix: ${typeSummary}\n- Last active: ${lastActive}\n\n📝 Recent tasks (last 5)\n${history.slice(-5).reverse().map((e, i) => `${i + 1}. ${e.taskDescription} (${e.taskType})`).join("\n")}`;
+}
+
+export function getContinueGuidance(status) {
+  switch (status.currentPhase) {
+    case "coding": {
+      const task = status.taskDescription ? ` "${status.taskDescription}"` : "";
+      // Item DoD yang masih terbuka disebut di sini karena agen sering berhenti
+      // di "implementasi selesai" dan lupa bahwa task-nya masih terkunci.
+      const open = (status.definitionOfDone || []).filter(
+        (item) => item && item.status !== "waived" && !(item.status === "done" && item.revision === status.dodRevision),
+      );
+      const dodHint =
+        open.length > 0
+          ? ` Prove each definition-of-done item with 'mark_dod_item' { id, evidence } - still open: ${open
+              .map((item) => `${item.id} (${item.text})`)
+              .join(", ")}.`
+          : "";
+      return `Describe your feature flow with Mermaid using 'create_feature_flow', then finish implementing${task} and run 'mark_bug_fixed' with a brief summary of the change.${dodHint}`;
+    }
+    case "testing":
+      if (!status.testsCreated) {
+        return "Create automated coverage now using 'create_tests' before recording any results.";
+      }
+
+      if (status.testsPassed) {
+        return "With tests green, move on to 'create_documentation' and capture what changed.";
+      }
+
+      if (status.testsSkipped) {
+        return "Document why tests were skipped using 'create_documentation' so the workflow can proceed.";
+      }
+
+      return status.testCommand
+        ? `Fix any failing tests and re-run '${status.testCommand}'. Once they pass, record the results with 'run_tests'.`
+        : "Run your automated tests and record the outcome with 'run_tests'. Fix any failures before moving forward.";
+    case "documentation":
+      return status.testsSkipped
+        ? `Document the change (including manual QA for skipped tests) with 'create_documentation'. Reason recorded: ${status.testsSkippedReason || "(none provided)"}.`
+        : "Capture your updates with 'create_documentation' (provide the documentation type and a short summary).";
+    case "ready":
+      return "Run 'check_ready_to_commit' to verify all prerequisite steps before committing.";
+    case "commit":
+      return "All checks passed—run 'commit_and_push' with your commit message (and optional branch).";
+    case "release":
+      return "Commit recorded. Execute 'perform_release' with the release command you ran to publish changes, or call 'skip_release' with a justification if no release is required.";
+    case "ready_to_complete":
+      return "Release recorded. Siapkan 'nextSteps' (1-5 butir, 10-200 karakter) saat 'complete_task' — apa yang sebaiknya dikerjakan berikutnya — lalu tutup dengan 'complete_task'. 'next_steps' menampilkan rekomendasi yang tersimpan di history.";
+    default:
+      return "Review your workflow progress and complete the next required step.";
+  }
+}
+
+
+export async function loadProjectSummary(workflowState) {
+  const summaryPath = path.join(path.dirname(workflowState.stateFile), PROJECT_SUMMARY_FILENAME);
+  try {
+    const data = await fs.readFile(summaryPath, "utf-8");
+    return sanitize(JSON.parse(data));
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+}
+
+export const prdPath = path.join(__dirname, "..", "..", "docs", "PRD.md");
+
+export function ensurePrdExists() {
+  return existsSync(prdPath);
+}
+
+/** Kandidat berkas dokumentasi di akar repo, berurutan menurut prioritas. */
+const README_CANDIDATES = [
+  "README.md",
+  "readme.md",
+  "README",
+  "README.rst",
+  "README.txt",
+  "docs/README.md",
+];
+
+/**
+ * Apakah repo punya dokumentasi yang bisa dijaga, dan di mana README-nya.
+ *
+ * `hasDocumentation` salah berarti gerbang tidak memblokir apa pun: repo yang
+ * dokumentasinya ada di tempat lain tidak boleh dihukum oleh aturan yang tidak
+ * mengenal tempat itu.
+ */
+export function detectDocumentation(toplevel) {
+  if (!toplevel) {
+    return { hasDocumentation: false, readmePath: "" };
+  }
+
+  for (const candidate of README_CANDIDATES) {
+    if (existsSync(path.join(toplevel, candidate))) {
+      return { hasDocumentation: true, readmePath: candidate };
+    }
+  }
+
+  if (existsSync(path.join(toplevel, "docs"))) {
+    return { hasDocumentation: true, readmePath: "" };
+  }
+
+  return { hasDocumentation: false, readmePath: "" };
+}
+
+/**
+ * Bahan mentah untuk `evaluateDocGate`, diambil dari git dan state.
+ *
+ * Dipisah dari aturannya (`docs.js`) supaya aturan itu tetap murni dan bisa
+ * diuji tanpa repo. `available: false` berarti git tidak bisa dipakai - gerbang
+ * lalu menjawab "tidak tahu" alih-alih memblokir.
+ */
+export async function loadDocGateInputs({ workflowState, git } = {}) {
+  const state = workflowState?.state || {};
+  const declaredFiles = Array.isArray(state.documentationFiles) ? state.documentationFiles : [];
+  const dirtyAtStart = Array.isArray(state.dirtyAtStart) ? state.dirtyAtStart : [];
+
+  if (!git || typeof git.getStatusOutput !== "function") {
+    return {
+      changedPaths: [],
+      dirtyAtStart,
+      declaredFiles,
+      hasDocumentation: false,
+      readmePath: "",
+      available: false,
+    };
+  }
+
+  let changedPaths = [];
+  try {
+    const output = await git.getStatusOutput();
+    const parseFn =
+      typeof git.parseStatusEntries === "function"
+        ? git.parseStatusEntries
+        : defaultParseStatusEntries;
+    const entries = parseFn(output);
+    changedPaths = entries.map((entry) => entry.path).filter(Boolean);
+  } catch {
+    changedPaths = [];
+  }
+
+  // Include files already committed during this task (e.g., when a release script
+  // or prior commit already committed CHANGELOG.md / RELEASE_NOTES.md / README.md).
+  if (state.taskStartedAt && typeof git.getCommittedFilesSince === "function") {
+    try {
+      const committedSinceStart = await git.getCommittedFilesSince(state.taskStartedAt);
+      if (Array.isArray(committedSinceStart) && committedSinceStart.length > 0) {
+        changedPaths = Array.from(new Set([...changedPaths, ...committedSinceStart.filter(Boolean)]));
+      }
+    } catch {
+      // Ignore committed-files lookup failure
+    }
+  }
+
+  // If working tree is clean and no task-window commits were found, fall back to
+  // files changed in HEAD so post-commit documentation recording does not deadlock.
+  if (changedPaths.length === 0 && typeof git.getHeadChangedFiles === "function") {
+    try {
+      const headFiles = await git.getHeadChangedFiles();
+      if (Array.isArray(headFiles) && headFiles.length > 0) {
+        changedPaths = Array.from(new Set(headFiles.filter(Boolean)));
+      }
+    } catch {
+      // Ignore HEAD changed-files lookup failure
+    }
+  }
+
+  let toplevel = "";
+  try {
+    toplevel = String((await git.getToplevel()) || "").trim();
+  } catch {
+    toplevel = "";
+  }
+
+  const { hasDocumentation, readmePath } = detectDocumentation(toplevel);
+
+  return { changedPaths, dirtyAtStart, declaredFiles, hasDocumentation, readmePath, available: true };
+}

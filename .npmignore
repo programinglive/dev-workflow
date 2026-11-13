@@ -1,0 +1,76 @@
+# Keep development and deployment files out of the published package.
+# Without this file npm falls back to .gitignore, which still lets tracked
+# files such as .env.production through.
+
+# Environment files - the example is fine, real ones are not
+.env
+.env.*
+!.env.example
+
+# Local workflow state
+.state/
+*.db
+*.db-wal
+*.db-shm
+
+# Tests and CI
+tests/
+.github/
+.husky/
+.agent/
+scripts/manual/
+
+# Web dashboard has its own package and is deployed separately
+web/
+
+# Build and tooling artefacts
+dist/
+node_modules/
+coverage/
+*.log
+*.tgz
+**/.npmrc
+**/.ssh/
+**/.docker/
+**/.aws/
+**/.kube/
+**/.config/gcloud/
+**/.git-credentials
+**/.netrc
+**/.aws/
+**/.kube/
+**/.config/gcloud/
+**/.git-credentials
+**/.netrc
+**/*credentials*.json
+**/service-account*.json
+**/id_rsa*
+**/id_ed25519*
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+
+# Docs that are not useful to package consumers
+docs/
+CHANGELOG.md
+test-output.html
+
+# Internal fleet rollout, deployment, and known-hosts assets
+monitor-server/bw-tools-known-hosts
+monitor-server/devwf-monitor.service
+managed/rollout.cjs
+managed/fleet-status.cjs
+managed/restart-devices.cjs
+managed/devwf-managed.service
+scripts/deploy-monitor.*
+scripts/deploy-gcloud.*
+scripts/rotate-monitor-token.sh
+scripts/probe-*.sh
+scripts/verify-share*.sh
+scripts/verify-orphan*.sh
+mobile-app/
+.managed-publish/
+**/__pycache__/
+*.pyc
+.netlify/
