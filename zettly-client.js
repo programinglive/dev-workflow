@@ -74,7 +74,8 @@ export async function resolveZettlyConfig(env=process.env,{platform=process.plat
   if(requestedOwner&&(!Number.isSafeInteger(expectedUserId)||expectedUserId<1))return null;
   if(env.ZETTLY_API_TOKEN&&fallback)return {...fallback,source:'environment',expectedUserId};
   if(profile?.mode==='ZETTLY_CONNECTED'&&creds){
-    const config=readZettlyConfig({...env,ZETTLY_API_BASE:base,ZETTLY_API_TOKEN:creds.token});
+    const profileBase=env.ZETTLY_API_BASE||creds.base;
+    const config=readZettlyConfig({...env,ZETTLY_API_BASE:profileBase,ZETTLY_API_TOKEN:creds.token});
     return config?{...config,source:'devworkflow-profile',expectedUserId}:null;
   }
   if(platform==='win32'){

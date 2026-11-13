@@ -83,6 +83,12 @@ export function readProfileCredentialsSync(env = process.env, home = os.homedir(
 export function detectExistingZettlyConnection({ env = process.env, home = os.homedir() } = {}) {
   const profile = readOnboardingProfileSync(env, home);
   const profileCreds = readProfileCredentialsSync(env, home);
+  if (
+    profile?.mode === ONBOARDING_MODES.ZETTLY_DISCONNECTED ||
+    profile?.mode === ONBOARDING_MODES.ZETTLY_SKIPPED
+  ) {
+    return { connected: false, source: null, base: "", expectedUserId: undefined, accountLabel: "" };
+  }
   if (profile?.mode === ONBOARDING_MODES.ZETTLY_CONNECTED || profileCreds) {
     return {
       connected: true,
@@ -266,14 +272,14 @@ export async function connectZettlyAccount({
   }
   const cleanToken = String(token || "").trim();
   if (!cleanToken) {
-    throw new CliError("Provide your personal Zettly token with --token <token>.");
+    throw new CliError("Provide your personal Zettly token via interactive prompt, --token-stdin, or ZETTLY_API_TOKEN.");
   }
   registerRuntimeSecret(cleanToken);
 
   const existing = detectExistingZettlyConnection({ env, home });
   if (existing.connected) {
     throw new CliError(
-      "A Zettly account is already connected. Use 'devwf zettly switch --url <url> --token <token> --confirm' to switch accounts."
+      "A Zettly account is already connected. Use 'devwf zettly switch --url <url> --confirm' (with --token-stdin, ZETTLY_API_TOKEN, or interactive prompt) to switch accounts."
     );
   }
 
@@ -336,7 +342,7 @@ export async function switchZettlyAccount({
   }
   const cleanToken = String(token || "").trim();
   if (!cleanToken) {
-    throw new CliError("Provide the new Zettly account token with --token <token>.");
+    throw new CliError("Provide the new Zettly account token via interactive prompt, --token-stdin, or ZETTLY_API_TOKEN.");
   }
   registerRuntimeSecret(cleanToken);
 
