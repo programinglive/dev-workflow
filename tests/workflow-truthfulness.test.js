@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, rm, readFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -162,6 +163,7 @@ test("perform_release menyebut commit dan tag yang tertinggal saat push gagal", 
 
 async function fakeRepo(prefix) {
   const dir = await mkdtemp(path.join(tmpdir(), prefix));
+  execFileSync("git", ["init", "-q", "-b", "main"], { cwd: dir, stdio: "ignore" });
   await mkdir(path.join(dir, ".git"), { recursive: true });
   return dir;
 }

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { mkdtemp, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -118,7 +118,7 @@ test("rejects a focus already bound to another project", async () => {
     const state = await sessionState("ses_ID3");
 
     await handleStartTask(taskArgs(alpha), state, null);
-    writeFocusBinding({
+    await writeFocusBinding({
       stateFile: state.stateFile,
       focusId: 73,
       projectDir: alpha,
@@ -206,8 +206,8 @@ test("refuses a second clone of the same remote without authorization", async ()
   });
 });
 
-// 6c. A linked worktree of the same checkout is legitimate continuity.
-test("accepts a linked worktree of the established checkout", async () => {
+// 6c. A linked worktree is a workspace transition, not automatic continuity.
+test("requires an explicit transition to start in a linked worktree", async () => {
   await withWorkspace(async (base) => {
     const repo = await makeRepo(base, "alpha", { remote: "https://github.com/example/alpha.git" });
     const worktree = path.join(base, "alpha-wt");
@@ -215,8 +215,20 @@ test("accepts a linked worktree of the established checkout", async () => {
 
     const state = await sessionState("ses_ID6C");
     await handleStartTask(taskArgs(repo), state, null);
-    const accepted = await handleStartTask(taskArgs(worktree), state, null);
 
+    const refused = await handleStartTask(taskArgs(worktree), state, null);
+    assert.match(text(refused), /different worktree/i);
+    assert.match(text(refused), /allowWorkspaceTransition/);
+    assert.equal(state.state.projectDir, repo);
+
+    const accepted = await handleStartTask(
+      taskArgs(worktree, {
+        allowWorkspaceTransition: true,
+        workspaceTransitionReason: "the feature work belongs in the linked worktree",
+      }),
+      state,
+      null,
+    );
     assert.doesNotMatch(text(accepted), /Refused/i);
     assert.equal(state.state.projectDir, worktree);
   });
@@ -312,8 +324,22 @@ test("compareIdentity separates workspace, checkout family and repository", () =
   assert.equal(compareIdentity(worktree, main).match, "SAME_CHECKOUT_FAMILY");
   assert.equal(compareIdentity(clone, main).match, "SAME_REPOSITORY_DIFFERENT_CLONE");
   assert.equal(sameRepository(clone, main), true, "remote identity is equal");
-  assert.equal(evaluateProjectSwitch({ requested: clone, session: main }).ok, false, "but a clone is not continuity");
-  assert.equal(evaluateProjectSwitch({ requested: worktree, session: main }).ok, true, "a worktree is continuity");
+  assert.equal(evaluateProjectSwitch({ requested: clone, session: main }).ok, false, "a clone is not continuity");
+
+  // A worktree is the same checkout family, but it is a second writable tree:
+  // starting there needs an explicit transition, not automatic continuity.
+  const worktreeRefused = evaluateProjectSwitch({ requested: worktree, session: main });
+  assert.equal(worktreeRefused.ok, false);
+  assert.equal(worktreeRefused.code, "WORKSPACE_TRANSITION_REQUIRES_AUTHORIZATION");
+
+  const worktreeAllowed = evaluateProjectSwitch({
+    requested: worktree,
+    session: main,
+    allowWorkspaceTransition: true,
+    workspaceTransitionReason: "the feature work belongs in the linked worktree",
+  });
+  assert.equal(worktreeAllowed.ok, true);
+  assert.equal(worktreeAllowed.code, "WORKSPACE_TRANSITION_AUTHORIZED");
 });
 
 // A task is bound to the checkout it started in, for mutations too.
@@ -329,8 +355,94 @@ test("assertTaskRepository refuses a mutation in another checkout", () => {
 
   const same = assertTaskRepository({ contract, actual: { root: "/repo/a", workspaceKey: "/repo/a", commonDirKey: "/repo/a/.git" } });
   assert.equal(same.ok, true);
+});
 
-  assert.equal(assertTaskRepository({ contract: null, actual: elsewhere }).legacy, true);
+// P0: a missing contract is not permission to write.
+test("a missing identity contract refuses a mutation", () => {
+  const actual = { isGitRepo: true, root: "/repo/a", remote: "https://h/o/a.git", workspaceKey: "/repo/a", commonDirKey: "/repo/a/.git" };
+  const refused = assertTaskRepository({ contract: null, state: {}, actual, operation: "commit_and_push" });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.code, "IDENTITY_UNVERIFIABLE_NO_CONTRACT");
+  assert.match(refused.message, /not permission to write/i);
+});
+
+// P0: a malformed contract is refused, not treated as legacy.
+test("a malformed identity contract refuses a mutation", () => {
+  const actual = { isGitRepo: true, root: "/repo/a", remote: "https://h/o/a.git", workspaceKey: "/repo/a", commonDirKey: "/repo/a/.git" };
+  for (const contract of [{}, { repository: null }, { repository: {} }, "not-an-object"]) {
+    const refused = assertTaskRepository({ contract, state: {}, actual, operation: "perform_release" });
+    assert.equal(refused.ok, false, `contract ${JSON.stringify(contract)} must be refused`);
+    assert.equal(refused.code, "IDENTITY_CONTRACT_MALFORMED");
+  }
+});
+
+// P0: a legacy task is backfilled only from evidence that matches the checkout.
+test("a legacy task is backfilled from matching recorded evidence", () => {
+  const actual = { isGitRepo: true, root: "/repo/a", remote: "https://h/o/a.git", workspaceKey: "/repo/a", commonDirKey: "/repo/a/.git", branch: "main", head: "abc" };
+  const state = { projectDir: "/repo/a", repository: { path: "/repo/a", remote: "https://h/o/a.git" } };
+
+  const allowed = assertTaskRepository({ contract: undefined, state, actual, operation: "commit_and_push" });
+  assert.equal(allowed.ok, true);
+  assert.equal(allowed.code, "IDENTITY_BACKFILLED");
+  assert.equal(allowed.backfilledContract.backfilled, true);
+  assert.equal(allowed.backfilledContract.repository.root, "/repo/a");
+});
+
+// P0: contradictory evidence must not be turned into a contract.
+test("a legacy task with contradictory evidence is refused", () => {
+  const actual = { isGitRepo: true, root: "/repo/a", remote: "https://h/o/a.git", workspaceKey: "/repo/a", commonDirKey: "/repo/a/.git" };
+
+  const wrongPath = assertTaskRepository({
+    contract: undefined,
+    state: { projectDir: "/repo/a", repository: { path: "/repo/other", remote: "https://h/o/a.git" } },
+    actual,
+  });
+  assert.equal(wrongPath.ok, false);
+  assert.equal(wrongPath.detail, "IDENTITY_UNVERIFIABLE_CONFLICT");
+
+  const workspaceMismatch = assertTaskRepository({
+    contract: undefined,
+    state: { repository: { path: "/repo/other", remote: "https://h/o/a.git" } },
+    actual,
+  });
+  assert.equal(workspaceMismatch.ok, false);
+  assert.equal(workspaceMismatch.detail, "IDENTITY_UNVERIFIABLE_WORKSPACE_MISMATCH");
+
+  const wrongRemote = assertTaskRepository({
+    contract: undefined,
+    state: { projectDir: "/repo/a", repository: { path: "/repo/a", remote: "https://h/o/other.git" } },
+    actual,
+  });
+  assert.equal(wrongRemote.ok, false);
+  assert.equal(wrongRemote.detail, "IDENTITY_UNVERIFIABLE_REMOTE_MISMATCH");
+
+  const noEvidence = assertTaskRepository({ contract: undefined, state: {}, actual });
+  assert.equal(noEvidence.ok, false);
+  assert.equal(noEvidence.detail, "IDENTITY_UNVERIFIABLE_NO_EVIDENCE");
+});
+
+// P0: a stale contract (workspace moved) is refused, not silently accepted.
+test("a stale identity contract is refused", () => {
+  const contract = buildIdentityContract({
+    identity: { root: "/repo/gone", remote: "https://h/o/a.git", workspaceKey: "/repo/gone", commonDirKey: "/repo/gone/.git" },
+  });
+  const actual = { isGitRepo: true, root: "/repo/a", remote: "https://h/o/a.git", workspaceKey: "/repo/a", commonDirKey: "/repo/a/.git" };
+  const refused = assertTaskRepository({ contract, actual, operation: "commit_and_push" });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.code, "SAME_REPOSITORY_DIFFERENT_CLONE");
+});
+
+// P1: a worktree of the same family is not writable by an existing task.
+test("a mutation in a linked worktree is refused without a new task", () => {
+  const contract = buildIdentityContract({
+    identity: { root: "/repo/a", remote: "https://h/o/a.git", workspaceKey: "/repo/a", commonDirKey: "/repo/a/.git" },
+  });
+  const worktree = { isGitRepo: true, root: "/repo/a-wt", remote: "https://h/o/a.git", workspaceKey: "/repo/a-wt", commonDirKey: "/repo/a/.git" };
+
+  const refused = assertTaskRepository({ contract, actual: worktree, operation: "commit_and_push" });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.code, "WORKTREE_WRITE_REQUIRES_TRANSITION");
+  assert.match(refused.message, /two writable trees/i);
 });
 
 // 7. Multiple remotes: origin is the identity, not the first remote.
@@ -446,7 +558,7 @@ test("focus binding survives session restoration and retires explicitly", async 
     const alpha = await makeRepo(base, "alpha", { remote: "https://github.com/example/alpha.git" });
     const state = await sessionState("ses_FB1");
 
-    const bound = writeFocusBinding({
+    const bound = await writeFocusBinding({
       stateFile: state.stateFile,
       focusId: 73,
       projectDir: alpha,
@@ -459,7 +571,7 @@ test("focus binding survives session restoration and retires explicitly", async 
     const read = readFocusBinding({ stateFile: restored.stateFile, focusId: 73 });
     assert.equal(read.repoKey, "github.com/example/alpha");
 
-    const retired = retireFocusBinding({ stateFile: restored.stateFile, focusId: 73, reason: "focus completed" });
+    const retired = await retireFocusBinding({ stateFile: restored.stateFile, focusId: 73, reason: "focus completed" });
     assert.equal(retired.retired, true);
     assert.equal(readFocusBinding({ stateFile: restored.stateFile, focusId: 73 }), null);
   });
@@ -471,10 +583,10 @@ test("a stale focus binding does not block project recovery", async () => {
     const beta = await makeRepo(base, "beta", { remote: "https://github.com/example/beta.git" });
     const state = await sessionState("ses_FB2");
 
-    writeFocusBinding({ stateFile: state.stateFile, focusId: 73, projectDir: alpha, repoKey: "github.com/example/alpha" });
+    await writeFocusBinding({ stateFile: state.stateFile, focusId: 73, projectDir: alpha, repoKey: "github.com/example/alpha" });
     await rm(alpha, { recursive: true, force: true });
 
-    const rebound = writeFocusBinding({
+    const rebound = await writeFocusBinding({
       stateFile: state.stateFile,
       focusId: 73,
       projectDir: beta,
@@ -492,13 +604,13 @@ test("two concurrent task starts cannot both claim one focus", async () => {
     const stateA = await sessionState("ses_FB3A");
     const stateB = await sessionState("ses_FB3B");
 
-    const first = writeFocusBinding({
+    const first = await writeFocusBinding({
       stateFile: stateA.stateFile,
       focusId: 73,
       projectDir: alpha,
       repoKey: "github.com/example/alpha",
     });
-    const second = writeFocusBinding({
+    const second = await writeFocusBinding({
       stateFile: stateB.stateFile,
       focusId: 73,
       projectDir: beta,
@@ -569,6 +681,158 @@ test("devwf identity without --dir exits non-zero with a message", async () => {
   }
   assert.equal(failed.status, 1);
   assert.match(String(failed.stderr), /--dir/);
+});
+
+// P0: two real operating-system processes must not both claim one focus.
+test("cross-process focus claims are exclusive", async () => {
+  await withWorkspace(async (base) => {
+    const alpha = await makeRepo(base, "alpha", { remote: "https://github.com/example/alpha.git" });
+    const beta = await makeRepo(base, "beta", { remote: "https://github.com/example/beta.git" });
+
+    // Both children resolve the same base directory from this state file path,
+    // so they contend for the same lock and the same binding record.
+    const stateFile = path.join(base, "state", "projects", "shared", "users", "u1", "workflow-state.ses_XP.json");
+    const worker = path.join(process.cwd(), "tests", "fixtures", "focus-claim-worker.mjs");
+
+    const run = (projectDir, repoKey) =>
+      new Promise((resolve, reject) => {
+        const child = spawn(
+          process.execPath,
+          ["--no-deprecation", "--import", "./tests/setup-env.js", worker, stateFile, "73", projectDir, repoKey],
+          { cwd: process.cwd(), env: { ...process.env, DEV_WORKFLOW_STATE_FILE: stateFile } },
+        );
+        let stdout = "";
+        let stderr = "";
+        child.stdout.on("data", (chunk) => { stdout += chunk; });
+        child.stderr.on("data", (chunk) => { stderr += chunk; });
+        child.on("error", reject);
+        child.on("close", (code) => {
+          if (code !== 0) {
+            reject(new Error(`worker exited ${code}: ${stderr}`));
+            return;
+          }
+          try {
+            resolve(JSON.parse(stdout));
+          } catch {
+            reject(new Error(`worker printed non-JSON: ${stdout}\n${stderr}`));
+          }
+        });
+      });
+
+    const [first, second] = await Promise.all([
+      run(alpha, "github.com/example/alpha"),
+      run(beta, "github.com/example/beta"),
+    ]);
+
+    const wins = [first, second].filter((result) => result.ok === true && result.reason !== "ALREADY_BOUND");
+    const losses = [first, second].filter((result) => result.ok === false);
+
+    assert.equal(wins.length, 1, `exactly one process must win: ${JSON.stringify([first, second])}`);
+    assert.equal(losses.length, 1);
+    assert.equal(losses[0].reason, "FOCUS_BOUND_TO_ANOTHER_PROJECT");
+
+    const binding = readFocusBinding({ stateFile, focusId: 73 });
+    assert.equal(binding.repoKey, wins[0].existing.repoKey, "the stored binding must be the winner's");
+  });
+});
+
+// P0: a stale lock left by a dead process must not block the focus forever.
+test("a stale focus lock is recovered", async () => {
+  await withWorkspace(async (base) => {
+    const alpha = await makeRepo(base, "alpha", { remote: "https://github.com/example/alpha.git" });
+    const stateFile = path.join(base, "state", "projects", "shared", "users", "u1", "workflow-state.ses_ST.json");
+
+    const lockDir = path.join(base, "state", "sessions");
+    await mkdir(lockDir, { recursive: true });
+    await writeFile(
+      path.join(lockDir, "focus-74.lock"),
+      JSON.stringify({ pid: 999999, host: "gone", startedAt: Date.now() - 120_000 }),
+      "utf8",
+    );
+
+    const claim = await writeFocusBinding({
+      stateFile,
+      focusId: 74,
+      projectDir: alpha,
+      repoKey: "github.com/example/alpha",
+    });
+    assert.equal(claim.ok, true);
+    assert.equal(readFocusBinding({ stateFile, focusId: 74 }).repoKey, "github.com/example/alpha");
+  });
+});
+
+// P1: the deployment record names the repository, commit, task and environment.
+test("record_deployment binds the record to the task workspace", async () => {
+  await withWorkspace(async (base) => {
+    const repo = await makeRepo(base, "alpha", { remote: "https://github.com/example/alpha.git" });
+    const { handleRecordDeployment } = await import("../tools/handler-modules/release-handlers.js");
+    const { execFileSync } = await import("node:child_process");
+
+    git(repo, "tag", "v1.0.0");
+    const head = git(repo, "rev-parse", "HEAD");
+    const identity = await captureRepositoryIdentity({ dir: repo });
+
+    const state = await sessionState("ses_DEP1");
+    state.state.currentPhase = "release";
+    state.state.projectDir = repo;
+    state.state.workflowTaskId = "task-deploy-1";
+    state.state.identityContract = buildIdentityContract({ identity, focusId: 73 });
+
+    const exec = async (command, options = {}) => ({
+      stdout: execFileSync(command, options.arguments || [], { cwd: repo, encoding: "utf8" }),
+    });
+    const gitApi = { getHeadSha: async () => head };
+
+    const response = await handleRecordDeployment(
+      {
+        tag: "v1.0.0",
+        pipelineId: "2961510763",
+        sites: ["example.com"],
+        evidence: "health receipt HTTP 200 standardVersion=1",
+        environment: "production",
+      },
+      { workflowState: state, exec, git: gitApi, utils: {} },
+    );
+
+    assert.match(text(response), /Deployment recorded/i);
+    const record = state.state.deployment;
+    assert.equal(record.environment, "production");
+    assert.equal(record.repository.root, repo);
+    assert.equal(record.repository.repoKey, "github.com/example/alpha");
+    assert.equal(record.repository.workspaceKey, identity.workspaceKey);
+    assert.equal(record.task.taskId, "task-deploy-1");
+    assert.equal(record.task.focusId, 73);
+    assert.equal(record.tagSha, head);
+  });
+});
+
+// P1: a deployment record cannot be manufactured from another clone.
+test("record_deployment refuses another checkout with the same remote", async () => {
+  await withWorkspace(async (base) => {
+    const repo = await makeRepo(base, "alpha", { remote: "https://github.com/example/alpha.git" });
+    const clone = await makeRepo(base, "alpha-clone", { remote: "https://github.com/example/alpha.git" });
+    const { handleRecordDeployment } = await import("../tools/handler-modules/release-handlers.js");
+
+    const identity = await captureRepositoryIdentity({ dir: repo });
+    const state = await sessionState("ses_DEP2");
+    state.state.currentPhase = "release";
+    state.state.projectDir = repo;
+    state.state.identityContract = buildIdentityContract({ identity, focusId: 73 });
+
+    const response = await handleRecordDeployment(
+      {
+        tag: "v1.0.0",
+        pipelineId: "2961510763",
+        sites: ["example.com"],
+        evidence: "health receipt HTTP 200",
+        projectDir: clone,
+      },
+      { workflowState: state, exec: async () => ({ stdout: "" }), git: { getHeadSha: async () => "" }, utils: {} },
+    );
+
+    assert.match(text(response), /Refused/i);
+    assert.ok(!state.state.deployment, "no deployment record may be written");
+  });
 });
 
 test("normalizes paths and remote URLs across platforms", () => {

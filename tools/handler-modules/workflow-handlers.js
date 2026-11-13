@@ -20,7 +20,7 @@ import {
 import { activeForeignLock, projectLockDir, currentIsAlive, DEFAULT_LOCK_STALE_MS } from "../../process-lock.js";
 import { reportEventSafe, updateSessionTitle, buildSnapshot, reportSnapshot } from "../../monitor.js";
 import { exec, resolveProjectDir, setActiveProjectDir } from "../../exec.js";
-import { pinSessionProject, resolveHistoryFile, readSessionProject, readFocusBinding, writeFocusBinding } from "../../workflow-state.js";
+import { pinSessionProject, resolveHistoryFile, readSessionProject, readFocusBinding, claimFocusBinding } from "../../workflow-state.js";
 import {
   captureRepositoryIdentity,
   evaluateProjectSwitch,
@@ -368,6 +368,8 @@ export async function handleStartTask(args, workflowState, git, zettlyOptions = 
     session: sessionIdentity,
     allowProjectSwitch: args.allowProjectSwitch,
     projectSwitchReason: args.projectSwitchReason,
+    allowWorkspaceTransition: args.allowWorkspaceTransition,
+    workspaceTransitionReason: args.workspaceTransitionReason,
     focusId: args.focusId,
   });
   if (!switchDecision.ok) {
@@ -401,11 +403,11 @@ export async function handleStartTask(args, workflowState, git, zettlyOptions = 
       }
     }
 
-    // Claim the focus before any state is reset. The write is atomic and first
-    // writer wins, so a concurrent start that bound the same focus to another
-    // project between the read above and this write is reported as a conflict
-    // instead of being overwritten.
-    const claimed = writeFocusBinding({
+    // Claim the focus before any state is reset. The claim is exclusive across
+    // operating-system processes: a concurrent start that bound the same focus
+    // to another project holds the focus lock, and this call either waits for a
+    // bounded time and then reports the conflict, or loses the atomic create.
+    const claimed = await claimFocusBinding({
       stateFile: workflowState.stateFile,
       focusId: requestedFocusId,
       projectDir: project.dir,
@@ -413,8 +415,11 @@ export async function handleStartTask(args, workflowState, git, zettlyOptions = 
     });
     if (claimed && claimed.ok === false) {
       return textResponse(
-        `⚠️ Refused: focus ${requestedFocusId} was bound to another project concurrently.\n\n` +
-          `Focus bound to: ${claimed.existing?.projectDir || claimed.existing?.repoKey || "(unknown)"}\n` +
+        `⚠️ Refused: focus ${requestedFocusId} could not be claimed.\n\n` +
+          `Reason: ${claimed.reason || "unknown"}\n` +
+          (claimed.existing
+            ? `Focus bound to: ${claimed.existing.projectDir || claimed.existing.repoKey || "(unknown)"}\n`
+            : "") +
           `Requested repo: ${requestedIdentity.root || project.dir}\n\n` +
           `Task NOT started; the previous task and its evidence are unchanged.`
       );

@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -24,6 +25,7 @@ import { withWorkflowState, testUtils, createRequest, createGitMock } from "./te
 
 async function makeRepo(prefix = "repo-") {
   const dir = await mkdtemp(path.join(tmpdir(), prefix));
+  execFileSync("git", ["init", "-q", "-b", "main"], { cwd: dir, stdio: "ignore" });
   await mkdir(path.join(dir, ".git"), { recursive: true });
   return dir;
 }

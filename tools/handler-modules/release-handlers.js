@@ -1,6 +1,7 @@
 import { textResponse, isReleaseSatisfied, resetToCommitIfWorkingChanges, summarizeHistory } from "./shared.js";
 import { resolveProjectDir, setActiveProjectDir, getActiveProjectDir } from "../../exec.js";
 import { assertMutationRepository } from "./commit-handlers.js";
+import { captureRepositoryIdentity, parseRemoteIdentity } from "../../repository-identity.js";
 import { acquireReleaseLock, releaseReleaseLock, readReleaseLock } from "../release-lock.js";
 
 /**
@@ -170,6 +171,14 @@ export async function handleRecordDeployment(args, context) {
     return textResponse("⚠️ 'evidence' must describe what proves the tag is live (health receipt, deployed version read back).");
   }
 
+  const environment =
+    typeof args.environment === "string" && args.environment.trim() !== ""
+      ? args.environment.trim()
+      : "production";
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{1,40}$/.test(environment)) {
+    return textResponse("⚠️ 'environment' must be a short slug like production, staging or preview.");
+  }
+
   const requestedProjectDir = typeof args.projectDir === "string" ? args.projectDir.trim() : "";
   if (requestedProjectDir) {
     try {
@@ -234,19 +243,41 @@ export async function handleRecordDeployment(args, context) {
     }
   }
 
+  // A deployment record is a claim about one repository at one commit. It must
+  // name the workspace that produced it, the task that owns it and the
+  // environment it reached; otherwise a different checkout could manufacture a
+  // record that merely shares a remote.
+  const deploymentIdentity = await captureRepositoryIdentity({ dir: repoDir });
+  const contract = workflowState.state.identityContract;
+
   workflowState.state.deployment = {
     tag,
     tagSha,
     headSha,
     pipelineId,
+    environment,
     sites,
     evidence,
+    repository: {
+      root: deploymentIdentity.root,
+      remote: deploymentIdentity.remote,
+      repoKey: parseRemoteIdentity(deploymentIdentity.remote)?.key || "",
+      workspaceKey: deploymentIdentity.workspaceKey,
+    },
+    task: {
+      taskId: workflowState.state.workflowTaskId || "",
+      projectId: contract?.projectId || "",
+      focusId: Number.isSafeInteger(Number(contract?.focusId)) ? Number(contract.focusId) : null,
+    },
     recordedAt: new Date().toISOString(),
   };
   await workflowState.save();
 
   return textResponse(
     `✅ Deployment recorded: ${tag}\n` +
+      `Environment: ${environment}\n` +
+      `Repository: ${deploymentIdentity.root || "(unknown)"}\n` +
+      `Commit: ${tagSha.slice(0, 12) || "(unknown)"}\n` +
       `Pipeline: ${pipelineId}\n` +
       `Sites: ${sites.join(", ")}\n` +
       `Tag contains HEAD: yes\n\n` +
