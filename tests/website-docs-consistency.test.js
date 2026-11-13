@@ -89,6 +89,9 @@ test("website source contains no retired Factory tools, private Tailscale IPs, o
     /factory\.programinglive\.com/,
     /\b100\.(?:77|107)\.\d+\.\d+\b/,
     /C:[\\/]Users[\\/]DHIKA/i,
+    /D:[\\/]code[\\/]/i,
+    /\bHELLOWORLD\b/,
+    /\bMMCH\b/,
     /migration-audit-record\.md/,
   ];
 
@@ -102,4 +105,14 @@ test("website source contains no retired Factory tools, private Tailscale IPs, o
     }
   }
   assert.deepEqual(hits, []);
+});
+
+test("web package.json wires normalize-static-export.mjs into postbuild", () => {
+  const webPkg = JSON.parse(fs.readFileSync(path.join(WEB_DIR, "package.json"), "utf8"));
+  assert.equal(
+    fs.existsSync(path.join(WEB_DIR, "scripts", "normalize-static-export.mjs")),
+    true,
+    "Missing web/scripts/normalize-static-export.mjs",
+  );
+  assert.match(String(webPkg.scripts?.postbuild || ""), /normalize-static-export\.mjs/);
 });

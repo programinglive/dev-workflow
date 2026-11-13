@@ -25,14 +25,23 @@ export const PORTAL_SECTIONS: PortalSection[] = [
         ],
       },
       {
-        heading: "2. Runtime Requirements & Installation",
+        heading: "2. Runtime Requirements & Installation Modes",
         body: [
-          "Requires Node.js >= 20.0.0. Because programinglive/dev-workflow-mcp-server is currently PRIVATE and not yet published to public npm, install from an authorized repository clone:",
+          "Requires Node.js >= 20.0.0. Because programinglive/dev-workflow-mcp-server is currently PRIVATE (authenticated Git access required) and not yet published to public npm, install from an authorized repository clone:",
         ],
         code: `git clone https://github.com/programinglive/dev-workflow-mcp-server.git
 cd dev-workflow-mcp-server
 npm ci
 npx devwf doctor`,
+        table: {
+          headers: ["Mode", "Command", "When to Use"],
+          rows: [
+            ["Source checkout", "npm ci", "Reproducible install from package-lock.json in a cloned repository"],
+            ["Local CLI invocation", "npx devwf doctor", "Run devwf from the local checkout without modifying global PATH"],
+            ["Global local link", "npm install -g . && devwf doctor", "Expose devwf globally on your machine from the local clone"],
+            ["Public npm registry", "Pending Gate C", "Public npm install is not yet active; verify on /releases/ before using"],
+          ],
+        },
       },
       {
         heading: "3. Register an AI Coding Client & Verify MCP Tools",

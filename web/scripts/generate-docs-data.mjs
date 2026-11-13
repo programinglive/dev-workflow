@@ -16,6 +16,15 @@ const webRoot = path.dirname(here);
 const repoRoot = path.dirname(webRoot);
 const target = path.join(webRoot, "lib", "catalog.generated.ts");
 
+function sanitizePublicText(text) {
+  return String(text || "")
+    .replace(/D:[\\/]code[\\/][A-Za-z0-9_.-]+/gi, "/path/to/repo")
+    .replace(/\bHELLOWORLD\b/g, "workstation-b")
+    .replace(/\bMMCH\b/g, "workstation-a")
+    .replace(/\bmmch\b/g, "workstation-a")
+    .trim();
+}
+
 function parseCliArgsSource(source) {
   const commandsMatch = source.match(/const COMMANDS\s*=\s*\[([^\]]+)\]/);
   const fleetMatch = source.match(/const FLEET_VERBS\s*=\s*\[([^\]]+)\]/);
@@ -48,10 +57,16 @@ function parseChangelogHighlights(changelog) {
 async function main() {
   const pkgRaw = await readFile(path.join(repoRoot, "package.json"), "utf8");
   const pkg = JSON.parse(pkgRaw);
+  if (!pkg?.version || !pkg?.name) {
+    throw new Error("package.json missing required name or version");
+  }
 
   const defsUrl = pathToFileURL(path.join(repoRoot, "tools", "definitions.js")).href;
   const defsMod = await import(defsUrl);
   const rawTools = typeof defsMod.getToolList === "function" ? defsMod.getToolList() : [];
+  if (!Array.isArray(rawTools) || rawTools.length === 0) {
+    throw new Error("tools/definitions.js getToolList() returned no MCP tools");
+  }
   const mcpTools = [...rawTools]
     .sort((a, b) => a.name.localeCompare(b.name))
     .map((tool) => {
@@ -60,12 +75,12 @@ async function main() {
       const required = Array.isArray(schema.required) ? schema.required : [];
       return {
         name: tool.name,
-        description: String(tool.description || "").trim(),
+        description: sanitizePublicText(tool.description),
         required,
         params: Object.entries(props).map(([key, val]) => ({
           name: key,
           type: String(val?.type || (Array.isArray(val?.enum) ? "enum" : "any")),
-          description: String(val?.description || "").trim(),
+          description: sanitizePublicText(val?.description),
           required: required.includes(key),
           enumValues: Array.isArray(val?.enum) ? val.enum.map(String) : [],
         })),
@@ -74,6 +89,9 @@ async function main() {
 
   const cliArgsSrc = await readFile(path.join(repoRoot, "cli", "args.js"), "utf8");
   const cliParsed = parseCliArgsSource(cliArgsSrc);
+  if (cliParsed.commands.length === 0 || cliParsed.fleetVerbs.length === 0) {
+    throw new Error("cli/args.js yielded empty COMMANDS or FLEET_VERBS");
+  }
   const cliArgsMod = await import(pathToFileURL(path.join(repoRoot, "cli", "args.js")).href);
 
   const changelogSrc = await readFile(path.join(repoRoot, "CHANGELOG.md"), "utf8");

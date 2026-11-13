@@ -89,7 +89,7 @@ export const GENERATED_CATALOG = {
         {
           "name": "host",
           "type": "string",
-          "description": "Optional build host filter, e.g. 'mmch'.",
+          "description": "Optional build host filter, e.g. 'workstation-a'.",
           "required": false,
           "enumValues": []
         }
@@ -451,7 +451,7 @@ export const GENERATED_CATALOG = {
         {
           "name": "to",
           "type": "string",
-          "description": "Name of the target machine, exactly as recorded in that machine's state (e.g. 'MMCH').",
+          "description": "Name of the target machine, exactly as recorded in that machine's state (e.g. 'workstation-a').",
           "required": true,
           "enumValues": []
         },
@@ -569,7 +569,7 @@ export const GENERATED_CATALOG = {
         {
           "name": "machine",
           "type": "string",
-          "description": "Optional filter by machine name (case-insensitive substring, e.g. 'HELLOWORLD', 'Mac').",
+          "description": "Optional filter by machine name (case-insensitive substring, e.g. 'workstation-b', 'Mac').",
           "required": false,
           "enumValues": []
         }
@@ -782,7 +782,7 @@ export const GENERATED_CATALOG = {
         {
           "name": "projectDir",
           "type": "string",
-          "description": "Optional project directory path to boost project-specific MCP tools (e.g. 'D:/code/clinic'). Defaults to the active session projectDir.",
+          "description": "Optional project directory path to boost project-specific MCP tools (e.g. '/path/to/repo'). Defaults to the active session projectDir.",
           "required": false,
           "enumValues": []
         },
@@ -1400,7 +1400,7 @@ export const GENERATED_CATALOG = {
         {
           "name": "projectDir",
           "type": "string",
-          "description": "Absolute path to the repository this task works on (e.g. D:\\code\\clinic). Pinned for the whole task; every git operation afterwards runs there. Pass it whenever the session directory is not itself a git repository, otherwise the server may fall back to WORKFLOW_PROJECT_DIR and commit to the wrong repo.",
+          "description": "Absolute path to the repository this task works on (e.g. /path/to/repo). Pinned for the whole task; every git operation afterwards runs there. Pass it whenever the session directory is not itself a git repository, otherwise the server may fall back to WORKFLOW_PROJECT_DIR and commit to the wrong repo.",
           "required": false,
           "enumValues": []
         },
