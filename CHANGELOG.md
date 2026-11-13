@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### Open-Source Repository Baseline
+
+DevWorkflow's Git history was reinitialized as part of its open-source preparation.
+
+The new repository baseline consolidates the project's existing functionality into a clean, portable source tree, separating public development resources from environment-specific internal configurations.
+
+This change does not represent a complete rewrite of the application. Existing functionality has been preserved and validated through automated tests.
+
+Earlier internal development history is maintained separately and is not part of the public repository.
+
+**Note:** Commit hashes from before this baseline are no longer part of the supported public Git history.
+
 ## [1.31.0](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.30.0...v1.31.0) (2026-11-12)
 
 
