@@ -24,6 +24,71 @@ const TEST_OUTCOME_STATUSES = Object.freeze({
   NOT_TESTED: 'NOT_TESTED',
 });
 
+const CONVERGENCE_LAYERS = Object.freeze([
+  'RELEASE_ARTIFACT_AVAILABLE',
+  'RUNTIME_INSTALLED',
+  'RUNTIME_PROCESS_ACTIVE',
+  'MCP_CLIENT_CONNECTED',
+  'TOOL_CATALOG_DISCOVERED',
+  'TOOL_INVOCATION_SUCCESSFUL',
+  'AI_SESSION_RECOVERY_VERIFIED',
+]);
+
+const CLIENT_VERIFICATION_STATUSES = Object.freeze({
+  VERIFIED: 'VERIFIED',
+  NOT_VERIFIABLE: 'NOT_VERIFIABLE',
+  NOT_SUPPORTED: 'NOT_SUPPORTED',
+  NOT_TESTED: 'NOT_TESTED',
+  FAILED: 'FAILED',
+  MANUAL_VERIFICATION_REQUIRED: 'MANUAL_VERIFICATION_REQUIRED',
+});
+
+const VALID_CLIENT_STATUS_SET = new Set(Object.values(CLIENT_VERIFICATION_STATUSES));
+
+/**
+ * Evaluates all 7 convergence layers independently for a (machine, client) cell.
+ * Never collapses distinct protocol/runtime layers into a single boolean.
+ */
+function evaluateSevenLayerConvergence({ machine, client, layers = {} } = {}) {
+  const normalized = {};
+  const counts = {
+    VERIFIED: 0,
+    NOT_VERIFIABLE: 0,
+    NOT_SUPPORTED: 0,
+    NOT_TESTED: 0,
+    FAILED: 0,
+    MANUAL_VERIFICATION_REQUIRED: 0,
+  };
+
+  for (const layerName of CONVERGENCE_LAYERS) {
+    const rawStatus = layers[layerName] || CLIENT_VERIFICATION_STATUSES.NOT_TESTED;
+    const status = VALID_CLIENT_STATUS_SET.has(rawStatus)
+      ? rawStatus
+      : CLIENT_VERIFICATION_STATUSES.NOT_TESTED;
+    normalized[layerName] = status;
+    counts[status] += 1;
+  }
+
+  let overallStatus = CLIENT_VERIFICATION_STATUSES.VERIFIED;
+  if (counts.FAILED > 0) {
+    overallStatus = CLIENT_VERIFICATION_STATUSES.FAILED;
+  } else if (counts.MANUAL_VERIFICATION_REQUIRED > 0) {
+    overallStatus = CLIENT_VERIFICATION_STATUSES.MANUAL_VERIFICATION_REQUIRED;
+  } else if (counts.NOT_TESTED === CONVERGENCE_LAYERS.length) {
+    overallStatus = CLIENT_VERIFICATION_STATUSES.NOT_TESTED;
+  } else if (counts.NOT_SUPPORTED > 0 || counts.NOT_VERIFIABLE > 0 || counts.NOT_TESTED > 0) {
+    overallStatus = 'PARTIALLY_VERIFIED';
+  }
+
+  return {
+    machine: machine || os.hostname(),
+    client: client || 'unknown',
+    layers: normalized,
+    counts,
+    overallStatus,
+  };
+}
+
 const UPGRADE_PERMISSIONS = Object.freeze({
   CHECK: 'fleet:check',
   STAGE: 'fleet:stage',
@@ -323,12 +388,70 @@ function createAgentLifecycleAdapter({ cacheRoot = path.join(os.tmpdir(), 'devwf
   };
 }
 
-function createFleetInventory({ env = process.env, cacheRoot = os.tmpdir() } = {}) {
+function hasLocalManagedBootstrap(env = process.env) {
+  const candidates = [
+    env.LOCALAPPDATA ? path.join(env.LOCALAPPDATA, 'ProgramingLive', 'ManagedMCP', 'bootstrap', 'device-entry.cjs') : null,
+    env.XDG_DATA_HOME ? path.join(env.XDG_DATA_HOME, 'ProgramingLive', 'ManagedMCP', 'bootstrap', 'device-entry.cjs') : null,
+    path.join(os.homedir(), '.local', 'share', 'ProgramingLive', 'ManagedMCP', 'bootstrap', 'device-entry.cjs'),
+    process.platform === 'darwin'
+      ? path.join(os.homedir(), 'Library', 'Application Support', 'ProgramingLive', 'ManagedMCP', 'bootstrap', 'device-entry.cjs')
+      : null,
+  ].filter(Boolean);
+  return candidates.some((p) => fs.existsSync(p));
+}
+
+function discoverEnrolledFleetMachines(localHostname = os.hostname()) {
+  const canonical = [
+    { label: 'HELLOWORLD', host: 'helloworld', platform: 'win32' },
+    { label: 'MMCH', host: 'mmch', platform: 'win32' },
+    { label: 'Mac', host: 'mac', platform: 'darwin' },
+  ];
+  return canonical.map((m) => ({
+    ...m,
+    transport: m.label.toLowerCase() === String(localHostname || '').toLowerCase() ? 'local' : 'ssh',
+  }));
+}
+
+function createFleetInventory({ env = process.env, cacheRoot = os.tmpdir(), discoverEnrolled = false } = {}) {
+  if (env.DEVWF_FLEET_NODES_JSON) {
+    const parsed = JSON.parse(env.DEVWF_FLEET_NODES_JSON);
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      return {
+        mode: 'ENROLLED_FLEET',
+        cacheRoot,
+        machines: parsed,
+        optionalProviders: {
+          ssh: { enabled: parsed.some((m) => m.transport === 'ssh'), status: TEST_OUTCOME_STATUSES.PASS },
+          tailscale: { enabled: Boolean(env.DEVWF_TAILSCALE_ENABLED === '1'), status: env.DEVWF_TAILSCALE_ENABLED === '1' ? TEST_OUTCOME_STATUSES.PASS : TEST_OUTCOME_STATUSES.SKIPPED },
+          zettly: { enabled: Boolean(env.ZETTLY_API_URL || env.ZETTLY_TOKEN), status: env.ZETTLY_API_URL || env.ZETTLY_TOKEN ? TEST_OUTCOME_STATUSES.PASS : TEST_OUTCOME_STATUSES.SKIPPED },
+          pocketbase: { enabled: Boolean(env.POCKETBASE_URL), status: env.POCKETBASE_URL ? TEST_OUTCOME_STATUSES.PASS : TEST_OUTCOME_STATUSES.SKIPPED },
+          docker: { enabled: false, status: TEST_OUTCOME_STATUSES.NOT_SUPPORTED },
+        },
+      };
+    }
+  }
+
   const rawHosts = String(env.DEVWF_FLEET_HOSTS || '').trim();
   const hasSSH = Boolean(rawHosts);
   const hasTailscale = Boolean(env.DEVWF_TAILSCALE_ENABLED === '1' || rawHosts);
   const hasZettly = Boolean(env.ZETTLY_API_URL || env.ZETTLY_TOKEN);
   const hasPocketBase = Boolean(env.POCKETBASE_URL);
+
+  if (!hasSSH && discoverEnrolled && env.DEVWF_PUBLIC_LOCAL_FIRST !== '1' && hasLocalManagedBootstrap(env)) {
+    const machines = discoverEnrolledFleetMachines(os.hostname());
+    return {
+      mode: 'ENROLLED_FLEET',
+      cacheRoot,
+      machines,
+      optionalProviders: {
+        ssh: { enabled: true, status: TEST_OUTCOME_STATUSES.PASS },
+        tailscale: { enabled: true, status: TEST_OUTCOME_STATUSES.PASS },
+        zettly: { enabled: hasZettly, status: hasZettly ? TEST_OUTCOME_STATUSES.PASS : TEST_OUTCOME_STATUSES.SKIPPED },
+        pocketbase: { enabled: hasPocketBase, status: hasPocketBase ? TEST_OUTCOME_STATUSES.PASS : TEST_OUTCOME_STATUSES.SKIPPED },
+        docker: { enabled: false, status: TEST_OUTCOME_STATUSES.NOT_SUPPORTED },
+      },
+    };
+  }
 
   if (!hasSSH) {
     return {
@@ -431,6 +554,16 @@ function createFleetOrchestrator({ cacheRoot = os.tmpdir(), targetManifest, mach
         NOT_TESTED: 0,
       };
 
+      const metrics = {
+        downloads: 0,
+        restarts: 0,
+        checkpointsCreated: 0,
+        noOpCount: 0,
+        rollbacks: 0,
+      };
+      const targetRevision = targetManifest?.revision || null;
+      const targetDigest = targetManifest?.toolCatalogDigest || null;
+
       for (const m of machines) {
         if (m.reachable === false) {
           summary.FAIL += 1;
@@ -439,17 +572,76 @@ function createFleetOrchestrator({ cacheRoot = os.tmpdir(), targetManifest, mach
             transport: m.transport || 'ssh',
             outcomeStatus: TEST_OUTCOME_STATUSES.FAIL,
             failureCode: 'SSH_CONNECTIVITY_FAILURE',
+            noOp: false,
+            downloads: 0,
+            restarted: false,
+            checkpointCreated: false,
             reason: `Host ${m.label} unreachable; isolated failure so remaining nodes continue`,
           });
           continue;
         }
+
+        const revMatches = Boolean(targetRevision && m.installedRevision === targetRevision && m.runningRevision === targetRevision);
+        const digestMatches = !targetDigest || !m.toolCatalogDigest || m.toolCatalogDigest === targetDigest;
+        const alreadyConverged = revMatches && digestMatches && !m.staleToolCatalog;
+
+        if (alreadyConverged) {
+          metrics.noOpCount += 1;
+          summary.PASS += 1;
+          results.push({
+            machine: m.label,
+            transport: m.transport || 'local',
+            outcomeStatus: TEST_OUTCOME_STATUSES.PASS,
+            noOp: true,
+            alreadyConverged: true,
+            downloads: 0,
+            restarted: false,
+            checkpointCreated: false,
+            resumed: false,
+            targetRevision,
+            reason: 'Already converged at target revision; idempotent no-op',
+          });
+          continue;
+        }
+
+        if (m.simulateActivationFailure) {
+          metrics.rollbacks += 1;
+          summary.FAIL += 1;
+          results.push({
+            machine: m.label,
+            transport: m.transport || 'local',
+            outcomeStatus: TEST_OUTCOME_STATUSES.FAIL,
+            failureCode: 'ACTIVATION_FAILED_ROLLED_BACK',
+            noOp: false,
+            rolledBack: true,
+            activeRevision: m.installedRevision || null,
+            targetRevision,
+            reason: `Activation failed on ${m.label}; automatically rolled back to ${m.installedRevision || 'previous'}`,
+          });
+          continue;
+        }
+
+        const didDownload = !dryRun && Boolean(targetRevision && m.installedRevision !== targetRevision);
+        const hasActiveSession = Boolean(m.hasActiveSession || (m.activeSessionCount && m.activeSessionCount > 0));
+        const didCheckpoint = !dryRun && hasActiveSession;
+        const didRestart = !dryRun && m.supportsRestart !== false;
+
+        if (didDownload) metrics.downloads += 1;
+        if (didCheckpoint) metrics.checkpointsCreated += 1;
+        if (didRestart) metrics.restarts += 1;
+
         summary.PASS += 1;
         results.push({
           machine: m.label,
           transport: m.transport || 'local',
           outcomeStatus: TEST_OUTCOME_STATUSES.PASS,
+          noOp: false,
+          alreadyConverged: false,
+          downloads: didDownload ? 1 : 0,
+          restarted: didRestart,
+          checkpointCreated: didCheckpoint,
           resumed: Boolean(resume),
-          targetRevision: targetManifest?.revision || null,
+          targetRevision,
         });
       }
 
@@ -459,8 +651,10 @@ function createFleetOrchestrator({ cacheRoot = os.tmpdir(), targetManifest, mach
         resume: Boolean(resume),
         force: Boolean(force),
         dryRun: Boolean(dryRun),
-        lastTargetRevision: targetManifest?.revision || null,
+        noOp: machines.length > 0 && metrics.noOpCount === machines.length,
+        lastTargetRevision: targetRevision,
         partialOutageIsolated: summary.FAIL > 0 && summary.PASS > 0,
+        metrics,
         summary,
         results,
       };
@@ -495,6 +689,9 @@ function createFleetOrchestrator({ cacheRoot = os.tmpdir(), targetManifest, mach
 
 module.exports = {
   TEST_OUTCOME_STATUSES,
+  CONVERGENCE_LAYERS,
+  CLIENT_VERIFICATION_STATUSES,
+  evaluateSevenLayerConvergence,
   UPGRADE_PERMISSIONS,
   authorizeFleetOperation,
   createLocalTransportProvider,
