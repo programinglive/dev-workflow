@@ -269,11 +269,25 @@ export async function runCommand({
     }
 
     if (verb === "upgrade") {
-      const inv = createFleetInventory({ env });
+      const discoverEnrolled =
+        Boolean(args.all) &&
+        env.DEVWF_FLEET_LOCAL_ONLY !== "1" &&
+        env.DEVWF_PUBLIC_LOCAL_FIRST !== "1";
+      const inv = createFleetInventory({ env, discoverEnrolled });
       const st = sup.getStatus();
       const adapter = createAgentLifecycleAdapter();
+      const targetRev = st.targetRevision || st.installedRevision || null;
+      const machinesWithState = inv.machines.map((m) => ({
+        ...m,
+        installedRevision: m.installedRevision || st.installedRevision || targetRev,
+        runningRevision: m.runningRevision || st.runningRevision || st.installedRevision || targetRev,
+        toolCatalogDigest: m.toolCatalogDigest || st.toolCatalogDigest || null,
+      }));
       const orch = createFleetOrchestrator({
-        machines: inv.machines,
+        targetManifest: targetRev
+          ? { revision: targetRev, toolCatalogDigest: st.toolCatalogDigest || null }
+          : undefined,
+        machines: machinesWithState,
       });
       const permissions = [
         UPGRADE_PERMISSIONS.CHECK,

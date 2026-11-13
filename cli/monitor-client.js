@@ -30,7 +30,7 @@ export function createMonitorClient({ env = process.env, fetchImpl = fetch } = {
   const baseUrl = readEnv(env, BASE_VAR);
   if (!baseUrl) {
     throw new CliError(
-      `${BASE_VAR} is not set. Point it at the central monitor, e.g. http://100.77.138.14:3100.`
+      `${BASE_VAR} is not set. Point it at the central monitor, e.g. http://127.0.0.1:3100.`
     );
   }
   const token = readEnv(env, TOKEN_VAR);

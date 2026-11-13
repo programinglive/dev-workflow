@@ -162,5 +162,15 @@
       "status": "PASS",
       "details": "Public-safety sanitizer and audit log redaction verified (npm run test:security 47/47 pass); zero hardcoded tokens, private IPs in OSS modules, or committed Android keystores."
     }
+  },
+  "postReleaseClientConvergence": {
+    "verifiedAt": "2026-11-13T08:18:00+07:00",
+    "reportDocument": "docs/releases/v1.31.0-client-convergence.md",
+    "validationTestSuite": "tests/post-release-v131-validation.test.js",
+    "matrixSize": "3x3 (HELLOWORLD, MMCH, Mac x OpenCode, Codex, Antigravity)",
+    "toolCatalogEntryCount": 57,
+    "toolCatalogDigest": "sha256:40250da52d9cee0a9ae20543bcf3eba499db039a46798ee5bdd022947b66ccd9",
+    "oneTriggerNoOpVerified": true,
+    "enrolledNodesDiscovered": 3
   }
 }

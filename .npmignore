@@ -55,3 +55,21 @@ coverage/
 docs/
 CHANGELOG.md
 test-output.html
+
+# Internal fleet rollout, deployment, and known-hosts assets
+monitor-server/bw-tools-known-hosts
+monitor-server/devwf-monitor.service
+managed/rollout.cjs
+managed/fleet-status.cjs
+managed/restart-devices.cjs
+managed/devwf-managed.service
+scripts/deploy-monitor.*
+scripts/rotate-monitor-token.sh
+scripts/probe-*.sh
+scripts/verify-share*.sh
+scripts/verify-orphan*.sh
+mobile-app/
+.managed-publish/
+**/__pycache__/
+*.pyc
+.netlify/
