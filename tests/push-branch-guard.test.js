@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert";
 
 import { handleToolCall } from "../tools/handlers.js";
-import { withWorkflowState, testUtils, createRequest, createGitMock } from "./test-helpers.js";
+import { withWorkflowState, testUtils, createRequest, createGitMock, bindTaskToRepo } from "./test-helpers.js";
 
 // Kenapa tes ini ada
 // ------------------
@@ -68,6 +68,7 @@ async function run(workflowState, { gitOverrides = {}, args = {}, commands = [] 
 
 test("REGRESI: push menargetkan branch aktif, bukan primary branch", async () => {
   await withWorkflowState(async (workflowState) => {
+    await bindTaskToRepo(workflowState);
     await readyState(workflowState);
     const commands = [];
 
@@ -97,6 +98,7 @@ test("REGRESI: push menargetkan branch aktif, bukan primary branch", async () =>
 test("REGRESI: push exit 0 tanpa mengirim apa pun harus dilaporkan GAGAL", async () => {
   // Skenario persis 31 Okt 2026: git push keluar 0, remote tidak bergerak.
   await withWorkflowState(async (workflowState) => {
+    await bindTaskToRepo(workflowState);
     await readyState(workflowState);
 
     const { text } = await run(workflowState, {
@@ -118,6 +120,7 @@ test("REGRESI: push exit 0 tanpa mengirim apa pun harus dilaporkan GAGAL", async
 
 test("push gagal dilaporkan bila branch remote belum ada", async () => {
   await withWorkflowState(async (workflowState) => {
+    await bindTaskToRepo(workflowState);
     await readyState(workflowState);
 
     const { text } = await run(workflowState, {
@@ -137,6 +140,7 @@ test("push gagal dilaporkan bila branch remote belum ada", async () => {
 
 test("sukses dilaporkan hanya setelah SHA remote cocok dengan HEAD", async () => {
   await withWorkflowState(async (workflowState) => {
+    await bindTaskToRepo(workflowState);
     await readyState(workflowState);
 
     const { text } = await run(workflowState, {
@@ -156,6 +160,7 @@ test("sukses dilaporkan hanya setelah SHA remote cocok dengan HEAD", async () =>
 
 test("branch eksplisit tetap menang atas branch aktif", async () => {
   await withWorkflowState(async (workflowState) => {
+    await bindTaskToRepo(workflowState);
     await readyState(workflowState);
     const commands = [];
 
@@ -178,6 +183,7 @@ test("branch eksplisit tetap menang atas branch aktif", async () => {
 
 test("HEAD detached memakai primary branch", async () => {
   await withWorkflowState(async (workflowState) => {
+    await bindTaskToRepo(workflowState);
     await readyState(workflowState);
     const commands = [];
 
@@ -197,6 +203,7 @@ test("HEAD detached memakai primary branch", async () => {
 test("REGRESI: tanpa perubahan, HEAD yang belum ter-push tidak dianggap selesai", async () => {
   // "No changes detected" bukan bukti bahwa commit sudah terkirim.
   await withWorkflowState(async (workflowState) => {
+    await bindTaskToRepo(workflowState);
     await readyState(workflowState);
 
     const { text } = await run(workflowState, {
@@ -218,6 +225,7 @@ test("REGRESI: tanpa perubahan, HEAD yang belum ter-push tidak dianggap selesai"
 
 test("tanpa perubahan dan remote sudah sinkron: selesai dengan bukti", async () => {
   await withWorkflowState(async (workflowState) => {
+    await bindTaskToRepo(workflowState);
     await readyState(workflowState);
 
     const { text } = await run(workflowState, {

@@ -7,6 +7,7 @@ import path from "node:path";
 import { WorkflowState } from "../workflow-state.js";
 import { handleToolCall } from "../tools/handlers.js";
 import { normalizeRequestArgs, shellEscape } from "../utils.js";
+import { bindTaskToRepo } from "./test-helpers.js";
 import {
   createCommitMessageParts,
   determineReleaseTypeFromCommit,
@@ -38,6 +39,7 @@ async function withWorkflowState(callback) {
   const stateFile = path.join(tempDir, "state.json");
   const state = new WorkflowState(stateFile);
   await state.load();
+  await bindTaskToRepo(state);
 
   try {
     await callback(state);
