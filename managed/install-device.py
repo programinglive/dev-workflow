@@ -16,6 +16,54 @@ def record_of(data):
     if 'servers' in records: records=records['servers']
     return records.get('dev-workflow')
 
+def client_config_files(home):
+    """JSON MCP configuration files per client, relative to the user's home.
+
+    Antigravity keeps two files: the IDE reads ~/.gemini/antigravity and the
+    CLI (agy) reads ~/.gemini/config, which is also where `agy mcp add` writes.
+    """
+    home=pathlib.Path(home)
+    return [
+        ('opencode',home/'.config/opencode/opencode.json'),
+        ('opencode',home/'.config/opencode/opencode.jsonc'),
+        ('antigravity',home/'.gemini/antigravity/mcp_config.json'),
+        ('antigravity-cli',home/'.gemini/config/mcp_config.json'),
+    ]
+
+def inspect_registration(file):
+    """Read-only state of the dev-workflow registration in one config file.
+
+    Returns (state, data, record) where state is one of: missing, empty,
+    invalid, no-entry, ok. A zero-byte or whitespace-only file is reported as
+    'empty' instead of raising, because a client reading it loads no MCP.
+    """
+    file=pathlib.Path(file)
+    if not file.exists():return ('missing',None,None)
+    try:raw=file.read_text(encoding='utf-8-sig')
+    except OSError:return ('invalid',None,None)
+    if not raw.strip():return ('empty',None,None)
+    try:data=read_json(file)
+    except ValueError:return ('invalid',None,None)
+    if not isinstance(data,dict):return ('invalid',None,None)
+    try:record=record_of(data)
+    except AttributeError:return ('invalid',data,None)
+    if not isinstance(record,dict):return ('no-entry',data,None)
+    return ('ok',data,record)
+
+def doctor(home):
+    """Report every client's dev-workflow registration without changing files.
+
+    A missing file is informational (the client may not be installed); an
+    empty, invalid or entry-less file means that client starts with no
+    dev-workflow tools and its tasks never reach the monitor.
+    """
+    report=[]
+    for client,file in client_config_files(home):
+        state,_,_=inspect_registration(file)
+        report.append({'client':client,'file':str(file),'state':state})
+    problems=[r for r in report if r['state'] in ('empty','invalid','no-entry')]
+    return {'ok':not problems,'registrations':report}
+
 def args_span(body):
     match=re.search(r'(?m)^args[ \t]*=[ \t]*(\[)',body)
     if not match:return None
@@ -99,13 +147,15 @@ def install(home,source,node=None,verify=True):
     target.mkdir(parents=True,exist_ok=True)
     for name in ('launcher.cjs','protocol.cjs','device-entry.cjs'):
         shutil.copy2(pathlib.Path(source)/name,target/name)
-    json_files=[home/'.config/opencode/opencode.json',home/'.config/opencode/opencode.jsonc',home/'.gemini/antigravity/mcp_config.json']
     configurations=[]
-    for file in json_files:
-        if not file.exists():continue
-        data=read_json(file)
-        record=record_of(data)
-        if isinstance(record,dict):configurations.append((file,data,record))
+    skipped=[]
+    client_of={}
+    for client,file in client_config_files(home):
+        state,data,record=inspect_registration(file)
+        # Empty or invalid files are reported, never overwritten: the owning
+        # client (for example `agy mcp add`) is the only safe writer for them.
+        if state=='ok':configurations.append((file,data,record));client_of[str(file)]=client
+        elif state!='missing':skipped.append({'file':str(file),'state':state})
     codex=home/'.codex/config.toml'
     codex_text=codex.read_text(encoding='utf-8') if codex.exists() else ''
     if not node:
@@ -152,19 +202,27 @@ def install(home,source,node=None,verify=True):
         updated=replace_toml_args(codex_text,args)
         backup_write(codex,updated);changed.append(str(codex))
     for file,data,record in configurations:
-        client='antigravity' if 'antigravity' in str(file) else 'opencode'
+        # Both Antigravity files (IDE and CLI) use the string command + args
+        # schema and identify themselves to device-entry.cjs as 'antigravity'.
+        antigravity=client_of[str(file)].startswith('antigravity')
+        client='antigravity' if antigravity else 'opencode'
         if wrapper and 'AppData/Local/DevWorkflowMCP' in str(wrapper).replace('\\','/'):
             command=[node,str(wrapper),client]
         else:command=[node,str(target/'device-entry.cjs'),client]
-        rewrite_json_command(record,command,'antigravity' not in str(file) and not isinstance(record.get('command'),str))
+        rewrite_json_command(record,command,not antigravity and not isinstance(record.get('command'),str))
         backup_write(file,json.dumps(data,indent=2,ensure_ascii=False)+'\n');changed.append(str(file))
-    return {'device':env.get('DEVWF_MACHINE',os.environ.get('COMPUTERNAME','Mac')),'node':node,'bootstrap':str(target),'revision':resolved and resolved['revision'],'runtimeRoot':resolved and resolved['runtimeRoot'],'changed':changed,'wrapper':str(wrapper) if wrapper else None}
+    return {'device':env.get('DEVWF_MACHINE',os.environ.get('COMPUTERNAME','Mac')),'node':node,'bootstrap':str(target),'revision':resolved and resolved['revision'],'runtimeRoot':resolved and resolved['runtimeRoot'],'changed':changed,'skipped':skipped,'wrapper':str(wrapper) if wrapper else None}
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser()
     parser.add_argument('--source',default=str(pathlib.Path(__file__).parent))
     parser.add_argument('--node')
+    parser.add_argument('--doctor',action='store_true',help='report dev-workflow registrations read-only and exit 1 when one is unusable')
     args=parser.parse_args()
+    if args.doctor:
+        result=doctor(pathlib.Path.home())
+        print(json.dumps(result,indent=2))
+        sys.exit(0 if result['ok'] else 1)
     try:print(json.dumps(install(pathlib.Path.home(),args.source,args.node)))
     except Exception as error:
         # Configuration values and subprocess environment are never dumped.

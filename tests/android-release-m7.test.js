@@ -13,6 +13,18 @@ const {
 
 const ROOT_DIR = path.resolve(import.meta.dirname, "..");
 
+// mobile-app/android is a generated native project (ignored by
+// mobile-app/.gitignore) and the APK is a build output. Neither exists in a
+// fresh checkout or in CI, so checks on them run only where they were built.
+const ANDROID_DIR = path.join(ROOT_DIR, "mobile-app", "android");
+const RELEASE_APK = path.join(ANDROID_DIR, "app", "build", "outputs", "apk", "release", "app-release.apk");
+const NATIVE_PROJECT_SKIP = fs.existsSync(path.join(ANDROID_DIR, "app", "src", "main", "res"))
+  ? false
+  : "mobile-app/android is generated and git-ignored; run the native prebuild to check it";
+const RELEASE_APK_SKIP = fs.existsSync(RELEASE_APK)
+  ? false
+  : "release APK is a build output; build it with the android-release workflow to check it";
+
 test("Milestone M7: Android APK Release Workflow & Verification", async (t) => {
   await t.test("M7: mobile-app/App.js maintains balanced Modal and ScrollView JSX tags for Metro bundler", () => {
     const appSource = fs.readFileSync(path.join(ROOT_DIR, "mobile-app", "App.js"), "utf8");
@@ -39,19 +51,8 @@ test("Milestone M7: Android APK Release Workflow & Verification", async (t) => {
     assert.equal(result.checks.noCommittedKeystoreSecret, true);
   });
 
-  await t.test("M7: verifyReleaseApkArtifact computes SHA-256 and verifies APK zip magic header", () => {
-    const apkPath = path.join(
-      ROOT_DIR,
-      "mobile-app",
-      "android",
-      "app",
-      "build",
-      "outputs",
-      "apk",
-      "release",
-      "app-release.apk"
-    );
-    const report = verifyReleaseApkArtifact(apkPath);
+  await t.test("M7: verifyReleaseApkArtifact computes SHA-256 and verifies APK zip magic header", { skip: RELEASE_APK_SKIP }, () => {
+    const report = verifyReleaseApkArtifact(RELEASE_APK);
     assert.equal(report.exists, true);
     assert.equal(report.validZipHeader, true);
     assert.ok(report.sizeBytes > 1_000_000);
@@ -76,7 +77,7 @@ test("Milestone M7: Android APK Release Workflow & Verification", async (t) => {
     assert.equal(parsedEmpty.xiaomiPad6Detected, false);
   });
 
-  await t.test("Commiter v2 (^1.5.1) and DW Android Companion icon & splash assets are configured", () => {
+  await t.test("Commiter v2 (^1.5.1) and DW Android Companion source icon & splash assets are configured", () => {
     const pkg = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, "package.json"), "utf8"));
     assert.equal(pkg.devDependencies["@programinglive/commiter"], "^1.5.1");
     assert.equal(pkg.scripts.release, "commiter release");
@@ -86,18 +87,25 @@ test("Milestone M7: Android APK Release Workflow & Verification", async (t) => {
       path.join(ROOT_DIR, "mobile-app", "assets", "icon.png"),
       path.join(ROOT_DIR, "mobile-app", "assets", "splash-icon.png"),
       path.join(ROOT_DIR, "mobile-app", "assets", "android-icon-foreground.png"),
-      path.join(ROOT_DIR, "mobile-app", "android", "app", "src", "main", "res", "mipmap-xxxhdpi", "ic_launcher.webp"),
-      path.join(ROOT_DIR, "mobile-app", "android", "app", "src", "main", "res", "drawable-xxxhdpi", "splashscreen_logo.png"),
     ];
     for (const assetPath of requiredAssets) {
       assert.equal(fs.existsSync(assetPath), true, `Missing asset: ${assetPath}`);
       assert.ok(fs.statSync(assetPath).size > 1000, `Asset unexpectedly small: ${assetPath}`);
     }
+  });
 
-    const colorsXml = fs.readFileSync(
-      path.join(ROOT_DIR, "mobile-app", "android", "app", "src", "main", "res", "values", "colors.xml"),
-      "utf8"
-    );
+  await t.test("DW Android Companion generated native icon, splash and colors are present", { skip: NATIVE_PROJECT_SKIP }, () => {
+    const res = path.join(ANDROID_DIR, "app", "src", "main", "res");
+    const nativeAssets = [
+      path.join(res, "mipmap-xxxhdpi", "ic_launcher.webp"),
+      path.join(res, "drawable-xxxhdpi", "splashscreen_logo.png"),
+    ];
+    for (const assetPath of nativeAssets) {
+      assert.equal(fs.existsSync(assetPath), true, `Missing asset: ${assetPath}`);
+      assert.ok(fs.statSync(assetPath).size > 1000, `Asset unexpectedly small: ${assetPath}`);
+    }
+
+    const colorsXml = fs.readFileSync(path.join(res, "values", "colors.xml"), "utf8");
     assert.match(colorsXml, /#080b12/);
   });
 });

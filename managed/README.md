@@ -84,6 +84,29 @@ When an agent has lost the MCP, do not ask it to "restart". Say:
 That gives the agent one command, a known side effect it will not mistake for a
 failure, and a verifiable end state.
 
+### Checking client registrations
+
+`fleet-status.cjs` proves which revision the bootstrap resolves. It does not
+prove that a client actually registers `dev-workflow`. A client whose MCP
+config file is empty loads no servers at all, so its tasks never reach the
+monitor while the fleet table stays green.
+
+```sh
+python managed/install-device.py --doctor
+```
+
+The doctor is read-only. It reports one state per client config file
+(`missing`, `empty`, `invalid`, `no-entry`, `ok`) and exits 1 when a present
+file is empty, invalid or has no `dev-workflow` entry. Antigravity has two
+files: the IDE reads `~/.gemini/antigravity/mcp_config.json` and the CLI (`agy`)
+reads `~/.gemini/config/mcp_config.json`. The installer rewrites a
+`dev-workflow` entry in either file, but never overwrites an empty or invalid
+file; repair those with the client's own command, for example:
+
+```sh
+agy mcp add --env DEVWF_AGENT=antigravity dev-workflow <node> <bootstrap>/device-entry.cjs antigravity
+```
+
 ## The manifest
 
 ```json
