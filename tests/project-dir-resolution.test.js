@@ -1,12 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { resolveProjectDir, resolveWorkingDirectory, setActiveProjectDir, getActiveProjectDir } from "../exec.js";
 import { handleToolCall } from "../tools/handlers.js";
-import { withWorkflowState, testUtils, createRequest, createGitMock } from "./test-helpers.js";
+import { withWorkflowState, testUtils, createRequest, createGitMock, bindTaskToRepo } from "./test-helpers.js";
 
 // Kenapa tes ini ada:
 //
@@ -24,6 +25,7 @@ import { withWorkflowState, testUtils, createRequest, createGitMock } from "./te
 
 async function makeRepo(prefix = "repo-") {
   const dir = await mkdtemp(path.join(tmpdir(), prefix));
+  execFileSync("git", ["init", "-q", "-b", "main"], { cwd: dir, stdio: "ignore" });
   await mkdir(path.join(dir, ".git"), { recursive: true });
   return dir;
 }
@@ -187,6 +189,7 @@ test("start_task menyimpan projectDir ke state dan mengaktifkannya", async () =>
   const repo = await makeRepo();
   try {
     await withWorkflowState(async (workflowState) => {
+      await bindTaskToRepo(workflowState);
       const response = await handleToolCall({
         request: createRequest("start_task", {
           description: "Kerjakan sesuatu",
@@ -221,6 +224,7 @@ test("start_task melaporkan KONFLIK bila env dan repo sesi berbeda", async () =>
 
   try {
     await withWorkflowState(async (workflowState) => {
+      await bindTaskToRepo(workflowState);
       process.env.WORKFLOW_PROJECT_DIR = globalRepo;
       process.chdir(sessionRepo);
 
@@ -260,6 +264,7 @@ test("start_task dengan projectDir mengalahkan env dan tidak melaporkan konflik"
 
   try {
     await withWorkflowState(async (workflowState) => {
+      await bindTaskToRepo(workflowState);
       process.env.WORKFLOW_PROJECT_DIR = globalRepo;
       process.chdir(globalRepo);
 
@@ -300,6 +305,7 @@ test("start_task menolak memulai bila projectDir tidak bisa ditentukan (tanpa pr
 
   try {
     await withWorkflowState(async (workflowState) => {
+      await bindTaskToRepo(workflowState);
       delete process.env.WORKFLOW_PROJECT_DIR;
       delete process.env.PROJECT_DIR;
       delete process.env.INIT_CWD;
@@ -343,6 +349,7 @@ test("commit_and_push melaporkan repo yang dipakai saat tidak ada perubahan", as
   const repo = await makeRepo();
   try {
     await withWorkflowState(async (workflowState) => {
+      await bindTaskToRepo(workflowState, repo);
       workflowState.state.readyToCommit = true;
       workflowState.state.readyCheckCompleted = true;
       workflowState.state.testsCreated = true;
@@ -378,6 +385,7 @@ test("commit_and_push menolak projectDir yang bukan repo", async () => {
   const bukanRepo = await makeNonRepo();
   try {
     await withWorkflowState(async (workflowState) => {
+      await bindTaskToRepo(workflowState);
       workflowState.state.currentPhase = "commit";
       await workflowState.save();
 

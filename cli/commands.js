@@ -28,6 +28,7 @@ import {
   skipZettlySetup,
   switchZettlyAccount,
 } from "./onboarding.js";
+import { captureRepositoryIdentity, evaluateProjectSwitch, parseRemoteIdentity } from "../repository-identity.js";
 import { createRequire } from "node:module";
 import os from "node:os";
 
@@ -77,6 +78,16 @@ function requireValue(value, flag, command) {
  */
 export function preflight(args) {
   const command = args.command;
+
+  // `identity` is read-only and answers a question about a directory the caller
+  // names. It must not require a monitor, a session or a token: the whole point
+  // is to be usable before any project context exists.
+  if (command === "identity") {
+    if (typeof args.dir !== "string" || args.dir.trim() === "") {
+      throw new CliError(`"identity" needs --dir <path>. Nothing was read.`);
+    }
+    return;
+  }
   const checked = { command, dryRun: args.dryRun === true };
 
   if (command === "close") {
@@ -233,6 +244,83 @@ export async function runCommand({
 }) {
   const command = args.command;
   const safe = preflight(args);
+
+  if (command === "identity") {
+    const dir = requireValue(args.dir, "--dir", "identity");
+    const identity = await captureRepositoryIdentity({ dir });
+    if (!identity.isGitRepo) {
+      throw new CliError(`"${dir}" is not a git repository. Nothing was read.`);
+    }
+
+    const payload = {
+      schemaVersion: 1,
+      root: identity.root,
+      remote: identity.remote,
+      repoKey: parseRemoteIdentity(identity.remote)?.key || "",
+      workspaceKey: identity.workspaceKey,
+      commonDirKey: identity.commonDirKey,
+      branch: identity.branch,
+      head: identity.head,
+      detached: identity.detached,
+      worktree: identity.worktree,
+      remotes: identity.remotes,
+    };
+
+    if (typeof args.against === "string" && args.against.trim() !== "") {
+      const against = await captureRepositoryIdentity({ dir: args.against });
+      if (!against.isGitRepo) {
+        throw new CliError(`"${args.against}" is not a git repository. Nothing was read.`);
+      }
+      const decision = evaluateProjectSwitch({
+        requested: identity,
+        session: {
+          projectDir: against.root,
+          root: against.root,
+          remote: against.remote,
+          repoKey: parseRemoteIdentity(against.remote)?.key || "",
+          commonDir: against.commonDir,
+          commonDirKey: against.commonDirKey,
+          workspaceKey: against.workspaceKey,
+        },
+      });
+      payload.against = {
+        root: against.root,
+        remote: against.remote,
+        repoKey: parseRemoteIdentity(against.remote)?.key || "",
+        workspaceKey: against.workspaceKey,
+        commonDirKey: against.commonDirKey,
+      };
+      payload.decision = {
+        ok: decision.ok,
+        code: decision.code,
+        match: decision.match,
+        switched: decision.switched,
+      };
+
+      if (args.json) {
+        out.write(JSON.stringify(payload, null, 2));
+      } else {
+        out.write(`root:    ${payload.root}`);
+        out.write(`remote:  ${payload.remote || "(none)"}`);
+        out.write(`branch:  ${payload.branch || "(detached)"}`);
+        out.write(`against: ${payload.against.root}`);
+        out.write(`decision: ${decision.ok ? "ALLOWED" : "REFUSED"} (${decision.code})`);
+      }
+      return { ok: decision.ok, ...payload };
+    }
+
+    if (args.json) {
+      out.write(JSON.stringify(payload, null, 2));
+    } else {
+      out.write(`root:    ${payload.root}`);
+      out.write(`remote:  ${payload.remote || "(none)"}`);
+      out.write(`repoKey: ${payload.repoKey || "(none)"}`);
+      out.write(`branch:  ${payload.branch || "(detached)"}`);
+      out.write(`head:    ${payload.head || "(none)"}`);
+      out.write(`worktree: ${payload.worktree ? "yes" : "no"}`);
+    }
+    return { ok: true, ...payload };
+  }
 
   if (command === "list") {
     const result = await monitor.listSessions();

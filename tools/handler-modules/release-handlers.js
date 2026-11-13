@@ -1,5 +1,7 @@
 import { textResponse, isReleaseSatisfied, resetToCommitIfWorkingChanges, summarizeHistory } from "./shared.js";
 import { resolveProjectDir, setActiveProjectDir, getActiveProjectDir } from "../../exec.js";
+import { assertMutationRepository } from "./commit-handlers.js";
+import { captureRepositoryIdentity, parseRemoteIdentity } from "../../repository-identity.js";
 import { acquireReleaseLock, releaseReleaseLock, readReleaseLock } from "../release-lock.js";
 
 /**
@@ -169,7 +171,16 @@ export async function handleRecordDeployment(args, context) {
     return textResponse("⚠️ 'evidence' must describe what proves the tag is live (health receipt, deployed version read back).");
   }
 
+  const environment =
+    typeof args.environment === "string" && args.environment.trim() !== ""
+      ? args.environment.trim()
+      : "production";
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{1,40}$/.test(environment)) {
+    return textResponse("⚠️ 'environment' must be a short slug like production, staging or preview.");
+  }
+
   const requestedProjectDir = typeof args.projectDir === "string" ? args.projectDir.trim() : "";
+  const taskProjectDir = typeof workflowState.state.projectDir === "string" ? workflowState.state.projectDir.trim() : "";
   if (requestedProjectDir) {
     try {
       setActiveProjectDir(resolveProjectDir({ explicit: requestedProjectDir }).dir);
@@ -177,6 +188,21 @@ export async function handleRecordDeployment(args, context) {
       return textResponse(`❌ projectDir tidak valid: ${error.message}`);
     }
     workflowState.state.projectDir = getActiveProjectDir();
+  }
+
+  // A deployment record is a claim about one repository. Recording it against a
+  // checkout this task never started in would attach the claim to the wrong
+  // project, so the identity contract is checked first.
+  {
+    const repoGuard = await assertMutationRepository({
+      workflowState,
+      dir: workflowState.state.projectDir || getActiveProjectDir() || "",
+      operation: "record_deployment",
+      taskProjectDir,
+    });
+    if (!repoGuard.ok) {
+      return textResponse(repoGuard.message);
+    }
   }
 
   let tagSha = "";
@@ -219,22 +245,53 @@ export async function handleRecordDeployment(args, context) {
     }
   }
 
+  // A deployment record is a claim about one repository at one commit. It must
+  // name the workspace that produced it, the task that owns it and the
+  // environment it reached; otherwise a different checkout could manufacture a
+  // record that merely shares a remote.
+  const deploymentIdentity = await captureRepositoryIdentity({ dir: repoDir });
+  const contract = workflowState.state.identityContract;
+
   workflowState.state.deployment = {
     tag,
     tagSha,
     headSha,
     pipelineId,
+    environment,
     sites,
     evidence,
+    // The evidence string is an attestation by the agent or user that the
+    // deployment happened. This tool does not query the deployment system, so it
+    // must not present the string as independently verified proof.
+    attestation: {
+      by: "agent",
+      verified: false,
+      note: "Recorded from the caller's evidence; not verified against a deployment system.",
+    },
+    repository: {
+      root: deploymentIdentity.root,
+      remote: deploymentIdentity.remote,
+      repoKey: parseRemoteIdentity(deploymentIdentity.remote)?.key || "",
+      workspaceKey: deploymentIdentity.workspaceKey,
+    },
+    task: {
+      taskId: workflowState.state.workflowTaskId || "",
+      projectId: contract?.projectId || "",
+      focusId: Number.isSafeInteger(Number(contract?.focusId)) ? Number(contract.focusId) : null,
+    },
     recordedAt: new Date().toISOString(),
   };
   await workflowState.save();
 
   return textResponse(
     `✅ Deployment recorded: ${tag}\n` +
+      `Environment: ${environment}\n` +
+      `Repository: ${deploymentIdentity.root || "(unknown)"}\n` +
+      `Commit: ${tagSha.slice(0, 12) || "(unknown)"}\n` +
       `Pipeline: ${pipelineId}\n` +
       `Sites: ${sites.join(", ")}\n` +
-      `Tag contains HEAD: yes\n\n` +
+      `Tag contains HEAD: yes\n` +
+      `Evidence: attested by the caller, not verified against a deployment system\n\n` +
       `Next: run 'complete_task'.`
   );
 }
@@ -380,6 +437,7 @@ export async function handlePerformRelease(args, context) {
   // Sama seperti commit_and_push: projectDir eksplisit menang atas repo sesi.
   const requestedProjectDir =
     typeof args.projectDir === "string" ? args.projectDir.trim() : "";
+  const taskProjectDir = typeof workflowState.state.projectDir === "string" ? workflowState.state.projectDir.trim() : "";
   if (requestedProjectDir) {
     try {
       setActiveProjectDir(resolveProjectDir({ explicit: requestedProjectDir }).dir);
@@ -387,6 +445,21 @@ export async function handlePerformRelease(args, context) {
       return textResponse(`❌ projectDir tidak valid: ${error.message}`);
     }
     workflowState.state.projectDir = getActiveProjectDir();
+  }
+
+  // A release is the most destructive mutation in the workflow. It must run in
+  // the checkout this task started in, never in another clone that happens to
+  // share the remote.
+  {
+    const repoGuard = await assertMutationRepository({
+      workflowState,
+      dir: workflowState.state.projectDir || getActiveProjectDir() || "",
+      operation: "perform_release",
+      taskProjectDir,
+    });
+    if (!repoGuard.ok) {
+      return textResponse(repoGuard.message);
+    }
   }
 
   // Release lock: a second session must not run the release script at the same
