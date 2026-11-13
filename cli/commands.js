@@ -20,6 +20,7 @@
 import { CliError } from "./args.js";
 import { createPairingChallenge } from "../pairing/challenge.js";
 import { createRequire } from "node:module";
+import os from "node:os";
 
 const requireCjs = createRequire(import.meta.url);
 const {
@@ -188,11 +189,22 @@ export async function runCommand({
     });
 
     if (verb === "doctor") {
-      const report = runFleetDoctor([sup.getStatus()]);
+      const st = sup.getStatus();
+      const report = runFleetDoctor([st], {
+        home: env.DEVWF_TEST_HOME || os.homedir(),
+        env,
+        machine: st.machine,
+      });
       if (args.json) {
         out.write(JSON.stringify(report, null, 2));
       } else {
         out.write(`DevWorkflow Fleet Update Doctor (${report.ok ? "HEALTHY" : "ACTION_REQUIRED"})`);
+        if (report.clients && report.clients.length > 0) {
+          out.write("  MCP Client Registration Health:");
+          for (const c of report.clients) {
+            out.write(`    - ${c.client}: ${c.status} (${c.configFile || "no config"})`);
+          }
+        }
         for (const f of report.findings) {
           out.write(`  [${f.severity.toUpperCase()}] ${f.machine} (${f.code}): ${f.message}`);
           out.write(`    -> Remediation: ${f.remediation}`);

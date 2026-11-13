@@ -698,7 +698,12 @@ function evaluateFleetConvergence({ targetManifest = null, machines = [] } = {})
   };
 }
 
-function runFleetDoctor(machines = []) {
+const {
+  diagnoseAllClients,
+  MCP_CLIENT_STATUSES,
+} = require('./mcp-client-doctor.cjs');
+
+function runFleetDoctor(machines = [], options = {}) {
   const findings = [];
   for (const m of machines) {
     if (m.convergenceStatus === CONVERGENCE_STATUSES.OFFLINE) {
@@ -768,6 +773,27 @@ function runFleetDoctor(machines = []) {
     }
   }
 
+  // Evaluate MCP client registration health across detectable clients
+  const clientDiag = diagnoseAllClients(options);
+  const clients = clientDiag.clients || [];
+  for (const c of clients) {
+    if (c.status !== MCP_CLIENT_STATUSES.HEALTHY && c.status !== MCP_CLIENT_STATUSES.NOT_INSTALLED) {
+      const isError = [
+        MCP_CLIENT_STATUSES.CONFIG_EMPTY,
+        MCP_CLIENT_STATUSES.CONFIG_INVALID,
+        MCP_CLIENT_STATUSES.BOOTSTRAP_FAILURE,
+      ].includes(c.status);
+      findings.push({
+        machine: c.machine,
+        client: c.client,
+        code: `CLIENT_MCP_${c.status}`,
+        severity: isError ? 'error' : 'warning',
+        message: `Client ${c.client} MCP registration status is ${c.status} (${c.configFile || 'no config'}).`,
+        remediation: c.remediation,
+      });
+    }
+  }
+
   let recommendedNextAction = {
     action: 'NONE',
     command: 'devwf fleet status',
@@ -803,12 +829,20 @@ function runFleetDoctor(machines = []) {
       requiresAuthorization: true,
       reason: 'Idle client connections or stale tool catalogs can be refreshed safely.',
     };
+  } else if (findings.some((f) => f.code && f.code.startsWith('CLIENT_MCP_'))) {
+    recommendedNextAction = {
+      action: 'REPAIR_CLIENT_MCP_REGISTRATION',
+      command: 'agy mcp add ... / check client config',
+      requiresAuthorization: false,
+      reason: 'One or more AI clients have missing, empty, or invalid MCP registrations.',
+    };
   }
 
   return {
     ok: !findings.some((f) => f.severity === 'error'),
     checkedAt: new Date().toISOString(),
     findings,
+    clients,
     recommendedNextAction,
   };
 }
