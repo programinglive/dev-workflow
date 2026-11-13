@@ -1,6 +1,6 @@
 import { safeLog } from './security/sanitizer.js';
 import fs from "fs/promises";
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, realpathSync, unlinkSync, openSync, closeSync, statSync } from "fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, realpathSync, unlinkSync, linkSync, renameSync } from "fs";
 import os from "os";
 import path from "path";
 import { assertSafeKnowledge } from './security/policy.js';
@@ -1073,11 +1073,11 @@ function focusBindingPath(baseDir, focusId) {
  * The claim decision ("is this focus free?") and the write must be one critical
  * section, which needs real mutual exclusion across operating-system processes.
  *
- * `open(..., "wx")` is the atomic primitive: the operating system guarantees
- * exactly one creator. The holder is recorded so an interrupted process can be
- * detected and its stale lock broken instead of blocking the focus forever.
+ * `link(2)` is the atomic primitive: the operating system guarantees exactly one
+ * creator, and the record is complete before the name appears. The holder is
+ * recorded so a confirmed-dead process can be detected and its lock recovered
+ * instead of blocking the focus forever.
  */
-const FOCUS_LOCK_STALE_MS = 30_000;
 const FOCUS_LOCK_TIMEOUT_MS = 2_000;
 const FOCUS_LOCK_POLL_MS = 20;
 
@@ -1094,30 +1094,62 @@ function readFocusLockRecord(file) {
 }
 
 /**
- * Is the current holder gone or too old to keep the lock?
+ * Is the current holder confirmed gone?
  *
- * A lock whose process is dead, whose timestamp is older than
- * `FOCUS_LOCK_STALE_MS`, or whose record is unreadable and whose file is old is
- * treated as abandoned. Without this an interrupted claim would block the focus
- * permanently - the "do not permanently block legitimate project recovery" rule.
+ * LIVENESS RULE
+ * -------------
+ * Elapsed time alone never proves abandonment. A live process may legitimately
+ * hold a focus lock for longer than any timeout, and stealing it because the
+ * timestamp is old would let two processes own one focus - the exact defect the
+ * lock exists to prevent.
+ *
+ *   - owner confirmed dead        -> stale, recoverable
+ *   - owner confirmed alive       -> NOT stale, regardless of age
+ *   - liveness unknown            -> NOT stale (fail closed)
+ *   - record unreadable           -> NOT stale (fail closed)
+ *   - different host              -> NOT stale (cannot verify a remote PID)
+ *
+ * PID reuse makes a dead owner look alive; that is fail-closed and safe. The
+ * bounded acquisition timeout reports the block instead of stealing the lock.
  */
-function focusLockIsStale(file, now = Date.now(), isAlive = defaultPidIsAlive) {
+function focusLockIsStale(file, { isAlive = defaultPidIsAlive, hostname = os.hostname() } = {}) {
   const record = readFocusLockRecord(file);
-  if (!record) {
-    try {
-      return now - statSync(file).mtimeMs > FOCUS_LOCK_STALE_MS;
-    } catch {
-      return true;
-    }
-  }
-
-  const startedAt = Number(record.startedAt);
-  if (Number.isFinite(startedAt) && now - startedAt > FOCUS_LOCK_STALE_MS) return true;
+  if (!record) return false;
 
   const pid = Number(record.pid);
-  if (!Number.isSafeInteger(pid) || pid <= 0) return true;
-  if (pid === process.pid) return true;
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+
+  // A lock written by another machine cannot be verified from here. Stealing it
+  // would be a guess, so it is treated as live.
+  const host = typeof record.host === "string" ? record.host.trim() : "";
+  if (host && hostname && host !== hostname) return false;
+
+  // Our own process holding the lock is a re-entrancy bug, not a stale lock.
+  if (pid === process.pid) return false;
+
   return !isAlive(pid);
+}
+
+/**
+ * Claim the right to recover one stale lock.
+ *
+ * Two processes can both observe the same stale lock. Renaming it is atomic and
+ * succeeds for exactly one of them, so only that process proceeds to create a
+ * new lock. The loser retries the atomic create and finds the winner's lock.
+ */
+function tryRecoverStaleLock(file) {
+  const tombstone = `${file}.stale.${process.pid}.${Date.now()}`;
+  try {
+    renameSync(file, tombstone);
+  } catch {
+    return false;
+  }
+  try {
+    unlinkSync(tombstone);
+  } catch {
+    // The tombstone is harmless; the lock itself is already gone.
+  }
+  return true;
 }
 
 function defaultPidIsAlive(pid) {
@@ -1136,25 +1168,30 @@ async function acquireFocusLock({ baseDir, focusId, timeoutMs = FOCUS_LOCK_TIMEO
 
   for (;;) {
     try {
-      const handle = openSync(file, "wx");
+      // Write the record to a temp file and hard-link it into place. `link` is
+      // atomic and fails when the target exists, and the content is complete
+      // before the name appears - so a crash can never leave an unreadable lock.
+      const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
+      writeFileSync(
+        temporary,
+        JSON.stringify({ pid: process.pid, host: os.hostname(), startedAt: Date.now() }),
+      );
       try {
-        writeFileSync(
-          handle,
-          JSON.stringify({ pid: process.pid, host: os.hostname(), startedAt: Date.now() }),
-        );
+        linkSync(temporary, file);
       } finally {
-        closeSync(handle);
+        try {
+          unlinkSync(temporary);
+        } catch {
+          // Best-effort cleanup of the temp name.
+        }
       }
       return { ok: true, file };
     } catch (error) {
       if (error.code !== "EEXIST") return { ok: false, code: "FOCUS_LOCK_UNWRITABLE" };
 
       if (focusLockIsStale(file)) {
-        try {
-          unlinkSync(file);
-        } catch {
-          // Another process broke it first; retry the atomic create.
-        }
+        // Only the process that wins the atomic rename may recover it.
+        tryRecoverStaleLock(file);
         continue;
       }
 

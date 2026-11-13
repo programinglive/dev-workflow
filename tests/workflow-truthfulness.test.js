@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 
 import { handleToolCall } from "../tools/handlers.js";
 import { resolveStateFile, WorkflowState } from "../workflow-state.js";
-import { withWorkflowState, testUtils, createRequest, createGitMock } from "./test-helpers.js";
+import { withWorkflowState, testUtils, createRequest, createGitMock, bindTaskToRepo } from "./test-helpers.js";
 
 /**
  * Workflow harus melaporkan KEADAAN SEBENARNYA, bukan yang diharapkannya.
@@ -36,6 +36,7 @@ import { withWorkflowState, testUtils, createRequest, createGitMock } from "./te
 
 test("perform_release menolak rilis saat tipe rilis tidak bisa ditentukan", async () => {
   await withWorkflowState(async (workflowState) => {
+    await bindTaskToRepo(workflowState);
     workflowState.state.currentPhase = "release";
     workflowState.state.commitAndPushCompleted = true;
     workflowState.state.readyCheckCompleted = true;
@@ -81,6 +82,7 @@ test("perform_release menolak rilis saat tipe rilis tidak bisa ditentukan", asyn
 
 test("perform_release tetap berjalan normal saat tipe rilis sah", async () => {
   await withWorkflowState(async (workflowState) => {
+    await bindTaskToRepo(workflowState);
     workflowState.state.currentPhase = "release";
     workflowState.state.commitAndPushCompleted = true;
     workflowState.state.readyCheckCompleted = true;
@@ -113,6 +115,7 @@ test("perform_release tetap berjalan normal saat tipe rilis sah", async () => {
 
 test("perform_release menyebut commit dan tag yang tertinggal saat push gagal", async () => {
   await withWorkflowState(async (workflowState) => {
+    await bindTaskToRepo(workflowState);
     workflowState.state.currentPhase = "release";
     workflowState.state.commitAndPushCompleted = true;
     workflowState.state.readyCheckCompleted = true;
@@ -174,6 +177,7 @@ test("commit_and_push menolak saat git berjalan di repo yang berbeda dari projec
 
   try {
     await withWorkflowState(async (workflowState) => {
+      await bindTaskToRepo(workflowState, requested);
       workflowState.state.readyToCommit = true;
       workflowState.state.readyCheckCompleted = true;
       workflowState.state.testsCreated = true;
@@ -216,6 +220,7 @@ test("commit_and_push melaporkan repo yang sama saat git memang di sana", async 
 
   try {
     await withWorkflowState(async (workflowState) => {
+      await bindTaskToRepo(workflowState, repo);
       workflowState.state.readyToCommit = true;
       workflowState.state.readyCheckCompleted = true;
       workflowState.state.testsCreated = true;
@@ -260,6 +265,7 @@ test("commit_and_push tidak mengaku sudah commit saat tidak ada yang di-commit",
 
   try {
     await withWorkflowState(async (workflowState) => {
+      await bindTaskToRepo(workflowState, repo);
       workflowState.state.readyToCommit = true;
       workflowState.state.readyCheckCompleted = true;
       workflowState.state.testsCreated = true;
@@ -310,6 +316,7 @@ test("commit_and_push menyebut tidak ada task aktif saat state idle", async () =
 
   try {
     await withWorkflowState(async (workflowState) => {
+      await bindTaskToRepo(workflowState);
       workflowState.state.readyToCommit = true;
       workflowState.state.readyCheckCompleted = true;
       workflowState.state.testsCreated = true;

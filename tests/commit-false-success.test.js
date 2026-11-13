@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import { handleToolCall } from "../tools/handlers.js";
 import { hasWorkingChanges, getStatusOutput } from "../git-helpers.js";
-import { withWorkflowState, testUtils, createRequest, createGitMock } from "./test-helpers.js";
+import { withWorkflowState, testUtils, createRequest, createGitMock, bindTaskToRepo } from "./test-helpers.js";
 
 const GIT_UNAVAILABLE =
   "Tidak bisa menentukan repo proyek: satu-satunya kandidat adalah repo paket server MCP. " +
@@ -97,6 +97,7 @@ test("git helpers still answer correctly inside a real repository", async (t) =>
 
 test("commit_and_push refuses to claim success when git cannot be inspected", async () => {
   await withWorkflowState(async (workflowState) => {
+    await bindTaskToRepo(workflowState);
     workflowState.state.readyToCommit = true;
     workflowState.state.readyCheckCompleted = true;
     workflowState.state.testsSkipped = false;
@@ -143,6 +144,7 @@ test("commit_and_push refuses to claim success when git cannot be inspected", as
 
 test("commit_and_push still reports a clean tree as already committed", async () => {
   await withWorkflowState(async (workflowState) => {
+    await bindTaskToRepo(workflowState);
     workflowState.state.readyToCommit = true;
     workflowState.state.readyCheckCompleted = true;
     workflowState.state.testsSkipped = false;
