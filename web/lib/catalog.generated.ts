@@ -1545,7 +1545,9 @@ export const GENERATED_CATALOG = {
       "version",
       "doctor",
       "pair",
-      "fleet"
+      "fleet",
+      "setup",
+      "zettly"
     ],
     "fleetVerbs": [
       "status",
@@ -1558,7 +1560,7 @@ export const GENERATED_CATALOG = {
       "doctor",
       "upgrade"
     ],
-    "usage": "devwf - close sessions and cards without the web monitor\n\nUsage:\n  devwf doctor                                 Check environment, node, and storage diagnostics\n  devwf pair [--url <url>] [--json]            Generate pairing challenge for mobile companion\n  devwf list                                  List sessions from the monitor\n  devwf close --session <key> [--dry-run]      Mark one session closed\n  devwf share list                             List live share links\n  devwf share revoke --token <t> [--dry-run]   Revoke one share link\n  devwf share revoke --orphans [--dry-run]     Revoke every orphan link\n  devwf drop --session <key> --reason <r> [--dry-run]\n                                               Drop a task without completing it\n  devwf complete --session <key> [--next-steps <s>]... [--dry-run]\n                                               Complete a task whose DoD is proven\n  devwf --help | --version\n\nEnvironment:\n  DEVWF_MONITOR_URL     Base URL of the central monitor (required)\n  DEVWF_MONITOR_TOKEN   Write token for the monitor (required for writes)\n\nRules:\n  --session is mandatory for every command that changes anything. There is no\n  \"current session\" default, so a missing target is always a refusal.\n  --dry-run prints what would change and writes nothing.\n  No command ever signals a process. close only marks the session closed.\n\nExit codes:\n  0 success   1 refusal or failure"
+    "usage": "devwf - close sessions and cards without the web monitor\n\nUsage:\n  devwf doctor                                 Check environment, node, and storage diagnostics\n  devwf setup [--skip-zettly] [--json]         Initialize local-first profile (preserves existing Zettly)\n  devwf zettly status|skip|connect|switch|disconnect|doctor\n                                               Manage optional per-user Zettly integration\n  devwf pair [--url <url>] [--json]            Generate pairing challenge for mobile companion\n  devwf list                                  List sessions from the monitor\n  devwf close --session <key> [--dry-run]      Mark one session closed\n  devwf share list                             List live share links\n  devwf share revoke --token <t> [--dry-run]   Revoke one share link\n  devwf share revoke --orphans [--dry-run]     Revoke every orphan link\n  devwf drop --session <key> --reason <r> [--dry-run]\n                                               Drop a task without completing it\n  devwf complete --session <key> [--next-steps <s>]... [--dry-run]\n                                               Complete a task whose DoD is proven\n  devwf --help | --version\n\nEnvironment:\n  DEVWF_MONITOR_URL     Base URL of the central monitor (required)\n  DEVWF_MONITOR_TOKEN   Write token for the monitor (required for writes)\n\nRules:\n  --session is mandatory for every command that changes anything. There is no\n  \"current session\" default, so a missing target is always a refusal.\n  --dry-run prints what would change and writes nothing.\n  No command ever signals a process. close only marks the session closed.\n\nExit codes:\n  0 success   1 refusal or failure"
   },
   "changelogEntries": [
     {

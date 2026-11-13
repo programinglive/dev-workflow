@@ -156,9 +156,15 @@ flowchart TD
     Plane2 <-->|"Low-Latency Telemetry & Signed Actions"| Companion
 ```
 
-1. **Zettly (Human Planning & Control Plane):**
+1. **Zettly (Human Planning & Control Plane — Optional):**
    - Owned by human engineers. Handles requirements discovery, Eisenhower priority matrix, Kanban tracking, and interactive visual planning (Zettly Draw).
-   - DevWorkflow remains 100% operational offline even when Zettly is not running.
+   - DevWorkflow defaults to **`LOCAL_FIRST_STANDALONE`** and remains 100% operational offline with zero external accounts required.
+   - **Per-User Zettly Isolation:** Every developer connects their own Zettly instance/account explicitly (`devwf zettly connect --url <url> --token <token>`). There is no shared default owner credential or default hosted Zettly URL.
+   - **Skip vs Disconnect vs Reinstall:**
+     - `devwf setup --skip-zettly` (or `devwf zettly skip`) skips Zettly **only when no account is connected**, making zero network calls.
+     - Re-running `npm ci` / `devwf setup` automatically **preserves** any existing Zettly connection.
+     - `devwf zettly switch --url <url> --token <token> --confirm` requires explicit confirmation, verifies identity first, and keeps prior mappings as historical records.
+     - `devwf zettly disconnect --confirm` removes active profile credentials while preserving local SQLite task history and leaving remote Zettly Todos untouched.
 2. **DevWorkflow Core (AI Execution & Governance Plane):**
    - Enforces Task Contracts, file scope boundaries, policy evaluation, test evidence verification, Git worktree isolation, and release governance.
    - Operates local-first using SQLite persistence, with zero mandatory cloud dependencies.
