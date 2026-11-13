@@ -1,0 +1,56 @@
+name: CI
+
+# Standard pipeline from programinglive/ci-cd.
+#
+# Runs on the self-hosted Linux runner on bw-tools. The commands preserve the
+# checks that existed before: unit tests, security boundaries, lint, server
+# bundle verification, and the web build.
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: programinglive/ci-cd/.github/workflows/ci-node.yml@v1
+    with:
+      node-version: "24"
+      runner: '["self-hosted","linux","bw-tools"]'
+      # bw-tools Linux runner supports npm cache; enable it for faster builds.
+      cache: "npm"
+      test-command: npm run ci:test
+      lint-command: npm run lint
+      build-command: npm run ci:build
+      web-build-command: npm run build
+      web-dir: web
+
+  deploy-monitor:
+    needs: ci
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, linux, bw-tools]
+    timeout-minutes: 10
+    concurrency:
+      group: devwf-monitor-production
+      cancel-in-progress: false
+    steps:
+      - name: Checkout verified main commit
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+      - name: Deploy monitor through the dedicated identity
+        shell: bash
+        env:
+          MONITOR_DEPLOY_SSH_KEY: ${{ secrets.MONITOR_DEPLOY_SSH_KEY }}
+        run: |
+          if git diff --name-only HEAD^ HEAD -- monitor-server/ scripts/deploy-monitor.sh | grep -q .; then
+            bash scripts/deploy-monitor.sh
+          else
+            echo "Monitor artifacts unchanged; skip deployment"
+          fi

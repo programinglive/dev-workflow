@@ -1,0 +1,18 @@
+[Unit]
+Description=Cloudflare Tunnel devwf-share (public session share pages)
+After=network-online.target devwf-share.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Config memuat tunnel id, kredensial (mode 600), dan ingress. Kredensial TIDAK
+# ditulis di unit ini: `systemctl cat` bisa dibaca siapa pun.
+ExecStart=/usr/bin/cloudflared --no-autoupdate --config /etc/cloudflared/share-tunnel.yml tunnel run
+Restart=always
+RestartSec=5
+# Tunnel hanya perlu keluar ke internet; ia tidak mendengarkan port apa pun.
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

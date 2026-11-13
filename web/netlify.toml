@@ -1,0 +1,38 @@
+[build]
+  command = "npm run build"
+  publish = "out"
+
+# Netlify reads this file from the build base directory, which is `web/`
+# (see the root netlify.toml). Keep the two consistent.
+
+# Tautan berbagi sesi dilayani proses lain (`monitor-server/share-server.cjs`
+# di balik Cloudflare Tunnel `devwf-share`), tetapi yang dibagikan pemilik
+# adalah domain utama. Karena itu `/s/*` di-proxy ke hostname tunnel.
+#
+# MENGAPA HOSTNAME TUNNEL-NYA BUKAN `share.devworkflow.programinglive.com`:
+# sertifikat Universal SSL zona ini hanya `programinglive.com` +
+# `*.programinglive.com` (satu label). Subdomain dua label gagal handshake
+# TLS. Pembaca tetap melihat domain utama, jadi hostname ini internal.
+#
+# MENGAPA URUTAN INI PENTING: Netlify memakai aturan PERTAMA yang cocok. Kalau
+# blok ini diletakkan sesudah catch-all di bawah, SETIAP tautan berbagi akan
+# menjawab 404 - dan gejalanya menyerupai "server share mati", padahal
+# servernya sehat. `force = true` dipakai supaya rewrite menang atas berkas
+# statis, karena `output: "export"` bisa menulis path yang mirip.
+[[redirects]]
+  from = "/s/*"
+  to = "https://devwfshare.programinglive.com/s/:splat"
+  status = 200
+  force = true
+
+# The catch-all used to be `to = "/index.html"` with status 200, so every
+# unknown path - including the removed /login/ and /history/ - answered with the
+# home page and a 200. That made dead routes look alive to crawlers, uptime
+# checks and anyone reading status codes.
+#
+# A static export writes a real 404.html, so the honest fallback is to serve it
+# with an actual 404 status.
+[[redirects]]
+  from = "/*"
+  to = "/404.html"
+  status = 404

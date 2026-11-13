@@ -1,0 +1,93 @@
+name: Deploy web
+
+# The public site at devworkflow.programinglive.com is a Next.js static export
+# published from `web/out`. Until 31 October 2026 it was deployed by hand from a
+# laptop through the Netlify CLI, and the last deploy that ever reached
+# production was built on 29 January 2026: the site kept advertising version
+# 1.9.1 while the package was at 1.13.x. Nothing failed, so nobody noticed.
+#
+# This workflow is the replacement: a fresh build on every push to main, so the
+# published site cannot drift from the repository again.
+#
+# Required repository secrets:
+#   NETLIFY_AUTH_TOKEN  - Netlify personal access token
+#   NETLIFY_SITE_ID     - 3b9966e4-43e6-45a8-bafc-8dd0a35aacf2
+#
+# Set them once, from the repository root:
+#   gh secret set NETLIFY_AUTH_TOKEN
+#   gh secret set NETLIFY_SITE_ID --body 3b9966e4-43e6-45a8-bafc-8dd0a35aacf2
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "web/**"
+      - "package.json"
+      - "netlify.toml"
+      - ".github/workflows/deploy-web.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-web-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Build and publish the static export
+    # Self-hosted Linux runner on bw-tools: it already has Node and Git,
+    # and hosting minutes are not spent on GitHub runners.
+    runs-on: [self-hosted, linux, bw-tools]
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Verify toolchain
+        shell: bash
+        run: |
+          node --version
+          npm --version
+
+      - name: Install web dependencies
+        shell: bash
+        working-directory: web
+        run: npm ci
+
+      - name: Build static export
+        shell: bash
+        working-directory: web
+        run: npm run build
+
+      - name: Verify the export exists
+        shell: bash
+        working-directory: web
+        run: |
+          if [[ ! -f "out/index.html" ]]; then
+            echo "ERROR: web/out/index.html missing: the export did not run" >&2; exit 1
+          fi
+          if [[ ! -f "out/docs/index.html" ]]; then
+            echo "ERROR: web/out/docs/index.html missing: the docs page did not export" >&2; exit 1
+          fi
+          # A hard-coded version is what made the site stale for months. Fail the
+          # build if the published page does not carry the released version.
+          expected=$(node -p "require('../package.json').version")
+          if ! grep -qF "$expected" out/docs/index.html; then
+            echo "ERROR: out/docs/index.html does not mention version $expected" >&2; exit 1
+          fi
+          echo "export verified: version $expected"
+
+      - name: Deploy to Netlify
+        shell: bash
+        working-directory: web
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+        run: |
+          if [[ -z "$NETLIFY_AUTH_TOKEN" ]]; then echo "ERROR: NETLIFY_AUTH_TOKEN secret is not set" >&2; exit 1; fi
+          if [[ -z "$NETLIFY_SITE_ID" ]]; then echo "ERROR: NETLIFY_SITE_ID secret is not set" >&2; exit 1; fi
+          npx --yes netlify-cli@latest deploy --prod --no-build --dir=out --message "ci: ${{ github.sha }}"

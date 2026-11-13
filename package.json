@@ -1,0 +1,137 @@
+{
+  "name": "@programinglive/dev-workflow-mcp-server",
+  "version": "1.31.0",
+  "description": "MCP server to enforce development workflow discipline",
+  "homepage": "https://devworkflow.programinglive.com/",
+  "mcpName": "io.github.programinglive/dev-workflow-mcp-server",
+  "type": "module",
+  "main": "index.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "dev-workflow-mcp": "index.js",
+    "devwf": "bin/cli.js"
+  },
+  "scripts": {
+    "build": "npm run build:server && npm run build:web",
+    "build:server": "vite build",
+    "build:web": "npm run build --prefix web",
+    "watch:web": "npm run dev --prefix web",
+    "dev": "node --watch index.js",
+    "start": "node index.js",
+    "local": "node index.js",
+    "setup": "node scripts/setup-stack.js",
+    "test": "node --no-deprecation --import ./tests/setup-env.js --test",
+    "test:db": "node --no-deprecation --import ./tests/setup-env.js --test tests/monitor-share-db.test.js tests/monitor-upsert-behavior.test.js",
+    "test:security": "node --no-deprecation --test tests/security*.test.js",
+    "security:audit": "node index.js call security_audit",
+    "lint": "node scripts/lint.mjs",
+    "check": "node --check index.js",
+    "prepare": "node scripts/install-husky.js",
+    "postinstall": "node install.js",
+    "release": "commiter release",
+    "release:major": "commiter release major",
+    "release:minor": "commiter release minor",
+    "release:patch": "commiter release patch",
+    "web": "npm start --prefix web",
+    "release:first": "commiter release --first-release",
+    "verify:bundle": "node scripts/verify-bundle.mjs",
+    "ci:test": "npm test && npm run test:security && node --test tests/setup-stack.test.js",
+    "ci:build": "npm run build:server && npm run verify:bundle",
+    "update:check": "node scripts/check-update.mjs"
+  },
+  "keywords": [
+    "mcp",
+    "workflow",
+    "development",
+    "discipline"
+  ],
+  "author": "",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/programinglive/dev-workflow-mcp-server.git"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "better-sqlite3": "^12.11.1",
+    "dotenv": "^18.0.9",
+    "mysql2": "^3.15.3",
+    "pg": "^8.23.1",
+    "vite": "^7.1.12"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "overrides": {
+    "tar": "7.5.22"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^21.2.4",
+    "@commitlint/config-conventional": "^21.2.4",
+    "@programinglive/commiter": "^1.5.1",
+    "@types/node": "^26.6.5",
+    "autoprefixer": "^10.6.1",
+    "cross-env": "^10.1.0",
+    "husky": "^9.1.7",
+    "postcss": "^8.5.6",
+    "standard-version": "^9.5.0",
+    "supertest": "^7.3.1",
+    "typescript": "^7.0.2"
+  },
+  "standard-version": {
+    "releaseCommitMessageFormat": "chore(release): {{currentTag}} 🚀",
+    "types": [
+      {
+        "type": "feat",
+        "section": "✨ Features"
+      },
+      {
+        "type": "fix",
+        "section": "🐛 Bug Fixes"
+      },
+      {
+        "type": "perf",
+        "section": "⚡ Performance"
+      },
+      {
+        "type": "refactor",
+        "section": "♻️ Refactors"
+      },
+      {
+        "type": "docs",
+        "section": "📝 Documentation"
+      },
+      {
+        "type": "style",
+        "section": "💄 Styles"
+      },
+      {
+        "type": "test",
+        "section": "✅ Tests"
+      },
+      {
+        "type": "build",
+        "section": "🏗️ Build System"
+      },
+      {
+        "type": "ci",
+        "section": "👷 Continuous Integration"
+      },
+      {
+        "type": "chore",
+        "section": "🧹 Chores"
+      },
+      {
+        "type": "revert",
+        "section": "⏪ Reverts"
+      }
+    ]
+  },
+  "commiter": {
+    "release": {
+      "branch": "main"
+    }
+  }
+}

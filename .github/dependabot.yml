@@ -1,0 +1,82 @@
+version: 2
+
+updates:
+  # Root package: the published MCP server
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "08:00"
+      timezone: "Asia/Jakarta"
+    open-pull-requests-limit: 5
+    versioning-strategy: "increase"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+    groups:
+      # Security patches land as one PR so they can be merged immediately.
+      security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+      # Routine minor and patch bumps grouped to avoid PR noise.
+      minor-and-patch:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
+    ignore:
+      # Native module: a major bump changes the Node ABI contract and needs a
+      # manual prebuild check (see docs/homelab/ci-runner.md).
+      - dependency-name: "better-sqlite3"
+        update-types: ["version-update:semver-major"]
+
+  # Web dashboard, deployed to Netlify from web/
+  - package-ecosystem: "npm"
+    directory: "/web"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "08:00"
+      timezone: "Asia/Jakarta"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(web-deps)"
+      include: "scope"
+    groups:
+      security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+      minor-and-patch:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
+    ignore:
+      # Next.js major upgrades change the static-export behaviour this
+      # dashboard depends on; handle those deliberately.
+      - dependency-name: "next"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "react"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "react-dom"
+        update-types: ["version-update:semver-major"]
+      # Tailwind 4 is a rewrite of how CSS is generated: the @tailwind
+      # directives become @import "tailwindcss", the config moves into CSS,
+      # and the PostCSS plugin is replaced by @tailwindcss/postcss. This
+      # dashboard is finished and stable, so a major rewrite of its styling
+      # pipeline is not wanted. Ignored entirely, not just majors, so no
+      # 4.x PR reappears.
+      - dependency-name: "tailwindcss"
+      - dependency-name: "@tailwindcss/postcss"
+      - dependency-name: "@tailwindcss/cli"
+
+  # Keep the CI workflow actions current
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "chore(ci)"

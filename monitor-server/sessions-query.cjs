@@ -1,0 +1,85 @@
+'use strict';
+
+/**
+ * Query daftar sesi untuk dashboard.
+ *
+ * Dipisah dari dashboard.cjs supaya bisa diuji tanpa Postgres: berkas ini
+ * tidak menyentuh jaringan sama sekali, hanya menyusun SQL dan parameternya.
+ *
+ * MENGAPA ADA FILTER
+ * ------------------
+ * Proses MCP mati bersama sesi OpenCode-nya, jadi sesi yang dulu `idle` akan
+ * tinggal sebagai baris mati selamanya. Tanpa filter, monitor yang dipakai
+ * berhari-hari memenuhi layar tablet dengan sesi yang sudah tidak ada.
+ *
+ * DUA BATAS UMUR, BUKAN SATU
+ * --------------------------
+ * Sesi `idle` TANPA task tidak memberi informasi apa pun - kartunya hanya
+ * berbunyi "IDLE (tanpa task)" - jadi dibuang jauh lebih cepat (1 menit).
+ * Sesi `idle` yang PUNYA task menyimpan riwayat pekerjaan yang baru selesai,
+ * jadi dipertahankan lebih lama (30 menit) agar masih terbaca sesudah commit.
+ *
+ * Sesi yang masih bekerja TIDAK pernah disembunyikan, seberapa lama pun ia
+ * berjalan tanpa menyimpan state - satu tugas panjang tetap pekerjaan nyata.
+ *
+ * SESI CLOSED/DONE/CANCELLED
+ * --------------------------
+ * Sesi yang sudah ditutup (closed, done, cancelled) tidak perlu tampil di tab
+ * Aktif - hanya muncul di tab Riwayat. Dibuang langsung dari query ini.
+ */
+const DEFAULT_IDLE_TTL = '30 minutes';
+const DEFAULT_EMPTY_IDLE_TTL = '1 minute';
+/**
+ * Batas umur sesi non-idle di tab Aktif.
+ *
+ * Sesi yang berhenti melapor lebih lama dari ini tidak mungkin masih bekerja:
+ * dashboard sendiri sudah melabelinya "berakhir". Sebelum ini, baris seperti
+ * itu menetap selamanya karena filter hanya menyentuh phase `idle`.
+ */
+const DEFAULT_STUCK_TTL = '2 hours';
+
+function buildSessionsQuery({
+  limit = 20,
+  idleTtl = DEFAULT_IDLE_TTL,
+  emptyIdleTtl = DEFAULT_EMPTY_IDLE_TTL,
+  stuckTtl = DEFAULT_STUCK_TTL,
+} = {}) {
+  return {
+    sql: `SELECT session_key, task_id, parent_task_id, parent_task_title,
+                  machine, project_path, project_name, task, task_type, phase,
+                 plan_json, plan_done, plan_total, dod_done, dod_total, dod_waived,
+                 started_at, session_title, agent_tool, release_version, release_revision, toolchain_json, updated_at,
+                 repo_path, repo_remote,
+                 workflow_task_id, task_origin_json, task_relations_json, refinement_json
+            FROM sessions
+           WHERE phase NOT IN ('closed', 'done', 'cancelled', 'handed-off')
+             AND NULLIF(BTRIM(task), '') IS NOT NULL
+             AND NULLIF(BTRIM(project_name), '') IS NOT NULL
+             AND NOT (
+                   phase = 'idle'
+                   AND (
+                     (task = '' AND updated_at < now() - $3::interval)
+                     OR updated_at < now() - $2::interval
+                   )
+                 )
+             AND NOT (
+                   phase <> 'idle'
+                   AND updated_at < now() - $4::interval
+                 )
+           ORDER BY updated_at DESC
+           LIMIT $1`,
+    params: [
+      limit,
+      idleTtl || DEFAULT_IDLE_TTL,
+      emptyIdleTtl || DEFAULT_EMPTY_IDLE_TTL,
+      stuckTtl || DEFAULT_STUCK_TTL,
+    ],
+  };
+}
+
+module.exports = {
+  buildSessionsQuery,
+  DEFAULT_IDLE_TTL,
+  DEFAULT_EMPTY_IDLE_TTL,
+  DEFAULT_STUCK_TTL,
+};

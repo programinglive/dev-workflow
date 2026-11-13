@@ -1,0 +1,353 @@
+import pg from "pg";
+import { DbAdapter, normalizeTaskType } from "./base.js";
+import { assertSafeKnowledge, classify } from '../../security/policy.js';
+
+const { Pool } = pg;
+
+const FREQUENCY_FORMATS = {
+    daily: "YYYY-MM-DD",
+    monthly: "YYYY-MM",
+    yearly: "YYYY",
+};
+
+export class PostgresAdapter extends DbAdapter {
+    constructor(config = {}) {
+        super(config);
+        this.pool = null;
+    }
+
+    getNumericUserId(userId) {
+        let numericUserId = parseInt(userId, 10);
+        if (isNaN(numericUserId)) {
+            let hash = 0;
+            for (let i = 0; i < userId.length; i++) {
+                hash = (hash << 5) - hash + userId.charCodeAt(i);
+                hash |= 0;
+            }
+            numericUserId = Math.abs(hash);
+        }
+        return numericUserId;
+    }
+
+    async connect() {
+        if (!this.pool) {
+            this.pool = new Pool({
+                connectionString: this.config.connectionUrl,
+                connectionTimeoutMillis: 5000, // 5 second timeout for new connections
+                idleTimeoutMillis: 10000,      // close idle connections after 10 seconds
+            });
+            await this.migrate();
+        }
+    }
+
+    async migrate() {
+        const client = await this.pool.connect();
+        try {
+            await client.query(`
+        CREATE TABLE IF NOT EXISTS workflow_history (
+          id SERIAL PRIMARY KEY,
+          user_id INTEGER NOT NULL,
+          project_path TEXT DEFAULT '',
+          description TEXT NOT NULL,
+          task_type TEXT NOT NULL,
+          commit_message TEXT,
+          completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          forced BOOLEAN DEFAULT FALSE,
+          force_reason TEXT,
+          dropped BOOLEAN DEFAULT FALSE,
+          drop_reason TEXT,
+          UNIQUE (user_id, project_path, completed_at, description)
+        )
+      `);
+
+            await client.query("ALTER TABLE workflow_history ADD COLUMN IF NOT EXISTS classification TEXT NOT NULL DEFAULT 'INTERNAL'");
+            // Migration: Add columns to existing table if they don't exist
+            const columns = await client.query(`
+                SELECT column_name FROM information_schema.columns WHERE table_name = 'workflow_history'
+            `);
+            const existingColumns = columns.rows.map(r => r.column_name);
+
+            if (!existingColumns.includes('project_path')) {
+                await client.query('ALTER TABLE workflow_history ADD COLUMN project_path TEXT DEFAULT \'\'');
+            }
+            if (!existingColumns.includes('forced')) {
+                await client.query('ALTER TABLE workflow_history ADD COLUMN forced BOOLEAN DEFAULT FALSE');
+            }
+            if (!existingColumns.includes('force_reason')) {
+                await client.query('ALTER TABLE workflow_history ADD COLUMN force_reason TEXT');
+            }
+            if (!existingColumns.includes('dropped')) {
+                await client.query('ALTER TABLE workflow_history ADD COLUMN dropped BOOLEAN DEFAULT FALSE');
+            }
+            if (!existingColumns.includes('drop_reason')) {
+                await client.query('ALTER TABLE workflow_history ADD COLUMN drop_reason TEXT');
+            }
+            // Ensure completed_at vs timestamp handled if table exists
+            if (!existingColumns.includes('completed_at') && existingColumns.includes('timestamp')) {
+                await client.query('ALTER TABLE workflow_history RENAME COLUMN timestamp TO completed_at');
+            } else if (existingColumns.includes('completed_at') && !existingColumns.includes('timestamp')) {
+                // Keep completed_at
+            }
+            // Logic for description vs task_description
+            if (!existingColumns.includes('description') && existingColumns.includes('task_description')) {
+                await client.query('ALTER TABLE workflow_history RENAME COLUMN task_description TO description');
+            }
+
+            await client.query(`
+        CREATE TABLE IF NOT EXISTS project_summary (
+          user_id INTEGER,
+          project_path TEXT DEFAULT '',
+          total_tasks INTEGER DEFAULT 0,
+          task_types JSONB,
+          last_active TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          recent_tasks JSONB,
+          PRIMARY KEY (user_id, project_path)
+        )
+      `);
+
+            await client.query(`
+        CREATE TABLE IF NOT EXISTS workflow_state (
+          user_id INTEGER,
+          project_path TEXT DEFAULT '',
+          state_json JSONB,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          PRIMARY KEY (user_id, project_path)
+        )
+      `);
+        } finally {
+            client.release();
+        }
+    }
+
+    async insertHistoryEntry(userId, projectPath, entry) {
+        await this.connect();
+        const normalizedProjectPath = projectPath || '';
+        const numericUserId = this.getNumericUserId(userId);
+
+        const query = `
+      INSERT INTO workflow_history
+      (user_id, project_path, description, task_type, commit_message, completed_at, forced, force_reason, dropped, drop_reason, classification)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      ON CONFLICT (user_id, project_path, completed_at, description) DO UPDATE SET
+        commit_message=EXCLUDED.commit_message,
+        forced=EXCLUDED.forced,
+        force_reason=EXCLUDED.force_reason,
+        dropped=EXCLUDED.dropped,
+        drop_reason=EXCLUDED.drop_reason, classification=EXCLUDED.classification
+    `;
+
+        await this.pool.query(query, [
+            numericUserId,
+            normalizedProjectPath,
+            entry.taskDescription || entry.description,
+            normalizeTaskType(entry.taskType),
+            entry.commitMessage,
+            entry.timestamp || entry.completed_at || new Date().toISOString(),
+            entry.forced || false,
+            entry.forceReason || null,
+            entry.dropped || false,
+            entry.dropReason || null,
+            classify(entry)
+        ]);
+
+        await this.updateSummaryForUser(userId, normalizedProjectPath);
+    }
+
+    async updateSummaryForUser(userId, projectPath) {
+        await this.connect();
+        const normalizedProjectPath = projectPath || '';
+        const numericUserId = this.getNumericUserId(userId);
+
+        const res = await this.pool.query(`
+      SELECT classification, task_type, completed_at as timestamp, description as task_description
+      FROM workflow_history
+      WHERE user_id = $1 AND project_path = $2
+      ORDER BY completed_at DESC
+      LIMIT 20
+    `, [numericUserId, normalizedProjectPath]);
+        // ... (lines continue similarly)
+
+        const rows = res.rows;
+
+        const taskTypes = {};
+        for (const row of rows) {
+            taskTypes[row.task_type] = (taskTypes[row.task_type] || 0) + 1;
+        }
+
+        assertSafeKnowledge(rows);
+        const recentTasks = rows.slice(0, 5).map(r => ({
+            classification: r.classification,
+            description: r.task_description,
+            type: r.task_type,
+            timestamp: r.timestamp,
+        }));
+
+        const lastActive = rows[0]?.timestamp || null;
+
+        const upsert = `
+      INSERT INTO project_summary
+      (user_id, project_path, total_tasks, task_types, last_active, recent_tasks, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      ON CONFLICT (user_id, project_path) DO UPDATE SET
+        total_tasks=EXCLUDED.total_tasks,
+        task_types=EXCLUDED.task_types,
+        last_active=EXCLUDED.last_active,
+        recent_tasks=EXCLUDED.recent_tasks,
+        updated_at=EXCLUDED.updated_at
+    `;
+
+        await this.pool.query(upsert, [
+            numericUserId,
+            normalizedProjectPath,
+            rows.length,
+            JSON.stringify(taskTypes),
+            lastActive,
+            JSON.stringify(recentTasks),
+            new Date().toISOString()
+        ]);
+    }
+
+    async getSummaryForUser(userId, projectPath) {
+        await this.connect();
+        const normalizedProjectPath = projectPath || '';
+        const numericUserId = this.getNumericUserId(userId);
+
+        const res = await this.pool.query(`
+      SELECT * FROM project_summary WHERE user_id = $1 AND project_path = $2
+    `, [numericUserId, normalizedProjectPath]);
+
+        const row = res.rows[0];
+        if (!row) return null;
+
+        return {
+            totalTasks: row.total_tasks,
+            taskTypes: row.task_types, // pg parses jsonb automatically
+            lastActive: row.last_active,
+            recentTasks: row.recent_tasks,
+            updatedAt: row.updated_at,
+        };
+    }
+
+    async getHistoryForUser(userId, projectPath, options = {}) {
+        await this.connect();
+        const normalizedProjectPath = projectPath || '';
+
+        const { page = 1, pageSize = 20, startDate, endDate } = options;
+        const sanitizedPage = Math.max(1, Number.isFinite(Number(page)) ? Math.floor(Number(page)) : 1);
+        const sanitizedPageSize = Math.min(100, Math.max(1, Number.isFinite(Number(pageSize)) ? Math.floor(Number(pageSize)) : 20));
+        const offset = (sanitizedPage - 1) * sanitizedPageSize;
+
+        const numericUserId = this.getNumericUserId(userId);
+
+        const clauses = [];
+        const params = [numericUserId, normalizedProjectPath];
+        let paramIdx = 3;
+
+        if (startDate) {
+            clauses.push(`DATE(completed_at) >= DATE($${paramIdx++})`);
+            params.push(startDate);
+        }
+        if (endDate) {
+            clauses.push(`DATE(completed_at) <= DATE($${paramIdx++})`);
+            params.push(endDate);
+        }
+
+        const where = [`user_id = $1`, `project_path = $2`, ...clauses].join(" AND ");
+
+        const countRes = await this.pool.query(
+            `SELECT COUNT(*) as total FROM workflow_history WHERE ${where}`,
+            params
+        );
+        const total = parseInt(countRes.rows[0].total, 10);
+
+        const entriesRes = await this.pool.query(`
+      SELECT *, description as task_description, completed_at as timestamp
+      FROM workflow_history
+      WHERE ${where}
+      ORDER BY completed_at DESC
+      LIMIT $${paramIdx++}
+      OFFSET $${paramIdx++}
+    `, [...params, sanitizedPageSize, offset]);
+
+        return {
+            entries: entriesRes.rows,
+            total,
+            page: sanitizedPage,
+            pageSize: sanitizedPageSize,
+        };
+    }
+
+    async getHistorySummary(userId, projectPath, options = {}) {
+        await this.connect();
+        const normalizedProjectPath = projectPath || '';
+
+        const { startDate, endDate, frequency = "daily" } = options;
+        const format = FREQUENCY_FORMATS[frequency] || FREQUENCY_FORMATS.daily;
+
+        const numericUserId = this.getNumericUserId(userId);
+
+        const clauses = [];
+        const params = [numericUserId, normalizedProjectPath];
+        let paramIdx = 3;
+
+        if (startDate) {
+            clauses.push(`DATE(completed_at) >= DATE($${paramIdx++})`);
+            params.push(startDate);
+        }
+        if (endDate) {
+            clauses.push(`DATE(completed_at) <= DATE($${paramIdx++})`);
+            params.push(endDate);
+        }
+
+        const where = [`user_id = $1`, `project_path = $2`, ...clauses].join(" AND ");
+
+        const res = await this.pool.query(`
+      SELECT to_char(completed_at, '${format}') AS period, COUNT(*) AS count
+      FROM workflow_history
+      WHERE ${where}
+      GROUP BY period
+      ORDER BY period DESC
+    `, params);
+
+        return res.rows;
+    }
+
+    async saveState(userId, projectPath, state) {
+        await this.connect();
+        const normalizedProjectPath = projectPath || '';
+
+        const query = `
+      INSERT INTO workflow_state
+      (user_id, project_path, state_json, updated_at)
+      VALUES ($1, $2, $3, $4)
+      ON CONFLICT (user_id, project_path) DO UPDATE SET
+        state_json=EXCLUDED.state_json,
+        updated_at=EXCLUDED.updated_at
+    `;
+
+        const numericUserId = this.getNumericUserId(userId);
+
+        await this.pool.query(query, [
+            numericUserId,
+            normalizedProjectPath,
+            JSON.stringify(state),
+            new Date().toISOString()
+        ]);
+    }
+
+    async getState(userId, projectPath) {
+        await this.connect();
+        const normalizedProjectPath = projectPath || '';
+        const numericUserId = this.getNumericUserId(userId);
+
+        const res = await this.pool.query(`
+      SELECT state_json FROM workflow_state WHERE user_id = $1 AND project_path = $2
+    `, [numericUserId, normalizedProjectPath]);
+
+        const row = res.rows[0];
+        if (!row) return null;
+
+        return row.state_json; // pg automatically parses JSONB
+    }
+}

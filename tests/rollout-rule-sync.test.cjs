@@ -1,0 +1,24 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+
+test('device-entry prefers canonical DEVWF_MONITOR_URL and DEVWF_RELEASE_URL from opencode.json', () => {
+  const entrySource = fs.readFileSync(path.join(__dirname, '..', 'managed', 'device-entry.cjs'), 'utf8');
+  assert.match(
+    entrySource,
+    /DEVWF_MONITOR_URL/,
+    'device-entry must enforce canonical DEVWF_MONITOR_URL from opencode.json over stale client configs',
+  );
+  assert.match(
+    entrySource,
+    /DEVWF_RELEASE_URL/,
+    'device-entry must support DEVWF_RELEASE_URL configuration',
+  );
+});
+
+test('workflow-guidance exports CLI-First and Mandatory Mermaid Flow rules without private host assumptions', () => {
+  const guidanceSource = fs.readFileSync(path.join(__dirname, '..', 'workflow-guidance.js'), 'utf8');
+  assert.match(guidanceSource, /CLI-First/);
+  assert.match(guidanceSource, /Mandatory Mermaid Flow Design Gate/);
+});
