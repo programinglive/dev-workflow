@@ -20,7 +20,15 @@ import {
 import { activeForeignLock, projectLockDir, currentIsAlive, DEFAULT_LOCK_STALE_MS } from "../../process-lock.js";
 import { reportEventSafe, updateSessionTitle, buildSnapshot, reportSnapshot } from "../../monitor.js";
 import { exec, resolveProjectDir, setActiveProjectDir } from "../../exec.js";
-import { pinSessionProject, resolveHistoryFile } from "../../workflow-state.js";
+import { pinSessionProject, resolveHistoryFile, readSessionProject, readFocusBinding, claimFocusBinding } from "../../workflow-state.js";
+import {
+  captureRepositoryIdentity,
+  evaluateProjectSwitch,
+  buildIdentityContract,
+  parseRemoteIdentity,
+  normalizeRepoPath,
+} from "../../repository-identity.js";
+import path from "node:path";
 import { assignWorkflowIdentity, validateZettlyTaskArguments } from '../../zettly-workflow.js';
 import { recommendMcpTools, formatMcpRecommendations, formatFullMcpCatalog } from "../../mcp-index.js";
 import { normalizeBuildState, formatBuildStatusBlock } from "../../build-monitor.js";
@@ -326,6 +334,98 @@ export async function handleStartTask(args, workflowState, git, zettlyOptions = 
     return textResponse(project.message);
   }
 
+  // Repository identity preflight.
+  //
+  // 13 November 2026: a session pinned to DBPinball accepted a Clinic task and
+  // replaced its own active task. The working directory never changed and no
+  // cross-project commit was made, so the defect was not in git: `start_task`
+  // resolved the requested `projectDir` and never compared it with the
+  // repository the session had already established. A natural-language task
+  // description was enough to move the session to another project.
+  //
+  // The comparison runs here, before `reset()`, so a refusal changes nothing:
+  // the active task, its Definition of Done and its evidence stay intact.
+  const requestedIdentity = await captureRepositoryIdentity({ dir: project.dir });
+  const sessionProject = readSessionProject({ stateFile: workflowState.stateFile });
+  let sessionIdentity = null;
+  if (sessionProject) {
+    const observed = await captureRepositoryIdentity({ dir: sessionProject.projectDir });
+    if (observed.isGitRepo) {
+      sessionIdentity = {
+        projectDir: sessionProject.projectDir,
+        root: observed.root,
+        remote: observed.remote,
+        repoKey: parseRemoteIdentity(observed.remote)?.key || "",
+        commonDir: observed.commonDir,
+        commonDirKey: observed.commonDirKey,
+        workspaceKey: observed.workspaceKey,
+      };
+    }
+  }
+
+  const switchDecision = evaluateProjectSwitch({
+    requested: requestedIdentity,
+    session: sessionIdentity,
+    allowProjectSwitch: args.allowProjectSwitch,
+    projectSwitchReason: args.projectSwitchReason,
+    allowWorkspaceTransition: args.allowWorkspaceTransition,
+    workspaceTransitionReason: args.workspaceTransitionReason,
+    focusId: args.focusId,
+  });
+  if (!switchDecision.ok) {
+    return textResponse(switchDecision.message);
+  }
+
+  // Focus binding: a focus is a container for one project's work. Reusing a
+  // focus that another project already owns would make the focus report work it
+  // does not own - the same defect in the opposite direction.
+  const requestedRepoKey = parseRemoteIdentity(requestedIdentity.remote)?.key || "";
+  const requestedFocusId = Number(args.focusId);
+  const hasRequestedFocus = Number.isSafeInteger(requestedFocusId) && requestedFocusId > 0;
+  if (hasRequestedFocus) {
+    const binding = readFocusBinding({ stateFile: workflowState.stateFile, focusId: requestedFocusId });
+    if (binding) {
+      const sameKey = Boolean(binding.repoKey) && Boolean(requestedRepoKey) && binding.repoKey === requestedRepoKey;
+      const sameDir =
+        Boolean(binding.projectDir) &&
+        Boolean(requestedIdentity.root) &&
+        normalizeRepoPath(binding.projectDir) === normalizeRepoPath(requestedIdentity.root);
+      if (!sameKey && !sameDir) {
+        return textResponse(
+          `⚠️ Refused: focus ${requestedFocusId} belongs to another project.\n\n` +
+            `Focus bound to: ${binding.projectDir || binding.repoKey}\n` +
+            `Requested repo: ${requestedIdentity.root || project.dir}\n\n` +
+            `A focus is a container for one project's work. Attaching this task to it would ` +
+            `make the focus report work it does not own.\n\n` +
+            `Choose the focus that owns this repository, or set a new focus first.\n` +
+            `Task NOT started; the previous task and its evidence are unchanged.`
+        );
+      }
+    }
+
+    // Claim the focus before any state is reset. The claim is exclusive across
+    // operating-system processes: a concurrent start that bound the same focus
+    // to another project holds the focus lock, and this call either waits for a
+    // bounded time and then reports the conflict, or loses the atomic create.
+    const claimed = await claimFocusBinding({
+      stateFile: workflowState.stateFile,
+      focusId: requestedFocusId,
+      projectDir: project.dir,
+      repoKey: requestedRepoKey,
+    });
+    if (claimed && claimed.ok === false) {
+      return textResponse(
+        `⚠️ Refused: focus ${requestedFocusId} could not be claimed.\n\n` +
+          `Reason: ${claimed.reason || "unknown"}\n` +
+          (claimed.existing
+            ? `Focus bound to: ${claimed.existing.projectDir || claimed.existing.repoKey || "(unknown)"}\n`
+            : "") +
+          `Requested repo: ${requestedIdentity.root || project.dir}\n\n` +
+          `Task NOT started; the previous task and its evidence are unchanged.`
+      );
+    }
+  }
+
   // Selamatkan dulu pekerjaan yang mungkin tertimpa. Ini menangani dua kasus:
   //   1. Proses MCP LAIN menulis berkas state setelah kita memuatnya.
   //   2. Task kita sendiri yang belum selesai lalu diganti task baru.
@@ -389,6 +489,16 @@ export async function handleStartTask(args, workflowState, git, zettlyOptions = 
   workflowState.state.projectDir = project.dir;
   setActiveProjectDir(project.dir);
 
+  // The identity contract is the answer to "what was this task allowed to
+  // touch", written once so a later operation can compare against it instead of
+  // guessing from the task text.
+  workflowState.state.identityContract = buildIdentityContract({
+    projectId: requestedRepoKey || path.basename(requestedIdentity.root || project.dir),
+    identity: requestedIdentity,
+    focusId: hasRequestedFocus ? requestedFocusId : null,
+    allowedOperations: ["read", "write", "commit", "push"],
+  });
+
   // Now that the directory is resolved for THIS task, record the commit the task
   // started from. Everything a later revert may touch is measured from here.
   workflowState.state.checkpoint.baseSha = await resolveBaseSha(workflowState.state.projectDir);
@@ -404,6 +514,7 @@ export async function handleStartTask(args, workflowState, git, zettlyOptions = 
     const pinned = pinSessionProject({
       stateFile: workflowState.stateFile,
       projectDir: workflowState.state.projectDir,
+      focusId: hasRequestedFocus ? requestedFocusId : null,
     });
 
     if (pinned && pinned.stateFile !== workflowState.stateFile) {
@@ -416,6 +527,10 @@ export async function handleStartTask(args, workflowState, git, zettlyOptions = 
       workflowState.state = carried;
     }
   }
+
+  // Bind the focus to the verified repository on first use. First writer wins:
+  // a focus already bound to another project is never rebound implicitly.
+  // (The claim happens before reset(); see the preflight block above.)
 
   // Catat berkas yang SUDAH kotor sebelum task ini dimulai.
   //

@@ -8,6 +8,7 @@ import { WorkflowState } from "../workflow-state.js";
 import { handleToolCall } from "../tools/handlers.js";
 import { normalizeRequestArgs } from "../utils.js";
 import { testUtils } from "./test-helpers.js";
+import { bindTaskToRepo } from "./test-helpers.js";
 
 /**
  * The deployment gate.
@@ -24,6 +25,7 @@ async function withState(callback) {
   const stateFile = path.join(dir, "state.json");
   const state = new WorkflowState(stateFile);
   await state.load();
+  await bindTaskToRepo(state);
 
   try {
     await callback(state, dir);
