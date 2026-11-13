@@ -30,14 +30,20 @@ This phase integrates comprehensive client registration health checks into `devw
 - **MUST_REMOVE**: Historical credential-bearing scripts (`scripts/check-db.js`, `.env.production`, historical GCloud deployment passwords).
 - **SHOULD_REMOVE**: Private infrastructure IPs (`127.0.0.1`), hostnames (`build-host.example`, `MMCH`, `HELLOWORLD`, `Mac`), private GitLab runner IDs (`58937956`, `58882401`), developer paths (`C:\Users\...`).
 - **ACCEPTABLE_PUBLIC**: MCP server core tools, SQLite/Zettly task tracking, MIT documentation, test suites.
-- **OWNER_DECISION_REQUIRED**: Candidate A (Clean Orphan Root `v1.0.0-oss`, guaranteed zero-leak) vs Candidate B (Targeted filter-repo rewrite preserving commit graph but modifying all SHAs).
+- **OWNER_DECISION_REQUIRED**: Candidate A (Clean Orphan Root `v1.31.0-oss.0`, guaranteed zero-leak) vs Candidate B (Targeted filter-repo rewrite preserving commit graph but modifying all SHAs). Adopt `v1.31.0-oss.0` to preserve continuity with v1.31.0 production baseline.
 
 ### 5. PostgreSQL Credential Lifecycle Status
 - Administratively verified: `CREDENTIAL_STATUS_UNVERIFIED`.
 - No GCP Cloud SQL administrative console access available from local workstation.
 - Per Section 8 security boundaries, no password authentication was attempted.
 
-### 6. Verification & Test Metrics
+### 6. Safety Guardrails & Reconciled Cutover Protocol
+- **No Public Legacy Branches:** Historical backup refs remain strictly offline in durable bundles (`D:\code\dev-workflow-private-backup-20261113-s3b.bundle`). Never create a `main-private-archive` branch on the public remote.
+- **GitHub Object Pruning Reality:** Clean root overwrite does not instantly delete historical objects from GitHub server caches until GitHub GC runs or repo is reset.
+- **No Automated Fleet Bouncing:** Internal fleet devices remain on pinned bootstrap and are migrated deliberately.
+- **Version Continuity:** Replaced confusing `v1.0.0-oss` with harmonized `v1.31.0-oss.0`.
+
+### 7. Verification & Test Metrics
 - Full test suite: `1943` tests across 29 test suites (`1917` passed, 0 failed, 26 skipped).
 - Security test suite: `47/47` passed.
 - Pack verification: Clean tarball `485 kB` (188 files), clean test consumer install with operational CLI.
