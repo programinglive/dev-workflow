@@ -64,6 +64,7 @@ managed/fleet-status.cjs
 managed/restart-devices.cjs
 managed/devwf-managed.service
 scripts/deploy-monitor.*
+scripts/deploy-gcloud.*
 scripts/rotate-monitor-token.sh
 scripts/probe-*.sh
 scripts/verify-share*.sh
