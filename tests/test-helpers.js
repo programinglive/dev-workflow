@@ -1,9 +1,32 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, mkdir } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { WorkflowState } from "../workflow-state.js";
+import { captureRepositoryIdentity, buildIdentityContract } from "../repository-identity.js";
 import { shellEscape } from "../utils.js";
 import { determineReleaseTypeFromCommit, createCommitMessageParts } from "../commit-helpers.js";
+
+/**
+ * Give a test task a real, trustworthy task-to-workspace binding.
+ *
+ * Repository-mutating handlers now fail closed when a task has no identity
+ * contract and never declared a projectDir. A unit test that exercises commit,
+ * release or deployment logic must therefore establish the same binding a real
+ * `start_task` would, or it is testing a state that cannot exist in production.
+ */
+export async function bindTaskToRepo(state, repo = null) {
+  const dir = repo || path.join(path.dirname(state.stateFile), "task-repo");
+  await mkdir(dir, { recursive: true });
+  if (!existsSync(path.join(dir, ".git"))) {
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: dir, stdio: "ignore" });
+  }
+  const identity = await captureRepositoryIdentity({ dir });
+  state.state.projectDir = dir;
+  state.state.identityContract = buildIdentityContract({ identity });
+  return dir;
+}
 
 export async function withWorkflowState(callback) {
   const tempDir = await mkdtemp(path.join(tmpdir(), "workflow-handlers-"));

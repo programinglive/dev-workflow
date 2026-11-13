@@ -180,6 +180,7 @@ export async function handleRecordDeployment(args, context) {
   }
 
   const requestedProjectDir = typeof args.projectDir === "string" ? args.projectDir.trim() : "";
+  const taskProjectDir = typeof workflowState.state.projectDir === "string" ? workflowState.state.projectDir.trim() : "";
   if (requestedProjectDir) {
     try {
       setActiveProjectDir(resolveProjectDir({ explicit: requestedProjectDir }).dir);
@@ -197,6 +198,7 @@ export async function handleRecordDeployment(args, context) {
       workflowState,
       dir: workflowState.state.projectDir || getActiveProjectDir() || "",
       operation: "record_deployment",
+      taskProjectDir,
     });
     if (!repoGuard.ok) {
       return textResponse(repoGuard.message);
@@ -258,6 +260,14 @@ export async function handleRecordDeployment(args, context) {
     environment,
     sites,
     evidence,
+    // The evidence string is an attestation by the agent or user that the
+    // deployment happened. This tool does not query the deployment system, so it
+    // must not present the string as independently verified proof.
+    attestation: {
+      by: "agent",
+      verified: false,
+      note: "Recorded from the caller's evidence; not verified against a deployment system.",
+    },
     repository: {
       root: deploymentIdentity.root,
       remote: deploymentIdentity.remote,
@@ -280,7 +290,8 @@ export async function handleRecordDeployment(args, context) {
       `Commit: ${tagSha.slice(0, 12) || "(unknown)"}\n` +
       `Pipeline: ${pipelineId}\n` +
       `Sites: ${sites.join(", ")}\n` +
-      `Tag contains HEAD: yes\n\n` +
+      `Tag contains HEAD: yes\n` +
+      `Evidence: attested by the caller, not verified against a deployment system\n\n` +
       `Next: run 'complete_task'.`
   );
 }
@@ -426,6 +437,7 @@ export async function handlePerformRelease(args, context) {
   // Sama seperti commit_and_push: projectDir eksplisit menang atas repo sesi.
   const requestedProjectDir =
     typeof args.projectDir === "string" ? args.projectDir.trim() : "";
+  const taskProjectDir = typeof workflowState.state.projectDir === "string" ? workflowState.state.projectDir.trim() : "";
   if (requestedProjectDir) {
     try {
       setActiveProjectDir(resolveProjectDir({ explicit: requestedProjectDir }).dir);
@@ -443,6 +455,7 @@ export async function handlePerformRelease(args, context) {
       workflowState,
       dir: workflowState.state.projectDir || getActiveProjectDir() || "",
       operation: "perform_release",
+      taskProjectDir,
     });
     if (!repoGuard.ok) {
       return textResponse(repoGuard.message);

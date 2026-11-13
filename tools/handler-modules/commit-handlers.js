@@ -105,18 +105,38 @@ function applyProjectDirOverride(args) {
  * when that evidence matches the live checkout; otherwise the mutation is
  * refused. A missing identity is not permission to write.
  */
-export async function assertMutationRepository({ workflowState, dir, operation }) {
+export async function assertMutationRepository({ workflowState, dir, operation, taskProjectDir }) {
   const state = workflowState?.state || {};
   const hasContract = state.identityContract !== undefined && state.identityContract !== null;
-  const declaredProjectDir = typeof state.projectDir === "string" ? state.projectDir.trim() : "";
 
-  // A state that never declared a repository is not a legacy task: it is a
-  // state with no repository context at all. The handler's own repository
-  // resolution still applies, and it refuses when it cannot determine one.
-  // A legacy task - one that declared a projectDir before contracts existed -
-  // is NOT skipped; it is backfilled or refused below.
+  // The binding must come from the TASK, not from the caller's `projectDir`
+  // argument. `applyProjectDirOverride` writes the argument into
+  // `state.projectDir` before this runs, so using that value would let a caller
+  // manufacture a binding by naming any valid checkout. `taskProjectDir` is the
+  // value captured before the override.
+  const declaredProjectDir =
+    typeof taskProjectDir === "string"
+      ? taskProjectDir.trim()
+      : typeof state.projectDir === "string"
+        ? state.projectDir.trim()
+        : "";
+
+  // No contract and no task-declared workspace means there is no trustworthy
+  // task-to-workspace binding. A valid checkout resolved by the handler is not
+  // evidence of which repository the task owns, so the mutation fails closed.
   if (!hasContract && !declaredProjectDir) {
-    return { ok: true, code: "NO_TASK_REPOSITORY_CONTEXT" };
+    return {
+      ok: false,
+      code: "IDENTITY_UNVERIFIABLE_NO_TASK_BINDING",
+      message:
+        `⚠️ Refused: ${operation} has no trustworthy task-to-workspace binding.\n\n` +
+        `This task has no identity contract and never declared a 'projectDir'. ` +
+        `A repository resolved from the caller or the working directory is not proof ` +
+        `that this task owns it.\n\n` +
+        `Start the task again with a 'projectDir' that points at the intended repository ` +
+        `so an identity contract is recorded.\n\n` +
+        `Nothing was changed.`,
+    };
   }
 
   if (!dir) {
@@ -133,7 +153,7 @@ export async function assertMutationRepository({ workflowState, dir, operation }
   const actual = await captureRepositoryIdentity({ dir });
   const result = assertTaskRepository({
     contract: state.identityContract,
-    state,
+    state: { ...state, projectDir: declaredProjectDir },
     actual,
     operation,
   });
@@ -228,12 +248,22 @@ async function verifyPushed(git, branch) {
 export async function handleCommitAndPush(args, context) {
   const { workflowState, exec, git, utils } = context;
 
+  // Capture the task's own binding BEFORE the caller's `projectDir` override can
+  // overwrite it. The override may point at a valid checkout, but that is not
+  // proof the task owns it.
+  const taskProjectDir = typeof workflowState.state.projectDir === "string" ? workflowState.state.projectDir.trim() : "";
+
   const projectDirError = applyProjectDirOverride(args);
   if (projectDirError) {
     return textResponse(projectDirError);
   }
 
-  workflowState.state.projectDir = getActiveProjectDir() || workflowState.state.projectDir || "";
+  // The task's own projectDir wins over the process-global active directory.
+  // The global is only a fallback for a state that never declared one, and the
+  // identity guard refuses that case anyway.
+  if (!workflowState.state.projectDir) {
+    workflowState.state.projectDir = getActiveProjectDir() || "";
+  }
 
   // Repository identity preflight: a task is bound to the checkout it started
   // in. A `projectDir` override that points at another checkout must not commit
@@ -243,6 +273,7 @@ export async function handleCommitAndPush(args, context) {
       workflowState,
       dir: workflowState.state.projectDir,
       operation: "commit_and_push",
+      taskProjectDir,
     });
     if (!repoGuard.ok) {
       return textResponse(repoGuard.message);

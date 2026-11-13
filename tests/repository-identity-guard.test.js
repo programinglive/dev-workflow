@@ -4,6 +4,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { mkdtemp, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
+import os from "node:os";
 import path from "node:path";
 
 import { WorkflowState, resolveStateFile, pinSessionProject, writeFocusBinding, readFocusBinding, retireFocusBinding } from "../workflow-state.js";
@@ -746,7 +747,7 @@ test("a stale focus lock is recovered", async () => {
     await mkdir(lockDir, { recursive: true });
     await writeFile(
       path.join(lockDir, "focus-74.lock"),
-      JSON.stringify({ pid: 999999, host: "gone", startedAt: Date.now() - 120_000 }),
+      JSON.stringify({ pid: 999999, host: os.hostname(), startedAt: Date.now() - 120_000 }),
       "utf8",
     );
 
@@ -832,6 +833,210 @@ test("record_deployment refuses another checkout with the same remote", async ()
 
     assert.match(text(response), /Refused/i);
     assert.ok(!state.state.deployment, "no deployment record may be written");
+  });
+});
+
+// P0: a live lock owner must not be displaced because the timestamp is old.
+test("a live lock holder is not displaced by an old timestamp", async () => {
+  await withWorkspace(async (base) => {
+    const alpha = await makeRepo(base, "alpha", { remote: "https://github.com/example/alpha.git" });
+    const beta = await makeRepo(base, "beta", { remote: "https://github.com/example/beta.git" });
+    const stateFile = path.join(base, "state", "projects", "shared", "users", "u1", "workflow-state.ses_LIVE.json");
+    const lockFile = path.join(base, "state", "sessions", "focus-75.lock");
+    const worker = path.join(process.cwd(), "tests", "fixtures", "focus-hold-worker.mjs");
+
+    const child = spawn(process.execPath, [worker, lockFile], {
+      cwd: process.cwd(),
+      env: { ...process.env, DEV_WORKFLOW_STATE_FILE: stateFile },
+    });
+
+    try {
+      await new Promise((resolve, reject) => {
+        let buffer = "";
+        const timer = setTimeout(() => reject(new Error("holder did not start in time")), 20_000);
+        child.stdout.on("data", (chunk) => {
+          buffer += chunk;
+          if (buffer.includes("HELD")) {
+            clearTimeout(timer);
+            resolve();
+          }
+        });
+        child.on("error", reject);
+      });
+
+      // Make the lock look ancient while its owner is still alive.
+      const record = JSON.parse(await readFile(lockFile, "utf8"));
+      record.startedAt = Date.now() - 10 * 60 * 1000;
+      await writeFile(lockFile, JSON.stringify(record), "utf8");
+
+      const contender = await writeFocusBinding({
+        stateFile,
+        focusId: 75,
+        projectDir: beta,
+        repoKey: "github.com/example/beta",
+        timeoutMs: 400,
+      });
+
+      assert.equal(contender.ok, false, "a live holder must not be displaced");
+      assert.equal(contender.reason, "FOCUS_CLAIM_TIMEOUT");
+
+      const stillHeld = JSON.parse(await readFile(lockFile, "utf8"));
+      assert.equal(stillHeld.pid, child.pid, "the live holder keeps the lock");
+    } finally {
+      child.stdin.end();
+      child.kill();
+    }
+  });
+});
+
+// P0: a confirmed dead owner is recoverable.
+test("a dead lock owner is recovered", async () => {
+  await withWorkspace(async (base) => {
+    const alpha = await makeRepo(base, "alpha", { remote: "https://github.com/example/alpha.git" });
+    const stateFile = path.join(base, "state", "projects", "shared", "users", "u1", "workflow-state.ses_DEAD.json");
+    const lockDir = path.join(base, "state", "sessions");
+    await mkdir(lockDir, { recursive: true });
+
+    // A PID that cannot be alive: the maximum PID is far below this on every
+    // supported platform, and `process.kill` reports ESRCH.
+    await writeFile(
+      path.join(lockDir, "focus-76.lock"),
+      JSON.stringify({ pid: 2147483646, host: os.hostname(), startedAt: Date.now() }),
+      "utf8",
+    );
+
+    const claim = await writeFocusBinding({
+      stateFile,
+      focusId: 76,
+      projectDir: alpha,
+      repoKey: "github.com/example/alpha",
+      timeoutMs: 2_000,
+    });
+    assert.equal(claim.ok, true);
+    assert.equal(readFocusBinding({ stateFile, focusId: 76 }).repoKey, "github.com/example/alpha");
+  });
+});
+
+// P0: unknown liveness (another host) must not authorize stealing.
+test("a lock from another host is not stolen", async () => {
+  await withWorkspace(async (base) => {
+    const alpha = await makeRepo(base, "alpha", { remote: "https://github.com/example/alpha.git" });
+    const stateFile = path.join(base, "state", "projects", "shared", "users", "u1", "workflow-state.ses_HOST.json");
+    const lockDir = path.join(base, "state", "sessions");
+    await mkdir(lockDir, { recursive: true });
+
+    await writeFile(
+      path.join(lockDir, "focus-77.lock"),
+      JSON.stringify({ pid: 1, host: "another-machine", startedAt: Date.now() - 3_600_000 }),
+      "utf8",
+    );
+
+    const claim = await writeFocusBinding({
+      stateFile,
+      focusId: 77,
+      projectDir: alpha,
+      repoKey: "github.com/example/alpha",
+      timeoutMs: 300,
+    });
+    assert.equal(claim.ok, false);
+    assert.equal(claim.reason, "FOCUS_CLAIM_TIMEOUT");
+  });
+});
+
+// P0: no task binding means no mutation, even with a valid caller projectDir.
+test("a mutation without a task binding fails closed", async () => {
+  await withWorkspace(async (base) => {
+    const repo = await makeRepo(base, "alpha", { remote: "https://github.com/example/alpha.git" });
+    const { assertMutationRepository } = await import("../tools/handler-modules/commit-handlers.js");
+
+    const state = await sessionState("ses_NOBIND");
+    state.state.projectDir = "";
+    state.state.identityContract = null;
+    state.state.repository = { path: "", remote: "" };
+
+    const result = await assertMutationRepository({
+      workflowState: state,
+      dir: repo,
+      operation: "commit_and_push",
+      taskProjectDir: "",
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.code, "IDENTITY_UNVERIFIABLE_NO_TASK_BINDING");
+    assert.match(result.message, /not proof/i);
+  });
+});
+
+// P0: the caller's projectDir must not become the task binding.
+test("commit_and_push refuses a caller projectDir with no task binding", async () => {
+  await withWorkspace(async (base) => {
+    const repo = await makeRepo(base, "alpha", { remote: "https://github.com/example/alpha.git" });
+    const { handleCommitAndPush } = await import("../tools/handler-modules/commit-handlers.js");
+
+    const state = await sessionState("ses_NOBIND2");
+    state.state.currentPhase = "commit";
+    state.state.readyToCommit = true;
+    state.state.readyCheckCompleted = true;
+    state.state.projectDir = "";
+    state.state.identityContract = null;
+    state.state.repository = { path: "", remote: "" };
+
+    const commands = [];
+    const response = await handleCommitAndPush(
+      { projectDir: repo, commitMessage: "feat: x" },
+      {
+        workflowState: state,
+        exec: async (command) => {
+          commands.push(command);
+          return { stdout: "" };
+        },
+        git: { hasWorkingChanges: async () => true, getHeadSha: async () => "abc" },
+        utils: {},
+      },
+    );
+
+    assert.match(text(response), /no trustworthy task-to-workspace binding/i);
+    assert.equal(commands.length, 0, "no git command may run");
+  });
+});
+
+// P1: the deployment record is an attestation, not verified proof.
+test("record_deployment marks the evidence as unverified attestation", async () => {
+  await withWorkspace(async (base) => {
+    const repo = await makeRepo(base, "alpha", { remote: "https://github.com/example/alpha.git" });
+    const { handleRecordDeployment } = await import("../tools/handler-modules/release-handlers.js");
+    const { execFileSync } = await import("node:child_process");
+
+    git(repo, "tag", "v1.0.0");
+    const head = git(repo, "rev-parse", "HEAD");
+    const identity = await captureRepositoryIdentity({ dir: repo });
+
+    const state = await sessionState("ses_DEP3");
+    state.state.currentPhase = "release";
+    state.state.projectDir = repo;
+    state.state.identityContract = buildIdentityContract({ identity, focusId: 73 });
+
+    const exec = async (command, options = {}) => ({
+      stdout: execFileSync(command, options.arguments || [], { cwd: repo, encoding: "utf8" }),
+    });
+
+    await handleRecordDeployment(
+      {
+        tag: "v1.0.0",
+        pipelineId: "2961510763",
+        sites: ["example.com"],
+        evidence: "health receipt HTTP 200",
+        environment: "production",
+      },
+      { workflowState: state, exec, git: { getHeadSha: async () => head }, utils: {} },
+    );
+
+    const record = state.state.deployment;
+    assert.equal(record.attestation.by, "agent");
+    assert.equal(record.attestation.verified, false);
+    assert.match(record.attestation.note, /not verified/i);
+    assert.equal(record.environment, "production");
+    assert.equal(record.tagSha, head);
   });
 });
 

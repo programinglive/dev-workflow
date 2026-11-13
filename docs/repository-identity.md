@@ -74,12 +74,19 @@ Refusal codes:
 
 | Code | Meaning |
 |---|---|
+| `IDENTITY_UNVERIFIABLE_NO_TASK_BINDING` | no contract and no task-declared `projectDir`; a checkout resolved by the caller is not proof |
 | `IDENTITY_UNVERIFIABLE_NO_EVIDENCE` | no recorded repository and no declared projectDir |
 | `IDENTITY_UNVERIFIABLE_NOT_A_REPO` | the target is not a Git repository |
 | `IDENTITY_UNVERIFIABLE_WORKSPACE_MISMATCH` | evidence points at a different checkout |
 | `IDENTITY_UNVERIFIABLE_REMOTE_MISMATCH` | recorded remote differs from the live remote |
 | `IDENTITY_UNVERIFIABLE_CONFLICT` | `state.repository.path` and `state.projectDir` disagree |
 | `IDENTITY_CONTRACT_MALFORMED` | a contract exists but cannot be read |
+
+The binding must come from the **task**, not from the caller. `commit_and_push`,
+`perform_release` and `record_deployment` accept a `projectDir` argument, and the
+handler writes that argument into `state.projectDir` before the guard runs. The
+guard therefore uses the value captured **before** the override. A caller that
+names a valid checkout cannot manufacture a task binding by doing so.
 
 A successful backfill is written back to the task state with
 `backfilled: true`, `backfilledAt` and `backfilledFrom`, so the migration is
@@ -112,18 +119,22 @@ A focus is a container for one project's work. Its binding lives at
 
 | Phase | Behaviour |
 |---|---|
-| Claim | `open(lock, "wx")` — the OS guarantees exactly one creator. The claim decision and the write happen inside that critical section. |
+| Claim | The lock record is written to a temp file and **hard-linked** into place. `link(2)` is atomic and fails when the target exists, and the content is complete before the name appears, so a crash cannot leave an unreadable lock. |
 | Bounded wait | A contender polls for up to 2 s, then returns `FOCUS_CLAIM_TIMEOUT`. |
 | Conflict | A different live project → `FOCUS_BOUND_TO_ANOTHER_PROJECT`; the task is refused before `reset()`. |
-| Interrupted process | A lock whose PID is dead, whose record is unreadable and old, or whose `startedAt` is older than 30 s is broken and retried. |
+| Liveness rule | Elapsed time alone never proves abandonment. A **confirmed dead** owner is recoverable; a **confirmed live** owner keeps the lock regardless of how old the record looks. **Unknown** liveness (another host, unreadable record, invalid PID) is treated as live. |
+| Concurrent recovery | Recovering a stale lock requires winning an atomic `rename` of the lock file, so two processes cannot both recover it. The loser retries the atomic create and finds the winner's lock. |
+| PID reuse | A reused PID makes a dead owner look alive, which is fail-closed: the contender times out instead of stealing. |
 | Restoration | The record lives outside session state, so a restored session reads the same binding. |
 | Stale recovery | If the bound project directory no longer exists, the next legitimate use rebinds it (`REBOUND_STALE`). |
 | Retirement | `retireFocusBinding` takes the same lock and removes the record explicitly. |
 
-Atomic rename alone was insufficient: two processes that both read "no binding"
-would both rename and the second would silently replace the first. The lock
+Atomic rename alone was insufficient for two reasons. First, rename is atomic per
+write but not first-writer-wins: two processes that both read "no binding" would
+both rename and the second would silently replace the first. Second, a
+time-based staleness rule would let a contender displace a live owner. The lock
 makes the read-decide-write one critical section across operating-system
-processes.
+processes, and ownership is decided by process liveness, not by a clock.
 
 ## 5. Deployment record integrity (P1)
 
@@ -137,6 +148,14 @@ processes.
 | `task.taskId`, `task.projectId`, `task.focusId` | the task's identity contract |
 | `environment` | explicit argument, default `production`, slug-validated |
 | `evidence` | required, ≥ 5 characters |
+| `attestation` | `{ by: "agent", verified: false, note }` |
+
+**Evidence semantics.** The `evidence` string is an **attestation by the agent or
+user** that the deployment happened. This tool does not query the deployment
+system, so it records `attestation.verified: false` and never presents the string
+as independent proof. What the tool *does* verify is the repository identity, the
+tag's existence in that workspace, and that HEAD is an ancestor of the tag. It
+does not verify that a production host is serving the tag.
 
 A different checkout cannot manufacture a record merely because its remote
 matches: the exact-workspace guard runs first, and the record names the

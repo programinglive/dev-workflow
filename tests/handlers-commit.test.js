@@ -1,12 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { handleToolCall } from "../tools/handlers.js";
-import { withWorkflowState, testUtils, createRequest, createGitMock } from "./test-helpers.js";
+import { withWorkflowState, testUtils, createRequest, createGitMock, bindTaskToRepo } from "./test-helpers.js";
 
 import { foreignDirtyEntries } from "../git-helpers.js";
 
 test("commit_and_push commits changes and pushes", async () => {
   await withWorkflowState(async (workflowState) => {
+    await bindTaskToRepo(workflowState);
     workflowState.state.readyToCommit = true;
     workflowState.state.readyCheckCompleted = true;
     workflowState.state.testsSkipped = false;
@@ -58,6 +59,7 @@ test("commit_and_push commits changes and pushes", async () => {
 
 test("commit_and_push uses primary branch when no branch specified", async () => {
   await withWorkflowState(async (workflowState) => {
+    await bindTaskToRepo(workflowState);
     workflowState.state.readyToCommit = true;
     workflowState.state.readyCheckCompleted = true;
     workflowState.state.testsSkipped = false;
@@ -101,6 +103,7 @@ test("commit_and_push uses primary branch when no branch specified", async () =>
 
 test("commit_and_push falls back to master when HEAD is detached", async () => {
   await withWorkflowState(async (workflowState) => {
+    await bindTaskToRepo(workflowState);
     workflowState.state.readyToCommit = true;
     workflowState.state.readyCheckCompleted = true;
     workflowState.state.testsSkipped = false;
@@ -143,6 +146,7 @@ test("commit_and_push falls back to master when HEAD is detached", async () => {
 
 test("commit_and_push recognizes already committed work", async () => {
   await withWorkflowState(async (workflowState) => {
+    await bindTaskToRepo(workflowState);
     workflowState.state.readyToCommit = true;
     workflowState.state.readyCheckCompleted = true;
     workflowState.state.testsSkipped = false;
@@ -209,6 +213,7 @@ const FOREIGN_STATUS = [
  */
 test("pesan commit lama tidak dihapus saat git tidak bisa membacanya", async () => {
   await withWorkflowState(async (workflowState) => {
+    await bindTaskToRepo(workflowState);
     workflowState.state.readyToCommit = true;
     workflowState.state.readyCheckCompleted = true;
     workflowState.state.testsSkipped = false;
@@ -257,6 +262,7 @@ test("pesan commit lama tidak dihapus saat git tidak bisa membacanya", async () 
  */
 test("complete_task memindahkan task Factory ke done", async () => {
   await withWorkflowState(async (workflowState) => {
+    await bindTaskToRepo(workflowState);
     workflowState.state.currentPhase = "commit";
     workflowState.state.taskDescription = "tugas dari papan";
     workflowState.state.dodFactoryTaskId = "rec-123";
@@ -297,6 +303,7 @@ test("complete_task memindahkan task Factory ke done", async () => {
 
 test("complete_task tanpa dodFactoryTaskId tidak menyentuh Factory", async () => {
   await withWorkflowState(async (workflowState) => {
+    await bindTaskToRepo(workflowState);
     workflowState.state.currentPhase = "commit";
     workflowState.state.taskDescription = "tugas manual";
     workflowState.state.dodFactoryTaskId = "";
@@ -335,6 +342,7 @@ test("complete_task tanpa dodFactoryTaskId tidak menyentuh Factory", async () =>
 
 test("drop_task membatalkan task Factory dengan cancelled", async () => {
   await withWorkflowState(async (workflowState) => {
+    await bindTaskToRepo(workflowState);
     workflowState.state.currentPhase = "commit";
     workflowState.state.taskDescription = "tugas dari papan";
     workflowState.state.dodFactoryTaskId = "rec-456";
@@ -368,6 +376,7 @@ test("drop_task membatalkan task Factory dengan cancelled", async () => {
 
 test("complete_task closes Factory through its configured client without an injected adapter", async () => {
   await withWorkflowState(async (workflowState) => {
+    await bindTaskToRepo(workflowState);
     workflowState.state.currentPhase = "commit";
     workflowState.state.taskDescription = "Close Factory automatically";
     workflowState.state.dodFactoryTaskId = "factory-task-1";
@@ -405,6 +414,7 @@ test("complete_task closes Factory through its configured client without an inje
 
 test("kegagalan menutup Factory tidak menggagalkan complete_task", async () => {
   await withWorkflowState(async (workflowState) => {
+    await bindTaskToRepo(workflowState);
     workflowState.state.currentPhase = "commit";
     workflowState.state.taskDescription = "tugas dari papan";
     workflowState.state.dodFactoryTaskId = "rec-789";
@@ -443,6 +453,7 @@ test("kegagalan menutup Factory tidak menggagalkan complete_task", async () => {
 
 test("commit_and_push menolak men-stage berkas yang sudah kotor sebelum task", async () => {
   await withWorkflowState(async (workflowState) => {
+    await bindTaskToRepo(workflowState);
     await prepareCommitPhase(workflowState);
     workflowState.state.dirtyAtStart = [{ code: "M", path: "knowledge/billing.yaml" }];
     await workflowState.save();
@@ -486,6 +497,7 @@ test("commit_and_push menolak men-stage berkas yang sudah kotor sebelum task", a
 
 test("commit_and_push dengan 'paths' hanya men-stage berkas yang disebut", async () => {
   await withWorkflowState(async (workflowState) => {
+    await bindTaskToRepo(workflowState);
     await prepareCommitPhase(workflowState);
     workflowState.state.dirtyAtStart = [{ code: "M", path: "knowledge/billing.yaml" }];
     await workflowState.save();
@@ -534,6 +546,7 @@ test("commit_and_push dengan 'paths' hanya men-stage berkas yang disebut", async
 
 test("commit_and_push boleh men-stage semuanya bila includeForeign: true", async () => {
   await withWorkflowState(async (workflowState) => {
+    await bindTaskToRepo(workflowState);
     await prepareCommitPhase(workflowState);
     workflowState.state.dirtyAtStart = [{ code: "M", path: "knowledge/billing.yaml" }];
     await workflowState.save();
@@ -574,6 +587,7 @@ test("commit_and_push tidak menyebut berkas yang baru saja di-commit lewat paths
   // versi pertama catatan ini menyebutnya "not committed" padahal baru saja
   // di-commit - laporan yang berlawanan dengan kenyataan.
   await withWorkflowState(async (workflowState) => {
+    await bindTaskToRepo(workflowState);
     await prepareCommitPhase(workflowState);
     workflowState.state.dirtyAtStart = [
       { code: "M", path: "knowledge/billing.yaml" },
@@ -618,6 +632,7 @@ test("commit_and_push tidak berubah bila baseline kosong", async () => {
   // Task tanpa baseline (state lama, atau start_task tanpa git) harus tetap
   // berperilaku seperti sebelumnya - kalau tidak, setiap task jadi terblokir.
   await withWorkflowState(async (workflowState) => {
+    await bindTaskToRepo(workflowState);
     await prepareCommitPhase(workflowState);
     await workflowState.save();
 
