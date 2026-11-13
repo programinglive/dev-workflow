@@ -43,7 +43,7 @@ test("fetchActiveSessions returns error when DEVWF_MONITOR_URL is not configured
 
 test("fetchActiveSessions swallows network failure gracefully", async () => {
   const res = await fetchActiveSessions({
-    env: { DEVWF_MONITOR_URL: "http://100.77.138.14:3100" },
+    env: { DEVWF_MONITOR_URL: "http://127.0.0.1:3100" },
     fetchImpl: async () => {
       throw new Error("ECONNREFUSED");
     },
@@ -56,7 +56,7 @@ test("fetchActiveSessions fetches GET /api/sessions and returns data", async () 
   let requestedUrl = "";
   let requestedOpts = {};
   const res = await fetchActiveSessions({
-    env: { DEVWF_MONITOR_URL: "http://100.77.138.14:3100" },
+    env: { DEVWF_MONITOR_URL: "http://127.0.0.1:3100" },
     limit: 10,
     fetchImpl: async (url, opts) => {
       requestedUrl = url;
@@ -78,7 +78,7 @@ test("handleListActiveSessions formats session list into markdown", async () => 
   const output = await handleListActiveSessions(
     { all: true },
     {
-      env: { DEVWF_MONITOR_URL: "http://100.77.138.14:3100" },
+      env: { DEVWF_MONITOR_URL: "http://127.0.0.1:3100" },
       fetchImpl: async () => ({
         ok: true,
         json: async () => ({ sessions: SAMPLE_SESSIONS }),
@@ -88,7 +88,7 @@ test("handleListActiveSessions formats session list into markdown", async () => 
 
   assert.ok(output.content && output.content[0]);
   const text = output.content[0].text;
-  assert.match(text, /🔗 Dashboard: http:\/\/100\.77\.138\.14:3100/);
+  assert.match(text, /🔗 Dashboard: http:\/\/127\.0\.0\.1:3100/);
   assert.match(text, /HELLOWORLD/);
   assert.match(text, /dev-workflow-mcp-server/);
   assert.match(text, /Implement feature/);
@@ -99,7 +99,7 @@ test("handleListActiveSessions filters only active sessions by default (all: fal
   const output = await handleListActiveSessions(
     { all: false },
     {
-      env: { DEVWF_MONITOR_URL: "http://100.77.138.14:3100" },
+      env: { DEVWF_MONITOR_URL: "http://127.0.0.1:3100" },
       fetchImpl: async () => ({
         ok: true,
         json: async () => ({ sessions: SAMPLE_SESSIONS }),
@@ -133,7 +133,7 @@ test("handleListActiveSessions shows local browser URL when DEVWF_LOCAL_URL is s
     { all: true },
     {
       env: {
-        DEVWF_MONITOR_URL: "http://100.77.138.14:3100",
+        DEVWF_MONITOR_URL: "http://127.0.0.1:3100",
         DEVWF_LOCAL_URL: "http://localhost:3100",
       },
       fetchImpl: async () => ({
@@ -152,8 +152,8 @@ test("handleListActiveSessions does NOT show local URL when DEVWF_LOCAL_URL equa
     { all: true },
     {
       env: {
-        DEVWF_MONITOR_URL: "http://100.77.138.14:3100",
-        DEVWF_LOCAL_URL: "http://100.77.138.14:3100",
+        DEVWF_MONITOR_URL: "http://127.0.0.1:3100",
+        DEVWF_LOCAL_URL: "http://127.0.0.1:3100",
       },
       fetchImpl: async () => ({
         ok: true,

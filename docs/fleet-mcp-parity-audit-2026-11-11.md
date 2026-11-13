@@ -51,17 +51,17 @@ All three devices carry the same nine servers. `MCP-PARITY.md` declares a
 ten-server baseline that includes `factory`, so the document and the devices
 disagree. The document also still points `central-gateway` at
 `http://100.78.134.44:3200/sse` while the devices use
-`http://100.77.138.14:3200/mcp`.
+`http://127.0.0.1:3200/mcp`.
 
 ## CI runner topology (verified)
 
 | Runner | ID | Tag | Platform | Status |
 |---|---|---|---|---|
 | `MMCH ERP Runner` | 58764237 | `bw-server` | windows | online |
-| `bw-tools clinic linux` | 58882401 | `bw-tools` | linux (Debian) | online |
-| `bw-server-clean ERP runner` | 58346133 | `bw-server` | — | deleted 11 Nov 2026 |
+| `build-host.example clinic linux` | 58882401 | `build-host.example` | linux (Debian) | online |
+| `db-host.example ERP runner` | 58346133 | `bw-server` | — | deleted 11 Nov 2026 |
 
-`bw-tools` has no Docker (`docker: MISSING`), so the `frontend_erp` image build
+`build-host.example` has no Docker (`docker: MISSING`), so the `frontend_erp` image build
 (`docker:24.0.5` + `docker:24.0.5-dind`) cannot run there as written. The ERP
 pipeline requires tag `bw-server`, which only the MMCH runner carries.
 
@@ -79,7 +79,7 @@ pipeline requires tag `bw-server`, which only the MMCH runner carries.
 4. **`MCP-PARITY.md`** — correct the `central-gateway` URL and reconcile the
    `factory` entry with what the devices actually load.
 5. **Runner** — either keep ERP on MMCH and stop claiming it is decommissioned,
-   or register a `bw-server` runner on `bw-tools` and install Docker there
+   or register a `bw-server` runner on `build-host.example` and install Docker there
    before moving `frontend_erp`.
 
 ## Verification commands

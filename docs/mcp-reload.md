@@ -90,7 +90,7 @@ Run it on its own at any time:
 
 ```bash
 node managed/mcp-reconnect.cjs                                  # every active project
-node managed/mcp-reconnect.cjs --directory "C:\\Users\\DHIKA"     # one project
+node managed/mcp-reconnect.cjs --directory "C:\\Users\\<username>"     # one project
 node managed/mcp-reconnect.cjs --since-hours 2 --attempts 5
 ```
 
@@ -99,13 +99,13 @@ node managed/mcp-reconnect.cjs --since-hours 2 --attempts 5
 Check the truth first, per location:
 
 ```bash
-opencode api get "/api/mcp?location[directory]=C:/Users/DHIKA"
+opencode api get "/api/mcp?location[directory]=C:/Users/<username>"
 ```
 
 Then connect the one server that is down:
 
 ```bash
-opencode api post "/api/experimental/mcp/dev-workflow/connect?location[directory]=C:/Users/DHIKA"
+opencode api post "/api/experimental/mcp/dev-workflow/connect?location[directory]=C:/Users/<username>"
 ```
 
 The `/mcps` screen in the TUI does the same thing. Do not restart the whole
@@ -134,7 +134,7 @@ the pin was made — in the OpenCode config on all three devices:
 
 | Device | Config |
 |---|---|
-| HELLOWORLD | `C:\Users\DHIKA\.config\opencode\opencode.json` |
+| HELLOWORLD | `C:\Users\<username>\.config\opencode\opencode.json` |
 | MMCH | `C:\Users\mahardhika\.config\opencode\opencode.json` |
 | Mac | `/Users/mahardhika/.config/opencode/opencode.json` |
 
@@ -144,6 +144,6 @@ device's MCP starts again.
 
 ## The monitors that consume this
 
-- Web dashboard: `http://100.77.138.14:3100`
+- Web dashboard: `http://127.0.0.1:3100`
 - Android monitor app: `mobile-app/`, package `com.programinglive.devwfmonitor`,
   see `docs/mobile-app.md` for the build and the Xiaomi Pad 6 install path.

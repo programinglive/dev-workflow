@@ -117,14 +117,14 @@ upsert has no matching unique constraint to conflict on.
 
 ## Rollout status (as of 8 November 2026, release v1.24.1)
 
-- Client and managed release: promoted on bw-tools (`/var/lib/devwf-releases/
+- Client and managed release: promoted on build-host.example (`/var/lib/devwf-releases/
   current.json` = revision `02542e1`); workstations pick it up on the next
   MCP reconnect.
 - Monitor database: the three card-chaining columns were added to
   `devwf_monitor.sessions` (a `pg_dump` of the table is kept under
   `/opt/devwf-monitor/backups/`). The primary-key swap and the unified monitor
   code deploy are **deliberately not applied yet**, because the deployed
-  monitor on bw-server-clean tracks a different implementation of the same
+  monitor on db-host.example tracks a different implementation of the same
   task: `origin/feat/zettelkasten-card-chaining` (commit `f2ac45d`, 7 Nov),
   a task-metadata model (`workflow_task_id`, `task_origin_json`,
   `task_relations_json`, `task-metadata.cjs`, Zettly drawing thumbnails) that
@@ -141,7 +141,7 @@ upsert has no matching unique constraint to conflict on.
 ## Reconciliation with the f2ac45d task-metadata model (release v1.24.2,
 8 November 2026)
 
-The deployed monitor on bw-server-clean tracked `f2ac45d`'s task-metadata
+The deployed monitor on db-host.example tracked `f2ac45d`'s task-metadata
 model, which lived outside the repository. It was reconciled into
 `monitor-server/` and the two card models were unified:
 
@@ -163,6 +163,6 @@ model, which lived outside the repository. It was reconciled into
   `tests/monitor-card-chain-behavior.test.js` and
   `tests/monitor-upsert-behavior.test.js`.
 
-Deploy order on bw-server-clean: stop `devwf-monitor` → copy the unified
+Deploy order on db-host.example: stop `devwf-monitor` → copy the unified
 files (with the owner `.bak` convention) → apply `001`+`002`+`003` in one
 transaction after a fresh `pg_dump` → start → verify `/api/sessions`.

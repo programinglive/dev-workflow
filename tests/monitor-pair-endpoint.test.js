@@ -21,7 +21,7 @@ describe("Mobile Pairing Route Handler", () => {
 
   describe("handlePairVerify", () => {
     test("successfully verifies valid pairing challenge and returns 200", async () => {
-      const ch = createPairingChallenge({ serverUrl: "http://100.77.138.14:3100" });
+      const ch = createPairingChallenge({ serverUrl: "http://127.0.0.1:3100" });
 
       const result = await handlePairVerify({
         body: {
@@ -52,7 +52,7 @@ describe("Mobile Pairing Route Handler", () => {
     });
 
     test("returns 400 when challenge verification fails in pairing engine", async () => {
-      const ch = createPairingChallenge({ serverUrl: "http://100.77.138.14:3100" });
+      const ch = createPairingChallenge({ serverUrl: "http://127.0.0.1:3100" });
 
       const result = await handlePairVerify({
         body: {
@@ -70,7 +70,7 @@ describe("Mobile Pairing Route Handler", () => {
 
   describe("handlePairStatus", () => {
     test("returns 200 with status for active challenge", async () => {
-      const ch = createPairingChallenge({ serverUrl: "http://100.77.138.14:3100" });
+      const ch = createPairingChallenge({ serverUrl: "http://127.0.0.1:3100" });
 
       const result = await handlePairStatus({
         queryParams: new URLSearchParams(`ch=${ch.challengeId}`),

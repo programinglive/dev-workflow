@@ -13,18 +13,18 @@ machine that started the AI session.
 4. `os.hostname()`
 
 Before this change the session machine was checked before `DEVWF_BUILD_HOST`, so
-a CI job that ran on the bw-tools runner was labelled with the workstation that
+a CI job that ran on the build-host.example runner was labelled with the workstation that
 started the session (for example `HELLOWORLD`).
 
 ## Fleet default
 
-`managed/launcher.cjs` now sets `DEVWF_BUILD_HOST=bw-tools` when the variable is
+`managed/launcher.cjs` now sets `DEVWF_BUILD_HOST=build-host.example` when the variable is
 absent, because the fleet standard is that every build, test suite and pipeline
-runs on the bw-tools runner (`100.77.138.14`). A device that genuinely builds
+runs on the build-host.example runner (`127.0.0.1`). A device that genuinely builds
 elsewhere can still override it, or pass `buildHost` on the call.
 
 ## Verifying
 
 - `node --test tests/build-host-precedence.test.js`
 - After a rollout, run a build and confirm the monitor card shows
-  `Build host: bw-tools`.
+  `Build host: build-host.example`.

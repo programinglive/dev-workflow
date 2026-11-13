@@ -1,6 +1,6 @@
 # One release for HELLOWORLD, MMCH and Mac
 
-The managed deployment has one approved source release on `bw-tools`, reachable only through Tailscale at `http://100.77.138.14:3101`. It distributes immutable, authenticated archives. The existing monitor remains at `http://100.77.138.14:3100`.
+The managed deployment has one approved source release on `build-host.example`, reachable only through Tailscale at `http://127.0.0.1:3101`. It distributes immutable, authenticated archives. The existing monitor remains at `http://127.0.0.1:3100`.
 
 This is centrally managed distribution with local execution. Git, files, tests, Factory credentials and repository paths remain on the device. It does not move development repositories onto a production server. There is no remote command-execution API.
 
@@ -10,7 +10,7 @@ To publish, promote, and propagate rules to all three devices (**HELLOWORLD**, *
 
 1. Commit and test changes in an isolated development branch.
 2. Run `node managed/publish.cjs <private-staging-directory>` from the reviewed checkout. It creates `current.json` and a SHA256-named archive under `releases/` from the committed Git tree only.
-3. Copy the archive to `/var/lib/devwf-releases/releases/` on bw-tools. Verify its SHA256 there against the staged manifest.
+3. Copy the archive to `/var/lib/devwf-releases/releases/` on build-host.example. Verify its SHA256 there against the staged manifest.
 4. Upload `current.json` to a temporary filename, validate it with `managed/protocol.cjs`, then atomically rename it over `/var/lib/devwf-releases/current.json`.
 5. On the next MCP connection each device downloads and verifies the approved release automatically. No `git pull`, package update or development-checkout switching is required on devices. First startup of a new release installs production dependencies and checks the native SQLite module. Prewarm with `node <managed>/device-entry.cjs <client> --resolve-only` when appropriate; keep tokens in the existing process environment/configuration.
 
@@ -30,7 +30,7 @@ modes were measured on 8 November 2026 and are now guarded:
 
 1. **Backticks are shell syntax.** Sending the block inside
    `ssh "... python -c \"...\""` made the remote shell execute every backticked
-   token, so `` `bw-tools` `` and `` `node managed/rollout.cjs` `` arrived empty
+   token, so `` `build-host.example` `` and `` `node managed/rollout.cjs` `` arrived empty
    ("promoted centrally to the release host on  and synchronized"). The block is
    now base64-encoded inside the script.
 2. **`cmd.exe` truncates multi-line `-c` scripts.** On Windows the script was cut
@@ -56,7 +56,7 @@ modes were measured on 8 November 2026 and are now guarded:
 
 Copy `managed/launcher.cjs`, `managed/protocol.cjs` and, when needed, `managed/device-entry.cjs` to a stable per-user directory. Keep credential-loading wrappers; replace only the old `index.js` entry with the managed launcher. Direct clients can use `node <managed>/device-entry.cjs codex` or `opencode`, preserving their original environment settings.
 
-Set `DEVWF_RELEASE_URL=http://100.77.138.14:3101`. Existing `DEVWF_MONITOR_TOKEN` authenticates downloads; neither tokens nor Factory secrets belong in a release archive. The optional adapter reads the device's existing OpenCode shared environment in memory, without printing credentials. Set the correct `DEVWF_MACHINE` per device and `DEVWF_AGENT` per client.
+Set `DEVWF_RELEASE_URL=http://127.0.0.1:3101`. Existing `DEVWF_MONITOR_TOKEN` authenticates downloads; neither tokens nor Factory secrets belong in a release archive. The optional adapter reads the device's existing OpenCode shared environment in memory, without printing credentials. Set the correct `DEVWF_MACHINE` per device and `DEVWF_AGENT` per client.
 
 The cache is `%LOCALAPPDATA%/ProgramingLive/ManagedMCP` on Windows and `~/.local/share/ProgramingLive/ManagedMCP` elsewhere. It is separated by OS, architecture and Node ABI. `DEVWF_MANAGED_CACHE` can override its location. Concurrent startup of the same release is serialized.
 

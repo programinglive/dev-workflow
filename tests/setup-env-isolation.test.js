@@ -28,7 +28,7 @@ function envAfterSetup() {
     {
       cwd: ROOT,
       encoding: "utf8",
-      env: { ...process.env, DEVWF_MONITOR_URL: "http://100.77.138.14:3100" },
+      env: { ...process.env, DEVWF_MONITOR_URL: "http://127.0.0.1:3100" },
     },
   );
   assert.equal(result.status, 0, `proses anak gagal: ${result.stderr}`);

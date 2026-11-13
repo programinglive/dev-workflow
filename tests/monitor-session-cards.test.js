@@ -83,7 +83,7 @@ test("history cards expose chain identity and their successor", () => {
 });
 
 test("the upsert unifies the task-metadata and the card-chain models", () => {
-  // The deployed monitor on bw-server-clean kept one row per session with a
+  // The deployed monitor on db-host.example kept one row per session with a
   // task-metadata model (workflow_task_id, task_origin_json, task_relations_json,
   // repo_path, repo_remote). The reconciled upsert carries BOTH models: the
   // metadata describes the task a card tracks, and the chain columns describe

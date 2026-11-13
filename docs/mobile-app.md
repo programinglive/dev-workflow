@@ -51,7 +51,7 @@ Dijaga `tests/monitor-app-card-build.test.js`: kartu wajib memakai
 
 ## Alamat server dinamis (Runtime Configuration)
 
-Bawaan default mengarah ke `http://100.77.138.14:3100`. Namun mulai Milestone M1, alamat server **tidak lagi terkunci saat build**. Anda dapat mengubah, menambah, menguji koneksi (ping latency), dan berpindah profil server langsung dari aplikasi Android tanpa perlu build ulang APK:
+Bawaan default mengarah ke `http://127.0.0.1:3100`. Namun mulai Milestone M1, alamat server **tidak lagi terkunci saat build**. Anda dapat mengubah, menambah, menguji koneksi (ping latency), dan berpindah profil server langsung dari aplikasi Android tanpa perlu build ulang APK:
 
 1. **Tombol Header:** Ketuk pil `⚙ Server` di samping jumlah sesi aktif di bagian atas layar.
 2. **Tab Info:** Buka tab `Info` (ikon `ⓘ`) dan ketuk tombol biru `⚙ Ganti Server Monitor`.
@@ -65,7 +65,7 @@ Di modal pengaturan server:
 Bila ingin menimpa nilai bawaan awal saat build:
 
 ```bash
-EXPO_PUBLIC_MONITOR_URL=http://100.77.138.14:3100 npx expo prebuild -p android
+EXPO_PUBLIC_MONITOR_URL=http://127.0.0.1:3100 npx expo prebuild -p android
 ```
 
 ## Pemasangan Perangkat Kriptografis (Cryptographic QR Pairing - M2)
@@ -77,7 +77,7 @@ Jalankan perintah berikut di mesin host / server:
 ```bash
 devwf pair
 # atau tentukan URL eksplisit:
-devwf pair --url http://100.77.138.14:3100
+devwf pair --url http://127.0.0.1:3100
 # atau format JSON untuk integrasi script:
 devwf pair --json
 ```
@@ -219,7 +219,7 @@ Yang diukur, bukan diasumsikan:
 |---|---|
 | APK terpasang identik dengan hasil build repo | `sha256` `3867AAE9...8D5800` sama untuk `base.apk` yang di-`adb pull` dan `app-release.apk` lokal |
 | Aplikasi berjalan | `pidof com.programinglive.devwfmonitor` mengembalikan PID |
-| Tablet menjangkau monitor | `ping 100.77.138.14` 10.2 ms, port 3100 terbuka |
+| Tablet menjangkau monitor | `ping 127.0.0.1` 10.2 ms, port 3100 terbuka |
 | Identitas terpasang | `versionName=1.0.0`, `versionCode=1`, `lastUpdateTime` bergerak setelah `install -r` |
 
 Cara memeriksa ulang bahwa tablet benar-benar memakai build terbaru, tanpa

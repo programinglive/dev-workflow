@@ -75,10 +75,10 @@ PID 18476  mulai 14:11:15  ← kode baru, memegang mcp-process.lock
 
 Sesi ini dilayani PID 10696: daftar tool-nya tidak memuat `waive_documentation` maupun `next_steps`, yang ada hanya di kode baru. Skrip `cleanup-stale-mcp.mjs` di repo `infra-knowledge-mcp-server` mengonfirmasi hal yang sama untuk tiga server sekaligus. Akibatnya restart memberi proses baru, tetapi sesi tetap memakai kode lama.
 
-**b. Pin tidak mengisolasi saat cwd bukan repo.** Jalur pin hanya membentuk `projects/<proyek>/` bila `findProjectRoot(cwd)` menemukan repo. Direktori kerja sesi ini (`C:\Users\DHIKA\Documents\Default Project`) bukan repo, jadi fungsinya mengembalikan berkas pin apa adanya:
+**b. Pin tidak mengisolasi saat cwd bukan repo.** Jalur pin hanya membentuk `projects/<proyek>/` bila `findProjectRoot(cwd)` menemukan repo. Direktori kerja sesi ini (`C:\Users\<username>\Documents\Default Project`) bukan repo, jadi fungsinya mengembalikan berkas pin apa adanya:
 
 ```
-cwd = C:\Users\DHIKA\Documents\Default Project (bukan repo)
+cwd = C:\Users\<username>\Documents\Default Project (bukan repo)
   sesi A -> .state\workflow-state.json
   sesi B -> .state\workflow-state.json
   SAMA BERKAS? true

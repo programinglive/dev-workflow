@@ -25,15 +25,7 @@ test("generateDefaultFlow creates valid Mermaid flow parsable by flowGraph", () 
 test("MANDATORY_FLOW_RULE is injected in WORKFLOW_INSTRUCTIONS", () => {
   assert.ok(WORKFLOW_INSTRUCTIONS.includes(MANDATORY_FLOW_RULE));
   assert.match(WORKFLOW_INSTRUCTIONS, /Mandatory Mermaid Flow Design Gate/);
-  assert.match(WORKFLOW_INSTRUCTIONS, /Multi-Device & Multi-AI Consistency/);
-  assert.match(WORKFLOW_INSTRUCTIONS, /node managed\/rollout\.cjs/);
-});
-
-test("managed/rollout.cjs exports expected rule block and functions", () => {
-  const rollout = readFileSync(path.join(ROOT, "managed/rollout.cjs"), "utf8");
-  assert.match(rollout, /Multi-Device & Multi-AI Consistency/);
-  assert.match(rollout, /promoteToServers/);
-  assert.match(rollout, /syncRules/);
+  assert.match(WORKFLOW_INSTRUCTIONS, /CLI-First/);
 });
 
 test("normalizeBuildState auto-detects buildHost from SSH commands", () => {
@@ -48,10 +40,10 @@ test("normalizeBuildState auto-detects buildHost from SSH commands", () => {
 test("normalizeBuildState auto-detects buildHost from gcloud compute ssh", () => {
   const result = normalizeBuildState({
     status: "building",
-    target: "GCP Cloud Build",
-    command: "gcloud compute ssh bw-server-clean --command 'npm run build'",
+    target: "Cloud Build",
+    command: "gcloud compute ssh build-host-example --command 'npm run build'",
   });
-  assert.equal(result.buildHost, "bw-server-clean");
+  assert.equal(result.buildHost, "build-host-example");
 });
 
 test("normalizeBuildState falls back to machine when command is local without SSH", () => {
@@ -71,10 +63,8 @@ test("dashboard.cjs renders Mesin Builder with Remote VM and Local badge tags", 
   assert.match(dashboardSource, /Lokal/);
 });
 
-test("checkpoint rollout documentation exists and records all three devices", () => {
-  const doc = readFileSync(path.join(ROOT, "docs/checkpoints/2026-11-06-mandatory-flow-gate-and-multi-device-rollout.md"), "utf8");
-  assert.match(doc, /HELLOWORLD/);
-  assert.match(doc, /Mac/);
-  assert.match(doc, /MMCH/);
-  assert.match(doc, /4f5e1f4253c8/);
+test("public README documents Mandatory Flow Gate and CLI-First architecture", () => {
+  const doc = readFileSync(path.join(ROOT, "README.md"), "utf8");
+  assert.match(doc, /Mermaid/i);
+  assert.match(doc, /CLI-First|CLI/i);
 });

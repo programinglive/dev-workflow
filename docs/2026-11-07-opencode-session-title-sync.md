@@ -1,7 +1,7 @@
 # Synchronizing AI Session Titles on Task Start
 
 ## Background & Problem
-When starting tasks in OpenCode or managing ongoing development workflows via the Dev Workflow Monitor (`http://100.107.65.21:3100/`), sessions previously displayed mismatched titles:
+When starting tasks in OpenCode or managing ongoing development workflows via the Dev Workflow Monitor (`http://127.0.0.1:3100/`), sessions previously displayed mismatched titles:
 - OpenCode's top-left tab title and the monitor card badge (`💬 <sessionTitle>`) remained stuck on the very first prompt asked in the conversation (often days old, e.g. `Analyze GCP services with gcloud`).
 - The active card task description showed the current work (`Finish the docker-alma to bw-app migration...`), causing user confusion when monitoring multi-task sessions.
 

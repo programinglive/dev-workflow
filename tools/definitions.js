@@ -467,7 +467,7 @@ export function getToolList() {
           buildHost: {
             type: "string",
             description:
-              "Machine that actually executed the tests, e.g. 'bw-tools'. Defaults to DEVWF_BUILD_HOST, then the session machine.",
+              "Machine that actually executed the tests, e.g. 'build-host.example'. Defaults to DEVWF_BUILD_HOST, then the session machine.",
           },
         },
         required: ["passed", "testCommand"],

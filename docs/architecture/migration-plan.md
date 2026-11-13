@@ -175,7 +175,7 @@ In alignment with the Supplementary Implementation Prompt, Zettly integration ev
 1. **Database Schema Rollback:**
    - All migrations are additive. If a new version must be rolled back, legacy tables (`workflow_state`, `workflow_history`) remain intact and up-to-date due to dual-writing.
 2. **MCP Process Rollback:**
-   - Central release store on `bw-tools` retains all historical versions (`v1.29.9`, `v1.29.10`, `v1.30.0`).
+   - Central release store on `build-host.example` retains all historical versions (`v1.29.9`, `v1.29.10`, `v1.30.0`).
    - `node managed/rollout.cjs --rollback <version>` rotates the pointer back in under 15 seconds.
 3. **Workspace Emergency Cleanup:**
    - If an agent's worktree becomes corrupted, `devworkflow workspace cleanup --force` safely prunes isolated worktrees without touching the primary checkout.

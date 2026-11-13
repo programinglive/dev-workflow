@@ -62,7 +62,7 @@ test("dua sesi pada proyek yang sama mendapat dua berkas state", async () => {
 test("direktori kerja yang bukan repo tetap memisahkan sesi", async () => {
   await withPinnedState(async ({ base }) => {
     // Direktori tanpa .git maupun package.json: persis keadaan
-    // `C:\Users\DHIKA\Documents\Default Project` di mesin pemilik.
+    // `C:\Users\<username>\Documents\Default Project` di mesin pemilik.
     const nonRepo = path.join(base, "bukan-repo");
     await mkdir(nonRepo, { recursive: true });
 

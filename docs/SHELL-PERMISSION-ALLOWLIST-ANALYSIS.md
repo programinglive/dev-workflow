@@ -58,8 +58,8 @@ Yang **benar-benar pernah dijalankan** (bukan hipotetis):
 
 | Perintah | Frekuensi | Contoh nyata |
 | --- | ---: | --- |
-| `Remove-Item -Recurse` | 98 | `if (Test-Path C:\Users\DHIKA\.git) { Remove-Item -Recurse -Force C:\Users\DHIKA\.git }` |
-| `rm -rf` | 39 | `ssh bw-server "cd /home/dhika && rm -rf clinic-work && git clone ..."` |
+| `Remove-Item -Recurse` | 98 | `if (Test-Path C:\Users\<username>\.git) { Remove-Item -Recurse -Force C:\Users\<username>\.git }` |
+| `rm -rf` | 39 | `ssh bw-server "cd /home/devuser && rm -rf clinic-work && git clone ..."` |
 | kill by name (`taskkill /IM`) | 3 | `taskkill /f /im codex.exe; taskkill /f /im opencode.exe` |
 | `Get-Process \| Stop-Process` | 9 | `Get-Process scrcpy \| Stop-Process -Force; Start-Process ...` |
 | `git reset --hard` | 6 | `git reset --hard 1b94f9626` |

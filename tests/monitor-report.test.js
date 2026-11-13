@@ -10,7 +10,7 @@ import { buildSnapshot, reportSnapshot, reportEvent } from "../monitor.js";
  * karena monitor hanyalah fitur pinggiran.
  */
 
-const ENV = { DEVWF_MONITOR_URL: "http://100.77.138.14:3100" };
+const ENV = { DEVWF_MONITOR_URL: "http://127.0.0.1:3100" };
 
 const state = {
   taskDescription: "Perbaiki retry",

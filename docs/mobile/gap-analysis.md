@@ -10,7 +10,7 @@
 
 | ID | Capability Area | As-Is Status | Target Requirement | Severity |
 |---|---|---|---|---|
-| **GAP-M1** | Server Configuration | Hardcoded build-time IP (`100.77.138.14:3100`) | Dynamic runtime server configuration & multi-profile management | **BLOCKER (OSS)** |
+| **GAP-M1** | Server Configuration | Hardcoded build-time IP (`127.0.0.1:3100`) | Dynamic runtime server configuration & multi-profile management | **BLOCKER (OSS)** |
 | **GAP-M2** | Device Pairing | None (open read-only LAN/Tailnet access) | QR-code single-use pairing challenge with mutual device auth | **CRITICAL** |
 | **GAP-M3** | Real-Time Transport | 3-second HTTP Polling | SSE primary stream + snapshot + resume cursor + polling fallback | **HIGH** |
 | **GAP-M4** | Human-in-the-Loop Governance | None (only emergency session close) | Authenticated review gates (Approve Commit, Reject/Approve Plan, Waive Gate) | **CRITICAL** |
@@ -25,7 +25,7 @@
 ## 2. Detailed Gap Descriptions
 
 ### GAP-M1: Hardcoded Server Configuration
-- **Current State:** `App.js` evaluates `MONITOR_URL` at module load time from `EXPO_PUBLIC_MONITOR_URL` or `app.json` extra field, falling back to `http://100.77.138.14:3100`.
+- **Current State:** `App.js` evaluates `MONITOR_URL` at module load time from `EXPO_PUBLIC_MONITOR_URL` or `app.json` extra field, falling back to `http://127.0.0.1:3100`.
 - **Deficiency:** A user downloading a pre-built APK from GitHub cannot connect the app to their local development machine or custom server without modifying source code and rebuilding the APK.
 - **Remediation:** Introduce a persistent `ServerProfileStore` using encrypted storage (Android Keystore / SecureStore) with support for adding, editing, validating, and switching server profiles at runtime.
 
@@ -67,6 +67,6 @@
 - **Remediation:** Provide GitHub Actions workflow (`.github/workflows/mobile-release.yml`) that validates code, runs tests, bundles Hermes JS, compiles signed release APKs, and generates SHA-256 checksums for GitHub Releases.
 
 ### GAP-M9: Open-Source Independence
-- **Current State:** References internal servers, machines (`bw-tools`, `HELLOWORLD`, `Mac`, `MMCH`), and internal domain routing.
+- **Current State:** References internal servers, machines (`build-host.example`, `HELLOWORLD`, `Mac`, `MMCH`), and internal domain routing.
 - **Deficiency:** Tightly coupled to internal enterprise homelab.
 - **Remediation:** Ensure all internal infrastructure references are completely decoupled into pluggable adapters, allowing the APK to connect out-of-the-box to any clean open-source DevWorkflow server.

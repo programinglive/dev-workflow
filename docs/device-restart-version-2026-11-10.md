@@ -82,4 +82,4 @@ Copy-Item "$b\protocol.cjs.bak-*" "$b\protocol.cjs" -Force
 
 Restarting again with the old pair would also restore the old behaviour of
 pointing at `100.78.134.44` on the `/tmp` copy — but the backups here were taken
-from commit `718c4e7`, which already uses `100.77.138.14`.
+from commit `718c4e7`, which already uses `127.0.0.1`.

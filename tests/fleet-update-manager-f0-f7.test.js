@@ -266,7 +266,7 @@ test("Architectural Addendum #5 — Automated Fleet Update Manager & MCP Tool Sy
       // Internal release controller is unreachable
       const checkOffline = await sup.checkForUpdates({
         fetchTargetManifest: async () => {
-          const err = new Error("connect ETIMEDOUT 100.77.138.14:3101");
+          const err = new Error("connect ETIMEDOUT 127.0.0.1:3101");
           err.network = true;
           throw err;
         },

@@ -17,7 +17,7 @@ import { chooseReleaseBranch } from "../tools/handler-modules/release-handlers.j
  * "The path argument must be of type string" after the release was promoted.
  */
 
-const ROLLOUT = readFileSync(new URL("../managed/rollout.cjs", import.meta.url), "utf8");
+const RELEASE_LINEAGE = readFileSync(new URL("../managed/release-lineage.cjs", import.meta.url), "utf8");
 
 function fakeGit({ current, exists = () => true } = {}) {
   return {
@@ -74,26 +74,16 @@ test("a failing existence probe keeps the release pushable instead of throwing",
   assert.equal(branch, "main");
 });
 
-test("the rollout finds ManagedMCP on any platform instead of assuming Windows", () => {
-  assert.match(ROLLOUT, /function localManagedRoot\(\)/);
-  const code = ROLLOUT.split("\n")
+test("the managed lineage helper finds ManagedMCP on any platform instead of assuming Windows", () => {
+  assert.match(RELEASE_LINEAGE, /function localManagedRoot\(\)/);
+  const code = RELEASE_LINEAGE.split("\n")
     .filter((line) => !line.trim().startsWith("*") && !line.trim().startsWith("//"))
     .join("\n");
-  // Every path.join on LOCALAPPDATA must sit behind the same-line guard.
   const unguarded = code
     .split("\n")
     .filter((line) => line.includes("path.join(process.env.LOCALAPPDATA"))
     .filter((line) => !line.includes("process.env.LOCALAPPDATA ?"));
   assert.deepEqual(unguarded, [], "LOCALAPPDATA must be guarded before path.join");
   assert.ok(code.includes("os.homedir()"), "a POSIX location must be available");
-  assert.equal(/process\.env\.USERPROFILE/.test(code), false, "rule sync must not assume a Windows home");
-});
-
-test("the rollout reports the device it is actually running on", () => {
-  assert.match(ROLLOUT, /const LOCAL_LABEL = os\.hostname\(\)/);
-  assert.equal(
-    /HELLOWORLD bootstrap updated/.test(ROLLOUT),
-    false,
-    "the label must not claim HELLOWORLD when running elsewhere"
-  );
+  assert.equal(/process\.env\.USERPROFILE/.test(code), false, "release-lineage must not assume a Windows home");
 });

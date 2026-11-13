@@ -2,7 +2,7 @@
 
 **Tanggal:** 2026-10-31
 **Status:** Menunggu review spec
-**Repo:** `C:\Users\DHIKA\Documents\code\dev-workflow-mcp-server` (v1.13.16, salinan yang benar-benar dijalankan MCP server)
+**Repo:** `C:\Users\<username>\Documents\code\dev-workflow-mcp-server` (v1.13.16, salinan yang benar-benar dijalankan MCP server)
 **Rilis yang direncanakan:** 1.14.0 (minor)
 
 ## Ringkasan
@@ -161,7 +161,7 @@ Diperbarui: 15 pemanggilan `start_task` yang ada di `tests/project-dir-resolutio
 
 `AGENTS.md` (repo) — sepuluh langkah menjadi dua belas: DoD disuplai di `start_task`, item dibuktikan selama implementasi. `README.md`, `docs/software-factory.md` (paritas dengan papan Factory, dan di mana keduanya berbeda: DoD lokal per item dan berbasis bukti), `CHANGELOG.md`, `docs/PRD.md` (wajib untuk `create_documentation`).
 
-Salinan aturan di `C:\Users\DHIKA\Documents\Default Project\AGENTS.md` juga menjelaskan sepuluh langkah. Berkas itu di luar repo ini; memperbaruinya adalah tindak lanjut terpisah yang perlu disetujui eksplisit.
+Salinan aturan di `C:\Users\<username>\Documents\Default Project\AGENTS.md` juga menjelaskan sepuluh langkah. Berkas itu di luar repo ini; memperbaruinya adalah tindak lanjut terpisah yang perlu disetujui eksplisit.
 
 ## Risiko
 

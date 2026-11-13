@@ -27,7 +27,7 @@ Two independent gaps:
   modal shows a larger copy plus a link to the Zettly drawing. A session with a
   task but no drawing now says `📐 Flow belum ada - jalankan create_feature_flow`
   instead of staying silent.
-- `monitor.cjs` on `bw-tools` — new route
+- `monitor.cjs` on `build-host.example` — new route
   `/api/drawings/:id/thumbnail.png` rasterises the stored SVG with `sharp` and
   caches the result in memory (max 200 entries). The SVG route is unchanged.
 
@@ -52,5 +52,5 @@ Two independent gaps:
 ## Note on drift
 
 `/opt/devwf-monitor` is not a git repository, so the PNG route lives only on
-`bw-tools`. A backup is written next to the file before every patch. If the
+`build-host.example`. A backup is written next to the file before every patch. If the
 monitor is ever redeployed from a source tree, this route must be carried over.

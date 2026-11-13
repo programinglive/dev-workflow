@@ -88,7 +88,7 @@ flowchart TD
 - **Pairing Protocol:**
   1. Developer runs `devworkflow monitor pair` in the terminal.
   2. Server generates single-use random nonce and renders QR code:
-     `devwf://pair?v=1&url=https://100.77.138.14:3100&nonce=<NONCE>&fp=<SERVER_FINGERPRINT>`
+     `devwf://pair?v=1&url=https://127.0.0.1:3100&nonce=<NONCE>&fp=<SERVER_FINGERPRINT>`
   3. Tablet camera scans QR code, generates local device identity, signs challenge with private key:
      `POST /api/v1/mobile/pair/verify` `{ nonce, deviceName: "Xiaomi Pad 6", pubKey }`
   4. Server terminal prompts developer: `"Authorize device 'Xiaomi Pad 6' with fingerprint a8f3...? [y/N]"`.

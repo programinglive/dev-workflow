@@ -16,7 +16,7 @@ The current implementation has already achieved:
 - Verified installation and runtime execution on physical **Xiaomi Pad 6** (SHA-256 binary parity verified with `adb pull`).
 - Comprehensive regression testing with 28 automated tests in the main test runner and 6 mobile-specific unit tests (100% passing).
 
-However, the application is currently tightly coupled to internal network configuration (hardcoded Tailscale IP `100.77.138.14:3100`), uses fixed 3-second HTTP polling, operates in read-only passive monitoring (with only an unauthenticated emergency session close endpoint), and lacks a secure dynamic pairing mechanism required for public open-source distribution.
+However, the application is currently tightly coupled to internal network configuration (hardcoded Tailscale IP `127.0.0.1:3100`), uses fixed 3-second HTTP polling, operates in read-only passive monitoring (with only an unauthenticated emergency session close endpoint), and lacks a secure dynamic pairing mechanism required for public open-source distribution.
 
 ---
 
@@ -51,7 +51,7 @@ mobile-app/
   2. `Build`: Dedicated build pipeline monitor with ETA p50/p90, host, and runner links.
   3. `Riwayat`: Completed/idle session history with status filtering (Semua, Selesai, Berjalan, Macet, Berakhir).
   4. `Rekap`: 7-day cumulative project duration aggregation.
-  5. `Mesin`: Multi-machine inventory and parity checks (`bw-tools`, `HELLOWORLD`, `Mac`, `MMCH`).
+  5. `Mesin`: Multi-machine inventory and parity checks (`build-host.example`, `HELLOWORLD`, `Mac`, `MMCH`).
   6. `Info`: Server address, connection metadata, and browser shortcut.
 - **Detail Modal (`DetailSesi`):** Complete inspection modal displaying session title, project path, elapsed duration timer, full plan items, DoD items, and large Zettly Draw / Mermaid architecture diagram thumbnail.
 - **Interactive Capabilities (Current State):**

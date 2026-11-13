@@ -90,11 +90,11 @@ test("report_build_status keeps an explicit buildHost", async () => {
   });
 });
 
-test("managed launcher defaults DEVWF_BUILD_HOST to bw-tools", () => {
+test("managed launcher defaults DEVWF_BUILD_HOST to build-host.example", () => {
   const source = readFileSync(path.join(ROOT, "managed/launcher.cjs"), "utf8");
   assert.match(
     source,
-    /DEVWF_BUILD_HOST:process\.env\.DEVWF_BUILD_HOST\|\|'bw-tools'/,
+    /DEVWF_BUILD_HOST:process\.env\.DEVWF_BUILD_HOST\|\|'build-host\.example'/,
   );
 });
 

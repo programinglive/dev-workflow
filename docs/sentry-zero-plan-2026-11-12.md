@@ -259,7 +259,7 @@ local error pollutes the same backlog.
 
 ### CI must create its own storage tree
 
-`POS-CLINIC-EW` ("Please provide a valid cache path") fired on `bw-tools`, not on
+`POS-CLINIC-EW` ("Please provide a valid cache path") fired on `build-host.example`, not on
 `bw-app`. A quality job runs `artisan` in a fresh checkout where
 `storage/framework/{cache,sessions,views}` do not exist. The job must create them
 before invoking artisan; resolving the issue without that change guarantees a

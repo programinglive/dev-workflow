@@ -10,7 +10,7 @@
 
 ## 1. Executive Summary & Gate Status
 
-The repository `@programinglive/dev-workflow-mcp-server` currently contains battle-tested governance capabilities for AI coding agents. However, an empirical security discovery reveals extensive hardcoded internal infrastructure identifiers, private network references (Tailscale IP `100.77.138.14`), internal workstation hostnames (`HELLOWORLD`, `Mac`, `MMCH`), proprietary service URLs (`*.programinglive.com`), and 248 historical Git commit objects that include internal credentials and private commit messages.
+The repository `@programinglive/dev-workflow-mcp-server` currently contains battle-tested governance capabilities for AI coding agents. However, an empirical security discovery reveals extensive hardcoded internal infrastructure identifiers, private network references (Tailscale IP `127.0.0.1`), internal workstation hostnames (`HELLOWORLD`, `Mac`, `MMCH`), proprietary service URLs (`*.programinglive.com`), and 248 historical Git commit objects that include internal credentials and private commit messages.
 
 ### Current Publication Gate: **BLOCKED**
 Under the **Mandatory Publication Safety Rule**, direct publication, changing repository visibility to public, pushing historical commits to public remotes, or publishing public npm packages is strictly blocked until:
@@ -28,11 +28,11 @@ Under the **Mandatory Publication Safety Rule**, direct publication, changing re
 |---|---|---|---|
 | **Git Commit History** | 248 refs, commits referencing internal company tasks & local paths | Single clean orphan initial root commit (`v1.0.0-oss`) | 🛑 BLOCKED (Requires Reinit) |
 | **Secrets & Credentials** | `security/` scans for secrets at runtime; older commits may hold hashes | Zero credentials in history; clean secret scan | ⚠️ REVIEW_REQUIRED |
-| **Internal IPs & Hostnames** | Tailscale `100.77.138.14`, `bw-tools`, `HELLOWORLD`, `MMCH` in code | Generic `localhost:3100`, environment-driven target hosts | ⚠️ REVIEW_REQUIRED |
+| **Internal IPs & Hostnames** | Tailscale `127.0.0.1`, `build-host.example`, `HELLOWORLD`, `MMCH` in code | Generic `localhost:3100`, environment-driven target hosts | ⚠️ REVIEW_REQUIRED |
 | **Domain & Account Coupling** | Hardcoded `*.programinglive.com`, personal emails | Configurable `DEVWF_SERVER_URL`, placeholder documentation | ⚠️ REVIEW_REQUIRED |
 | **Local-First Defaults** | Assumes Zettly/PocketBase presence unless waived | 100% offline local SQLite & Mermaid CLI default | 🔄 IN_PROGRESS |
-| **Monitor Dashboard** | Bound to `100.77.138.14:3100` via systemd | Standalone local CLI command `devworkflow monitor` (loopback) | 🔄 IN_PROGRESS |
-| **Cross-Platform Safety** | Hardcoded `C:\Users\DHIKA` paths in rollout/managed configs | Dynamic `os.homedir()`, platform-safe path normalization | ⚠️ REVIEW_REQUIRED |
+| **Monitor Dashboard** | Bound to `127.0.0.1:3100` via systemd | Standalone local CLI command `devworkflow monitor` (loopback) | 🔄 IN_PROGRESS |
+| **Cross-Platform Safety** | Hardcoded `C:\Users\<username>` paths in rollout/managed configs | Dynamic `os.homedir()`, platform-safe path normalization | ⚠️ REVIEW_REQUIRED |
 | **Licenses & Legal** | `MIT` in `package.json`, but contains proprietary company scripts | Clean MIT/Apache-2.0 core with explicit IP boundaries | ⚠️ REVIEW_REQUIRED |
 
 ---

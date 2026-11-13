@@ -7,7 +7,7 @@ Status: diperbaiki
 
 `commit_and_push` menjalankan `git add .` di `D:\code\clinic`, sementara
 pekerjaan sebenarnya ada di `D:\code\bw-server-grooming` dan di
-`C:\Users\DHIKA\Documents\Default Project`. Tool menjawab
+`C:\Users\<username>\Documents\Default Project`. Tool menjawab
 "repo bersih → No changes detected → assuming already completed" dan menandai
 tahap commit selesai, padahal tidak ada commit sama sekali.
 

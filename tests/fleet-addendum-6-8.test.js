@@ -354,7 +354,6 @@ test("Consolidated Architectural Addendum #6–#8 — Universal Providers, Sessi
       "docs/opensource/local-first-fleet.md",
       "docs/opensource/ssh-provider.md",
       "docs/opensource/agent-compatibility.md",
-      "docs/releases/fleet-update-verification.md",
     ];
 
     for (const relPath of requiredDocs) {
@@ -363,8 +362,8 @@ test("Consolidated Architectural Addendum #6–#8 — Universal Providers, Sessi
       const text = await readFile(fullPath, "utf8");
       assert.ok(text.length > 200, `${relPath} must have substantive documentation`);
       // Public/architecture/operations/opensource docs must not leak internal Tailscale IPs or personal workstation paths
-      assert.ok(!text.includes("100.77.138.14"), `${relPath} must not contain private Tailscale IP 100.77.138.14`);
-      assert.ok(!text.includes("C:\\Users\\DHIKA"), `${relPath} must not contain personal path C:\\Users\\DHIKA`);
+      assert.ok(!/100\.(77|107)\.\d+\.\d+/.test(text), `${relPath} must not contain private Tailscale IPs`);
+      assert.ok(!text.includes("C:\\Users\\<username>"), `${relPath} must not contain personal path C:\\Users\\<username>`);
       assert.ok(!text.includes("/Users/mahardhika"), `${relPath} must not contain personal path /Users/mahardhika`);
     }
   });

@@ -104,8 +104,8 @@ flowchart TD
     subgraph Integrations["Connected Ecosystem"]
         Zettly["Zettly Focus & Todo Tracking<br/>(Task #, Outcomes, Foci)"]
         Draw["Zettly Draw API<br/>(Visual Mermaid Canvas)"]
-        Monitor["Central Monitor Dashboard<br/>(http://100.77.138.14:3100)"]
-        Runner["Universal CI/CD Runner<br/>(bw-tools 100.77.138.14)"]
+        Monitor["Central Monitor Dashboard<br/>(http://127.0.0.1:3100)"]
+        Runner["Universal CI/CD Runner<br/>(build-host.example 127.0.0.1)"]
         Sentry["Sentry Error Intelligence"]
     end
 
@@ -208,14 +208,14 @@ stateDiagram-v2
 
 #### Step 6: Clean Stage, Conventional Commit & Guarded Release (`commit_and_push` & `perform_release`)
 - Enforces `@programinglive/commiter` conventional commit specifications.
-- Validates clean working trees, verified tags, and triggers CI/CD builds on the universal self-hosted Linux runner (`bw-tools: 100.77.138.14`).
+- Validates clean working trees, verified tags, and triggers CI/CD builds on the universal self-hosted Linux runner (`build-host.example: 127.0.0.1`).
 
 ### 4. Key Operational Innovations
 
-- **Central Fleet Monitor (`http://100.77.138.14:3100`):**
+- **Central Fleet Monitor (`http://127.0.0.1:3100`):**
   Provides a single pane of glass showing live heartbeat cards across all agent sessions (OpenCode, Codex, Antigravity) running on all workstations (`HELLOWORLD`, `Mac`, `MMCH`). Displays active phase, live build stepper, DoD progress, and builder VM indicators.
 - **Multi-Device Parity & Hot Sync (`node managed/rollout.cjs`):**
-  A centralized, forward-only distribution mechanism on `bw-tools:3101`. Any MCP updates or rule changes are automatically deployed and hot-reloaded across all fleet devices and AI clients via `managed/restart-devices.cjs` and `managed/mcp-reconnect.cjs`.
+  A centralized, forward-only distribution mechanism on `build-host.example:3101`. Any MCP updates or rule changes are automatically deployed and hot-reloaded across all fleet devices and AI clients via `managed/restart-devices.cjs` and `managed/mcp-reconnect.cjs`.
 - **Context-Aware MCP Discovery (`recommend_mcp_tools`):**
   Acts as the directory index for the entire ecosystem (Playwright, Mermaid, Central-Gateway, PocketBase, Infra-Knowledge, Notify, Clinic-Helper, etc.), matching task context and keywords to appropriate tools without token-bloating the prompt.
 - **Token Diet Architecture:**
@@ -825,7 +825,7 @@ Add `--dry-run` to any writing command to print what would change and write
 nothing.
 
 ```bash
-DEVWF_MONITOR_URL=http://100.77.138.14:3100
+DEVWF_MONITOR_URL=http://127.0.0.1:3100
 DEVWF_MONITOR_TOKEN=<same token the monitor was started with>
 ```
 

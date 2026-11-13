@@ -18,7 +18,7 @@ Pemilik permintaan: pemilik repo (`programinglive`)
 
 ## Masalah
 
-Dashboard sesi (`http://100.107.65.21:3100`) hanya bisa dibuka dari dalam
+Dashboard sesi (`http://127.0.0.1:3100`) hanya bisa dibuka dari dalam
 tailnet. Kalau pemilik ingin memberi tahu orang lain — di WhatsApp, di grup
 tim — bahwa sebuah task sedang dikerjakan, satu-satunya cara adalah menyalin
 teks secara manual atau mengirim tangkapan layar. Tangkapan layar memuat nama
@@ -35,9 +35,9 @@ Diperiksa 2 November 2026, bukan diasumsikan:
 |---|---|
 | `devworkflow.programinglive.com` adalah Netlify (A → `75.2.60.5`), proxied **off** | DNS Cloudflare API |
 | Situs itu **static export** (`output: "export"`), tanpa runtime server | `web/next.config.ts` |
-| Dashboard hidup di `100.107.65.21:3100`, bind hanya ke IP Tailscale | `ss -ltnp`, unit `devwf-monitor.service` |
+| Dashboard hidup di `127.0.0.1:3100`, bind hanya ke IP Tailscale | `ss -ltnp`, unit `devwf-monitor.service` |
 | `api.devworkflow.programinglive.com` **tidak ada di DNS**; `nginx-api.conf` di repo menganggur | resolve gagal, nginx tidak punya `server_name` itu |
-| `cloudflared` **tidak terpasang** di `bw-server-clean`; belum ada tunnel devworkflow | `which cloudflared` → kosong |
+| `cloudflared` **tidak terpasang** di `db-host.example`; belum ada tunnel devworkflow | `which cloudflared` → kosong |
 | Port 443 di `34.101.43.69` **tertutup** | `Test-NetConnection` |
 | Akun Cloudflare yang dipakai sesi ini punya `argotunnel.read/write` | API |
 
@@ -52,7 +52,7 @@ di server, jadi jalurnya Cloudflare Tunnel.
    `session_key`, dan `agent_tool`.
 2. Tautan **permanen sampai dicabut**.
 3. Tombol Share ada di **dashboard browser dan aplikasi tablet**.
-4. Boleh menyentuh `bw-server-clean` untuk memasang tunnel.
+4. Boleh menyentuh `db-host.example` untuk memasang tunnel.
 5. Tautan yang dibagikan memakai **domain utama** `devworkflow.programinglive.com`.
 
 ## Arsitektur
@@ -228,7 +228,7 @@ stderr supaya operator bisa menjalankannya sendiri.
 
 ## Perilaku UI yang harus benar di http, bukan hanya di https
 
-Dashboard dibuka lewat `http://100.107.65.21:3100` — bukan secure context. Dua
+Dashboard dibuka lewat `http://127.0.0.1:3100` — bukan secure context. Dua
 API browser yang biasa dipakai justru mati di sana:
 
 - `navigator.share` tidak ada → tombol Share akan tampak berfungsi lalu gagal.

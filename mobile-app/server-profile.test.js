@@ -10,10 +10,10 @@ import {
 describe("server-profile domain logic", () => {
   describe("normalizeServerUrl", () => {
     it("normalizes a raw ip and port without protocol to http", () => {
-      const res = normalizeServerUrl("100.77.138.14:3100");
+      const res = normalizeServerUrl("127.0.0.1:3100");
       assert.equal(res.ok, true);
-      assert.equal(res.url, "http://100.77.138.14:3100");
-      assert.equal(res.host, "100.77.138.14:3100");
+      assert.equal(res.url, "http://127.0.0.1:3100");
+      assert.equal(res.host, "127.0.0.1:3100");
       assert.equal(res.isSecure, false);
     });
 

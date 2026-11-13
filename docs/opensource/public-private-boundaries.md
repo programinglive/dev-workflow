@@ -35,7 +35,7 @@ DevWorkflow enforces strict boundaries between what is distributed publicly and 
 |   +---------------------------+       +-------------------------------------+   |
 |   |  Zettly Provider Adapter  |       |  Multi-Machine Tailscale Rollout    |   |
 |   |  - DPAPI/Keychain Token   |       |  - rollout.cjs, restart-devices.cjs |   |
-|   |  - Zettly Draw v4 Engine  |       |  - bw-tools, HELLOWORLD, Mac, MMCH  |   |
+|   |  - Zettly Draw v4 Engine  |       |  - build-host.example, HELLOWORLD, Mac, MMCH  |   |
 |   +---------------------------+       +-------------------------------------+   |
 |   +---------------------------+       +-------------------------------------+   |
 |   |  Sentry Issue Pipeline    |       |  Proprietary Homelab CI Config      |   |

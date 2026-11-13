@@ -19,14 +19,14 @@ import {
 
 test("parseConfigPathOutput reads the config path from `opencode debug paths`", () => {
   const stdout = [
-    "home       C:\\Users\\DHIKA",
-    "data       C:\\Users\\DHIKA\\.local\\share\\opencode",
-    "cache      C:\\Users\\DHIKA\\.cache\\opencode",
-    "config     C:\\Users\\DHIKA\\.config\\opencode",
-    "state      C:\\Users\\DHIKA\\.local\\state\\opencode",
+    "home       C:\\Users\\<username>",
+    "data       C:\\Users\\<username>\\.local\\share\\opencode",
+    "cache      C:\\Users\\<username>\\.cache\\opencode",
+    "config     C:\\Users\\<username>\\.config\\opencode",
+    "state      C:\\Users\\<username>\\.local\\state\\opencode",
   ].join("\n");
 
-  assert.strictEqual(parseConfigPathOutput(stdout), "C:\\Users\\DHIKA\\.config\\opencode");
+  assert.strictEqual(parseConfigPathOutput(stdout), "C:\\Users\\<username>\\.config\\opencode");
 });
 
 test("parseConfigPathOutput returns null when no config line is present", () => {
@@ -39,8 +39,8 @@ test("resolveConfigDir prefers the path reported by OpenCode over any guess", ()
   const resolved = resolveConfigDir({
     probe: () => "D:\\custom\\opencode",
     platform: "win32",
-    home: "C:\\Users\\DHIKA",
-    appData: "C:\\Users\\DHIKA\\AppData\\Roaming",
+    home: "C:\\Users\\<username>",
+    appData: "C:\\Users\\<username>\\AppData\\Roaming",
   });
 
   assert.strictEqual(resolved, "D:\\custom\\opencode");
@@ -50,11 +50,11 @@ test("resolveConfigDir falls back to ~/.config/opencode on Windows, not APPDATA"
   const resolved = resolveConfigDir({
     probe: () => null,
     platform: "win32",
-    home: "C:\\Users\\DHIKA",
-    appData: "C:\\Users\\DHIKA\\AppData\\Roaming",
+    home: "C:\\Users\\<username>",
+    appData: "C:\\Users\\<username>\\AppData\\Roaming",
   });
 
-  assert.strictEqual(resolved, "C:\\Users\\DHIKA\\.config\\opencode");
+  assert.strictEqual(resolved, "C:\\Users\\<username>\\.config\\opencode");
   assert.ok(
     !resolved.includes("AppData"),
     "Windows fallback must not use APPDATA: OpenCode V2 reads ~/.config/opencode",
@@ -147,11 +147,11 @@ test("ensureSchema does not clobber existing providers", () => {
 // ---------------------------------------------------------------------------
 
 test("backupPathFor places a timestamped backup inside the config directory", () => {
-  const result = backupPathFor("C:\\Users\\DHIKA\\.config\\opencode", "opencode.json", "20261025-115000");
+  const result = backupPathFor("C:\\Users\\<username>\\.config\\opencode", "opencode.json", "20261025-115000");
 
   assert.strictEqual(
     result,
-    "C:\\Users\\DHIKA\\.config\\opencode\\secrets\\opencode-backup-20261025-115000.json",
+    "C:\\Users\\<username>\\.config\\opencode\\secrets\\opencode-backup-20261025-115000.json",
   );
 });
 

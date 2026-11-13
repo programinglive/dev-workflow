@@ -32,22 +32,10 @@ test("kedua endpoint tulis memakai pemeriksaan yang sama", () => {
   assert.equal(panggilan, 2, "POST /api/session dan /api/event harus sama-sama dijaga");
 });
 
-test("skrip rotasi tidak mengubah apa pun tanpa --apply", () => {
-  const skrip = readFileSync(path.join(ROOT, "scripts", "rotate-monitor-token.sh"), "utf8");
-  assert.match(skrip, /APPLY=0/);
-  assert.match(skrip, /MODE KERING/);
-  // Penulisan hanya boleh terjadi setelah penjagaan --apply.
-  const idxApply = skrip.indexOf('if [ "$APPLY" -ne 1 ]');
-  const idxTulis = skrip.indexOf("cp -p \"$ENVF\"");
-  assert.ok(idxApply > 0 && idxTulis > idxApply, "penulisan harus berada setelah penjagaan --apply");
-});
-
-test("skrip rotasi mencadangkan berkas dan tidak mencetak token", () => {
-  const skrip = readFileSync(path.join(ROOT, "scripts", "rotate-monitor-token.sh"), "utf8");
-  assert.match(skrip, /cp -p "\$ENVF" "\$ENVF\.bak-\$STAMP"/);
-  // Token tidak boleh pernah di-echo.
-  assert.ok(!/echo[^\n]*\$BARU/.test(skrip), "skrip tidak boleh mencetak token");
-  assert.match(skrip, /tidak dicetak/);
+test("templat env monitor mendokumentasikan token tanpa nilai nyata", () => {
+  const envExample = readFileSync(path.join(ROOT, "monitor-server", "devwf-monitor.env.example"), "utf8");
+  assert.match(envExample, /DEVWF_MONITOR_TOKEN=GANTI_TOKEN_PANJANG_ACAK/);
+  assert.match(envExample, /127\.0\.0\.1:5432/);
 });
 
 test("aturan token tetap: kosong ditolak, salah ditolak", () => {

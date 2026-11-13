@@ -20,7 +20,7 @@ test("runCommand executes pair and outputs pairing instructions", async () => {
   const out = { write: (msg) => lines.push(msg) };
 
   const res = await runCommand({
-    args: { command: "pair", url: "http://100.77.138.14:3100", json: false },
+    args: { command: "pair", url: "http://127.0.0.1:3100", json: false },
     out,
   });
 

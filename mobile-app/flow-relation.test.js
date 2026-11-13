@@ -42,23 +42,23 @@ test("punyaTask is true only when a task or session title exists", () => {
 
 test("urlThumbnail points at the PNG copy, not the SVG", () => {
   assert.equal(
-    urlThumbnail("http://100.77.138.14:3100", 159, "abc"),
-    "http://100.77.138.14:3100/api/drawings/159/thumbnail.png?v=abc",
+    urlThumbnail("http://127.0.0.1:3100", 159, "abc"),
+    "http://127.0.0.1:3100/api/drawings/159/thumbnail.png?v=abc",
   );
   assert.equal(
-    urlThumbnail("http://100.77.138.14:3100/", 159, "abc"),
-    "http://100.77.138.14:3100/api/drawings/159/thumbnail.png?v=abc",
+    urlThumbnail("http://127.0.0.1:3100/", 159, "abc"),
+    "http://127.0.0.1:3100/api/drawings/159/thumbnail.png?v=abc",
   );
 });
 
 test("urlThumbnail carries a cache-busting token that is stable within a launch", () => {
   // The tablet cached a 404 and never asked again. A per-launch token makes a
   // new app start a new URL, so a failure cannot outlive the session.
-  const first = urlThumbnail("http://100.77.138.14:3100", 159);
-  const second = urlThumbnail("http://100.77.138.14:3100", 159);
+  const first = urlThumbnail("http://127.0.0.1:3100", 159);
+  const second = urlThumbnail("http://127.0.0.1:3100", 159);
   assert.equal(first, second, "the same launch must reuse one URL");
   assert.match(first, /\?v=[a-z0-9]+$/);
 
-  const other = urlThumbnail("http://100.77.138.14:3100", 159, "next-launch");
+  const other = urlThumbnail("http://127.0.0.1:3100", 159, "next-launch");
   assert.notEqual(first, other, "a new launch must produce a new URL");
 });

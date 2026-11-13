@@ -8,14 +8,14 @@ import {
 import { ServerProfileStore } from "./server-profile.js";
 
 describe("mobile-app pairing-service", () => {
-  const sampleUri = "devwf://pair?v=1&url=http%3A%2F%2F100.77.138.14%3A3100&ch=ch_abc123&nonce=deadbeef0123456789abcdef&fp=fedcba9876543210&code=482-913";
+  const sampleUri = "devwf://pair?v=1&url=http%3A%2F%2F127.0.0.1%3A3100&ch=ch_abc123&nonce=deadbeef0123456789abcdef&fp=fedcba9876543210&code=482-913";
 
   describe("parsePairingPayload", () => {
     it("successfully parses valid devwf://pair URI", () => {
       const res = parsePairingPayload(sampleUri);
       assert.equal(res.ok, true);
       assert.equal(res.data.version, "1");
-      assert.equal(res.data.serverUrl, "http://100.77.138.14:3100");
+      assert.equal(res.data.serverUrl, "http://127.0.0.1:3100");
       assert.equal(res.data.challengeId, "ch_abc123");
       assert.equal(res.data.nonce, "deadbeef0123456789abcdef");
       assert.equal(res.data.fingerprint, "fedcba9876543210");
@@ -48,7 +48,7 @@ describe("mobile-app pairing-service", () => {
   describe("executePairingHandshake", () => {
     it("performs successful POST handshake to /api/v1/mobile/pair/verify", async () => {
       const fakeFetch = async (url, options) => {
-        assert.equal(url, "http://100.77.138.14:3100/api/v1/mobile/pair/verify");
+        assert.equal(url, "http://127.0.0.1:3100/api/v1/mobile/pair/verify");
         assert.equal(options.method, "POST");
         const body = JSON.parse(options.body);
         assert.equal(body.challengeId, "ch_abc123");
@@ -77,7 +77,7 @@ describe("mobile-app pairing-service", () => {
       assert.equal(result.ok, true);
       assert.equal(result.deviceId, "dev_9876");
       assert.equal(result.deviceToken, "tok_secret_access_token_123");
-      assert.equal(result.serverUrl, "http://100.77.138.14:3100");
+      assert.equal(result.serverUrl, "http://127.0.0.1:3100");
     });
 
     it("returns error on server rejection (400)", async () => {

@@ -41,7 +41,7 @@ Rather than abandoning the established GitHub repository (`github.com/programing
 
 ### Step 2: Source Code Sanitization
 - Relocate proprietary fleet scripts (`managed/rollout.cjs`, `managed/restart-devices.cjs`) into private adapter modules.
-- Replace hardcoded Tailscale IP (`100.77.138.14`) with `process.env.DEVWF_MONITOR_URL || 'http://127.0.0.1:3100'`.
+- Replace hardcoded Tailscale IP (`127.0.0.1`) with `process.env.DEVWF_MONITOR_URL || 'http://127.0.0.1:3100'`.
 - Replace hardcoded user directory paths with `os.homedir()`.
 - Provide generic `.env.example`.
 

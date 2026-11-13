@@ -68,7 +68,7 @@ number can never disagree with the screen.
 
 ## Deploying a change to this feature
 
-The monitor on `bw-tools` is not a git checkout; it is `/opt/devwf-monitor` with
+The monitor on `build-host.example` is not a git checkout; it is `/opt/devwf-monitor` with
 the entry point `monitor.cjs` (the repository file is `dashboard.cjs`).
 
 ```sh
@@ -82,7 +82,7 @@ sudo install -m 644 dashboard.cjs /opt/devwf-monitor/monitor.cjs
 
 # 3. Restart and read the result back.
 sudo systemctl restart devwf-monitor
-curl -s http://100.77.138.14:3100/api/sessions | jq '.fleet'
+curl -s http://127.0.0.1:3100/api/sessions | jq '.fleet'
 ```
 
 The migration must run **before** the new `session-upsert.cjs` is copied,

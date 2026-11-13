@@ -81,7 +81,7 @@ test("Option B+ Cross-System Integration Verification (End-to-End 4-Pillar Lifec
     assert.match(legacyBlocked.reason, /activity_tasks.*retired/i);
 
     // 3. Cryptographic Device Pairing & Least-Privilege Default Scope
-    const challenge = createPairingChallenge({ serverUrl: "http://100.77.138.14:3100" });
+    const challenge = createPairingChallenge({ serverUrl: "http://127.0.0.1:3100" });
     const paired = verifyPairingChallenge({
       challengeId: challenge.challengeId,
       nonce: challenge.nonce,

@@ -4,7 +4,7 @@ Owner request: one server-side update must reach HELLOWORLD, MMCH and Mac withou
 
 ## Architecture
 
-Use n8n-instance (Node 22, low load, approximately 1.5 GiB available RAM) for an authenticated, Tailscale-only release service on port 3101. Store immutable source archives and an atomic current manifest. Keep the existing monitor and state replicas on bw-server-clean.
+Use n8n-instance (Node 22, low load, approximately 1.5 GiB available RAM) for an authenticated, Tailscale-only release service on port 3101. Store immutable source archives and an atomic current manifest. Keep the existing monitor and state replicas on db-host.example.
 
 Each MCP client retains a small stable managed launcher. At process startup it fetches the approved manifest, verifies the archive SHA256, installs the release into a platform/Node-ABI-specific cache, and starts its local executor. All workflow code comes from that central release, not a device's development checkout. Git, filesystem access, tests, and existing credentials remain on the originating device. This is centrally managed distribution with local execution, not execution of local Git commands on a remote server.
 

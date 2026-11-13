@@ -76,7 +76,7 @@ describe("mobile-app connection-manager", () => {
       };
 
       const cm = new ConnectionManager({
-        getBaseUrl: () => "http://100.77.138.14:3100",
+        getBaseUrl: () => "http://127.0.0.1:3100",
         onStatusChange: (s) => { currentStatus = s; },
         onData: (d) => { lastData = d; },
         fetchFn: fakeFetch,
@@ -122,7 +122,7 @@ describe("mobile-app connection-manager", () => {
       };
 
       const cm = new ConnectionManager({
-        getBaseUrl: () => "http://100.77.138.14:3100",
+        getBaseUrl: () => "http://127.0.0.1:3100",
         onStatusChange: (s) => { currentStatus = s; },
         fetchFn: fakeFetch,
         backoffBaseMs: 5,

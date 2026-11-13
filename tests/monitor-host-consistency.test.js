@@ -153,15 +153,3 @@ test("every public runtime configuration surface uses local-first default monito
   });
   assert.deepEqual(missing, [], `missing ${PUBLIC_DEFAULT_MONITOR_URL} in: ${missing.join(", ")}`);
 });
-
-test("the managed rule block tells every device where the monitor lives", () => {
-  const rollout = read("managed/rollout.cjs");
-  const block = rollout.slice(rollout.indexOf("managed-development-workflow:start"));
-  assert.match(block, /Verify the task appears on the central monitor at http:\/\/100\.77\.138\.14:3100/);
-});
-
-test("the monitor unit binds the bw-tools tailnet address", () => {
-  const unit = read("monitor-server/devwf-monitor.service");
-  assert.match(unit, /^Environment=HOST=100\.77\.138\.14$/m);
-  assert.match(unit, /^Environment=DEVWF_SHARE_ORIGINS=http:\/\/100\.77\.138\.14:3100,http:\/\/localhost:3100$/m);
-});

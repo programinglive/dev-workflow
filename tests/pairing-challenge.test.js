@@ -17,12 +17,12 @@ describe("Pairing Challenge Engine", () => {
 
   describe("createPairingChallenge", () => {
     it("generates a challenge with unique id, nonce, verification code, and 3-minute TTL", () => {
-      const challenge = createPairingChallenge({ serverUrl: "http://100.77.138.14:3100" });
+      const challenge = createPairingChallenge({ serverUrl: "http://127.0.0.1:3100" });
       assert.ok(challenge.challengeId.startsWith("ch_"));
       assert.equal(typeof challenge.nonce, "string");
       assert.equal(challenge.nonce.length >= 16, true);
       assert.match(challenge.verificationCode, /^\d{3}-\d{3}$/);
-      assert.equal(challenge.serverUrl, "http://100.77.138.14:3100");
+      assert.equal(challenge.serverUrl, "http://127.0.0.1:3100");
       assert.ok(challenge.expiresAt > Date.now());
       assert.ok(challenge.qrPayload.startsWith("devwf://pair?v=1"));
       assert.ok(challenge.qrPayload.includes("url="));
@@ -37,7 +37,7 @@ describe("Pairing Challenge Engine", () => {
 
   describe("verifyPairingChallenge", () => {
     it("successfully verifies valid challenge, marks consumed, and issues device token", () => {
-      const ch = createPairingChallenge({ serverUrl: "http://100.77.138.14:3100" });
+      const ch = createPairingChallenge({ serverUrl: "http://127.0.0.1:3100" });
       const res = verifyPairingChallenge({
         challengeId: ch.challengeId,
         nonce: ch.nonce,
@@ -64,7 +64,7 @@ describe("Pairing Challenge Engine", () => {
     });
 
     it("rejects challenge reuse (single-use constraint)", () => {
-      const ch = createPairingChallenge({ serverUrl: "http://100.77.138.14:3100" });
+      const ch = createPairingChallenge({ serverUrl: "http://127.0.0.1:3100" });
       const first = verifyPairingChallenge({
         challengeId: ch.challengeId,
         nonce: ch.nonce,
@@ -82,7 +82,7 @@ describe("Pairing Challenge Engine", () => {
     });
 
     it("rejects challenge when nonce does not match", () => {
-      const ch = createPairingChallenge({ serverUrl: "http://100.77.138.14:3100" });
+      const ch = createPairingChallenge({ serverUrl: "http://127.0.0.1:3100" });
       const res = verifyPairingChallenge({
         challengeId: ch.challengeId,
         nonce: "wrong-nonce-value",
@@ -94,7 +94,7 @@ describe("Pairing Challenge Engine", () => {
 
     it("rejects challenge when expired", () => {
       // Create challenge with -1s TTL
-      const ch = createPairingChallenge({ serverUrl: "http://100.77.138.14:3100", ttlSeconds: -1 });
+      const ch = createPairingChallenge({ serverUrl: "http://127.0.0.1:3100", ttlSeconds: -1 });
       const res = verifyPairingChallenge({
         challengeId: ch.challengeId,
         nonce: ch.nonce,
@@ -107,7 +107,7 @@ describe("Pairing Challenge Engine", () => {
 
   describe("Device Revocation", () => {
     it("revokes an active device token", () => {
-      const ch = createPairingChallenge({ serverUrl: "http://100.77.138.14:3100" });
+      const ch = createPairingChallenge({ serverUrl: "http://127.0.0.1:3100" });
       const paired = verifyPairingChallenge({
         challengeId: ch.challengeId,
         nonce: ch.nonce,
@@ -126,7 +126,7 @@ describe("Pairing Challenge Engine", () => {
 
   describe("Challenge Status", () => {
     it("returns status for existing and non-existing challenges", () => {
-      const ch = createPairingChallenge({ serverUrl: "http://100.77.138.14:3100" });
+      const ch = createPairingChallenge({ serverUrl: "http://127.0.0.1:3100" });
       const st1 = getChallengeStatus(ch.challengeId);
       assert.equal(st1.ok, true);
       assert.equal(st1.status, "pending");

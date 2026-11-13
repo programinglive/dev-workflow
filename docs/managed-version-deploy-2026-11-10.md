@@ -6,11 +6,11 @@ Date: **10 November 2026**.
 
 | Step | Where | Result |
 |---|---|---|
-| `protocol.cjs` with semver validation | bw-tools `/opt/devwf-managed` | installed, sha `24949f05` |
-| `release-server.cjs` | bw-tools | unchanged — it already forwards whatever `validateManifest` returns |
+| `protocol.cjs` with semver validation | build-host.example `/opt/devwf-managed` | installed, sha `24949f05` |
+| `release-server.cjs` | build-host.example | unchanged — it already forwards whatever `validateManifest` returns |
 | Publish one release | this device, then uploaded | `current.json` gained `version: "1.28.0"` |
 | `release_version`, `release_revision` columns | monitor database | added with `IF NOT EXISTS`, defaults `''` |
-| `session-upsert.cjs`, `sessions-query.cjs` | bw-tools `/opt/devwf-monitor` | deployed; SQL now `$1..$27` |
+| `session-upsert.cjs`, `sessions-query.cjs` | build-host.example `/opt/devwf-monitor` | deployed; SQL now `$1..$27` |
 | `launcher.cjs` and `protocol.cjs` | device bootstrap | installed, exports `DEVWF_RELEASE_VERSION` |
 
 Backups taken before every replacement:

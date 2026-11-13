@@ -28,7 +28,7 @@ This phase integrates comprehensive client registration health checks into `devw
 
 ### 4. Historical Privacy Sanitization & Metadata Classification
 - **MUST_REMOVE**: Historical credential-bearing scripts (`scripts/check-db.js`, `.env.production`, historical GCloud deployment passwords).
-- **SHOULD_REMOVE**: Private infrastructure IPs (`100.77.138.14`), hostnames (`bw-tools`, `MMCH`, `HELLOWORLD`, `Mac`), private GitLab runner IDs (`58937956`, `58882401`), developer paths (`C:\Users\...`).
+- **SHOULD_REMOVE**: Private infrastructure IPs (`127.0.0.1`), hostnames (`build-host.example`, `MMCH`, `HELLOWORLD`, `Mac`), private GitLab runner IDs (`58937956`, `58882401`), developer paths (`C:\Users\...`).
 - **ACCEPTABLE_PUBLIC**: MCP server core tools, SQLite/Zettly task tracking, MIT documentation, test suites.
 - **OWNER_DECISION_REQUIRED**: Candidate A (Clean Orphan Root `v1.0.0-oss`, guaranteed zero-leak) vs Candidate B (Targeted filter-repo rewrite preserving commit graph but modifying all SHAs).
 

@@ -75,7 +75,7 @@ mysql -e "select count(*) from ms_stock where Stock_Del is null;"
 
 ## What is deliberately not planned
 
-- Rewriting ERP's deploy path again. It now pushes through the bw-tools runner
+- Rewriting ERP's deploy path again. It now pushes through the build-host.example runner
   on a tag, verified end to end at v2.41.30.
 - Resolving performance insights without a fix or a written technical reason.
 - Touching `app/Concerns/InsertsInBulk.php` while three sessions depend on it.

@@ -30,7 +30,7 @@
 1. **A session with every field filled** — the public page must still leak none of the six denied fields. A renderer tested only against a sparse session passes while leaking on a real one.
 2. **A task title containing `<script>`, `</title>`, `"` and `&`** — must appear as literal text in both the body and the `<title>`/OG tags. Broken escaping here is stored XSS on a public page.
 3. **Revocation** — after `DELETE /api/share`, the same URL must answer `410` on the very next request, with no cache serving the old page.
-4. **The dashboard opened over plain `http://100.107.65.21:3100`** — `navigator.share` and `navigator.clipboard` do not exist in that context, so the button must still deliver the link.
+4. **The dashboard opened over plain `http://127.0.0.1:3100`** — `navigator.share` and `navigator.clipboard` do not exist in that context, so the button must still deliver the link.
 5. **The tablet app sends no `Origin` header** — the share guard must allow a missing Origin while still rejecting a foreign one.
 
 ---
@@ -435,7 +435,7 @@ const {
   handleListShares, listLiveShares, shareErrorStatus,
 } = require("../monitor-server/share-route.cjs");
 
-const ORIGINS = ["http://100.107.65.21:3100", "http://localhost:3100"];
+const ORIGINS = ["http://127.0.0.1:3100", "http://localhost:3100"];
 const TOKEN = "T".repeat(43);
 
 /** Query palsu: mencatat panggilan dan menjawab dari skrip per pola. */
@@ -450,10 +450,10 @@ function fakeQuery(handler) {
 }
 
 test("origin asing ditolak, origin dashboard diterima", () => {
-  assert.equal(isOriginAllowed("http://100.107.65.21:3100", ORIGINS), true);
+  assert.equal(isOriginAllowed("http://127.0.0.1:3100", ORIGINS), true);
   assert.equal(isOriginAllowed("http://localhost:3100", ORIGINS), true);
   assert.equal(isOriginAllowed("https://evil.example", ORIGINS), false);
-  assert.equal(isOriginAllowed("http://100.107.65.21:3100.evil.example", ORIGINS), false);
+  assert.equal(isOriginAllowed("http://127.0.0.1:3100.evil.example", ORIGINS), false);
   assert.equal(isOriginAllowed("null", ORIGINS), false);
 });
 
@@ -847,7 +847,7 @@ const { ensureTableSql } = require('./share-links.cjs');
 Add a constant next to `WRITE_TOKEN`:
 
 ```js
-const SHARE_ORIGINS = String(process.env.DEVWF_SHARE_ORIGINS || 'http://100.107.65.21:3100,http://localhost:3100')
+const SHARE_ORIGINS = String(process.env.DEVWF_SHARE_ORIGINS || 'http://127.0.0.1:3100,http://localhost:3100')
   .split(',').map((s) => s.trim()).filter(Boolean);
 ```
 
@@ -1069,14 +1069,14 @@ Expected: completes and writes `web/out/share/index.html`.
 - [ ] **Step 2: Copy files and start the service**
 
 ```bash
-scp monitor-server/share-links.cjs monitor-server/share-page.cjs monitor-server/share-route.cjs monitor-server/share-server.cjs monitor-server/dashboard.cjs root@100.107.65.21:/tmp/
-ssh root@100.107.65.21
+scp monitor-server/share-links.cjs monitor-server/share-page.cjs monitor-server/share-route.cjs monitor-server/share-server.cjs monitor-server/dashboard.cjs root@127.0.0.1:/tmp/
+ssh root@127.0.0.1
 install -m 644 /tmp/share-links.cjs /tmp/share-page.cjs /tmp/share-route.cjs /tmp/share-server.cjs /tmp/dashboard.cjs /opt/devwf-monitor/
 install -m 644 /tmp/devwf-share.service /etc/systemd/system/
 systemctl daemon-reload && systemctl enable --now devwf-share
 systemctl restart devwf-monitor
 curl -s http://127.0.0.1:3200/health
-curl -s http://100.107.65.21:3100/health
+curl -s http://127.0.0.1:3100/health
 ```
 
 Expected: both health checks answer `{"ok":true,...}`.
@@ -1104,7 +1104,7 @@ Create a share through the dashboard, then:
 ```bash
 curl -s -o /dev/null -w '%{http_code}\n' https://devworkflow.programinglive.com/s/<token>   # 200
 curl -s https://devworkflow.programinglive.com/s/<token> | grep -c -E 'machine|project_path|project_name|session_key|agent_tool'  # 0
-curl -s -o /dev/null -w '%{http_code}\n' -X DELETE 'http://100.107.65.21:3100/api/share?token=<token>' -H 'X-Devwf-Share: 1'  # 200
+curl -s -o /dev/null -w '%{http_code}\n' -X DELETE 'http://127.0.0.1:3100/api/share?token=<token>' -H 'X-Devwf-Share: 1'  # 200
 curl -s -o /dev/null -w '%{http_code}\n' https://devworkflow.programinglive.com/s/<token>   # 410
 ```
 

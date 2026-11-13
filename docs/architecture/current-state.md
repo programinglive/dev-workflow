@@ -14,7 +14,7 @@ DevWorkflow (`@programinglive/dev-workflow-mcp-server`) is an MCP-compliant (Mod
 Currently, DevWorkflow enforces a strict sequential software development lifecycle:
 $$\text{start\_task} \longrightarrow \text{flow\_gate} \longrightarrow \text{implement} \longrightarrow \text{tests} \longrightarrow \text{documentation} \longrightarrow \text{commit} \longrightarrow \text{release} \longrightarrow \text{complete}$$
 
-It operates as a local daemon communicating via standard input/output (`stdio`) JSON-RPC, backed by a local SQLite database (`better-sqlite3`), and synchronizes real-time status with a centralized web monitor (`monitor-server` on `100.77.138.14:3100`) and a project management workspace (Zettly).
+It operates as a local daemon communicating via standard input/output (`stdio`) JSON-RPC, backed by a local SQLite database (`better-sqlite3`), and synchronizes real-time status with a centralized web monitor (`monitor-server` on `127.0.0.1:3100`) and a project management workspace (Zettly).
 
 ---
 
@@ -102,7 +102,7 @@ The workflow state is modeled in `workflow-state.js` around the following struct
     { "id": "plan-1", "text": "Draft architecture", "status": "done" }
   ],
   "checkpoint": { "checkpointedAt": "...", "baseSha": "...", "commits": [] },
-  "activeBuild": { "target": "...", "command": "...", "progress": 100, "buildHost": "bw-tools" }
+  "activeBuild": { "target": "...", "command": "...", "progress": 100, "buildHost": "build-host.example" }
 }
 ```
 
@@ -146,8 +146,8 @@ These flags can only transition from `false` to `true` during a single task exec
 
 ## 8. Fleet Distribution & Multi-Machine Runtime
 
-- **Release Topology:** Centralized release repository on `bw-tools` (`100.77.138.14:3101`).
-- **Managed Bootstrap:** `managed/rollout.cjs` publishes reviewed tarballs to `bw-tools`, updates `device-entry.cjs` on `HELLOWORLD`, `Mac`, and `MMCH`, prewarms runtimes, and synchronizes `MANAGED_RULE_BLOCK` to `~/.gemini/GEMINI.md`, `~/.codex/AGENTS.md`, and `~/.config/opencode/AGENTS.md`.
+- **Release Topology:** Centralized release repository on `build-host.example` (`127.0.0.1:3101`).
+- **Managed Bootstrap:** `managed/rollout.cjs` publishes reviewed tarballs to `build-host.example`, updates `device-entry.cjs` on `HELLOWORLD`, `Mac`, and `MMCH`, prewarms runtimes, and synchronizes `MANAGED_RULE_BLOCK` to `~/.gemini/GEMINI.md`, `~/.codex/AGENTS.md`, and `~/.config/opencode/AGENTS.md`.
 - **Process Cycling:** `managed/restart-devices.cjs` signals stale daemon processes and invokes `managed/mcp-reconnect.cjs`.
 
 ---

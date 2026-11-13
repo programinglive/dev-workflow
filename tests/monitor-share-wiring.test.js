@@ -98,7 +98,7 @@ test("tombol share memakai delegasi, bukan listener per kartu", () => {
 });
 
 test("tombol share tidak bergantung pada navigator.share saja", () => {
-  // Dashboard dibuka lewat http://100.77.138.14:3100 - bukan secure context -
+  // Dashboard dibuka lewat http://127.0.0.1:3100 - bukan secure context -
   // jadi navigator.share TIDAK ADA dan clipboard.writeText DITOLAK.
   assert.match(src, /execCommand\('copy'\)/);
   assert.match(src, /'manual'/);

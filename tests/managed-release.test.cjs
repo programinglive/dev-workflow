@@ -10,7 +10,7 @@ const {once} = require('node:events');
 const {createReleaseServer} = require('../managed/release-server.cjs');
 const {tarExecutable} = require('../managed/protocol.cjs');
 const {resolveRelease, validateManifest, validateArchiveEntries,acquireInstallLock} = require('../managed/launcher.cjs');
-const {classifyLineage, enforceForwardOnly, readHostCurrentRevision, makeGitIsAncestor} = require('../managed/rollout.cjs');
+const {classifyLineage, enforceForwardOnly, readHostCurrentRevision, makeGitIsAncestor} = require('../managed/release-lineage.cjs');
 
 const rev = (c) => c.repeat(40);
 
@@ -89,7 +89,7 @@ test('readHostCurrentRevision parses, fails open on empty or corrupt pointer fil
 });
 
 test('promoteToServers runs the lineage guard before any transfer and stops the rollout on regression', () => {
-  const {promoteToServers} = require('../managed/rollout.cjs');
+  const {promoteToServers} = require('../managed/release-lineage.cjs');
   const current = rev('a');
   const manifest = { revision: rev('b'), sha256: rev('1'), size: 10 };
   const calls = [];
@@ -107,7 +107,7 @@ test('promoteToServers runs the lineage guard before any transfer and stops the 
 });
 
 test('promoteToServers allows an idempotent same-revision rotation and records the rollback pointer', () => {
-  const {promoteToServers} = require('../managed/rollout.cjs');
+  const {promoteToServers} = require('../managed/release-lineage.cjs');
   const current = rev('a');
   const manifest = { revision: rev('a'), sha256: rev('1'), size: 10 };
   const calls = [];

@@ -676,7 +676,7 @@ export function formatFullMcpCatalog(optionalQueryResult = null) {
 
   lines.push("📚 Complete MCP Ecosystem Index:");
   lines.push(
-    "All devices share `dev-workflow` (auto-updated from `http://100.77.138.14:3101`) as the entry index, plus `central-gateway` (`http://100.77.138.14:3200/sse`) for centralized remote tools."
+    "All devices share `dev-workflow` (auto-updated from `http://127.0.0.1:3101`) as the entry index, plus `central-gateway` (`http://127.0.0.1:3200/sse`) for centralized remote tools."
   );
   lines.push("");
 

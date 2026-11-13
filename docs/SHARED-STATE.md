@@ -387,7 +387,7 @@ state workflow tidak pernah disimpan ke SQLite.
 
 ## Bukti
 
-Pada proyek `C:\Users\DHIKA\Documents\Default Project`, state memuat 150 entri
+Pada proyek `C:\Users\<username>\Documents\Default Project`, state memuat 150 entri
 tetapi tabel `workflow_history` hanya berisi **25 baris**. Dua puluh lima itu
 tepat entri indeks 0–24; entri indeks 25 adalah entri lama tanpa `taskType`,
 sehingga loop berhenti di situ dan 125 entri sesudahnya tidak pernah dicoba.
@@ -455,7 +455,7 @@ menghasilkan `user_id` berbeda untuk proyek yang sama (`default` vs
 
 ## Masalah
 
-Dari sesi OpenCode di `C:\Users\DHIKA\Documents\Default Project`, delapan berkas
+Dari sesi OpenCode di `C:\Users\<username>\Documents\Default Project`, delapan berkas
 sudah diubah dan siap di-commit. `commit_and_push` menjawab:
 
 ```text
@@ -471,7 +471,7 @@ workflow melangkah ke fase rilis seolah semuanya beres.
 
 ```text
 $ node -e "..."   # cwd = Documents\Default Project
-cwd: C:\Users\DHIKA\Documents\Default Project
+cwd: C:\Users\<username>\Documents\Default Project
 getStatusOutput -> ""
 hasWorkingChanges -> false    <-- false di sini adalah kebohongan
 ```
@@ -836,9 +836,9 @@ database dengan `user_id = "default"`, padahal pemakaian normal memakai
 Pada mesin yang sama ditemukan tiga identitas berbeda:
 
 ```text
-C:\Users\DHIKA                              -> user-19ac630d828-982a39ab
-C:\Users\DHIKA\Documents\Default Project    -> user-1a171645d22-788e41b9
-C:\Users\DHIKA\Documents\code\dev-workflow-mcp-server -> user-1a17163e109-757756e5
+C:\Users\<username>                              -> user-19ac630d828-982a39ab
+C:\Users\<username>\Documents\Default Project    -> user-1a171645d22-788e41b9
+C:\Users\<username>\Documents\code\dev-workflow-mcp-server -> user-1a17163e109-757756e5
 ```
 
 ## Akar masalah
@@ -895,10 +895,10 @@ urutan pemanggilan, dan tidak bocor antar proyek.
 2. dua proyek berbeda dalam **satu proses** memakai identitas masing-masing,
    tanpa saling mewarisi.
 
-Pada database nyata `C:\Users\DHIKA\Documents\Default Project\.state\dev-workflow.db`:
+Pada database nyata `C:\Users\<username>\Documents\Default Project\.state\dev-workflow.db`:
 
 ```text
-  161  user-1a171645d22-788e41b9  <-  C:\Users\DHIKA\Documents\Default Project
+  161  user-1a171645d22-788e41b9  <-  C:\Users\<username>\Documents\Default Project
 proyek dengan lebih dari satu user_id: tidak ada
 ```
 

@@ -10,7 +10,7 @@ approved Dev Workflow MCP releases.
 | `launcher.cjs` | Runs on the device. Fetches the manifest, verifies and unpacks the archive, then spawns the server. |
 | `protocol.cjs` | Shared validation: manifest shape and archive path safety. |
 | `publish.cjs` | Runs in the repository. Builds the archive and writes `current.json`. |
-| `release-server.cjs` | Runs on bw-tools as `devwf-managed.service`, serving `/v1/current` and `/v1/releases/:sha256.tar.gz`. |
+| `release-server.cjs` | Runs on build-host.example as `devwf-managed.service`, serving `/v1/current` and `/v1/releases/:sha256.tar.gz`. |
 | `device-entry.cjs` | Thin per-client entry point that calls the launcher. |
 | `install-device.py` | Installs the bootstrap into a device's `%LOCALAPPDATA%\ProgramingLive\ManagedMCP`. |
 | `devwf-managed.service` | systemd unit for the release server. |
@@ -52,7 +52,7 @@ single project instead of every active one:
 
 ```bash
 node managed/mcp-reconnect.cjs
-node managed/mcp-reconnect.cjs --directory "C:\\Users\\DHIKA"
+node managed/mcp-reconnect.cjs --directory "C:\\Users\\<username>"
 ```
 
 The measured reload procedure, the exit code table and the recovery commands live
@@ -140,7 +140,7 @@ package.json at the published commit
 
 **The working copy in `/tmp` was stale.** It defaulted
 `DEVWF_RELEASE_URL` to `100.78.134.44:3101`, a host that has since been deleted.
-The launcher actually running on the device defaults to `100.77.138.14:3101`.
+The launcher actually running on the device defaults to `127.0.0.1:3101`.
 Taking the `/tmp` copy as the base would have pointed every device at a dead
 address. The base here is the launcher read back from the running device.
 
@@ -153,13 +153,13 @@ the only copy of the release protocol. It lives here now.
 # 1. publish from a clean tree
 node managed/publish.cjs /var/lib/devwf-releases
 
-# 2. install the server files on bw-tools
+# 2. install the server files on build-host.example
 sudo install -o devwf-releases -g devwf-releases -m 640 \
   managed/protocol.cjs managed/release-server.cjs /opt/devwf-managed/
 sudo systemctl restart devwf-managed
 
 # 3. verify
-curl -s -H "authorization: Bearer $TOKEN" http://100.77.138.14:3101/v1/current
+curl -s -H "authorization: Bearer $TOKEN" http://127.0.0.1:3101/v1/current
 ```
 
 Devices pick the new manifest up on their next start. The version appears in

@@ -9,7 +9,7 @@ const connected=(name)=>({name,status:{status:'connected'}});
 const failed=(name)=>({name,status:{status:'failed',error:'MCP server process exited with code 255'}});
 
 test('parseServers reads the OpenCode /api/mcp payload shape',()=>{
-  const payload={location:{directory:'C:\\Users\\DHIKA'},data:[connected('playwright'),failed('dev-workflow')]};
+  const payload={location:{directory:'C:\\Users\\<username>'},data:[connected('playwright'),failed('dev-workflow')]};
   const servers=parseServers(payload);
   assert.deepEqual(servers,[
     {name:'playwright',state:'connected'},
@@ -29,7 +29,7 @@ test('parseServers tolerates a bare array and a missing status',()=>{
 test('connected servers are never reconnected',async()=>{
   const calls=[];
   const result=await reconnectMcp({
-    directory:'C:\\Users\\DHIKA',
+    directory:'C:\\Users\\<username>',
     read:async()=>({data:[connected('playwright'),connected('dev-workflow')]}),
     connect:async(name)=>calls.push(name),
     wait:async()=>{},
@@ -61,7 +61,7 @@ test('a failed server is reconnected once and the reload succeeds when the statu
 test('the reload reports failure when the server is still failed after the attempts',async()=>{
   const calls=[];
   const result=await reconnectMcp({
-    directory:'/home/dhika',
+    directory:'/home/devuser',
     read:async()=>({data:[connected('playwright'),failed('dev-workflow')]}),
     connect:async(name)=>calls.push(name),
     wait:async()=>{},
@@ -75,7 +75,7 @@ test('the reload reports failure when the server is still failed after the attem
 test('a rejected connect is reported instead of silently swallowed',async()=>{
   const logs=[];
   const result=await reconnectMcp({
-    directory:'C:\\Users\\DHIKA',
+    directory:'C:\\Users\\<username>',
     read:async()=>({data:[failed('dev-workflow')]}),
     connect:async()=>{throw new Error('opencode api returned 500');},
     wait:async()=>{},
@@ -90,13 +90,13 @@ test('a rejected connect is reported instead of silently swallowed',async()=>{
 test('activeDirectories heals only projects OpenCode touched recently',()=>{
   const now=1_000_000_000;
   const projects=[
-    {canonical:'C:\\Users\\DHIKA',time:{active:now-60_000}},
+    {canonical:'C:\\Users\\<username>',time:{active:now-60_000}},
     {canonical:'D:\\code\\old',time:{active:now-48*60*60*1000}},
     {time:{active:now}},
     {canonical:'D:\\code\\fresh',time:{active:now-11*60*60*1000}},
   ];
   assert.deepEqual(activeDirectories(projects,{now,maxAgeMs:24*60*60*1000}),[
-    'C:\\Users\\DHIKA',
+    'C:\\Users\\<username>',
     'D:\\code\\fresh',
   ]);
   assert.deepEqual(activeDirectories(null,{now}),[]);
@@ -105,15 +105,15 @@ test('activeDirectories heals only projects OpenCode touched recently',()=>{
 test('reconnectAll heals every directory and reports the union of failures',async()=>{
   const seen=[];
   const result=await reconnectAll({
-    directories:['C:\\Users\\DHIKA','D:\\code\\dev-workflow-mcp-server'],
+    directories:['C:\\Users\\<username>','D:\\code\\dev-workflow-mcp-server'],
     reconnect:async({directory})=>{
       seen.push(directory);
-      return directory==='C:\\Users\\DHIKA'
+      return directory==='C:\\Users\\<username>'
         ? {ok:true,healed:['dev-workflow'],stillFailed:[],connected:['dev-workflow']}
         : {ok:false,healed:[],stillFailed:['dev-workflow'],connected:[]};
     },
   });
-  assert.deepEqual(seen,['C:\\Users\\DHIKA','D:\\code\\dev-workflow-mcp-server']);
+  assert.deepEqual(seen,['C:\\Users\\<username>','D:\\code\\dev-workflow-mcp-server']);
   assert.equal(result.ok,false);
   assert.deepEqual(result.stillFailed,['D:\\code\\dev-workflow-mcp-server:dev-workflow']);
   assert.equal(result.results.length,2);
@@ -176,10 +176,9 @@ test('waitForReady gives up with the last error instead of hanging forever',asyn
   assert.equal(calls,3);
 });
 
-test('the reload never spawns with shell:true',()=>{
-  // Node deprecates shell:true for argument concatenation (DEP0190) and warns on
-  // every reload. The local restart invokes cmd.exe explicitly instead.
-  const source=fs.readFileSync(path.join(__dirname,'../managed/restart-devices.cjs'),'utf8');
-  assert.doesNotMatch(source,/shell\s*:\s*true/);
-  assert.match(source,/process\.env\.ComSpec/);
+test('managed runtime never spawns subprocesses with shell:true',()=>{
+  for (const rel of ['../managed/launcher.cjs', '../managed/fleet-providers.cjs', '../managed/device-entry.cjs']) {
+    const source = fs.readFileSync(path.join(__dirname, rel), 'utf8');
+    assert.doesNotMatch(source, /shell\s*:\s*true/, `${rel} must not use shell:true`);
+  }
 });

@@ -149,9 +149,9 @@ async function main() {
       PATH:path.dirname(process.execPath)+path.delimiter+(process.env.PATH||''),
       DEVWF_RELEASE_REVISION:release.revision,
       // Fleet standard: every build, test suite and pipeline runs on the
-      // bw-tools runner. Default the reported build host to it so a monitor
+      // build-host.example runner. Default the reported build host to it so a monitor
       // card never names the workstation that merely started the session.
-      DEVWF_BUILD_HOST:process.env.DEVWF_BUILD_HOST||'bw-tools',
+      DEVWF_BUILD_HOST:process.env.DEVWF_BUILD_HOST||'build-host.example',
       // Handed to the server so it can report its own version to the monitor.
       // Without this, "connected" cannot distinguish a current build from an
       // old one, and finding out needs an SSH session per device.

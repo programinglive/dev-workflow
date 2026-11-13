@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Repo: `C:\Users\DHIKA\Documents\code\dev-workflow-mcp-server` (v1.13.16, salinan yang dijalankan MCP).
+- Repo: `C:\Users\<username>\Documents\code\dev-workflow-mcp-server` (v1.13.16, salinan yang dijalankan MCP).
 - Baseline tes sebelum perubahan: `npm test` → 450 tes, 448 pass, 2 skipped, 0 fail.
 - Batas item: 1–20 item per task. Teks item 3–300 karakter setelah trim. `evidence` dan `waivedReason` 5–500 karakter.
 - Duplikat teks item ditolak case-insensitive.

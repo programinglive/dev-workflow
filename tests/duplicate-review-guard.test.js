@@ -55,7 +55,7 @@ function fakeFetch(handlers) {
 const ACTIVE_TASK = {
   id: TASK_ID,
   projectId: "p1",
-  title: "Pulihkan monitoring & alerting bw-server-clean",
+  title: "Pulihkan monitoring & alerting db-host.example",
   status: "running",
   priority: "high",
   work: { id: "sess-new", state: "active", step: "verifikasi" },

@@ -21,7 +21,7 @@ This gap analysis compares the **Current State (v1.30.0)** against the **Target 
 | **GAP-4** | Evidence Verification | Self-reported boolean flags (`testsPassed: true`) | Evidence Store with tree digests, execution IDs & stale detection | Medium |
 | **GAP-5** | Concurrency & Isolation | Coarse repository-level process lock | Git worktree isolation + lease coordination + fencing tokens | High |
 | **GAP-6** | Documentation Impact | Binary check: source changed $\rightarrow$ README changed | Impact-aware classification (API, CLI, Internal, Config) | Low |
-| **GAP-7** | Provider Modularity | Tightly coupled internal services (Zettly, bw-tools) | Ports-and-Adapters Provider SDK (Local default + Plugins) | Medium |
+| **GAP-7** | Provider Modularity | Tightly coupled internal services (Zettly, build-host.example) | Ports-and-Adapters Provider SDK (Local default + Plugins) | Medium |
 | **GAP-8** | CLI Capabilities | Session cleanup only (`devwf list/close/drop`) | Full lifecycle parity (`devworkflow task start/verify/status`) | Low |
 | **GAP-9** | Event Journal & Recovery | SQLite snapshot + heuristic timeout ("mungkin macet") | Append-only event journal + deterministic crash recovery | Medium |
 | **GAP-10**| Security & Threat Model | Basic secret regex scanner and strict mode | Layered sandboxing, adversarial testing, approval gates | High |
@@ -138,7 +138,7 @@ This gap analysis compares the **Current State (v1.30.0)** against the **Target 
 
 ### GAP-7: Provider Modularity (Decoupling Proprietary Services)
 
-- **Current Implementation:** Zettly, Zettly Draw, and `bw-tools` are directly imported and invoked in `tools/handler-modules/index.js` and `managed/rollout.cjs`.
+- **Current Implementation:** Zettly, Zettly Draw, and `build-host.example` are directly imported and invoked in `tools/handler-modules/index.js` and `managed/rollout.cjs`.
 - **Identified Problem:** Prevents the project from being used by the open-source community or in air-gapped corporate environments.
 - **Proposed Improvement:**
   - Define Ports-and-Adapters Provider SDK:
