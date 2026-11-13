@@ -365,22 +365,16 @@ See [MCP client configuration](#mcp-client-configuration).
 | `project_summary_data` | Read the persisted `project-summary.json` |
 | `project_summary_db` | Read the per-user summary from SQLite |
 | `list_active_sessions` | List active workflow sessions across all machines from the central monitor (`DEVWF_MONITOR_URL`). Output includes a 🔗 clickable dashboard URL. |
-| `list_factory_tasks` | List your Factory task queue (requires config) |
-| `list_factory_projects` | List Factory projects available to the configured account |
-| `create_factory_task` | Record a new task with a required definition of done |
-| `update_factory_task` | Edit a task, including filling a missing definition of done |
-| `claim_factory_task` | Claim a Factory task and start a local workflow |
 | `start_task` (claim view) | Before you commit to a task, reports which tasks other live sessions currently hold, so two sessions do not compete for the same one. Own, idle and stale (older than 15 minutes) claims are excluded. |
-| `sync_task_status` | Report a status change back to Factory |
 
-Development tasks are recorded in Factory by default when the configured account and a matching Git repository project are available. The original request, Zettly Todo, Sentry issue if applicable, Factory task, and visual plan remain separate linked records. `start_task` reports a visible warning when Factory recording fails; it never chooses an unrelated project. Existing Factory links are reused. `create_feature_flow` publishes editable shapes and a preview in Zettly Draw, while `mark_bug_fixed` requires that flow first. The monitor shows the source and linked records. An explicit `FACTORY_AUTO_TASK=false` is reserved for isolated test environments.
+> **Note on retired integrations:** Legacy Factory board tools (`list_factory_tasks`, `list_factory_projects`, `create_factory_task`, `update_factory_task`, `claim_factory_task`, `sync_task_status`) were retired prior to the OSS baseline. Active task coordination uses local SQLite WAL state and optional **Zettly** (`zettly_*`) + **Sentry** (`*_sentry_*`) integrations. `create_feature_flow` publishes editable shapes and a preview in Zettly Draw, while `mark_bug_fixed` requires that flow first.
 
 #### Junk sessions are not recorded
 
 A session without **both** a task **and** a project carries incomplete
 information: it can appear in no active list, no recap, no history entry and no
 report. The owner's rule (10 November 2026) is to require both a real task and a
-real project (`start_task` and `claim_factory_task` refuse to start without a
+real project (`start_task` refuses to start without a
 valid project), preserve the task description when a task closes, clean up any
 incomplete rows, and stop them coming back.
 
@@ -898,114 +892,9 @@ npm run update:check -- --json
 
 Compares the installed version against `origin` (for clone installs) and against the npm registry, then prints the exact command. Exit code `0` means up to date, `1` means an update is available, `2` means no source could be checked — "could not check" is not the same as "current". Nothing runs automatically: the tool path that is called most often must never wait on the network.
 
-### Factory task integration
+### Retired Factory Task Integration (Historical)
 
-Five tools connect this server to the **Factory** board at
-`factory.programinglive.com`. They read and write the real task table
-(`factory_tasks`), not the retired PocketBase `activity_tasks` collection
-(which still exists but holds 0 records and never reached the board).
-
-They stay **inert** until configured. With no configuration the server behaves
-exactly as before, and the tools reply with setup instructions.
-
-```bash
-FACTORY_URL=https://factory.programinglive.com
-FACTORY_EMAIL=<activity_users email>
-FACTORY_PASSWORD=<password>
-```
-
-Or supply a ready token instead of a password:
-
-```bash
-FACTORY_TOKEN=<PocketBase activity_users token>
-```
-
-Optional:
-
-```bash
-FACTORY_PB_URL=https://pocketbase.programinglive.com   # where the login happens
-FACTORY_MACHINE_ID=<name shown on the device row>       # defaults to the hostname
-FACTORY_DEVICE_ID=<fixed device UUID>                   # else derived from the name
-FACTORY_AGENT=dev-workflow-mcp                          # max 40 chars
-```
-
-Use an **`activity_users` account, not a PocketBase superuser**. Factory accepts
-that token as `Authorization: Bearer <token>` for non-browser clients, and the
-account only sees its own tasks.
-
-| Tool | Writes? | What it does |
-|---|---|---|
-| `list_factory_tasks` | no | Reads `GET /api/factory`, maps tasks plus their latest work session, and orders them status → priority. Defaults to `running, queued, backlog, review, blocked` |
-| `create_factory_task` | yes | Creates a task (`POST /api/factory {action:create_task}`). Requires `acceptance` and `definitionOfDone`; defaults to `backlog` so recording work never starts a worker run |
-| `update_factory_task` | yes | Edits title, description, acceptance or definitionOfDone (`POST /api/factory {action:update_task}`), sending the task's current version so Factory can reject a stale edit with 409 |
-| `claim_factory_task` | yes | Opens a work session (`POST /api/work {action:start}`), which is what turns the task `running` on the board, then starts a local workflow |
-| `sync_task_status` | yes | Uses the only endpoint that can produce the status; see the table below |
-
-#### Status mapping is not free-form
-
-Factory has no generic "set status" endpoint, so the tool routes each status to
-the endpoint that actually supports it:
-
-| Requested status | Endpoint used | Result |
-|---|---|---|
-| `review`, `blocked`, `paused` | `POST /api/work {action:finish}` | Session closes, task changes accordingly |
-| `backlog`, `queued`, `cancelled`, `done` | `POST /api/factory {action:move_task}` | Board column changes; `done` requires the task to be in review with its checklist satisfied |
-| `running` | — rejected | Point the caller at `claim_factory_task` |
-
-`review` requires an active work session. Asking for it without one fails with
-"no active work session on this device" instead of silently doing nothing - the
-task must be claimed first. Full behaviour, limits (summary 2000 chars, step 240
-chars) and troubleshooting live in
-[docs/factory-integration.md](docs/factory-integration.md).
-
-#### The work session is read from `/api/work`, not from the board payload
-
-`GET /api/factory` deliberately sends only a **badge** per task
-(`activityStatus`, device name/agent, client session title). The full session is
-191 KB across 829 tasks and no list renders it, so the badge carries no `id` and
-no `state`.
-
-Reading the session from that badge made `finishWork` see `state === undefined`
-and refuse **every** running task with "no active work session" - measured on
-10 November 2026 against a task the board showed as `running`. The client now
-reads the real session from `GET /api/work`, which returns `id`, `state` and
-`device.id`, and only then sends the finish request. A session that belongs to
-another device, or that is already closed, is still refused before any write.
-
-For a linked development task, claim the Factory task, report it for review, and
-then call `complete_task` after the workflow checks pass. `complete_task` moves
-the matching Factory task to `done` through the configured Factory client and
-reports an actionable warning if Factory rejects that transition.
-
-#### Review is reported once, not twice
-
-Factory reads a second `review` report as an **approval**, so a task can jump to
-`done` without a human deciding anything. That happened on 29 October 2026 to
-four tasks whose earlier session was already `review` while the board still said
-`backlog`.
-
-The client now refuses `review` when the latest lifecycle event for that task is
-a `work.review` or `task.done`, and says what to do instead:
-
-```
-Task "..." sudah pernah dilaporkan untuk review (work.review pada ...).
-Melaporkan review kedua kali dibaca Factory sebagai approval, ...
-Minta pemilik memutuskan: set done bila pekerjaan diterima, atau kembalikan
-ke backlog bila perlu dikerjakan ulang.
-```
-
-`blocked` and `paused` are unaffected: only `review` carries approval semantics.
-
-A later `work.paused` event re-opens the task, so rework can be reported again.
-That matters because `paused` is the only supported way back from `review` to
-`backlog`; without the exception the guard would block legitimate second
-reviews forever.
-
-#### Task ids are UUIDs
-
-`list_factory_tasks` prints the full UUID, because `sync_task_status` and
-`claim_factory_task` reject the 8-character short key. Earlier versions printed
-the short key, which forced agents to call `GET /api/factory` by hand.
+The legacy Factory board integration (`factory.programinglive.com` / `FACTORY_URL` / `list_factory_tasks` / `claim_factory_task` / `sync_task_status`) has been retired and removed from the active runtime tool catalog (`57` tools). Local SQLite WAL task contracts and optional Zettly synchronization replace it.
 
 
 ### Example session
