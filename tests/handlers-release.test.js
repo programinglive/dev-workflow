@@ -1,11 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { handleToolCall } from "../tools/handlers.js";
-import { withWorkflowState, testUtils, createRequest, createGitMock } from "./test-helpers.js";
+import { withWorkflowState, testUtils, createRequest, createGitMock, bindTaskToRepo } from "./test-helpers.js";
 import { hasOnlyForeignChanges, parseStatusEntries } from "../git-helpers.js";
 
 test("perform_release runs release command before pushing with tags", async () => {
   await withWorkflowState(async (workflowState) => {
+    await bindTaskToRepo(workflowState);
     workflowState.state.currentPhase = "release";
     workflowState.state.commitAndPushCompleted = true;
     workflowState.state.readyCheckCompleted = true;
@@ -42,6 +43,7 @@ test("perform_release runs release command before pushing with tags", async () =
 
 test("perform_release accepts shorthand patch command", async () => {
   await withWorkflowState(async (workflowState) => {
+    await bindTaskToRepo(workflowState);
     workflowState.state.currentPhase = "release";
     workflowState.state.commitAndPushCompleted = true;
     workflowState.state.readyCheckCompleted = true;
@@ -73,6 +75,7 @@ test("perform_release accepts shorthand patch command", async () => {
 
 test("perform_release respects explicit releaseType option", async () => {
   await withWorkflowState(async (workflowState) => {
+    await bindTaskToRepo(workflowState);
     workflowState.state.currentPhase = "release";
     workflowState.state.commitAndPushCompleted = true;
     workflowState.state.readyCheckCompleted = true;
@@ -108,7 +111,9 @@ test("perform_release respects explicit releaseType option", async () => {
   });
 });
 
-test("perform_release blocks when new changes detected", async () => {  await withWorkflowState(async (workflowState) => {
+test("perform_release blocks when new changes detected", async () => {
+  await withWorkflowState(async (workflowState) => {
+    await bindTaskToRepo(workflowState);
     workflowState.state.currentPhase = "release";
     workflowState.state.commitAndPushCompleted = true;
     workflowState.state.readyCheckCompleted = true;
@@ -148,6 +153,7 @@ test("perform_release blocks when new changes detected", async () => {  await wi
 
 test("perform_release requires commit_and_push completion when tree is clean", async () => {
   await withWorkflowState(async (workflowState) => {
+    await bindTaskToRepo(workflowState);
     workflowState.state.currentPhase = "release";
     workflowState.state.commitAndPushCompleted = false;
     workflowState.state.readyCheckCompleted = true;
@@ -183,6 +189,7 @@ test("perform_release requires commit_and_push completion when tree is clean", a
 
 test("skip_release records justification and advances to completion phase", async () => {
   await withWorkflowState(async (workflowState) => {
+    await bindTaskToRepo(workflowState);
     workflowState.state.currentPhase = "release";
     workflowState.state.commitAndPushCompleted = true;
     workflowState.state.readyCheckCompleted = true;
@@ -260,6 +267,7 @@ async function releaseWithDirtyTree(workflowState, dirtyPaths, lines) {
 
 test("perform_release lanjut saat yang kotor hanya berkas dari sebelum task", async () => {
   await withWorkflowState(async (workflowState) => {
+    await bindTaskToRepo(workflowState);
     const { response, commands } = await releaseWithDirtyTree(
       workflowState,
       [" M knowledge/billing.yaml"],
@@ -283,6 +291,7 @@ test("perform_release lanjut saat yang kotor hanya berkas dari sebelum task", as
 
 test("perform_release tetap menolak bila ada berkas baru di luar baseline", async () => {
   await withWorkflowState(async (workflowState) => {
+    await bindTaskToRepo(workflowState);
     const { response, commands } = await releaseWithDirtyTree(
       workflowState,
       [" M knowledge/billing.yaml", "?? fitur-baru.js"],
@@ -307,6 +316,7 @@ test("perform_release tidak melonggarkan apa pun bila baseline kosong", async ()
   // Tanpa baseline tidak ada dasar menyebut sesuatu "bukan milik kita", jadi
   // perlindungan lama harus utuh.
   await withWorkflowState(async (workflowState) => {
+    await bindTaskToRepo(workflowState);
     workflowState.state.currentPhase = "release";
     workflowState.state.commitAndPushCompleted = true;
     workflowState.state.readyCheckCompleted = true;

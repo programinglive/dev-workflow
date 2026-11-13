@@ -1,6 +1,7 @@
 import { safeLog } from './security/sanitizer.js';
 import fs from "fs/promises";
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, realpathSync } from "fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, realpathSync, unlinkSync, linkSync, renameSync } from "fs";
+import os from "os";
 import path from "path";
 import { assertSafeKnowledge } from './security/policy.js';
 import { sanitize } from './security/sanitizer.js';
@@ -957,6 +958,35 @@ export function readSessionPointer(baseDir, sessionKey) {
 }
 
 /**
+ * The project this session has already established, read from its own state file.
+ *
+ * `start_task` uses this to answer "is this the same repository I was already
+ * working in?". A pointer whose directory no longer exists is stale - the
+ * project was moved or deleted - and is ignored, so a removed checkout cannot
+ * block a new project forever.
+ */
+export function readSessionProject({ stateFile } = {}) {
+  const resolved = path.resolve(String(stateFile || ""));
+  if (!resolved.split(path.sep).includes(PROJECTS_DIR)) return null;
+
+  const baseDir = resolveBaseDirFromState(resolved);
+  const sessionKey = sessionKeyFromStateFile(resolved);
+  const pointer = readSessionPointer(baseDir, sessionKey);
+  if (!pointer) return null;
+
+  const projectDir = typeof pointer.projectDir === "string" ? pointer.projectDir.trim() : "";
+  if (!projectDir) return null;
+  if (!existsSync(projectDir)) return null;
+
+  return {
+    projectDir,
+    projectDirPath: typeof pointer.projectDirPath === "string" ? pointer.projectDirPath : "",
+    focusId: Number.isSafeInteger(Number(pointer.focusId)) && Number(pointer.focusId) > 0 ? Number(pointer.focusId) : null,
+    updatedAt: typeof pointer.updatedAt === "string" ? pointer.updatedAt : "",
+  };
+}
+
+/**
  * Catat proyek yang sedang dikerjakan sesi ini, dan kembalikan letak state
  * yang seharusnya.
  *
@@ -966,7 +996,7 @@ export function readSessionPointer(baseDir, sessionKey) {
  * repo berbeda berbagi satu direktori proyek: history tercampur, lock saling
  * menolak, dan rekomendasi satu proyek muncul di proyek lain.
  */
-export function pinSessionProject({ stateFile, projectDir }) {
+export function pinSessionProject({ stateFile, projectDir, focusId = null }) {
   const target = path.resolve(String(projectDir || ""));
   if (!target) {
     return null;
@@ -983,12 +1013,22 @@ export function pinSessionProject({ stateFile, projectDir }) {
   const baseDir = resolveBaseDirFromState(stateFile);
   const sessionKey = sessionKeyFromStateFile(stateFile);
   const projectDirPath = path.join(baseDir, PROJECTS_DIR, projectKey(target));
+  const focus = Number(focusId);
 
   try {
     mkdirSync(path.join(baseDir, SESSIONS_DIR), { recursive: true });
     writeFileSync(
       sessionPointerPath(baseDir, sessionKey),
-      JSON.stringify({ projectDir: target, projectDirPath, updatedAt: new Date().toISOString() }, null, 2),
+      JSON.stringify(
+        {
+          projectDir: target,
+          projectDirPath,
+          focusId: Number.isSafeInteger(focus) && focus > 0 ? focus : null,
+          updatedAt: new Date().toISOString(),
+        },
+        null,
+        2,
+      ),
       "utf8",
     );
   } catch {
@@ -1000,6 +1040,309 @@ export function pinSessionProject({ stateFile, projectDir }) {
     projectDirPath,
     stateFile: path.join(getUserScopedDir(projectDirPath), sessionStateFilename(process.env, sessionKey)),
   };
+}
+
+/**
+ * Focus binding to a verified repository.
+ *
+ * WHY THIS EXISTS
+ * ---------------
+ * 13 November 2026: the Clinic focus was active, and a session working on
+ * DBPinball called `start_task` without a `focusId`. The tool fell back to the
+ * current focus and attached DBPinball work to the Clinic focus. A focus is a
+ * container for one project's work; silently attaching foreign work to it makes
+ * the focus a liar.
+ *
+ * The binding is stored next to the session pointers, so it is per project and
+ * survives a restart. It is advisory only for the project it already names: the
+ * guard in `repository-identity.js` decides whether a task may start, and the
+ * binding decides whether the requested focus belongs to that project.
+ */
+function focusBindingPath(baseDir, focusId) {
+  return path.join(baseDir, SESSIONS_DIR, `focus-${focusId}.json`);
+}
+
+/**
+ * Lock file that serializes claims on one focus.
+ *
+ * WHY A LOCK AND NOT `rename`
+ * ---------------------------
+ * A temp file renamed into place is atomic per write, but it is NOT
+ * first-writer-wins: two processes that both read "no binding" would both write
+ * a temp file and both rename, and the second would silently replace the first.
+ * The claim decision ("is this focus free?") and the write must be one critical
+ * section, which needs real mutual exclusion across operating-system processes.
+ *
+ * `link(2)` is the atomic primitive: the operating system guarantees exactly one
+ * creator, and the record is complete before the name appears. The holder is
+ * recorded so a confirmed-dead process can be detected and its lock recovered
+ * instead of blocking the focus forever.
+ */
+const FOCUS_LOCK_TIMEOUT_MS = 2_000;
+const FOCUS_LOCK_POLL_MS = 20;
+
+function focusLockPath(baseDir, focusId) {
+  return path.join(baseDir, SESSIONS_DIR, `focus-${focusId}.lock`);
+}
+
+function readFocusLockRecord(file) {
+  try {
+    return JSON.parse(readFileSync(file, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Is the current holder confirmed gone?
+ *
+ * LIVENESS RULE
+ * -------------
+ * Elapsed time alone never proves abandonment. A live process may legitimately
+ * hold a focus lock for longer than any timeout, and stealing it because the
+ * timestamp is old would let two processes own one focus - the exact defect the
+ * lock exists to prevent.
+ *
+ *   - owner confirmed dead        -> stale, recoverable
+ *   - owner confirmed alive       -> NOT stale, regardless of age
+ *   - liveness unknown            -> NOT stale (fail closed)
+ *   - record unreadable           -> NOT stale (fail closed)
+ *   - different host              -> NOT stale (cannot verify a remote PID)
+ *
+ * PID reuse makes a dead owner look alive; that is fail-closed and safe. The
+ * bounded acquisition timeout reports the block instead of stealing the lock.
+ */
+function focusLockIsStale(file, { isAlive = defaultPidIsAlive, hostname = os.hostname() } = {}) {
+  const record = readFocusLockRecord(file);
+  if (!record) return false;
+
+  const pid = Number(record.pid);
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+
+  // A lock written by another machine cannot be verified from here. Stealing it
+  // would be a guess, so it is treated as live.
+  const host = typeof record.host === "string" ? record.host.trim() : "";
+  if (host && hostname && host !== hostname) return false;
+
+  // Our own process holding the lock is a re-entrancy bug, not a stale lock.
+  if (pid === process.pid) return false;
+
+  return !isAlive(pid);
+}
+
+/**
+ * Claim the right to recover one stale lock.
+ *
+ * Two processes can both observe the same stale lock. Renaming it is atomic and
+ * succeeds for exactly one of them, so only that process proceeds to create a
+ * new lock. The loser retries the atomic create and finds the winner's lock.
+ */
+function tryRecoverStaleLock(file) {
+  const tombstone = `${file}.stale.${process.pid}.${Date.now()}`;
+  try {
+    renameSync(file, tombstone);
+  } catch {
+    return false;
+  }
+  try {
+    unlinkSync(tombstone);
+  } catch {
+    // The tombstone is harmless; the lock itself is already gone.
+  }
+  return true;
+}
+
+function defaultPidIsAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return Boolean(error && error.code === "EPERM");
+  }
+}
+
+async function acquireFocusLock({ baseDir, focusId, timeoutMs = FOCUS_LOCK_TIMEOUT_MS }) {
+  const file = focusLockPath(baseDir, focusId);
+  mkdirSync(path.join(baseDir, SESSIONS_DIR), { recursive: true });
+  const deadline = Date.now() + Math.max(0, Number(timeoutMs) || 0);
+
+  for (;;) {
+    try {
+      // Write the record to a temp file and hard-link it into place. `link` is
+      // atomic and fails when the target exists, and the content is complete
+      // before the name appears - so a crash can never leave an unreadable lock.
+      const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
+      writeFileSync(
+        temporary,
+        JSON.stringify({ pid: process.pid, host: os.hostname(), startedAt: Date.now() }),
+      );
+      try {
+        linkSync(temporary, file);
+      } finally {
+        try {
+          unlinkSync(temporary);
+        } catch {
+          // Best-effort cleanup of the temp name.
+        }
+      }
+      return { ok: true, file };
+    } catch (error) {
+      if (error.code !== "EEXIST") return { ok: false, code: "FOCUS_LOCK_UNWRITABLE" };
+
+      if (focusLockIsStale(file)) {
+        // Only the process that wins the atomic rename may recover it.
+        tryRecoverStaleLock(file);
+        continue;
+      }
+
+      if (Date.now() >= deadline) return { ok: false, code: "FOCUS_CLAIM_TIMEOUT" };
+      await new Promise((resolve) => setTimeout(resolve, FOCUS_LOCK_POLL_MS));
+    }
+  }
+}
+
+/**
+ * Bind a focus to a verified repository, exclusively.
+ *
+ * LIFECYCLE
+ * ---------
+ * - First writer wins under a cross-process lock. Two processes claiming the
+ *   same focus for different projects produce exactly one success; the loser
+ *   re-reads and reports `FOCUS_BOUND_TO_ANOTHER_PROJECT`.
+ * - A binding whose project directory no longer exists is stale. It is replaced
+ *   on the next legitimate use, so a deleted or moved checkout cannot block
+ *   project recovery forever.
+ * - Retirement is explicit: `retireFocusBinding` takes the same lock and removes
+ *   the record. Nothing else deletes it.
+ */
+export async function claimFocusBinding({ stateFile, focusId, projectDir, repoKey, timeoutMs } = {}) {
+  const id = Number(focusId);
+  if (!Number.isSafeInteger(id) || id <= 0) return { ok: false, reason: "INVALID_FOCUS" };
+
+  const baseDir = resolveBaseDirFromState(stateFile);
+  const lock = await acquireFocusLock({ baseDir, focusId: id, timeoutMs });
+  if (!lock.ok) return { ok: false, reason: lock.code };
+
+  try {
+    return claimFocusBindingUnderLock({ baseDir, focusId: id, projectDir, repoKey });
+  } finally {
+    try {
+      unlinkSync(lock.file);
+    } catch {
+      // Releasing is best-effort; a leftover lock is broken as stale later.
+    }
+  }
+}
+
+function claimFocusBindingUnderLock({ baseDir, focusId, projectDir, repoKey }) {
+  const target = focusBindingPath(baseDir, focusId);
+  const requestedDir = path.resolve(String(projectDir || ""));
+  const requestedKey = typeof repoKey === "string" ? repoKey.trim() : "";
+
+  const existing = readFocusBindingRecord(target);
+  let replacingStale = false;
+
+  if (existing) {
+    const sameKey = Boolean(existing.repoKey) && Boolean(requestedKey) && existing.repoKey === requestedKey;
+    const sameDir =
+      Boolean(existing.projectDir) &&
+      normalizeRepoPathForBinding(existing.projectDir) === normalizeRepoPathForBinding(requestedDir);
+    if (sameKey || sameDir) {
+      return { ok: true, existing, reason: "ALREADY_BOUND" };
+    }
+    if (existing.projectDir && !existsSync(existing.projectDir)) {
+      replacingStale = true;
+    } else {
+      return { ok: false, existing, reason: "FOCUS_BOUND_TO_ANOTHER_PROJECT" };
+    }
+  }
+
+  const record = {
+    focusId,
+    projectDir: requestedDir,
+    repoKey: requestedKey,
+    boundAt: new Date().toISOString(),
+  };
+
+  try {
+    writeFileSync(target, JSON.stringify(record, null, 2), "utf8");
+    return { ok: true, existing: record, reason: replacingStale ? "REBOUND_STALE" : "BOUND" };
+  } catch {
+    return { ok: false, reason: "FOCUS_BINDING_UNWRITABLE" };
+  }
+}
+
+/** Backward-compatible name; both share the one exclusive implementation. */
+export function writeFocusBinding(options = {}) {
+  return claimFocusBinding(options);
+}
+
+/**
+ * Retire a focus binding explicitly.
+ *
+ * Takes the same lock as a claim, so a retirement cannot interleave with a
+ * concurrent claim and erase a binding that was just written.
+ */
+export async function retireFocusBinding({ stateFile, focusId, reason = "" } = {}) {
+  const id = Number(focusId);
+  if (!Number.isSafeInteger(id) || id <= 0) return { ok: false, reason: "INVALID_FOCUS" };
+
+  const baseDir = resolveBaseDirFromState(stateFile);
+  const lock = await acquireFocusLock({ baseDir, focusId: id });
+  if (!lock.ok) return { ok: false, reason: lock.code };
+
+  try {
+    const target = focusBindingPath(baseDir, id);
+    const existing = readFocusBindingRecord(target);
+    if (!existing) return { ok: true, retired: false, reason: "NOT_BOUND" };
+    try {
+      unlinkSync(target);
+      return {
+        ok: true,
+        retired: true,
+        previous: existing,
+        reason: typeof reason === "string" ? reason.trim() : "",
+      };
+    } catch {
+      return { ok: false, reason: "RETIRE_FAILED" };
+    }
+  } finally {
+    try {
+      unlinkSync(lock.file);
+    } catch {
+      // Best-effort release.
+    }
+  }
+}
+
+/** The repository a focus is already bound to, or null. */
+export function readFocusBinding({ stateFile, focusId } = {}) {
+  const id = Number(focusId);
+  if (!Number.isSafeInteger(id) || id <= 0) return null;
+  const baseDir = resolveBaseDirFromState(stateFile);
+  return readFocusBindingRecord(focusBindingPath(baseDir, id));
+}
+
+function readFocusBindingRecord(file) {
+  try {
+    const data = JSON.parse(readFileSync(file, "utf-8"));
+    const boundRepoKey = typeof data?.repoKey === "string" ? data.repoKey.trim() : "";
+    const boundProjectDir = typeof data?.projectDir === "string" ? data.projectDir.trim() : "";
+    if (!boundRepoKey && !boundProjectDir) return null;
+    return {
+      focusId: Number(data?.focusId) || null,
+      repoKey: boundRepoKey,
+      projectDir: boundProjectDir,
+      boundAt: typeof data?.boundAt === "string" ? data.boundAt : "",
+    };
+  } catch {
+    return null;
+  }
+}
+
+function normalizeRepoPathForBinding(value) {
+  const resolved = path.resolve(String(value || "")).replace(/\\/g, "/").replace(/\/+$/, "");
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
 }
 
 /**

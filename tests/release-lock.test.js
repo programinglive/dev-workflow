@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -18,6 +19,7 @@ import { acquireReleaseLock, releaseReleaseLock, readReleaseLock } from "../tool
 
 async function repoWithGit() {
   const dir = await mkdtemp(path.join(tmpdir(), "release-lock-"));
+  execFileSync("git", ["init", "-q", "-b", "main"], { cwd: dir, stdio: "ignore" });
   await mkdir(path.join(dir, ".git"), { recursive: true });
   return dir;
 }

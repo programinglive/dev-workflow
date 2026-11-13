@@ -6,11 +6,13 @@ import {
   testUtils,
   createRequest,
   createGitMock,
+  bindTaskToRepo,
 } from "./test-helpers.js";
 import { exec } from "../exec.js";
 
 test("perform_release records release idempotently without re-running npm run release when HEAD already has a release tag/commit", async () => {
   await withWorkflowState(async (workflowState) => {
+    await bindTaskToRepo(workflowState);
     workflowState.state.currentPhase = "release";
     workflowState.state.commitAndPushCompleted = true;
     workflowState.state.readyCheckCompleted = true;
@@ -70,6 +72,7 @@ test("perform_release records release idempotently without re-running npm run re
 
 test("perform_release breaks deadlock when commitAndPushCompleted is false on an already-released clean HEAD", async () => {
   await withWorkflowState(async (workflowState) => {
+    await bindTaskToRepo(workflowState);
     workflowState.state.currentPhase = "ready_to_commit";
     workflowState.state.readyCheckCompleted = true;
     workflowState.state.commitAndPushCompleted = false;
@@ -128,6 +131,7 @@ test("exec.js resolves promptly after direct child exit even when a grandchild k
 
 test("commit_and_push with clean working tree pushes unpushed HEAD to remote and succeeds", async () => {
   await withWorkflowState(async (workflowState) => {
+    await bindTaskToRepo(workflowState);
     workflowState.state.currentPhase = "commit";
     workflowState.state.readyToCommit = true;
     workflowState.state.readyCheckCompleted = true;
@@ -180,6 +184,7 @@ test("commit_and_push with clean working tree pushes unpushed HEAD to remote and
 
 test("commit_and_push succeeds when isCommitOnRemoteBranch confirms HEAD is already on remote despite stale local tracking ref", async () => {
   await withWorkflowState(async (workflowState) => {
+    await bindTaskToRepo(workflowState);
     workflowState.state.currentPhase = "commit";
     workflowState.state.readyToCommit = true;
     workflowState.state.readyCheckCompleted = true;
@@ -218,6 +223,7 @@ test("commit_and_push succeeds when isCommitOnRemoteBranch confirms HEAD is alre
 
 test("create_documentation accepts documentation files already committed during the task when working tree is clean", async () => {
   await withWorkflowState(async (workflowState) => {
+    await bindTaskToRepo(workflowState);
     workflowState.state.currentPhase = "documentation";
     workflowState.state.taskStartedAt = "2026-11-04T15:00:00.000Z";
     workflowState.state.testsCreated = true;
