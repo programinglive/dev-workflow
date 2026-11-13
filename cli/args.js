@@ -14,7 +14,7 @@
  * only `list` runs without one.
  */
 
-const COMMANDS = ["list", "close", "share", "drop", "complete", "help", "version", "doctor", "pair", "fleet"];
+const COMMANDS = ["list", "close", "share", "drop", "complete", "help", "version", "doctor", "pair", "fleet", "identity"];
 const FLEET_VERBS = ["status", "check", "plan", "stage", "activate", "verify", "rollback", "doctor", "upgrade"];
 
 /** A refusal the CLI reports to the user and turns into a non-zero exit. */
@@ -40,6 +40,9 @@ Usage:
                                                Drop a task without completing it
   devwf complete --session <key> [--next-steps <s>]... [--dry-run]
                                                Complete a task whose DoD is proven
+  devwf identity --dir <path> [--against <path>] [--json]
+                                               Print the repository identity contract and
+                                               whether <path> may start a task against --against
   devwf --help | --version
 
 Environment:
@@ -63,6 +66,8 @@ const FLAGS_WITH_VALUE = new Set([
   "--next-steps",
   "--url",
   "--mode",
+  "--dir",
+  "--against",
 ]);
 const BOOLEAN_FLAGS = new Set(["--dry-run", "--orphans", "--help", "--version", "--json", "--authorize", "--all", "--resume", "--force"]);
 
@@ -138,6 +143,8 @@ export function parseArgs(argv = []) {
       else if (word === "--token") args.token = value;
       else if (word === "--url") args.url = value;
       else if (word === "--mode") args.mode = value;
+      else if (word === "--dir") args.dir = value;
+      else if (word === "--against") args.against = value;
       else if (word === "--next-steps") args.nextSteps.push(value);
       continue;
     }

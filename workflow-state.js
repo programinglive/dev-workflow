@@ -1,6 +1,6 @@
 import { safeLog } from './security/sanitizer.js';
 import fs from "fs/promises";
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, realpathSync } from "fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, realpathSync, renameSync, unlinkSync } from "fs";
 import path from "path";
 import { assertSafeKnowledge } from './security/policy.js';
 import { sanitize } from './security/sanitizer.js';
@@ -957,6 +957,35 @@ export function readSessionPointer(baseDir, sessionKey) {
 }
 
 /**
+ * The project this session has already established, read from its own state file.
+ *
+ * `start_task` uses this to answer "is this the same repository I was already
+ * working in?". A pointer whose directory no longer exists is stale - the
+ * project was moved or deleted - and is ignored, so a removed checkout cannot
+ * block a new project forever.
+ */
+export function readSessionProject({ stateFile } = {}) {
+  const resolved = path.resolve(String(stateFile || ""));
+  if (!resolved.split(path.sep).includes(PROJECTS_DIR)) return null;
+
+  const baseDir = resolveBaseDirFromState(resolved);
+  const sessionKey = sessionKeyFromStateFile(resolved);
+  const pointer = readSessionPointer(baseDir, sessionKey);
+  if (!pointer) return null;
+
+  const projectDir = typeof pointer.projectDir === "string" ? pointer.projectDir.trim() : "";
+  if (!projectDir) return null;
+  if (!existsSync(projectDir)) return null;
+
+  return {
+    projectDir,
+    projectDirPath: typeof pointer.projectDirPath === "string" ? pointer.projectDirPath : "",
+    focusId: Number.isSafeInteger(Number(pointer.focusId)) && Number(pointer.focusId) > 0 ? Number(pointer.focusId) : null,
+    updatedAt: typeof pointer.updatedAt === "string" ? pointer.updatedAt : "",
+  };
+}
+
+/**
  * Catat proyek yang sedang dikerjakan sesi ini, dan kembalikan letak state
  * yang seharusnya.
  *
@@ -966,7 +995,7 @@ export function readSessionPointer(baseDir, sessionKey) {
  * repo berbeda berbagi satu direktori proyek: history tercampur, lock saling
  * menolak, dan rekomendasi satu proyek muncul di proyek lain.
  */
-export function pinSessionProject({ stateFile, projectDir }) {
+export function pinSessionProject({ stateFile, projectDir, focusId = null }) {
   const target = path.resolve(String(projectDir || ""));
   if (!target) {
     return null;
@@ -983,12 +1012,22 @@ export function pinSessionProject({ stateFile, projectDir }) {
   const baseDir = resolveBaseDirFromState(stateFile);
   const sessionKey = sessionKeyFromStateFile(stateFile);
   const projectDirPath = path.join(baseDir, PROJECTS_DIR, projectKey(target));
+  const focus = Number(focusId);
 
   try {
     mkdirSync(path.join(baseDir, SESSIONS_DIR), { recursive: true });
     writeFileSync(
       sessionPointerPath(baseDir, sessionKey),
-      JSON.stringify({ projectDir: target, projectDirPath, updatedAt: new Date().toISOString() }, null, 2),
+      JSON.stringify(
+        {
+          projectDir: target,
+          projectDirPath,
+          focusId: Number.isSafeInteger(focus) && focus > 0 ? focus : null,
+          updatedAt: new Date().toISOString(),
+        },
+        null,
+        2,
+      ),
       "utf8",
     );
   } catch {
@@ -1000,6 +1039,144 @@ export function pinSessionProject({ stateFile, projectDir }) {
     projectDirPath,
     stateFile: path.join(getUserScopedDir(projectDirPath), sessionStateFilename(process.env, sessionKey)),
   };
+}
+
+/**
+ * Focus binding to a verified repository.
+ *
+ * WHY THIS EXISTS
+ * ---------------
+ * 13 November 2026: the Clinic focus was active, and a session working on
+ * DBPinball called `start_task` without a `focusId`. The tool fell back to the
+ * current focus and attached DBPinball work to the Clinic focus. A focus is a
+ * container for one project's work; silently attaching foreign work to it makes
+ * the focus a liar.
+ *
+ * The binding is stored next to the session pointers, so it is per project and
+ * survives a restart. It is advisory only for the project it already names: the
+ * guard in `repository-identity.js` decides whether a task may start, and the
+ * binding decides whether the requested focus belongs to that project.
+ */
+function focusBindingPath(baseDir, focusId) {
+  return path.join(baseDir, SESSIONS_DIR, `focus-${focusId}.json`);
+}
+
+/** The repository a focus is already bound to, or null. */
+export function readFocusBinding({ stateFile, focusId } = {}) {
+  const id = Number(focusId);
+  if (!Number.isSafeInteger(id) || id <= 0) return null;
+  const baseDir = resolveBaseDirFromState(stateFile);
+  try {
+    const data = JSON.parse(readFileSync(focusBindingPath(baseDir, id), "utf-8"));
+    const boundRepoKey = typeof data?.repoKey === "string" ? data.repoKey.trim() : "";
+    const boundProjectDir = typeof data?.projectDir === "string" ? data.projectDir.trim() : "";
+    if (!boundRepoKey && !boundProjectDir) return null;
+    return {
+      focusId: id,
+      repoKey: boundRepoKey,
+      projectDir: boundProjectDir,
+      boundAt: typeof data?.boundAt === "string" ? data.boundAt : "",
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Bind a focus to a verified repository.
+ *
+ * LIFECYCLE
+ * ---------
+ * - First writer wins. A focus already bound to a live project is never rebound
+ *   implicitly, because that would let a second project quietly claim a focus
+ *   another project owns.
+ * - A binding whose project directory no longer exists is stale. It is replaced
+ *   on the next legitimate use, so a deleted or moved checkout cannot block
+ *   project recovery forever.
+ * - Retirement is explicit: `retireFocusBinding` removes the record and records
+ *   why. Nothing else deletes it.
+ *
+ * CONCURRENCY
+ * -----------
+ * The record is written to a temporary file and renamed into place, which is
+ * atomic on both NTFS and POSIX. Two sessions starting at once therefore see
+ * either the old record or the new one, never a half-written file. The loser of
+ * a genuine race re-reads and reports the conflict instead of overwriting.
+ */
+export function writeFocusBinding({ stateFile, focusId, projectDir, repoKey } = {}) {
+  const id = Number(focusId);
+  if (!Number.isSafeInteger(id) || id <= 0) return null;
+
+  const baseDir = resolveBaseDirFromState(stateFile);
+  const target = focusBindingPath(baseDir, id);
+  const requestedDir = path.resolve(String(projectDir || ""));
+  const requestedKey = typeof repoKey === "string" ? repoKey.trim() : "";
+
+  const existing = readFocusBinding({ stateFile, focusId: id });
+  let replacingStale = false;
+  if (existing) {
+    const sameKey = Boolean(existing.repoKey) && Boolean(requestedKey) && existing.repoKey === requestedKey;
+    const sameDir =
+      Boolean(existing.projectDir) &&
+      normalizeRepoPathForBinding(existing.projectDir) === normalizeRepoPathForBinding(requestedDir);
+    if (sameKey || sameDir) {
+      return { ok: true, existing, reason: "ALREADY_BOUND" };
+    }
+    // Recovery: a binding whose project is gone must not block a new project.
+    if (existing.projectDir && !existsSync(existing.projectDir)) {
+      replacingStale = true;
+    } else {
+      return { ok: false, existing, reason: "FOCUS_BOUND_TO_ANOTHER_PROJECT" };
+    }
+  }
+
+  const record = {
+    focusId: id,
+    projectDir: requestedDir,
+    repoKey: requestedKey,
+    boundAt: new Date().toISOString(),
+  };
+
+  try {
+    mkdirSync(path.join(baseDir, SESSIONS_DIR), { recursive: true });
+    const temporary = `${target}.${process.pid}.${Date.now()}.tmp`;
+    writeFileSync(temporary, JSON.stringify(record, null, 2), "utf8");
+    renameSync(temporary, target);
+    return { ok: true, existing: record, reason: replacingStale ? "REBOUND_STALE" : "BOUND" };
+  } catch {
+    // A failed binding must not block start_task: the guard still compares the
+    // repository, and this binding is a refinement, not the correctness boundary.
+    return null;
+  }
+}
+
+/**
+ * Retire a focus binding explicitly.
+ *
+ * Used when a focus is completed or when an owner decides the binding is wrong.
+ * The reason is written next to the record so a later session can see why the
+ * focus became available again, instead of finding an unexplained empty slot.
+ */
+export function retireFocusBinding({ stateFile, focusId, reason = "" } = {}) {
+  const id = Number(focusId);
+  if (!Number.isSafeInteger(id) || id <= 0) return { ok: false, reason: "INVALID_FOCUS" };
+
+  const baseDir = resolveBaseDirFromState(stateFile);
+  const target = focusBindingPath(baseDir, id);
+  const existing = readFocusBinding({ stateFile, focusId: id });
+  if (!existing) return { ok: true, retired: false, reason: "NOT_BOUND" };
+
+  try {
+    unlinkSync(target);
+    return { ok: true, retired: true, previous: existing, reason: typeof reason === "string" ? reason.trim() : "" };
+  } catch {
+    return { ok: false, reason: "RETIRE_FAILED" };
+  }
+}
+
+function normalizeRepoPathForBinding(value) {
+  const resolved = path.resolve(String(value || "")).replace(/\\/g, "/").replace(/\/+$/, "");
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
 }
 
 /**
