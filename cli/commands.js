@@ -102,7 +102,101 @@ export function preflight(args) {
     return checked;
   }
 
+  if (command === "zettly" && (args.zettlyVerb === "connect" || args.zettlyVerb === "switch")) {
+    if (typeof args.token === "string" && args.token.length > 0) {
+      throw new CliError(
+        `Passing a raw Zettly token via --token is disabled for security (shell history and process list exposure). Use --token-stdin, ZETTLY_API_TOKEN, or interactive hidden input.`
+      );
+    }
+    return checked;
+  }
+
   return checked;
+}
+
+async function readStreamText(stream) {
+  let buf = "";
+  for await (const chunk of stream) {
+    buf += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+  }
+  return buf.trim();
+}
+
+async function promptHiddenToken(stdin, promptOut) {
+  promptOut.write("Zettly API token: ");
+  if (typeof stdin.setRawMode === "function") {
+    return new Promise((resolve, reject) => {
+      const wasRaw = Boolean(stdin.isRaw);
+      stdin.setRawMode(true);
+      stdin.resume();
+      let token = "";
+      const onData = (buf) => {
+        const ch = typeof buf === "string" ? buf : buf.toString("utf8");
+        for (const c of ch) {
+          if (c === "\r" || c === "\n") {
+            cleanup();
+            promptOut.write("\n");
+            resolve(token.trim());
+            return;
+          }
+          if (c === "\u0003") {
+            cleanup();
+            promptOut.write("\n");
+            reject(new CliError("Cancelled Zettly token input."));
+            return;
+          }
+          if (c === "\u007f" || c === "\b") {
+            token = token.slice(0, -1);
+          } else {
+            token += c;
+          }
+        }
+      };
+      const cleanup = () => {
+        stdin.off("data", onData);
+        try {
+          stdin.setRawMode(wasRaw);
+        } catch {
+          // Ignore terminal restore errors.
+        }
+        stdin.pause();
+      };
+      stdin.on("data", onData);
+    });
+  }
+  return readStreamText(stdin);
+}
+
+export async function resolveZettlyTokenInput({
+  args,
+  env = process.env,
+  stdin = process.stdin,
+  promptOut = process.stderr,
+} = {}) {
+  if (typeof args?.token === "string" && args.token.length > 0) {
+    throw new CliError(
+      "Passing a raw Zettly token via --token is disabled for security (shell history and process list exposure). Use --token-stdin, ZETTLY_API_TOKEN, or interactive hidden input."
+    );
+  }
+  if (args?.tokenStdin) {
+    const token = await readStreamText(stdin);
+    if (!token) {
+      throw new CliError("No Zettly token received on stdin (--token-stdin). Nothing was changed.");
+    }
+    return token;
+  }
+  const envToken = String(env.ZETTLY_API_TOKEN || env.ZETTLY_CLI_TOKEN || "").trim();
+  if (envToken) return envToken;
+  if (stdin?.isTTY) {
+    const token = await promptHiddenToken(stdin, promptOut);
+    if (!token) {
+      throw new CliError("Zettly token cannot be empty. Nothing was changed.");
+    }
+    return token;
+  }
+  throw new CliError(
+    "Provide your Zettly token securely via --token-stdin, ZETTLY_API_TOKEN, or an interactive terminal prompt."
+  );
 }
 
 /** The one place the "would have" line is written, so dry runs read the same. */
@@ -131,6 +225,8 @@ export async function runCommand({
   args,
   env = process.env,
   out,
+  stdin = process.stdin,
+  promptOut = process.stderr,
   monitor = null,
   sessions = null,
   handlers = null,
@@ -205,10 +301,11 @@ export async function runCommand({
       return res;
     }
     if (verb === "connect") {
+      const token = await resolveZettlyTokenInput({ args, env, stdin, promptOut });
       const res = await connectZettlyAccount({
         env,
         url: args.url,
-        token: args.token,
+        token,
         dryRun: Boolean(args.dryRun),
       });
       if (args.json) out.write(JSON.stringify(res, null, 2));
@@ -216,10 +313,11 @@ export async function runCommand({
       return res;
     }
     if (verb === "switch") {
+      const token = await resolveZettlyTokenInput({ args, env, stdin, promptOut });
       const res = await switchZettlyAccount({
         env,
         url: args.url,
-        token: args.token,
+        token,
         confirm: Boolean(args.confirm),
         dryRun: Boolean(args.dryRun),
       });

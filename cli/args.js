@@ -68,7 +68,7 @@ const FLAGS_WITH_VALUE = new Set([
   "--url",
   "--mode",
 ]);
-const BOOLEAN_FLAGS = new Set(["--dry-run", "--orphans", "--help", "--version", "--json", "--authorize", "--all", "--resume", "--force", "--skip-zettly", "--confirm"]);
+const BOOLEAN_FLAGS = new Set(["--dry-run", "--orphans", "--help", "--version", "--json", "--authorize", "--all", "--resume", "--force", "--skip-zettly", "--confirm", "--token-stdin"]);
 
 /**
  * Parses argv (without the node and script entries).
@@ -139,6 +139,7 @@ export function parseArgs(argv = []) {
       if (word === "--force") args.force = true;
       if (word === "--skip-zettly") args.skipZettly = true;
       if (word === "--confirm") args.confirm = true;
+      if (word === "--token-stdin") args.tokenStdin = true;
       continue;
     }
 

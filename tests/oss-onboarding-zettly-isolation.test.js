@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import {
   ONBOARDING_MODES,
   connectZettlyAccount,
+  detectExistingZettlyConnection,
   disconnectZettlyAccount,
   getZettlyStatus,
   runOnboardingSetup,
@@ -15,7 +16,9 @@ import {
   skipZettlySetup,
   switchZettlyAccount,
 } from "../cli/onboarding.js";
+import { Readable } from "node:stream";
 import { parseArgs } from "../cli/args.js";
+import { preflight, resolveZettlyTokenInput } from "../cli/commands.js";
 import { resolveZettlyConfig } from "../zettly-client.js";
 
 const ROOT = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -280,6 +283,74 @@ test("Test I & J — Reinstall Idempotency + Disconnect preserves local history 
 
     const resolvedAfter = await resolveZettlyConfig(env, { home: dir, platform: "linux" });
     assert.equal(resolvedAfter, null);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("Test K — CLI Token Security: --token is rejected on zettly connect/switch; --token-stdin works without leaking token", async () => {
+  const secret = "synthetic-cli-secret-xyz";
+  const connectArgs = parseArgs(["zettly", "connect", "--url", "https://zettly.example", "--token", secret]);
+  assert.throws(() => preflight(connectArgs), /disabled for security/);
+
+  const switchArgs = parseArgs(["zettly", "switch", "--url", "https://zettly.example", "--token", secret, "--confirm"]);
+  assert.throws(() => preflight(switchArgs), /disabled for security/);
+
+  await assert.rejects(
+    () => resolveZettlyTokenInput({ args: connectArgs, env: {}, stdin: Readable.from([]) }),
+    (err) => !String(err.message).includes(secret) && /disabled for security/.test(err.message),
+  );
+
+  const stdinArgs = parseArgs(["zettly", "connect", "--url", "https://zettly.example", "--token-stdin"]);
+  assert.equal(stdinArgs.tokenStdin, true);
+  const resolvedToken = await resolveZettlyTokenInput({
+    args: stdinArgs,
+    env: {},
+    stdin: Readable.from([`${secret}\n`]),
+  });
+  assert.equal(resolvedToken, secret);
+
+  const readme = readFileSync(path.join(ROOT, "README.md"), "utf8");
+  const portal = readFileSync(path.join(ROOT, "web", "lib", "portal-content.ts"), "utf8");
+  assert.equal(/zettly (?:connect|switch)[^\n]*--token\s+</.test(readme), false);
+  assert.equal(/zettly (?:connect|switch)[^\n]*--token\s+</.test(portal), false);
+});
+
+test("Test L — Fail-Closed Precedence: SKIP ignores env token, DISCONNECT ignores legacy DPAPI, profile base beats cli.host", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "devwf-oss-l-"));
+  try {
+    const env = {
+      DEVWF_PROFILE_DIR: path.join(dir, ".devworkflow"),
+      ZETTLY_API_BASE: "https://env-zettly.example",
+      ZETTLY_API_TOKEN: "synthetic-env-token",
+    };
+
+    await skipZettlySetup({ env, home: dir });
+    assert.equal(await resolveZettlyConfig(env, { home: dir, platform: "linux" }), null);
+
+    await mkdir(path.join(dir, ".zettly"), { recursive: true });
+    await writeFile(path.join(dir, ".zettly", "token.dpapi"), "dpapi-encrypted");
+    await writeFile(
+      path.join(dir, ".zettly", "config.json"),
+      JSON.stringify({ host: "https://legacy-cli-host.example", managedOwnerCredential: { expectedUserId: 1 } }),
+    );
+
+    const cleanEnv = { DEVWF_PROFILE_DIR: path.join(dir, ".devworkflow") };
+    await connectZettlyAccount({
+      env: cleanEnv,
+      home: dir,
+      url: "https://new-profile.example",
+      token: "synthetic-profile-token",
+      fetchImpl: makeUserFetch(303, "newuser@example.test"),
+    });
+    const cfg = await resolveZettlyConfig(cleanEnv, { home: dir, platform: "win32" });
+    assert.equal(cfg.base, "https://new-profile.example");
+    assert.equal(cfg.expectedUserId, 303);
+
+    await disconnectZettlyAccount({ env: cleanEnv, home: dir, confirm: true });
+    const detected = detectExistingZettlyConnection({ env: cleanEnv, home: dir });
+    assert.equal(detected.connected, false);
+    assert.equal(await resolveZettlyConfig(cleanEnv, { home: dir, platform: "win32" }), null);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
