@@ -1,6 +1,7 @@
 import { safeLog } from './security/sanitizer.js';
 import fs from "fs/promises";
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, realpathSync, renameSync, unlinkSync } from "fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, realpathSync, unlinkSync, openSync, closeSync, statSync } from "fs";
+import os from "os";
 import path from "path";
 import { assertSafeKnowledge } from './security/policy.js';
 import { sanitize } from './security/sanitizer.js';
@@ -1061,59 +1062,149 @@ function focusBindingPath(baseDir, focusId) {
   return path.join(baseDir, SESSIONS_DIR, `focus-${focusId}.json`);
 }
 
-/** The repository a focus is already bound to, or null. */
-export function readFocusBinding({ stateFile, focusId } = {}) {
-  const id = Number(focusId);
-  if (!Number.isSafeInteger(id) || id <= 0) return null;
-  const baseDir = resolveBaseDirFromState(stateFile);
+/**
+ * Lock file that serializes claims on one focus.
+ *
+ * WHY A LOCK AND NOT `rename`
+ * ---------------------------
+ * A temp file renamed into place is atomic per write, but it is NOT
+ * first-writer-wins: two processes that both read "no binding" would both write
+ * a temp file and both rename, and the second would silently replace the first.
+ * The claim decision ("is this focus free?") and the write must be one critical
+ * section, which needs real mutual exclusion across operating-system processes.
+ *
+ * `open(..., "wx")` is the atomic primitive: the operating system guarantees
+ * exactly one creator. The holder is recorded so an interrupted process can be
+ * detected and its stale lock broken instead of blocking the focus forever.
+ */
+const FOCUS_LOCK_STALE_MS = 30_000;
+const FOCUS_LOCK_TIMEOUT_MS = 2_000;
+const FOCUS_LOCK_POLL_MS = 20;
+
+function focusLockPath(baseDir, focusId) {
+  return path.join(baseDir, SESSIONS_DIR, `focus-${focusId}.lock`);
+}
+
+function readFocusLockRecord(file) {
   try {
-    const data = JSON.parse(readFileSync(focusBindingPath(baseDir, id), "utf-8"));
-    const boundRepoKey = typeof data?.repoKey === "string" ? data.repoKey.trim() : "";
-    const boundProjectDir = typeof data?.projectDir === "string" ? data.projectDir.trim() : "";
-    if (!boundRepoKey && !boundProjectDir) return null;
-    return {
-      focusId: id,
-      repoKey: boundRepoKey,
-      projectDir: boundProjectDir,
-      boundAt: typeof data?.boundAt === "string" ? data.boundAt : "",
-    };
+    return JSON.parse(readFileSync(file, "utf8"));
   } catch {
     return null;
   }
 }
 
 /**
- * Bind a focus to a verified repository.
+ * Is the current holder gone or too old to keep the lock?
+ *
+ * A lock whose process is dead, whose timestamp is older than
+ * `FOCUS_LOCK_STALE_MS`, or whose record is unreadable and whose file is old is
+ * treated as abandoned. Without this an interrupted claim would block the focus
+ * permanently - the "do not permanently block legitimate project recovery" rule.
+ */
+function focusLockIsStale(file, now = Date.now(), isAlive = defaultPidIsAlive) {
+  const record = readFocusLockRecord(file);
+  if (!record) {
+    try {
+      return now - statSync(file).mtimeMs > FOCUS_LOCK_STALE_MS;
+    } catch {
+      return true;
+    }
+  }
+
+  const startedAt = Number(record.startedAt);
+  if (Number.isFinite(startedAt) && now - startedAt > FOCUS_LOCK_STALE_MS) return true;
+
+  const pid = Number(record.pid);
+  if (!Number.isSafeInteger(pid) || pid <= 0) return true;
+  if (pid === process.pid) return true;
+  return !isAlive(pid);
+}
+
+function defaultPidIsAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return Boolean(error && error.code === "EPERM");
+  }
+}
+
+async function acquireFocusLock({ baseDir, focusId, timeoutMs = FOCUS_LOCK_TIMEOUT_MS }) {
+  const file = focusLockPath(baseDir, focusId);
+  mkdirSync(path.join(baseDir, SESSIONS_DIR), { recursive: true });
+  const deadline = Date.now() + Math.max(0, Number(timeoutMs) || 0);
+
+  for (;;) {
+    try {
+      const handle = openSync(file, "wx");
+      try {
+        writeFileSync(
+          handle,
+          JSON.stringify({ pid: process.pid, host: os.hostname(), startedAt: Date.now() }),
+        );
+      } finally {
+        closeSync(handle);
+      }
+      return { ok: true, file };
+    } catch (error) {
+      if (error.code !== "EEXIST") return { ok: false, code: "FOCUS_LOCK_UNWRITABLE" };
+
+      if (focusLockIsStale(file)) {
+        try {
+          unlinkSync(file);
+        } catch {
+          // Another process broke it first; retry the atomic create.
+        }
+        continue;
+      }
+
+      if (Date.now() >= deadline) return { ok: false, code: "FOCUS_CLAIM_TIMEOUT" };
+      await new Promise((resolve) => setTimeout(resolve, FOCUS_LOCK_POLL_MS));
+    }
+  }
+}
+
+/**
+ * Bind a focus to a verified repository, exclusively.
  *
  * LIFECYCLE
  * ---------
- * - First writer wins. A focus already bound to a live project is never rebound
- *   implicitly, because that would let a second project quietly claim a focus
- *   another project owns.
+ * - First writer wins under a cross-process lock. Two processes claiming the
+ *   same focus for different projects produce exactly one success; the loser
+ *   re-reads and reports `FOCUS_BOUND_TO_ANOTHER_PROJECT`.
  * - A binding whose project directory no longer exists is stale. It is replaced
  *   on the next legitimate use, so a deleted or moved checkout cannot block
  *   project recovery forever.
- * - Retirement is explicit: `retireFocusBinding` removes the record and records
- *   why. Nothing else deletes it.
- *
- * CONCURRENCY
- * -----------
- * The record is written to a temporary file and renamed into place, which is
- * atomic on both NTFS and POSIX. Two sessions starting at once therefore see
- * either the old record or the new one, never a half-written file. The loser of
- * a genuine race re-reads and reports the conflict instead of overwriting.
+ * - Retirement is explicit: `retireFocusBinding` takes the same lock and removes
+ *   the record. Nothing else deletes it.
  */
-export function writeFocusBinding({ stateFile, focusId, projectDir, repoKey } = {}) {
+export async function claimFocusBinding({ stateFile, focusId, projectDir, repoKey, timeoutMs } = {}) {
   const id = Number(focusId);
-  if (!Number.isSafeInteger(id) || id <= 0) return null;
+  if (!Number.isSafeInteger(id) || id <= 0) return { ok: false, reason: "INVALID_FOCUS" };
 
   const baseDir = resolveBaseDirFromState(stateFile);
-  const target = focusBindingPath(baseDir, id);
+  const lock = await acquireFocusLock({ baseDir, focusId: id, timeoutMs });
+  if (!lock.ok) return { ok: false, reason: lock.code };
+
+  try {
+    return claimFocusBindingUnderLock({ baseDir, focusId: id, projectDir, repoKey });
+  } finally {
+    try {
+      unlinkSync(lock.file);
+    } catch {
+      // Releasing is best-effort; a leftover lock is broken as stale later.
+    }
+  }
+}
+
+function claimFocusBindingUnderLock({ baseDir, focusId, projectDir, repoKey }) {
+  const target = focusBindingPath(baseDir, focusId);
   const requestedDir = path.resolve(String(projectDir || ""));
   const requestedKey = typeof repoKey === "string" ? repoKey.trim() : "";
 
-  const existing = readFocusBinding({ stateFile, focusId: id });
+  const existing = readFocusBindingRecord(target);
   let replacingStale = false;
+
   if (existing) {
     const sameKey = Boolean(existing.repoKey) && Boolean(requestedKey) && existing.repoKey === requestedKey;
     const sameDir =
@@ -1122,7 +1213,6 @@ export function writeFocusBinding({ stateFile, focusId, projectDir, repoKey } = 
     if (sameKey || sameDir) {
       return { ok: true, existing, reason: "ALREADY_BOUND" };
     }
-    // Recovery: a binding whose project is gone must not block a new project.
     if (existing.projectDir && !existsSync(existing.projectDir)) {
       replacingStale = true;
     } else {
@@ -1131,46 +1221,85 @@ export function writeFocusBinding({ stateFile, focusId, projectDir, repoKey } = 
   }
 
   const record = {
-    focusId: id,
+    focusId,
     projectDir: requestedDir,
     repoKey: requestedKey,
     boundAt: new Date().toISOString(),
   };
 
   try {
-    mkdirSync(path.join(baseDir, SESSIONS_DIR), { recursive: true });
-    const temporary = `${target}.${process.pid}.${Date.now()}.tmp`;
-    writeFileSync(temporary, JSON.stringify(record, null, 2), "utf8");
-    renameSync(temporary, target);
+    writeFileSync(target, JSON.stringify(record, null, 2), "utf8");
     return { ok: true, existing: record, reason: replacingStale ? "REBOUND_STALE" : "BOUND" };
   } catch {
-    // A failed binding must not block start_task: the guard still compares the
-    // repository, and this binding is a refinement, not the correctness boundary.
-    return null;
+    return { ok: false, reason: "FOCUS_BINDING_UNWRITABLE" };
   }
+}
+
+/** Backward-compatible name; both share the one exclusive implementation. */
+export function writeFocusBinding(options = {}) {
+  return claimFocusBinding(options);
 }
 
 /**
  * Retire a focus binding explicitly.
  *
- * Used when a focus is completed or when an owner decides the binding is wrong.
- * The reason is written next to the record so a later session can see why the
- * focus became available again, instead of finding an unexplained empty slot.
+ * Takes the same lock as a claim, so a retirement cannot interleave with a
+ * concurrent claim and erase a binding that was just written.
  */
-export function retireFocusBinding({ stateFile, focusId, reason = "" } = {}) {
+export async function retireFocusBinding({ stateFile, focusId, reason = "" } = {}) {
   const id = Number(focusId);
   if (!Number.isSafeInteger(id) || id <= 0) return { ok: false, reason: "INVALID_FOCUS" };
 
   const baseDir = resolveBaseDirFromState(stateFile);
-  const target = focusBindingPath(baseDir, id);
-  const existing = readFocusBinding({ stateFile, focusId: id });
-  if (!existing) return { ok: true, retired: false, reason: "NOT_BOUND" };
+  const lock = await acquireFocusLock({ baseDir, focusId: id });
+  if (!lock.ok) return { ok: false, reason: lock.code };
 
   try {
-    unlinkSync(target);
-    return { ok: true, retired: true, previous: existing, reason: typeof reason === "string" ? reason.trim() : "" };
+    const target = focusBindingPath(baseDir, id);
+    const existing = readFocusBindingRecord(target);
+    if (!existing) return { ok: true, retired: false, reason: "NOT_BOUND" };
+    try {
+      unlinkSync(target);
+      return {
+        ok: true,
+        retired: true,
+        previous: existing,
+        reason: typeof reason === "string" ? reason.trim() : "",
+      };
+    } catch {
+      return { ok: false, reason: "RETIRE_FAILED" };
+    }
+  } finally {
+    try {
+      unlinkSync(lock.file);
+    } catch {
+      // Best-effort release.
+    }
+  }
+}
+
+/** The repository a focus is already bound to, or null. */
+export function readFocusBinding({ stateFile, focusId } = {}) {
+  const id = Number(focusId);
+  if (!Number.isSafeInteger(id) || id <= 0) return null;
+  const baseDir = resolveBaseDirFromState(stateFile);
+  return readFocusBindingRecord(focusBindingPath(baseDir, id));
+}
+
+function readFocusBindingRecord(file) {
+  try {
+    const data = JSON.parse(readFileSync(file, "utf-8"));
+    const boundRepoKey = typeof data?.repoKey === "string" ? data.repoKey.trim() : "";
+    const boundProjectDir = typeof data?.projectDir === "string" ? data.projectDir.trim() : "";
+    if (!boundRepoKey && !boundProjectDir) return null;
+    return {
+      focusId: Number(data?.focusId) || null,
+      repoKey: boundRepoKey,
+      projectDir: boundProjectDir,
+      boundAt: typeof data?.boundAt === "string" ? data.boundAt : "",
+    };
   } catch {
-    return { ok: false, reason: "RETIRE_FAILED" };
+    return null;
   }
 }
 

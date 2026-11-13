@@ -100,17 +100,55 @@ function applyProjectDirOverride(args) {
  * passing B's directory - the same class of defect as the 13 November 2026
  * incident, one step later in the workflow.
  *
- * A task started before identity contracts existed has no contract; it is
- * allowed through so in-flight work is not broken.
+ * A task started before identity contracts existed is NOT allowed through. Its
+ * identity is backfilled only from evidence the task itself recorded and only
+ * when that evidence matches the live checkout; otherwise the mutation is
+ * refused. A missing identity is not permission to write.
  */
 export async function assertMutationRepository({ workflowState, dir, operation }) {
-  const contract = workflowState?.state?.identityContract;
-  if (!contract || !contract.repository) {
-    return { ok: true, legacy: true };
+  const state = workflowState?.state || {};
+  const hasContract = state.identityContract !== undefined && state.identityContract !== null;
+  const declaredProjectDir = typeof state.projectDir === "string" ? state.projectDir.trim() : "";
+
+  // A state that never declared a repository is not a legacy task: it is a
+  // state with no repository context at all. The handler's own repository
+  // resolution still applies, and it refuses when it cannot determine one.
+  // A legacy task - one that declared a projectDir before contracts existed -
+  // is NOT skipped; it is backfilled or refused below.
+  if (!hasContract && !declaredProjectDir) {
+    return { ok: true, code: "NO_TASK_REPOSITORY_CONTEXT" };
+  }
+
+  if (!dir) {
+    return {
+      ok: false,
+      code: "NO_WORKSPACE",
+      message:
+        `⚠️ Refused: ${operation} has no repository to run in.\n\n` +
+        `Start the task with a 'projectDir' that points at a Git repository.\n` +
+        `Nothing was changed.`,
+    };
   }
 
   const actual = await captureRepositoryIdentity({ dir });
-  return assertTaskRepository({ contract, actual, operation });
+  const result = assertTaskRepository({
+    contract: state.identityContract,
+    state,
+    actual,
+    operation,
+  });
+
+  if (result.ok && result.backfilledContract) {
+    workflowState.state.identityContract = result.backfilledContract;
+    try {
+      await workflowState.save();
+    } catch {
+      // The backfill is already proven in memory; a failed save must not turn a
+      // verified mutation into a refusal. The next save retries it.
+    }
+  }
+
+  return result;
 }
 
 /**

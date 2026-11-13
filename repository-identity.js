@@ -274,6 +274,8 @@ export function evaluateProjectSwitch({
   session,
   allowProjectSwitch = false,
   projectSwitchReason = "",
+  allowWorkspaceTransition = false,
+  workspaceTransitionReason = "",
   focusId = null,
 } = {}) {
   if (!session || !text(session.projectDir || session.root)) {
@@ -282,11 +284,41 @@ export function evaluateProjectSwitch({
 
   const comparison = compareIdentity(requested, session);
 
-  // A linked worktree of the same checkout family is legitimate continuity, not
-  // a project switch: it shares one object store and refs with the main
-  // checkout, and is the documented way to run a second session on a repository.
-  if (comparison.match === "SAME_WORKSPACE" || comparison.match === "SAME_CHECKOUT_FAMILY") {
+  if (comparison.match === "SAME_WORKSPACE") {
     return { ok: true, switched: false, code: comparison.match, match: comparison.match, comparison };
+  }
+
+  // A linked worktree shares one object store, but it is a second writable tree.
+  // Starting a task there is a workspace transition, not automatic continuity:
+  // it needs an explicit, reasoned decision so two trees never share mutable
+  // task ownership by accident.
+  if (comparison.match === "SAME_CHECKOUT_FAMILY") {
+    if (allowWorkspaceTransition === true && text(workspaceTransitionReason).length >= 10) {
+      return {
+        ok: true,
+        switched: true,
+        code: "WORKSPACE_TRANSITION_AUTHORIZED",
+        match: comparison.match,
+        comparison,
+      };
+    }
+    return {
+      ok: false,
+      switched: false,
+      code: "WORKSPACE_TRANSITION_REQUIRES_AUTHORIZATION",
+      match: comparison.match,
+      comparison,
+      message:
+        `⚠️ Refused: this session works in a different worktree of the same repository.\n\n` +
+        `Established workspace: ${text(session.projectDir || session.root)}\n` +
+        `Requested workspace:   ${text(requested && (requested.root || requested.projectDir))}\n\n` +
+        `The two directories share one git object store, but they are two writable trees. ` +
+        `Starting here without an explicit transition would let both trees share mutable task ownership.\n\n` +
+        `If this is intended, repeat 'start_task' with:\n` +
+        `  allowWorkspaceTransition: true\n` +
+        `  workspaceTransitionReason: "<why this task belongs in the other worktree>"\n\n` +
+        `Task NOT started; the previous task and its evidence are unchanged.`,
+    };
   }
 
   const from = text(session.projectDir);
@@ -376,33 +408,146 @@ export function evaluateProjectSwitch({
 }
 
 /**
- * Guard a mutation that has a task context.
+ * Shape validation for a recorded identity contract.
  *
- * `commit_and_push`, `perform_release` and `record_deployment` all accept a
- * `projectDir` override and run git in it. Without this check, a task started in
- * one repository could commit or release in another by passing a different
- * directory - the same class of defect as the original incident, one step later.
- *
- * A task started before the identity contract existed has no contract; it is
- * allowed through and reported as `legacy`, because refusing every in-flight
- * task would be a breaking change unrelated to this fix.
+ * A contract that exists but is unreadable is NOT the same as a legacy task
+ * without one: it means the record was corrupted or written by an older shape,
+ * and treating it as "legacy" would replay the fail-open this module exists to
+ * close.
  */
-export function assertTaskRepository({ contract, actual, operation = "this operation" } = {}) {
-  if (!contract || !contract.repository) {
-    return { ok: true, legacy: true, code: "NO_CONTRACT" };
+export function validateContractShape(contract) {
+  if (contract === undefined || contract === null) return { valid: false, reason: "MISSING" };
+  if (typeof contract !== "object" || Array.isArray(contract)) return { valid: false, reason: "MALFORMED" };
+
+  const repository = contract.repository;
+  if (!repository || typeof repository !== "object" || Array.isArray(repository)) {
+    return { valid: false, reason: "MALFORMED" };
+  }
+  if (!text(repository.root)) return { valid: false, reason: "MALFORMED" };
+
+  return { valid: true, reason: "VALID" };
+}
+
+/**
+ * Build an identity contract for a task that predates contracts.
+ *
+ * This is a *validated* backfill, not a fabrication: it only reuses evidence the
+ * task itself already recorded (`state.repository.path` and
+ * `state.repository.remote`, captured by `save()` while the task ran) and only
+ * when that evidence agrees with the live checkout. A contradiction means the
+ * identity cannot be proven, and the caller must refuse.
+ */
+export function buildBackfillContract({ state, actual } = {}) {
+  const recorded = state && state.repository;
+  const recordedPath = text(recorded && recorded.path);
+  const declaredProjectDir = text(state && state.projectDir);
+  const recordedRemote = text(recorded && recorded.remote);
+  const hasRecordedRemote = Boolean(recorded) && typeof recorded.remote === "string";
+
+  // Two independent records of the same task must not disagree. A conflict is
+  // evidence of tampering or a half-migrated state, not something to average.
+  if (recordedPath && declaredProjectDir && normalizeRepoPath(recordedPath) !== normalizeRepoPath(declaredProjectDir)) {
+    return { ok: false, code: "IDENTITY_UNVERIFIABLE_CONFLICT" };
   }
 
-  const expected = {
-    root: contract.repository.root,
-    remote: contract.repository.remote,
-    repoKey: contract.repository.repoKey,
-    commonDir: contract.repository.commonDir || "",
-    commonDirKey: contract.repository.commonDirKey || "",
-  };
+  // The task's own declared workspace is valid evidence: it is what the task
+  // said it owns. `state.repository` is preferred because it was captured while
+  // the task ran, but a task that predates that capture still declared a
+  // projectDir, and the live checkout at that path is its identity.
+  const evidencePath = recordedPath || declaredProjectDir;
+  if (!evidencePath) {
+    return { ok: false, code: "IDENTITY_UNVERIFIABLE_NO_EVIDENCE" };
+  }
+  if (!actual || !actual.isGitRepo) {
+    return { ok: false, code: "IDENTITY_UNVERIFIABLE_NOT_A_REPO" };
+  }
+  if (normalizeRepoPath(evidencePath) !== normalizeRepoPath(actual.root)) {
+    return { ok: false, code: "IDENTITY_UNVERIFIABLE_WORKSPACE_MISMATCH" };
+  }
+  if (hasRecordedRemote && recordedRemote !== text(actual.remote)) {
+    return { ok: false, code: "IDENTITY_UNVERIFIABLE_REMOTE_MISMATCH" };
+  }
 
-  const comparison = compareIdentity(actual, expected);
-  if (comparison.match === "SAME_WORKSPACE" || comparison.match === "SAME_CHECKOUT_FAMILY") {
+  const parsed = parseRemoteIdentity(actual.remote);
+  const focusId = Number(state && state.focus && state.focus.id);
+  const contract = buildIdentityContract({
+    projectId: parsed ? parsed.key : path.basename(actual.root),
+    identity: actual,
+    focusId: Number.isSafeInteger(focusId) && focusId > 0 ? focusId : null,
+  });
+
+  return {
+    ok: true,
+    contract: {
+      ...contract,
+      backfilled: true,
+      backfilledAt: new Date().toISOString(),
+      backfilledFrom: recordedPath ? "state.repository" : "state.projectDir",
+    },
+  };
+}
+
+/**
+ * Decide whether a repository-mutating operation may proceed.
+ *
+ * MUTATION POLICY (stricter than task start):
+ *   - the task must be running in the EXACT workspace it started in;
+ *   - a linked worktree of the same checkout family is NOT sufficient, because
+ *     two worktrees are two writable trees and sharing mutable task ownership
+ *     between them is how one tree's work silently lands in another;
+ *   - a task without a valid contract is backfilled only from verified evidence,
+ *     and refused when that evidence is missing or contradicts the live checkout.
+ */
+export function evaluateMutationIdentity({ contract, state, actual, operation = "this operation" } = {}) {
+  const shape = validateContractShape(contract);
+
+  if (!shape.valid) {
+    const backfill = buildBackfillContract({ state, actual });
+    if (backfill.ok) {
+      return {
+        ok: true,
+        code: "IDENTITY_BACKFILLED",
+        backfilledContract: backfill.contract,
+        comparison: { match: "SAME_WORKSPACE" },
+      };
+    }
+    return {
+      ok: false,
+      code: shape.reason === "MISSING" ? "IDENTITY_UNVERIFIABLE_NO_CONTRACT" : "IDENTITY_CONTRACT_MALFORMED",
+      detail: backfill.code,
+      message:
+        `⚠️ Refused: ${operation} needs a verifiable repository identity.\n\n` +
+        (shape.reason === "MISSING"
+          ? `This task was started before identity contracts existed and has no recorded repository.\n`
+          : `This task's identity contract is malformed and cannot be trusted.\n`) +
+        `The recorded evidence (${backfill.code}) does not prove which checkout this task owns.\n\n` +
+        `A missing or unreadable identity is not permission to write. Start the task again in the ` +
+        `intended repository so a contract is recorded.\n\n` +
+        `Nothing was changed.`,
+    };
+  }
+
+  const comparison = compareIdentity(actual, contract.repository);
+
+  if (comparison.match === "SAME_WORKSPACE") {
     return { ok: true, code: comparison.match, comparison };
+  }
+
+  if (comparison.match === "SAME_CHECKOUT_FAMILY") {
+    return {
+      ok: false,
+      code: "WORKTREE_WRITE_REQUIRES_TRANSITION",
+      comparison,
+      message:
+        `⚠️ Refused: ${operation} would write into a different worktree of this repository.\n\n` +
+        `Task workspace:      ${contract.repository.root}\n` +
+        `Requested workspace: ${actual && actual.root ? actual.root : "(unknown)"}\n\n` +
+        `The two directories share one git object store, but they are two writable trees. ` +
+        `Sharing mutable task ownership between them lets one tree's work land in the other.\n\n` +
+        `Start a new task in the target worktree (that records a new identity contract), ` +
+        `or run this operation in the worktree it started in.\n\n` +
+        `Nothing was changed.`,
+    };
   }
 
   return {
@@ -411,13 +556,23 @@ export function assertTaskRepository({ contract, actual, operation = "this opera
     comparison,
     message:
       `⚠️ Refused: ${operation} would run in a different workspace than this task started in.\n\n` +
-      `Task workspace:    ${expected.root || "(unknown)"}\n` +
+      `Task workspace:      ${contract.repository.root}\n` +
       `Requested workspace: ${actual && (actual.root || actual.projectDir) ? actual.root || actual.projectDir : "(unknown)"}\n\n` +
       `A task is bound to the checkout it started in. Committing or releasing in another ` +
       `checkout would write into a repository this task never declared.\n\n` +
-      `Start a new task in the target repository, or use a linked worktree of this one.\n` +
+      `Start a new task in the target repository.\n` +
       `Nothing was changed.`,
   };
+}
+
+/**
+ * Legacy-compatible wrapper used by the mutation handlers.
+ *
+ * Kept because it is the single call site for "may this mutation run here", but
+ * the fail-open branch is gone: an unverifiable identity now refuses.
+ */
+export function assertTaskRepository({ contract, state, actual, operation = "this operation" } = {}) {
+  return evaluateMutationIdentity({ contract, state, actual, operation });
 }
 
 /**
