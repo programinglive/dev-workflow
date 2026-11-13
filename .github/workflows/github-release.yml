@@ -16,6 +16,8 @@ on:
   push:
     tags:
       - "v*"
+      - "!*-oss*"
+      - "!v*-oss*"
   workflow_dispatch:
     inputs:
       tag:

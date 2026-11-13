@@ -3,8 +3,8 @@ name: Android Companion APK Release (M7)
 on:
   push:
     tags:
-      - "v*"
       - "mobile-v*"
+      - "android-v*"
   workflow_dispatch:
     inputs:
       release_tag:
@@ -54,6 +54,14 @@ jobs:
             echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "${RUNNER_TEMP}/release.keystore"
             echo "ANDROID_KEYSTORE_PATH=${RUNNER_TEMP}/release.keystore" >> "$GITHUB_ENV"
           fi
+
+      - name: Generate native Android project via Expo prebuild (if missing)
+        working-directory: mobile-app
+        run: |
+          if [ ! -d "android" ]; then
+            npx expo prebuild --platform android --no-install
+          fi
+          test -f android/gradlew
 
       - name: Build Android Release APK via Gradle
         working-directory: mobile-app/android
