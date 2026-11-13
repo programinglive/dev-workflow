@@ -3,8 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "prebuild": "node scripts/generate-version.mjs",
-    "predev": "node scripts/generate-version.mjs",
+    "prebuild": "node scripts/generate-version.mjs && node scripts/generate-docs-data.mjs",
+    "predev": "node scripts/generate-version.mjs && node scripts/generate-docs-data.mjs",
     "dev": "node server.js",
     "build": "next build",
     "start": "cross-env NODE_ENV=production node server.js",
