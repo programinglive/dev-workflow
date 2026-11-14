@@ -14,8 +14,15 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { fileURLToPath } from "url";
 import path from "path";
-import { acquireProcessLockAsync, releaseProcessLock, releaseActiveProcessLock, lockWarning, projectLockDir, refreshProcessLock, HEARTBEAT_MS } from "./process-lock.js";
-import { exec, setActiveProjectDir } from "./exec.js";
+import {
+  acquireWorktreeMutex,
+  writeKernelLockMetadata,
+  releaseAllWorktreeMutexesSync,
+  findActiveLegacyWriter,
+  projectLockDir,
+  HEARTBEAT_MS,
+} from "./process-lock.js";
+import { exec, setActiveProjectDir, resolveProjectDir } from "./exec.js";
 import { normalizeRequestArgs, shellEscape } from "./utils.js";
 import { createGitFacade } from "./git-facade.js";
 import {
@@ -242,23 +249,51 @@ export async function main() {
   // Lokasinya juga harus di `.state` PROYEK, bukan di direktori user: direktori
   // user bisa berbeda antar proses, sehingga keduanya tidak saling melihat.
   try {
+    workflowState.requireKernelMutex = true;
     const lockDir = projectLockDir(workflowState.stateFile);
-    const acquired = await acquireProcessLockAsync({ dir: lockDir });
-    if (acquired.acquired && typeof workflowState.bindLockLease === "function") {
-      workflowState.bindLockLease({ dir: lockDir, leaseId: acquired.leaseId });
+    let startupProjectDir = workflowState.state?.projectDir || "";
+    if (!startupProjectDir) {
+      try {
+        startupProjectDir = resolveProjectDir({
+          env: process.env,
+          candidates: [process.cwd(), process.env.INIT_CWD],
+        }).dir;
+      } catch {
+        startupProjectDir = "";
+      }
     }
-    const warning = lockWarning(acquired);
-    if (warning) safeLog('error', warning);
-    process.once('exit', () => releaseActiveProcessLock({ fallbackDir: lockDir }));
+    if (startupProjectDir) {
+      const legacy = findActiveLegacyWriter({ dir: lockDir });
+      if (legacy) {
+        safeLog('error', `Warning: active legacy (pre-Option-B) MCP process PID ${legacy.pid} detected in ${lockDir}.`);
+      } else {
+        const acquired = await acquireWorktreeMutex({ projectDir: startupProjectDir });
+        if (acquired.ok) {
+          workflowState.bindKernelCapability(acquired.capability);
+          writeKernelLockMetadata({
+            dir: lockDir,
+            capability: acquired.capability,
+            projectDir: acquired.worktreeRoot,
+          });
+        } else if (acquired.reason === "unsupported_platform") {
+          safeLog('error', acquired.message || `Unsupported kernel mutex platform: ${process.platform}`);
+        } else {
+          safeLog('error', `Warning: worktree mutex held by another process (${acquired.endpoint || startupProjectDir}).`);
+        }
+      }
+    }
+    process.once('exit', () => releaseAllWorktreeMutexesSync());
 
-    // Detak jantung penanda proses.
-    //
-    // Tanpa ini, penanda hanya menyebut KAPAN proses start. Proses MCP yang
-    // tertinggal hidup setelah jendela OpenCode-nya ditutup akan terlihat sama
-    // hidupnya dengan sesi yang benar-benar bekerja, sehingga aturan "satu
-    // penulis per repo" tidak bisa ditegakkan tanpa memblokir sesi yang sah.
-    // Dengan detak, "hidup" berarti "hidup DAN baru saja bekerja".
-    const heartbeat = setInterval(() => refreshProcessLock(), HEARTBEAT_MS);
+    const heartbeat = setInterval(() => {
+      const cap = workflowState?.boundKernelCapability;
+      if (cap && cap.active) {
+        writeKernelLockMetadata({
+          dir: projectLockDir(workflowState.stateFile),
+          capability: cap,
+          projectDir: cap.worktreeRoot,
+        });
+      }
+    }, HEARTBEAT_MS);
     heartbeat.unref?.();
   } catch (lockError) {
     safeLog('error', 'Warning: could not record process lock:', lockError.message);

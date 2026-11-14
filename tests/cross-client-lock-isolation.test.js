@@ -33,8 +33,8 @@ import {
   stageProcessLockTransition,
   acquireKernelMutex,
   releaseKernelMutex,
-  acquireProcessLockAsync,
-  stageProcessLockTransitionAsync,
+  acquireWorktreeMutex,
+  releaseWorktreeMutex,
   GATE_FILENAME,
   GATE_RECOVER_FILENAME,
   DEFAULT_LOCK_STALE_MS,
@@ -1696,7 +1696,7 @@ test("R2-4 Durable Transition Safety & Crash Recovery: Post-save failure and abr
 
     await ws.close();
 
-    // 3. Part 2: Abrupt process crash (SIGKILL) after target state & session pointer are saved, before commit
+    // 3. Part 2: Abrupt process crash (SIGKILL) mid-transition after acquiring target OS mutex, before SQLite commit
     const handlersModuleUrl = pathToFileURL(path.resolve("tools/handler-modules/workflow-handlers.js")).href;
     const wfStateModuleUrl = pathToFileURL(path.resolve("workflow-state.js")).href;
     const crashWorkerScript = `
@@ -1724,12 +1724,12 @@ test("R2-4 Durable Transition Safety & Crash Recovery: Post-save failure and abr
         {},
         {
           transitionHooks: {
-            afterSave: async ({ transitionJournal }) => {
+            afterStageLock: async ({ targetMutex }) => {
               process.send({
-                type: "PAUSED_AFTER_TARGET_SAVE",
+                type: "PAUSED_UNDER_TARGET_MUTEX",
                 pid: process.pid,
                 targetStateFile: ws.stateFile,
-                journalFile: transitionJournal.journalFile,
+                endpoint: targetMutex?.endpoint || null,
               });
               // Hang until parent sends SIGKILL
               await new Promise(() => {});
@@ -1751,61 +1751,48 @@ test("R2-4 Durable Transition Safety & Crash Recovery: Post-save failure and abr
 
     const pausedMsg = await new Promise((resolve, reject) => {
       crashChild.on("message", (m) => {
-        if (m && m.type === "PAUSED_AFTER_TARGET_SAVE") resolve(m);
+        if (m && m.type === "PAUSED_UNDER_TARGET_MUTEX") resolve(m);
       });
       crashChild.once("error", reject);
       crashChild.once("exit", (code) => reject(new Error(`Crash child exited prematurely (${code})`)));
     });
 
-    // Verify before SIGKILL that the uncommitted transition artifacts exist on disk:
-    assert.equal(existsSync(pausedMsg.journalFile), true, "Transition journal must exist on disk before commit");
-    assert.equal(existsSync(pausedMsg.targetStateFile), true, "Target state file was written before crash");
-    assert.equal(
-      readSessionPointer(path.join(base, "state"), "ses_r24")?.projectDir,
-      canonicalProjectPath(repoB),
-      "Session pointer points to Repo B prior to crash",
-    );
-
-    // Abruptly terminate the child process (SIGKILL)
+    // Abruptly terminate the child process (SIGKILL) while it holds Repo B's OS mutex
     const childExitPromise = new Promise((resolve) => crashChild.once("exit", resolve));
     crashChild.kill("SIGKILL");
     await childExitPromise;
 
-    // Now simulate restart: resolveStateFile + WorkflowState.load() must automatically reconcile the journal!
+    // Now simulate restart: session pointer, Repo A state, Focus #90, and Repo B must all be clean
     process.env.DEV_WORKFLOW_STATE_FILE = path.join(base, "state", "workflow-state.json");
     const resolvedAfterCrash = resolveStateFile({ sessionId: "ses_r24" });
     assert.equal(
       path.resolve(resolvedAfterCrash),
       path.resolve(pinnedStateFileA),
-      "resolveStateFile must synchronously restore session pointer to Repo A after crash",
+      "resolveStateFile must continue pointing to Repo A after crash before commit",
     );
 
     const wsRecovered = new WorkflowState(resolvedAfterCrash, { sessionId: "ses_r24" });
     await wsRecovered.load();
 
-    // 1. Journal file must be cleaned up after reconciliation
-    assert.equal(existsSync(pausedMsg.journalFile), false, "Journal file must be removed after reconciliation");
-
-    // 2. Repo A's original task and DoD evidence must be intact
+    // 1. Repo A's original task and DoD evidence must be intact
     assert.equal(wsRecovered.state.taskDescription, "Authoritative task on Repo A");
     assert.equal(wsRecovered.state.projectDir, repoA);
     assert.equal(wsRecovered.state.definitionOfDone[0].status, "done");
     assert.equal(wsRecovered.state.definitionOfDone[0].evidence, "Verified on Repo A");
 
-    // 3. Repo B's uncommitted state file, SQLite row, Focus #90 binding, and staged lock must all be rolled back!
-    assert.equal(existsSync(pausedMsg.targetStateFile), false, "Repo B uncommitted JSON state file must be removed");
+    // 2. Focus #90 binding and Repo B target state must have zero phantom artifacts
     assert.equal(
       readFocusBinding({ stateFile: wsRecovered.stateFile, focusId: 90 }),
       null,
-      "Focus #90 binding from crashed transition must be rolled back",
+      "Focus #90 binding from crashed transition must not exist",
     );
     assert.equal(
       readProcessLockDetailed({ dir: lockDirB }).status,
       "missing",
-      "Staged lock on Repo B from crashed transition must be released",
+      "Staged lock on Repo B from crashed transition must not exist",
     );
 
-    const probeBAfterCrash = new WorkflowState(pausedMsg.targetStateFile, { sessionId: "ses_r24" });
+    const probeBAfterCrash = new WorkflowState(stateFileB, { sessionId: "ses_r24" });
     await probeBAfterCrash.load();
     assert.equal(probeBAfterCrash.state.currentPhase, "idle");
     assert.equal(probeBAfterCrash.state.taskDescription, "");
@@ -2322,33 +2309,37 @@ test("R3-6 Legacy Admission Barrier & Fail-Closed Quiescence Inspection on EACCE
 test("Option B OS-Owned Kernel Mutex: Two real child processes are kernel-excluded and SIGKILL auto-releases mutex for immediate successor acquisition", async () => {
   await withWorkspace(async (base) => {
     const repo = await createRepo(base, "optb-repo");
-    const bucket = projectKey(canonicalProjectPath(repo));
-    const lockDir = path.join(base, "state", "projects", bucket);
-    await mkdir(lockDir, { recursive: true });
 
     const processLockUrl = pathToFileURL(path.resolve("process-lock.js")).href;
     const holderScript = `
-      import { acquireProcessLockAsync } from ${JSON.stringify(processLockUrl)};
-      const res = await acquireProcessLockAsync({ dir: process.env.TEST_LOCK_DIR });
-      process.send({ type: "ACQUIRED", acquired: res.acquired, leaseId: res.leaseId || null, pid: process.pid });
+      import { acquireWorktreeMutex } from ${JSON.stringify(processLockUrl)};
+      const res = await acquireWorktreeMutex({ projectDir: process.env.TEST_PROJECT_DIR });
+      process.send({
+        type: "ACQUIRED",
+        ok: res.ok,
+        token: res.capability?.token || null,
+        endpoint: res.endpoint || null,
+        pid: process.pid,
+      });
       setInterval(() => {}, 1000);
     `;
 
-    // 1. Child A acquires OS-owned kernel mutex + mcp-process.lock
+    // 1. Child A acquires OS-owned kernel mutex for canonical worktree
     const childA = spawn(process.execPath, ["--input-type=module", "-e", holderScript], {
-      env: { ...process.env, TEST_LOCK_DIR: lockDir },
+      env: { ...process.env, TEST_PROJECT_DIR: repo },
       stdio: ["ignore", "pipe", "pipe", "ipc"],
     });
     const msgA = await new Promise((resolve, reject) => {
       childA.once("message", resolve);
       childA.once("error", reject);
     });
-    assert.equal(msgA.acquired, true);
-    assert.ok(msgA.leaseId);
+    assert.equal(msgA.ok, true);
+    assert.ok(msgA.token);
+    assert.ok(msgA.endpoint);
 
-    // 2. Competing in-process/child acquisition on same bucket MUST be rejected by OS kernel mutex
-    const contender = await acquireProcessLockAsync({ dir: lockDir, mutexTimeoutMs: 20 });
-    assert.equal(contender.acquired, false);
+    // 2. Competing acquisition on same canonical worktree MUST be rejected by OS kernel mutex
+    const contender = await acquireWorktreeMutex({ projectDir: repo, timeoutMs: 20 });
+    assert.equal(contender.ok, false);
     assert.equal(contender.kernelMutexBusy, true);
     assert.equal(contender.reason, "foreign_lock");
 
@@ -2359,15 +2350,15 @@ test("Option B OS-Owned Kernel Mutex: Two real child processes are kernel-exclud
 
     // 4. Child B immediately acquires ownership cleanly without force or operator intervention
     const childB = spawn(process.execPath, ["--input-type=module", "-e", holderScript], {
-      env: { ...process.env, TEST_LOCK_DIR: lockDir },
+      env: { ...process.env, TEST_PROJECT_DIR: repo },
       stdio: ["ignore", "pipe", "pipe", "ipc"],
     });
     const msgB = await new Promise((resolve, reject) => {
       childB.once("message", resolve);
       childB.once("error", reject);
     });
-    assert.equal(msgB.acquired, true, "Successor Child B must acquire immediately after Child A SIGKILL");
-    assert.notEqual(msgB.leaseId, msgA.leaseId);
+    assert.equal(msgB.ok, true, "Successor Child B must acquire immediately after Child A SIGKILL");
+    assert.notEqual(msgB.token, msgA.token);
 
     const exitB = new Promise((resolve) => childB.once("exit", resolve));
     childB.kill("SIGKILL");

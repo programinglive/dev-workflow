@@ -29,6 +29,10 @@ import {
   PROCESS_INCARNATION_ID,
   GATE_FILENAME,
   ProjectOwnershipLostError,
+  assertWorktreeCapabilityLive,
+  useWorktreeCapability,
+  getHeldWorktreeCapability,
+  resolveCanonicalWorktreeRoot,
   currentIsAlive,
   currentIsHolderProcess,
   defaultIsHolderProcess,
@@ -1300,6 +1304,8 @@ export function pinSessionProject({
   focusId = null,
   expectedLeaseId = null,
   requireLease = false,
+  kernelCapability = null,
+  requireKernelMutex = false,
 }) {
   const target = canonicalProjectPath(projectDir);
   if (!target) {
@@ -1342,7 +1348,14 @@ export function pinSessionProject({
     }
   };
 
-  if (requireLease || expectedLeaseId || existsSync(path.join(projectDirPath, "mcp-process.lock"))) {
+  if (kernelCapability || requireKernelMutex) {
+    const cap = kernelCapability || getHeldWorktreeCapability(target);
+    assertWorktreeCapabilityLive(cap, {
+      operation: "pinSessionProject",
+      allowDrainingInFlight: true,
+    });
+    writePointer();
+  } else if (requireLease || expectedLeaseId) {
     withProjectOwnershipFence(
       {
         dir: projectDirPath,
@@ -1535,9 +1548,25 @@ async function acquireFocusLock({ baseDir, focusId, timeoutMs = FOCUS_LOCK_TIMEO
  * - Retirement is explicit: `retireFocusBinding` takes the same lock and removes
  *   the record. Nothing else deletes it.
  */
-export async function claimFocusBinding({ stateFile, focusId, projectDir, repoKey, timeoutMs } = {}) {
+export async function claimFocusBinding({
+  stateFile,
+  focusId,
+  projectDir,
+  repoKey,
+  timeoutMs,
+  kernelCapability = null,
+  requireKernelMutex = false,
+} = {}) {
   const id = Number(focusId);
   if (!Number.isSafeInteger(id) || id <= 0) return { ok: false, reason: "INVALID_FOCUS" };
+
+  if (kernelCapability || requireKernelMutex) {
+    const cap = kernelCapability || (projectDir ? getHeldWorktreeCapability(projectDir) : null);
+    assertWorktreeCapabilityLive(cap, {
+      operation: "claimFocusBinding",
+      allowDrainingInFlight: true,
+    });
+  }
 
   const baseDir = resolveBaseDirFromState(stateFile);
   const lock = await acquireFocusLock({ baseDir, focusId: id, timeoutMs });
@@ -2643,6 +2672,9 @@ export class WorkflowState {
 
     // Lease kepemilikan proyek yang terikat ke instance WorkflowState ini (F5).
     this.boundLockLease = options.boundLockLease || null;
+    // Live OS-owned kernel mutex capability (Option B).
+    this.boundKernelCapability = options.boundKernelCapability || null;
+    this.requireKernelMutex = Boolean(options.requireKernelMutex || this.boundKernelCapability);
     // Antrean serialisasi in-process supaya panggilan async berbarengan tidak
     // mengacak-acak `this.state` / `this.stateFile` / `this.stateVersion`.
     this._opQueue = Promise.resolve();
@@ -2802,18 +2834,63 @@ export class WorkflowState {
     };
   }
 
+  bindKernelCapability(capability) {
+    this.boundKernelCapability = capability || null;
+    if (capability) {
+      this.requireKernelMutex = true;
+    }
+    return this.boundKernelCapability;
+  }
+
+  _resolveKernelCapability() {
+    if (this.boundKernelCapability) {
+      return this.boundKernelCapability;
+    }
+    if (this.state?.projectDir) {
+      return getHeldWorktreeCapability(this.state.projectDir);
+    }
+    return null;
+  }
+
+  _assertKernelOwnership(operation, { allowDrainingInFlight = false } = {}) {
+    if (!this.requireKernelMutex && !this.boundKernelCapability) {
+      return null;
+    }
+    const cap = this._resolveKernelCapability();
+    assertWorktreeCapabilityLive(cap, { operation, allowDrainingInFlight });
+    if (this.state?.projectDir) {
+      const wt = resolveCanonicalWorktreeRoot(this.state.projectDir);
+      if (wt.ok && wt.canonicalKey !== cap.canonicalKey) {
+        throw new ProjectOwnershipLostError(
+          `Project ownership mismatch before ${operation}: capability is for "${cap.worktreeRoot}", not "${wt.worktreeRoot}".`,
+          { operation, capabilityWorktree: cap.worktreeRoot, targetWorktree: wt.worktreeRoot },
+        );
+      }
+    }
+    return cap;
+  }
+
   async _withOwnershipFence(operation, fn) {
-    const ctx = this._resolveFencingContext();
-    return await withProjectOwnershipFence(
-      {
-        dir: ctx.dir,
-        stateFile: this.stateFile,
-        expectedLeaseId: ctx.expectedLeaseId,
-        requireLease: ctx.requireLease,
-        operation,
-      },
-      fn,
-    );
+    const cap = this._assertKernelOwnership(operation, { allowDrainingInFlight: false });
+    const fence = this._resolveFencingContext();
+    const runWithLeaseFence = async () => {
+      if (fence.requireLease || this.boundLockLease) {
+        return await withProjectOwnershipFence(
+          {
+            dir: fence.dir,
+            expectedLeaseId: fence.expectedLeaseId,
+            requireLease: fence.requireLease,
+            operation,
+          },
+          fn,
+        );
+      }
+      return await fn();
+    };
+    if (cap) {
+      return await useWorktreeCapability(cap, runWithLeaseFence, { operation });
+    }
+    return await runWithLeaseFence();
   }
 
   /**
@@ -3340,6 +3417,7 @@ export class WorkflowState {
     // diukur di mesin ini: 96 KB per simpan, 74% di antaranya riwayat, dan
     // angkanya naik terus seiring usia proyek - di jalur terpanas sistem.
     const { history: _omitHistory, ...persistedState } = this.state;
+    this._assertKernelOwnership("save_commit", { allowDrainingInFlight: true });
 
     try {
       written = await db.saveStateVersioned({
@@ -4136,34 +4214,36 @@ export class WorkflowState {
    * proyek diam-diam berhenti tersimpan sama sekali.
    */
   async syncToDatabase(options = {}) {
-    assertSafeKnowledge(this.state);
-    const db = options.db ?? (await import("./db/index.js"));
-    const userId = getCurrentUserId(this.stateFile);
-    // projectRoot dipakai sebagai identitas proyek di database. Ditentukan
-    // lewat resolveProjectRootForState, bukan dengan menghitung `dirname`
-    // berkali-kali: jumlah itu hanya benar untuk satu kedalaman tertentu.
-    const projectRoot = resolveProjectRootForState(this.stateFile);
+    return await this._withOwnershipFence("syncToDatabase", async () => {
+      assertSafeKnowledge(this.state);
+      const db = options.db ?? (await import("./db/index.js"));
+      const userId = getCurrentUserId(this.stateFile);
+      // projectRoot dipakai sebagai identitas proyek di database. Ditentukan
+      // lewat resolveProjectRootForState, bukan dengan menghitung `dirname`
+      // berkali-kali: jumlah itu hanya benar untuk satu kedalaman tertentu.
+      const projectRoot = resolveProjectRootForState(this.stateFile);
 
-    let skipped = 0;
-    for (const entry of this.state.history || []) {
-      try {
-        await db.insertHistoryEntry(userId, projectRoot, entry);
-      } catch (error) {
-        skipped++;
-        safeLog("error", "History entry skipped:", error.message);
+      let skipped = 0;
+      for (const entry of this.state.history || []) {
+        try {
+          await db.insertHistoryEntry(userId, projectRoot, entry);
+        } catch (error) {
+          skipped++;
+          safeLog("error", "History entry skipped:", error.message);
+        }
       }
-    }
-    if (skipped > 0) {
-      safeLog("error", `History sync skipped ${skipped} entr${skipped === 1 ? "y" : "ies"}.`);
-    }
+      if (skipped > 0) {
+        safeLog("error", `History sync skipped ${skipped} entr${skipped === 1 ? "y" : "ies"}.`);
+      }
 
-    try {
-      await db.updateSummaryForUser(userId, projectRoot);
-      await db.saveState(userId, projectRoot, this.state);
-    } catch (error) {
-      // Ringkasan dan state tetap opsional: jangan pernah menggagalkan save().
-      safeLog("error", "Database sync failed:", error.message);
-    }
+      try {
+        await db.updateSummaryForUser(userId, projectRoot);
+        await db.saveState(userId, projectRoot, this.state);
+      } catch (error) {
+        // Ringkasan dan state tetap opsional: jangan pernah menggagalkan save().
+        safeLog("error", "Database sync failed:", error.message);
+      }
+    });
   }
 
   generateProjectSummaryData() {

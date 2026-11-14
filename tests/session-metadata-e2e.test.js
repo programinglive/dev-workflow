@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, rm, writeFile, readdir } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { once } from "node:events";
@@ -81,6 +81,10 @@ function startServer(env, cwd) {
 
 test("MCP SDK meneruskan _meta sessionID sampai ke state di disk", async () => {
   const projectRoot = await mkdtemp(path.join(tmpdir(), "mcp-meta-e2e-"));
+  const repoA = path.join(projectRoot, "repo-a");
+  const repoB = path.join(projectRoot, "repo-b");
+  await mkdir(path.join(repoA, ".git"), { recursive: true });
+  await mkdir(path.join(repoB, ".git"), { recursive: true });
   await writeFile(path.join(projectRoot, "package.json"), JSON.stringify({ name: "fixture" }));
 
   const server = startServer({
@@ -102,7 +106,12 @@ test("MCP SDK meneruskan _meta sessionID sampai ke state di disk", async () => {
       method: "tools/call",
       params: {
         name: "start_task",
-        arguments: { description: "Task sesi A lewat stdio", type: "feature" },
+        arguments: {
+          description: "Task sesi A lewat stdio",
+          type: "feature",
+          projectDir: repoA,
+          definitionOfDone: ["done A"],
+        },
         _meta: { [SESSION_META_KEY]: "ses_E2E_AAA" },
       },
     });
@@ -113,7 +122,14 @@ test("MCP SDK meneruskan _meta sessionID sampai ke state di disk", async () => {
       method: "tools/call",
       params: {
         name: "start_task",
-        arguments: { description: "Task sesi B lewat stdio", type: "bugfix" },
+        arguments: {
+          description: "Task sesi B lewat stdio",
+          type: "bugfix",
+          projectDir: repoB,
+          definitionOfDone: ["done B"],
+          allowProjectSwitch: true,
+          projectSwitchReason: "Testing distinct session key isolation",
+        },
         _meta: { [SESSION_META_KEY]: "ses_E2E_BBB" },
       },
     });

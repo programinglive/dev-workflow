@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -139,6 +139,7 @@ test("acquireProcessLock mencatat detak pertama saat mengambil alih", async () =
 
 test("start_task menolak saat proses MCP lain masih aktif di proyek yang sama", async () => {
   await withTempDir(async (dir) => {
+    await mkdir(path.join(dir, ".git"), { recursive: true });
     const stateFile = path.join(dir, "state.json");
     const state = new WorkflowState(stateFile);
     await state.load();
@@ -151,7 +152,7 @@ test("start_task menolak saat proses MCP lain masih aktif di proyek yang sama", 
         request: {
           params: {
             name: "start_task",
-            arguments: { description: "Kerjakan sesuatu", type: "feature", definitionOfDone: ["build lulus"] },
+            arguments: { description: "Kerjakan sesuatu", type: "feature", definitionOfDone: ["build lulus"], projectDir: dir },
           },
         },
         normalizeRequestArgs,
@@ -162,10 +163,8 @@ test("start_task menolak saat proses MCP lain masih aktif di proyek yang sama", 
       });
       const out = response?.content?.[0]?.text || "";
 
-      assert.match(out, /sesi lain sedang mengerjakan proyek ini/);
       assert.match(out, /PID 4242/);
-      assert.match(out, /MMCH/);
-      assert.match(out, /force/);
+      assert.match(out, /legacy|Option B|sesi lain/i);
       assert.equal(state.state.taskDescription, "", "task tidak boleh dimulai");
       assert.equal(state.state.currentPhase, "idle");
     } finally {
@@ -176,6 +175,7 @@ test("start_task menolak saat proses MCP lain masih aktif di proyek yang sama", 
 
 test("start_task tetap boleh jalan saat pemegang penanda lain sudah mati", async () => {
   await withTempDir(async (dir) => {
+    await mkdir(path.join(dir, ".git"), { recursive: true });
     const stateFile = path.join(dir, "state.json");
     const state = new WorkflowState(stateFile);
     await state.load();
@@ -192,7 +192,7 @@ test("start_task tetap boleh jalan saat pemegang penanda lain sudah mati", async
         request: {
           params: {
             name: "start_task",
-            arguments: { description: "Kerjakan sesuatu", type: "feature", definitionOfDone: ["build lulus"] },
+            arguments: { description: "Kerjakan sesuatu", type: "feature", definitionOfDone: ["build lulus"], projectDir: dir },
           },
         },
         normalizeRequestArgs,
@@ -210,8 +210,9 @@ test("start_task tetap boleh jalan saat pemegang penanda lain sudah mati", async
   });
 });
 
-test("force true melewati penolakan dan tetap mencatat task", async () => {
+test("Option B menolak force true saat pemegang aktif masih hidup", async () => {
   await withTempDir(async (dir) => {
+    await mkdir(path.join(dir, ".git"), { recursive: true });
     const stateFile = path.join(dir, "state.json");
     const state = new WorkflowState(stateFile);
     await state.load();
@@ -228,6 +229,7 @@ test("force true melewati penolakan dan tetap mencatat task", async () => {
               description: "Kerjakan sesuatu",
               type: "feature",
               definitionOfDone: ["build lulus"],
+              projectDir: dir,
               force: true,
             },
           },
@@ -239,8 +241,8 @@ test("force true melewati penolakan dan tetap mencatat task", async () => {
         utils: testUtils,
       });
 
-      assert.match(response?.content?.[0]?.text || "", /Task Started/);
-      assert.equal(state.state.currentPhase, "coding");
+      assert.match(response?.content?.[0]?.text || "", /Dibatalkan|Refused/i);
+      assert.equal(state.state.currentPhase, "idle");
     } finally {
       await state.close();
     }

@@ -1,5 +1,5 @@
 import { exec as execCallback, execFile as execFileCallback } from "child_process";
-import { existsSync } from "fs";
+import { existsSync, statSync } from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { sanitize } from './security/sanitizer.js';
@@ -152,19 +152,39 @@ function repoRootOrThrow(dir, message) {
  * `source` dan `conflict` dipakai tool untuk memberi tahu pengguna repo mana
  * yang dipakai - dan kapan ia kemungkinan salah.
  */
+function assertExistingDirectory(dir, label = "Direktori") {
+  const trimmed = typeof dir === "string" ? dir.trim() : "";
+  if (!trimmed || trimmed.includes("\0")) {
+    throw new Error(`${label} "${dir}" tidak valid.`);
+  }
+  const resolved = path.resolve(trimmed);
+  let stat = null;
+  try {
+    stat = statSync(resolved);
+  } catch {
+    stat = null;
+  }
+  if (!stat || !stat.isDirectory()) {
+    throw new Error(`${label} "${resolved}" tidak ada atau bukan direktori yang valid.`);
+  }
+  return resolved;
+}
+
 export function resolveProjectDir({ explicit = "", pinned = "", env = process.env, candidates = [] } = {}) {
   if (explicit) {
+    const resolvedExplicit = assertExistingDirectory(explicit, "projectDir");
     return {
-      dir: repoRootOrThrow(explicit, `Direktori "${explicit}" bukan repo git (tidak ada .git).`),
+      dir: repoRootOrThrow(resolvedExplicit, `Direktori "${explicit}" bukan repo git (tidak ada .git).`),
       source: "explicit",
       conflict: null,
     };
   }
 
   if (pinned) {
+    const resolvedPinned = assertExistingDirectory(pinned, "projectDir sesi");
     return {
       dir: repoRootOrThrow(
-        pinned,
+        resolvedPinned,
         `projectDir sesi "${pinned}" bukan repo git (tidak ada .git). ` +
         "Perbaiki dengan memanggil 'start_task' lagi dengan projectDir yang benar.",
       ),
