@@ -165,3 +165,49 @@ process.once('exit', () => releaseActiveProcessLock({ fallbackDir: lockDir }));
 | Lease token fencing | Monotonic `leaseId` check in heartbeat/release | Scenario H |
 | Backward compatibility | Normalized `projectKey` & bucket resolution | Scenario G |
 | Multi-process CLI validation | Child processes executing CLI `start_task` | Scenario I |
+| R2-1 Gate recovery safety | Fail-closed `LOCK_GATE_ABANDONED` + explicit `recoverAbandonedLockGate` under `mcp-process.gate.recover.lock` | R2-1 (two-process IPC barrier) |
+| R2-2 Async reentrant release | Unified `releaseGateEntry` on `entry.count === 0` | R2-2 (out-of-order inner/outer async release) |
+| R2-3 Async execution-context isolation | `AsyncLocalStorage` (`gateExecutionStorage` & `serializedExecutionStorage`) + `inProcessGateQueues` | R2-3 (concurrent Request A & Request B at `await`) |
+| R2-4 Durable transition & crash recovery | `<base>/sessions/transition-<sessionKey>.journal.json` + `markTransitionJournalCommitted` + `rollbackTransitionJournal` + `reconcilePendingTransitionJournals` | R2-4 (post-save failure + `SIGKILL` crash recovery) |
+| R2-5 Legacy exclusion & fleet quiescence | Unconditional `<base>/projects/*/mcp-process.lock` scan + `verifyLegacyFleetQuiescence` | R2-5 (missing/outdated session pointer + quiescence gate) |
+
+---
+
+## 5. Round 2 Concurrency & Durability Hardening (`R2-1` – `R2-5`)
+
+### 5.1 R2-1: Fail-Closed Gate Acquisition & Controlled Abandoned-Gate Recovery
+- **Elimination of Pathname Recovery Races in Normal Acquisition:** `acquireLockGate` **never** calls `renameSync` or `unlinkSync` on an existing `mcp-process.gate.lock`. If the recorded gate holder process is confirmed dead (or the gate remains unreadable past `gateCorruptGraceMs`), `acquireLockGate` fails closed and returns `{ acquired: false, error: "LOCK_GATE_ABANDONED", abandoned: true, holder }`.
+- **Controlled Operator-Authorized Recovery (`recoverAbandonedLockGate`):** Recovery of an abandoned gate requires an explicit call to `recoverAbandonedLockGate({ dir, expectedToken, authorizeAbandonedGateRecovery: true })`:
+  1. Enforces `authorizeAbandonedGateRecovery === true` and a non-empty `expectedToken` matching the abandoned gate's `gateToken`.
+  2. Acquires an exclusive recovery mutex file `mcp-process.gate.recover.lock` (`GATE_RECOVER_FILENAME`) via `publishCompleteJsonFile`. Normal `acquireLockGate` yields while `mcp-process.gate.recover.lock` is held by a live recovery process.
+  3. Re-reads `mcp-process.gate.lock` inside the recovery lock, re-verifies `existing.gateToken === expectedToken`, confirms the holder is dead, and only then renames `mcp-process.gate.lock` to a tombstone and unlinks it. A delayed second recovery process sees `gate_token_mismatch` and cannot affect a successor's newly acquired gate.
+
+### 5.2 R2-2 & R2-3: Execution-Context-Scoped Async Ownership & Last-Holder Gate Cleanup
+- **`AsyncLocalStorage` Execution Context Scoping:**
+  - `process-lock.js` uses `gateExecutionStorage = new AsyncLocalStorage()` instead of a process-wide `Map` for re-entrancy detection. `acquireLockGate` and `withLockGate` recognize a call as re-entrant **only** if `gateExecutionStorage.getStore()?.get(resolvedDir)` is present in the caller's async execution chain and its `entry.closed === false`.
+  - `workflow-state.js` uses `serializedExecutionStorage = new AsyncLocalStorage()` in `WorkflowState.prototype.runSerialized(fn)` instead of an instance-wide `this._inSerializedOp` counter. Independent requests arriving while an operation is suspended at an `await` never bypass `this._opQueue` or `inProcessGateQueues`.
+- **Last-Holder Gate Release (`releaseGateEntry`):**
+  - Both outer (`reentrant: false`) and nested (`reentrant: true`) gate handles invoke `releaseGateEntry(resolvedDir, entry)` with an idempotent per-handle guard.
+  - When any handle releases, `entry.count` is decremented (`entry.count -= 1`). When and only when `entry.count === 0` (the last valid holder in the execution tree exits), `entry.closed = true` is set and `mcp-process.gate.lock` is verified by `gateToken` and unlinked.
+
+### 5.3 R2-4: Durable Transition Journal, Authoritative Commit Point, and Crash Recovery
+- **Pre-Mutation Durable Journal (`beginTransitionJournal`):** Before `handleStartTask` mutates session pointers, focus bindings, or target/source state files, it writes a durable transition journal to `<base>/sessions/transition-<sessionKey>.journal.json` containing:
+  - `status: "pending"`
+  - Pre-transition snapshots of source and target JSON files (`sourceStateSnap`, `targetStateSnap`, `targetHistorySnap`, `targetSummarySnap`)
+  - Pre-transition SQLite row snapshots (`sourceDbSnapshot` and `targetDbSnapshot` read from `workflow.db`)
+  - `priorSessionPointer`, `priorFocusBinding`, and `stagedLock` metadata (`fromDir`, `toDir`, `targetLease`, `priorLease`).
+- **Explicit Authoritative Commit Point:**
+  - After `workflowState.save({ allowReplaceRunningTask: true })` and optional `afterSave` verification complete, `handleStartTask` reaches the single authoritative commit point:
+    1. `markTransitionJournalCommitted(transitionJournal)` atomically persists `status: "committed"` to the journal file.
+    2. `commitProcessLockTransition(stagedLock)` releases the prior startup/source project lock lease and binds the target project lease.
+    3. `completeTransitionJournal(transitionJournal)` removes the completed journal file.
+- **Post-Save Rollback & Automatic Restart Reconciliation:**
+  - If any error is thrown before `markTransitionJournalCommitted` (including after `workflowState.save()` has already written to `targetStateFile` and target `workflow.db`), `rollbackTransitionJournal` restores **both** the target project (`targetDbSnapshot`, `targetStateSnap`, `targetHistorySnap`, `targetSummarySnap`) and the source project (`sourceDbSnapshot`, `sourceStateSnap`), restores `priorSessionPointer` and `priorFocusBinding`, and rolls back `stagedLock` so zero phantom tasks or locks remain in `targetLockDir`.
+  - If a process crashes (`SIGKILL`) before `markTransitionJournalCommitted`, the next process calling `resolveStateFile` (`reconcilePendingTransitionJournalsSync`) or `WorkflowState.load()` (`reconcilePendingTransitionJournals`) detects the orphaned `status: "pending"` journal whose `pid` is no longer alive (or is the current recovering session) and deterministically rolls back all uncommitted target/source artifacts before serving state.
+
+### 5.4 R2-5: Full-Root Legacy Writer Exclusion & Fleet Quiescence Verification
+- **Unconditional Shared-Root Legacy Lock Scan (`detectIncompatibleLegacyWriters`):**
+  - Because legacy v1 processes (which write `mcp-process.lock` without `leaseId` or `protocolVersion: 2`) may run in an unpinned startup bucket without ever creating `<base>/sessions/<sessionId>.json`, or may have an outdated session pointer pointing to a previous repository, `detectIncompatibleLegacyWriters` unconditionally enumerates **all** `<base>/projects/*/mcp-process.lock` files whenever `toDir` is inside a `.state/projects/<bucket>` layout (in addition to scanning `<base>/sessions/*.json` and foreign state files in `toDir`).
+  - Any live legacy v1 lock anywhere under `<base>/projects/*` causes `acquireProcessLock`, `stageProcessLockTransition`, and `handleStartTask` to fail closed with `reason: "legacy_writer_active"`.
+- **Pre-Cutover Fleet Quiescence Verifier (`verifyLegacyFleetQuiescence`):**
+  - Scans `<base>/projects/*` and `<base>/sessions/*` and reports `{ quiescent, legacyWriters, abandonedGates, pendingJournals }` so release automation or operators can verify zero active legacy v1 processes, zero abandoned gates, and zero pending transition journals before or after fleet cutover.

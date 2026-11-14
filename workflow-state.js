@@ -1,6 +1,7 @@
 import { safeLog } from './security/sanitizer.js';
 import fs from "fs/promises";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, realpathSync, unlinkSync, linkSync, renameSync } from "fs";
+import { AsyncLocalStorage } from "node:async_hooks";
 import os from "os";
 import path from "path";
 import { assertSafeKnowledge } from './security/policy.js';
@@ -14,13 +15,17 @@ import { captureRepository } from './repository.js';
 import { normalizePlan } from './tools/handler-modules/plan.js';
 import { fileURLToPath } from "url";
 import { pathToFileURL } from "url";
-import { createHash } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import {
   projectLockDir,
   withProjectOwnershipFence,
   verifyProjectOwnership,
   getHeldLeaseForDir,
   readProcessLock,
+  releaseProcessLock,
+  recoverAbandonedLockGate,
+  PROCESS_INCARNATION_ID,
+  GATE_FILENAME,
   ProjectOwnershipLostError,
   currentIsAlive,
   currentIsHolderProcess,
@@ -28,6 +33,9 @@ import {
 } from "./process-lock.js";
 
 export { ProjectOwnershipLostError };
+
+/** Konteks eksekusi asinkron untuk serialisasi per-instans WorkflowState (R2-3). */
+const serializedExecutionStorage = new AsyncLocalStorage();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -832,6 +840,10 @@ export function resolveStateFile({ sessionId = null } = {}) {
      */
     const baseDir = path.dirname(resolvedCustom);
     const sessionKey = resolveSessionKey(process.env, sessionId);
+
+    // R2-4: Rekonsiliasi sinkron atas jurnal transisi yang belum komit milik
+    // proses yang sudah mati sebelum membaca penunjuk sesi.
+    reconcilePendingTransitionJournalsSync({ baseDir });
 
     /*
      * MENGAPA ADA PENUNJUK PER SESI
@@ -1668,6 +1680,547 @@ export async function restoreFocusBindingSnapshot(snapshot) {
   }
 }
 
+function transitionJournalPath(baseDir, sessionKey) {
+  return path.join(baseDir, SESSIONS_DIR, `transition-${sessionKey}.journal.json`);
+}
+
+function writeJournalFileAtomic(journalFile, payload) {
+  mkdirSync(path.dirname(journalFile), { recursive: true });
+  const tmpFile = `${journalFile}.tmp.${process.pid}.${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+  writeFileSync(tmpFile, JSON.stringify(payload, null, 2), "utf8");
+  renameSync(tmpFile, journalFile);
+}
+
+function captureFileSnapshot(filePath) {
+  if (!filePath) return { file: null, existed: false, raw: null };
+  const resolved = path.resolve(filePath);
+  try {
+    if (!existsSync(resolved)) {
+      return { file: resolved, existed: false, raw: null };
+    }
+    return { file: resolved, existed: true, raw: readFileSync(resolved, "utf8") };
+  } catch {
+    return { file: resolved, existed: false, raw: null };
+  }
+}
+
+function restoreFileSnapshot(snap) {
+  if (!snap || !snap.file) return;
+  try {
+    if (!snap.existed || snap.raw === null) {
+      if (existsSync(snap.file)) unlinkSync(snap.file);
+    } else {
+      mkdirSync(path.dirname(snap.file), { recursive: true });
+      const tmp = `${snap.file}.restore.${process.pid}.${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+      writeFileSync(tmp, snap.raw, "utf8");
+      renameSync(tmp, snap.file);
+    }
+  } catch {}
+}
+
+function restoreFocusBindingSnapshotSync(snapshot) {
+  if (!snapshot || !snapshot.applicable || !snapshot.file) return false;
+  try {
+    if (snapshot.raw === null) {
+      if (existsSync(snapshot.file)) unlinkSync(snapshot.file);
+    } else {
+      mkdirSync(path.dirname(snapshot.file), { recursive: true });
+      writeFileSync(snapshot.file, snapshot.raw, "utf8");
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function captureDbRowSnapshot(stateFile, sessionKey) {
+  if (!stateFile) return null;
+  const resolved = path.resolve(stateFile);
+  const userId = getCurrentUserId(resolved);
+  const projectPath = normalizeProjectPath(resolveProjectRootForState(resolved));
+  try {
+    const mod = await import("./db/index.js");
+    const db = await mod.getLocalAdapter({ stateFile: resolved });
+    await db.connect();
+    const rawRow = db.db
+      .prepare(
+        "SELECT state_json, version, updated_at FROM workflow_state WHERE user_id = ? AND project_path = ? AND session_key = ?",
+      )
+      .get(userId, projectPath, sessionKey);
+    const summaryRow = db.db
+      .prepare(
+        "SELECT total_tasks, task_types, last_active, updated_at, recent_tasks FROM project_summary WHERE user_id = ? AND project_path = ?",
+      )
+      .get(userId, projectPath);
+    return {
+      stateFile: resolved,
+      userId,
+      projectPath,
+      sessionKey,
+      existed: Boolean(rawRow),
+      stateJson: rawRow ? rawRow.state_json : null,
+      version: rawRow ? rawRow.version : null,
+      updatedAt: rawRow ? rawRow.updated_at : null,
+      summaryExisted: Boolean(summaryRow),
+      summaryRow: summaryRow || null,
+    };
+  } catch {
+    return {
+      stateFile: resolved,
+      userId,
+      projectPath,
+      sessionKey,
+      existed: false,
+      stateJson: null,
+      version: null,
+      updatedAt: null,
+      summaryExisted: false,
+      summaryRow: null,
+    };
+  }
+}
+
+async function restoreDbRowSnapshot(dbSnap) {
+  if (!dbSnap || !dbSnap.stateFile) return false;
+  try {
+    const mod = await import("./db/index.js");
+    const db = await mod.getLocalAdapter({ stateFile: dbSnap.stateFile });
+    await db.connect();
+    if (!dbSnap.existed || dbSnap.stateJson === null) {
+      db.db
+        .prepare(
+          "DELETE FROM workflow_state WHERE user_id = ? AND project_path = ? AND session_key = ?",
+        )
+        .run(dbSnap.userId, dbSnap.projectPath, dbSnap.sessionKey);
+      db.db
+        .prepare(
+          "DELETE FROM state_writer WHERE user_id = ? AND project_path = ? AND session_key = ?",
+        )
+        .run(dbSnap.userId, dbSnap.projectPath, dbSnap.sessionKey);
+    } else {
+      db.db
+        .prepare(
+          `INSERT INTO workflow_state (user_id, project_path, session_key, state_json, version, updated_at)
+           VALUES (?, ?, ?, ?, ?, COALESCE(?, datetime('now')))
+           ON CONFLICT(user_id, project_path, session_key) DO UPDATE SET
+             state_json = excluded.state_json,
+             version = excluded.version,
+             updated_at = excluded.updated_at`,
+        )
+        .run(
+          dbSnap.userId,
+          dbSnap.projectPath,
+          dbSnap.sessionKey,
+          dbSnap.stateJson,
+          dbSnap.version,
+          dbSnap.updatedAt,
+        );
+    }
+
+    if (!dbSnap.summaryExisted || !dbSnap.summaryRow) {
+      db.db
+        .prepare("DELETE FROM project_summary WHERE user_id = ? AND project_path = ?")
+        .run(dbSnap.userId, dbSnap.projectPath);
+    } else {
+      db.db
+        .prepare(
+          `INSERT INTO project_summary (user_id, project_path, total_tasks, task_types, last_active, updated_at, recent_tasks)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(user_id, project_path) DO UPDATE SET
+             total_tasks = excluded.total_tasks,
+             task_types = excluded.task_types,
+             last_active = excluded.last_active,
+             updated_at = excluded.updated_at,
+             recent_tasks = excluded.recent_tasks`,
+        )
+        .run(
+          dbSnap.userId,
+          dbSnap.projectPath,
+          dbSnap.summaryRow.total_tasks,
+          dbSnap.summaryRow.task_types,
+          dbSnap.summaryRow.last_active,
+          dbSnap.summaryRow.updated_at,
+          dbSnap.summaryRow.recent_tasks,
+        );
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Memulai jurnal transisi tahan-banting (durable transition journal) sebelum
+ * memutasi focus, penunjuk sesi, atau berkas state target (R2-4).
+ */
+export async function beginTransitionJournal({
+  sourceStateFile,
+  targetStateFile,
+  sessionId = null,
+  focusId = null,
+  stagedLock = null,
+  priorStateSnapshot = null,
+  priorStateVersion = null,
+  priorLoadedTask = "",
+  priorBoundLease = null,
+  priorActiveProjectDir = "",
+} = {}) {
+  const resolvedSource = path.resolve(String(sourceStateFile || ""));
+  const resolvedTarget = path.resolve(String(targetStateFile || resolvedSource));
+  const isPinned = resolvedSource.split(path.sep).includes(PROJECTS_DIR) || resolvedTarget.split(path.sep).includes(PROJECTS_DIR);
+  const baseDir = isPinned
+    ? resolveBaseDirFromState(resolvedTarget.split(path.sep).includes(PROJECTS_DIR) ? resolvedTarget : resolvedSource)
+    : path.dirname(resolvedSource);
+  const sessionKey = sessionKeyFromStateFile(resolvedSource) || resolveSessionKey(process.env, sessionId);
+  const journalFile = transitionJournalPath(baseDir, sessionKey);
+
+  const sourceHistoryFile = resolveHistoryFile(resolvedSource);
+  const sourceSummaryFile = path.join(path.dirname(resolvedSource), PROJECT_SUMMARY_FILENAME);
+  const targetHistoryFile = resolveHistoryFile(resolvedTarget);
+  const targetSummaryFile = path.join(path.dirname(resolvedTarget), PROJECT_SUMMARY_FILENAME);
+
+  const sourceDbSnapshot = await captureDbRowSnapshot(resolvedSource, sessionKey);
+  const targetDbSnapshot =
+    resolvedTarget === resolvedSource
+      ? sourceDbSnapshot
+      : await captureDbRowSnapshot(resolvedTarget, sessionKey);
+
+  const journal = {
+    journalId: randomUUID(),
+    phase: "STAGED",
+    pid: process.pid,
+    incarnationId: PROCESS_INCARNATION_ID,
+    startedAt: Date.now(),
+    baseDir,
+    sessionKey,
+    journalFile,
+    sourceStateFile: resolvedSource,
+    sourceHistoryFile,
+    targetStateFile: resolvedTarget,
+    targetHistoryFile,
+    sourceStateSnap: captureFileSnapshot(resolvedSource),
+    sourceHistorySnap: captureFileSnapshot(sourceHistoryFile),
+    sourceSummarySnap: captureFileSnapshot(sourceSummaryFile),
+    targetStateSnap: captureFileSnapshot(resolvedTarget),
+    targetHistorySnap: captureFileSnapshot(targetHistoryFile),
+    targetSummarySnap: captureFileSnapshot(targetSummaryFile),
+    sourceDbSnapshot,
+    targetDbSnapshot,
+    priorSessionPointer: captureSessionPointerSnapshot(resolvedSource),
+    priorFocusBinding:
+      Number.isSafeInteger(Number(focusId)) && Number(focusId) > 0
+        ? captureFocusBindingSnapshot({ stateFile: resolvedSource, focusId: Number(focusId) })
+        : null,
+    fromLockDir: stagedLock?.fromDir || null,
+    fromLeaseId:
+      stagedLock?.heldSourceLease?.leaseId ||
+      stagedLock?.previousLease?.leaseId ||
+      null,
+    toLockDir: stagedLock?.dir || null,
+    toLeaseId: stagedLock?.leaseId || null,
+    relocatedLock: Boolean(stagedLock?.relocated),
+    priorInMemory: {
+      state: priorStateSnapshot,
+      stateVersion: priorStateVersion,
+      loadedTask: priorLoadedTask,
+      boundLease: priorBoundLease,
+      activeProjectDir: priorActiveProjectDir,
+    },
+  };
+
+  try {
+    writeJournalFileAtomic(journalFile, journal);
+  } catch {}
+
+  return journal;
+}
+
+/**
+ * Titik Komit Otoritatif (Authoritative Commit Point) untuk transisi (R2-4).
+ * Begitu jurnal ditandai `COMMITTED`, rekonsiliasi pasca-crash akan menyelesaikan
+ * transisi ke depan (melepas lock asal), bukan memutar balik ke proyek asal.
+ */
+export function markTransitionJournalCommitted(journal) {
+  if (!journal || !journal.journalFile) return false;
+  journal.phase = "COMMITTED";
+  journal.committedAt = Date.now();
+  try {
+    writeJournalFileAtomic(journal.journalFile, journal);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function completeTransitionJournal(journal) {
+  if (!journal || !journal.journalFile) return false;
+  try {
+    if (existsSync(journal.journalFile)) {
+      unlinkSync(journal.journalFile);
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function releaseOrphanedLockFromJournal(dir, expectedLeaseId, deadPid) {
+  if (!dir || !expectedLeaseId) return false;
+  const resolvedDir = path.resolve(dir);
+  const gateFile = path.join(resolvedDir, GATE_FILENAME);
+  if (existsSync(gateFile)) {
+    try {
+      const gateData = JSON.parse(readFileSync(gateFile, "utf8"));
+      if (gateData && gateData.pid === deadPid && gateData.token) {
+        recoverAbandonedLockGate({
+          dir: resolvedDir,
+          expectedToken: gateData.token,
+          authorizeAbandonedGateRecovery: true,
+        });
+      }
+    } catch {}
+  }
+  const lock = readProcessLock({ dir: resolvedDir });
+  if (lock && lock.leaseId === expectedLeaseId) {
+    return releaseProcessLock({
+      dir: resolvedDir,
+      pid: lock.pid,
+      leaseId: expectedLeaseId,
+      preserveRemembered: true,
+    });
+  }
+  return false;
+}
+
+function rollbackJournalFilesAndLocksSync(journal, { isCrashRecovery = false } = {}) {
+  if (!journal) return;
+
+  if (journal.targetStateFile && journal.targetStateFile !== journal.sourceStateFile) {
+    restoreFileSnapshot(journal.targetStateSnap);
+    restoreFileSnapshot(journal.targetHistorySnap);
+    restoreFileSnapshot(journal.targetSummarySnap);
+  }
+  restoreFileSnapshot(journal.sourceStateSnap);
+  restoreFileSnapshot(journal.sourceHistorySnap);
+  restoreFileSnapshot(journal.sourceSummarySnap);
+
+  if (journal.priorSessionPointer) {
+    restoreSessionPointerSnapshot(journal.priorSessionPointer);
+  }
+  if (journal.priorFocusBinding) {
+    restoreFocusBindingSnapshotSync(journal.priorFocusBinding);
+  }
+
+  if (isCrashRecovery && journal.relocatedLock && journal.toLockDir && journal.toLockDir !== journal.fromLockDir) {
+    releaseOrphanedLockFromJournal(journal.toLockDir, journal.toLeaseId, journal.pid);
+  }
+}
+
+/**
+ * Memutar balik seluruh perubahan transisi (baik target maupun asal) secara
+ * idempoten ketika langkah transisi gagal sebelum `COMMITTED` (R2-4).
+ */
+export async function rollbackTransitionJournal(
+  journal,
+  { workflowState = null, stagedLock = null, setActiveProjectDirFn = null } = {},
+) {
+  if (!journal) return false;
+
+  try {
+    if (
+      workflowState &&
+      typeof workflowState.close === "function" &&
+      workflowState.stateFile !== journal.sourceStateFile
+    ) {
+      await workflowState.close();
+    }
+  } catch {}
+
+  if (journal.targetDbSnapshot && journal.targetStateFile !== journal.sourceStateFile) {
+    await restoreDbRowSnapshot(journal.targetDbSnapshot);
+  }
+  if (journal.sourceDbSnapshot) {
+    await restoreDbRowSnapshot(journal.sourceDbSnapshot);
+  }
+
+  rollbackJournalFilesAndLocksSync(journal, { isCrashRecovery: !stagedLock });
+
+  if (journal.priorFocusBinding) {
+    await restoreFocusBindingSnapshot(journal.priorFocusBinding);
+  }
+
+  if (workflowState && journal.priorInMemory) {
+    workflowState.stateFile = journal.sourceStateFile;
+    workflowState.historyFile = journal.sourceHistoryFile;
+    workflowState.stateVersion = journal.priorInMemory.stateVersion;
+    workflowState.loadedTask = journal.priorInMemory.loadedTask;
+    if (journal.priorInMemory.state) {
+      workflowState.state = structuredClone(journal.priorInMemory.state);
+    }
+    if (typeof workflowState.bindLockLease === "function") {
+      workflowState.bindLockLease(journal.priorInMemory.boundLease);
+    }
+  }
+
+  if (typeof setActiveProjectDirFn === "function" && journal.priorInMemory) {
+    setActiveProjectDirFn(journal.priorInMemory.activeProjectDir || "");
+  }
+
+  completeTransitionJournal(journal);
+  return true;
+}
+
+function isJournalOwnerConfirmedDead(journal, { isAlive = currentIsAlive(), isHolderProcess = currentIsHolderProcess() } = {}) {
+  const jPid = Number(journal?.pid);
+  if (!Number.isFinite(jPid) || jPid <= 0) return true;
+  if (jPid === process.pid) {
+    return Boolean(journal.incarnationId && journal.incarnationId !== PROCESS_INCARNATION_ID);
+  }
+  if (!isAlive(jPid)) return true;
+  const shouldConsultHolder =
+    isHolderProcess !== defaultIsHolderProcess ||
+    isAlive === currentIsAlive();
+  if (shouldConsultHolder && isHolderProcess(jPid, journal) === false) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Rekonsiliasi sinkron atas jurnal transisi yang ditinggalkan proses mati.
+ * Dipanggil oleh `resolveStateFile` agar penunjuk sesi dan berkas JSON dipulihkan
+ * segera sebelum pemanggil memilih berkas state sesi.
+ */
+export function reconcilePendingTransitionJournalsSync({
+  baseDir = null,
+  stateFile = null,
+  isAlive = currentIsAlive(),
+  isHolderProcess = currentIsHolderProcess(),
+} = {}) {
+  const resolvedBase = baseDir
+    ? path.resolve(baseDir)
+    : stateFile
+      ? resolveBaseDirFromState(stateFile)
+      : null;
+  if (!resolvedBase) return [];
+
+  const sessionsDir = path.join(resolvedBase, SESSIONS_DIR);
+  if (!existsSync(sessionsDir)) return [];
+
+  const reconciled = [];
+  let entries = [];
+  try {
+    entries = readdirSync(sessionsDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.startsWith("transition-") || !entry.name.endsWith(".journal.json")) {
+      continue;
+    }
+    const journalFile = path.join(sessionsDir, entry.name);
+    let journal;
+    try {
+      journal = JSON.parse(readFileSync(journalFile, "utf8"));
+    } catch {
+      continue;
+    }
+    if (!journal || !isJournalOwnerConfirmedDead(journal, { isAlive, isHolderProcess })) {
+      continue;
+    }
+
+    journal.journalFile = journalFile;
+    if (journal.phase === "COMMITTED") {
+      if (journal.relocatedLock && journal.fromLockDir && journal.fromLockDir !== journal.toLockDir) {
+        releaseOrphanedLockFromJournal(journal.fromLockDir, journal.fromLeaseId, journal.pid);
+      }
+      completeTransitionJournal(journal);
+      reconciled.push({ journalId: journal.journalId, sessionKey: journal.sessionKey, action: "committed_cleanup" });
+    } else if (journal.phase === "STAGED") {
+      rollbackJournalFilesAndLocksSync(journal, { isCrashRecovery: true });
+      journal.phase = "FILES_ROLLED_BACK";
+      try {
+        writeJournalFileAtomic(journalFile, journal);
+      } catch {}
+      reconciled.push({ journalId: journal.journalId, sessionKey: journal.sessionKey, action: "staged_files_rolled_back" });
+    }
+  }
+
+  return reconciled;
+}
+
+/**
+ * Rekonsiliasi penuh (termasuk baris SQLite pada database target & asal) atas
+ * jurnal transisi yang ditinggalkan proses yang mati mendadak (R2-4).
+ */
+export async function reconcilePendingTransitionJournals({
+  baseDir = null,
+  stateFile = null,
+  isAlive = currentIsAlive(),
+  isHolderProcess = currentIsHolderProcess(),
+} = {}) {
+  const resolvedBase = baseDir
+    ? path.resolve(baseDir)
+    : stateFile
+      ? resolveBaseDirFromState(stateFile)
+      : null;
+  if (!resolvedBase) return [];
+
+  const sessionsDir = path.join(resolvedBase, SESSIONS_DIR);
+  if (!existsSync(sessionsDir)) return [];
+
+  const reconciled = [];
+  let entries = [];
+  try {
+    entries = readdirSync(sessionsDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.startsWith("transition-") || !entry.name.endsWith(".journal.json")) {
+      continue;
+    }
+    const journalFile = path.join(sessionsDir, entry.name);
+    let journal;
+    try {
+      journal = JSON.parse(readFileSync(journalFile, "utf8"));
+    } catch {
+      continue;
+    }
+    if (!journal || !isJournalOwnerConfirmedDead(journal, { isAlive, isHolderProcess })) {
+      continue;
+    }
+
+    journal.journalFile = journalFile;
+    if (journal.phase === "COMMITTED") {
+      if (journal.relocatedLock && journal.fromLockDir && journal.fromLockDir !== journal.toLockDir) {
+        releaseOrphanedLockFromJournal(journal.fromLockDir, journal.fromLeaseId, journal.pid);
+      }
+      completeTransitionJournal(journal);
+      reconciled.push({
+        journalId: journal.journalId,
+        sessionKey: journal.sessionKey,
+        action: "committed_cleanup",
+        sourceStateFile: journal.sourceStateFile,
+        targetStateFile: journal.targetStateFile,
+      });
+    } else {
+      await rollbackTransitionJournal(journal);
+      reconciled.push({
+        journalId: journal.journalId,
+        sessionKey: journal.sessionKey,
+        action: "rolled_back",
+        sourceStateFile: journal.sourceStateFile,
+        targetStateFile: journal.targetStateFile,
+      });
+    }
+  }
+
+  return reconciled;
+}
+
 function readFocusBindingRecord(file) {
   try {
     const data = JSON.parse(readFileSync(file, "utf-8"));
@@ -2022,11 +2575,13 @@ export class WorkflowState {
 
   /**
    * Serialize in-process async mutations against this WorkflowState instance
-   * (F5 / Phase 2 requirement 9). Re-entrant calls within an already-serialized
-   * operation execute directly without deadlocking.
+   * (F5 / R2-3). Re-entrancy is scoped strictly to the current AsyncLocalStorage
+   * execution context (`serializedExecutionStorage`) so independent concurrent
+   * async requests in the same process never bypass the queue.
    */
   async runSerialized(fn) {
-    if (this._inSerializedOp > 0) {
+    const activeInstances = serializedExecutionStorage.getStore();
+    if (activeInstances && activeInstances.has(this)) {
       return await fn();
     }
     const previous = this._opQueue;
@@ -2035,9 +2590,11 @@ export class WorkflowState {
       releaseQueue = resolve;
     });
     await previous.catch(() => {});
+    const nextInstances = new Set(activeInstances || []);
+    nextInstances.add(this);
     this._inSerializedOp += 1;
     try {
-      return await fn();
+      return await serializedExecutionStorage.run(nextInstances, fn);
     } finally {
       this._inSerializedOp -= 1;
       releaseQueue();
@@ -2172,6 +2729,25 @@ export class WorkflowState {
   }
 
   async load() {
+    // R2-4: Rekonsiliasi penuh (termasuk baris SQLite target & asal) atas jurnal
+    // transisi yang ditinggalkan proses mati sebelum memuat state.
+    const reconciledJournals = await reconcilePendingTransitionJournals({ stateFile: this.stateFile });
+    if (Array.isArray(reconciledJournals) && reconciledJournals.length > 0) {
+      const { key: currentSessionKey } = this._sessionKey();
+      const match = reconciledJournals.find(
+        (entry) =>
+          entry.action === "rolled_back" &&
+          entry.sessionKey === currentSessionKey &&
+          entry.sourceStateFile &&
+          path.resolve(entry.targetStateFile || "") === path.resolve(this.stateFile),
+      );
+      if (match) {
+        await this.close();
+        this.stateFile = match.sourceStateFile;
+        this.historyFile = resolveHistoryFile(match.sourceStateFile);
+      }
+    }
+
     // Berkas bernama lama (`.workflow-state.json`) dipindahkan ke nama sekarang
     // SEBELUM apa pun dibaca. Tanpa ini, pengguna yang memutakhirkan dari versi
     // pra-1.16 akan tampak kehilangan seluruh state-nya.
