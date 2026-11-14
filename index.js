@@ -14,7 +14,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { fileURLToPath } from "url";
 import path from "path";
-import { acquireProcessLock, releaseProcessLock, releaseActiveProcessLock, lockWarning, projectLockDir, refreshProcessLock, HEARTBEAT_MS } from "./process-lock.js";
+import { acquireProcessLockAsync, releaseProcessLock, releaseActiveProcessLock, lockWarning, projectLockDir, refreshProcessLock, HEARTBEAT_MS } from "./process-lock.js";
 import { exec, setActiveProjectDir } from "./exec.js";
 import { normalizeRequestArgs, shellEscape } from "./utils.js";
 import { createGitFacade } from "./git-facade.js";
@@ -243,7 +243,7 @@ export async function main() {
   // user bisa berbeda antar proses, sehingga keduanya tidak saling melihat.
   try {
     const lockDir = projectLockDir(workflowState.stateFile);
-    const acquired = acquireProcessLock({ dir: lockDir });
+    const acquired = await acquireProcessLockAsync({ dir: lockDir });
     if (acquired.acquired && typeof workflowState.bindLockLease === "function") {
       workflowState.bindLockLease({ dir: lockDir, leaseId: acquired.leaseId });
     }

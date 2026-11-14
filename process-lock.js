@@ -30,7 +30,8 @@ import {
 } from "fs";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { execFileSync } from "child_process";
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
+import net from "node:net";
 import os from "os";
 import path from "path";
 
@@ -63,6 +64,156 @@ export class ProjectOwnershipLostError extends Error {
 
 /** Peta lease aktif yang dipegang proses ini per direktori lock kanonik. */
 const heldLeases = new Map();
+
+/** Peta mutex kernel OS yang sedang dipegang proses ini per direktori lock kanonik. */
+const heldKernelMutexes = new Map();
+
+export function kernelMutexEndpoint(dir) {
+  const resolved = path.resolve(dir);
+  const canonical = process.platform === "win32" ? resolved.toLowerCase() : resolved;
+  const digest = createHash("sha256").update(canonical).digest();
+  const hex32 = digest.toString("hex").slice(0, 32);
+  if (process.platform === "win32") {
+    return { path: `\\\\.\\pipe\\devwf-lock-${hex32}`, exclusive: true };
+  }
+  if (process.platform === "linux") {
+    return { path: `\0devwf-lock-${hex32}`, exclusive: true };
+  }
+  return { host: "127.0.0.1", port: 30000 + (digest.readUInt32BE(0) % 30000), exclusive: true };
+}
+
+/**
+ * Mengambil mutex eksklusif milik kernel OS (Windows Named Pipe / Linux abstract
+ * Unix socket / macOS exclusive loopback listener) untuk `dir`.
+ * Mutex ini dilepas otomatis oleh kernel OS jika proses mati mendadak (SIGKILL).
+ */
+export async function acquireKernelMutex(dir, { timeoutMs = 150, pid = process.pid } = {}) {
+  const resolvedDir = path.resolve(dir);
+  const existing = heldKernelMutexes.get(resolvedDir);
+  if (existing && existing.pid === pid && existing.active) {
+    return {
+      ok: true,
+      alreadyHeld: true,
+      endpoint: existing.endpoint,
+      release() {},
+    };
+  }
+
+  const endpoint = kernelMutexEndpoint(resolvedDir);
+  const deadline = Date.now() + Math.max(0, Number(timeoutMs) || 0);
+
+  while (true) {
+    const server = net.createServer((socket) => socket.destroy());
+    server.unref?.();
+    try {
+      await new Promise((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(endpoint, resolve);
+      });
+      const record = {
+        server,
+        pid,
+        endpoint,
+        active: true,
+        acquiredAt: Date.now(),
+      };
+      heldKernelMutexes.set(resolvedDir, record);
+      return {
+        ok: true,
+        alreadyHeld: false,
+        endpoint,
+        release() {
+          releaseKernelMutex(resolvedDir, record);
+        },
+      };
+    } catch (error) {
+      try {
+        server.close();
+      } catch {}
+      if (error && error.code === "EADDRINUSE") {
+        if (Date.now() >= deadline) {
+          return {
+            ok: false,
+            error: "KERNEL_MUTEX_HELD",
+            code: "EADDRINUSE",
+            endpoint,
+          };
+        }
+        await new Promise((r) => setTimeout(r, 15));
+        continue;
+      }
+      return {
+        ok: false,
+        error: (error && (error.code || error.message)) || "KERNEL_MUTEX_ERROR",
+        code: error?.code || "KERNEL_MUTEX_ERROR",
+        endpoint,
+      };
+    }
+  }
+}
+
+export function releaseKernelMutex(dir, expectedRecord = null) {
+  if (!dir) return false;
+  const resolvedDir = path.resolve(dir);
+  const record = heldKernelMutexes.get(resolvedDir);
+  if (!record) return false;
+  if (expectedRecord && record !== expectedRecord) return false;
+  record.active = false;
+  heldKernelMutexes.delete(resolvedDir);
+  try {
+    record.server.close();
+  } catch {}
+  return true;
+}
+
+export async function acquireProcessLockAsync(options = {}) {
+  const resolvedDir = path.resolve(options.dir || process.cwd());
+  const mutex = await acquireKernelMutex(resolvedDir, {
+    timeoutMs: options.mutexTimeoutMs ?? 50,
+    pid: options.pid ?? process.pid,
+  });
+  if (!mutex.ok) {
+    const holder = readProcessLock({ dir: resolvedDir });
+    return {
+      acquired: false,
+      wrote: false,
+      reason: "foreign_lock",
+      kernelMutexBusy: true,
+      holder: holder || { pid: null, kernelMutexBusy: true },
+    };
+  }
+  const result = acquireProcessLock(options);
+  if (!result.acquired && !mutex.alreadyHeld) {
+    mutex.release();
+  }
+  return result;
+}
+
+export async function stageProcessLockTransitionAsync(options = {}) {
+  const { toDir } = options;
+  if (!toDir) {
+    return { ok: false, reason: "missing_target_dir" };
+  }
+  const targetDir = path.resolve(toDir);
+  const mutex = await acquireKernelMutex(targetDir, {
+    timeoutMs: options.mutexTimeoutMs ?? 50,
+    pid: options.pid ?? process.pid,
+  });
+  if (!mutex.ok) {
+    const holder = readProcessLock({ dir: targetDir });
+    return {
+      ok: false,
+      reason: "foreign_lock",
+      kernelMutexBusy: true,
+      holder: holder || { pid: null, kernelMutexBusy: true },
+    };
+  }
+  const staged = stageProcessLockTransition(options);
+  if (!staged.ok && !mutex.alreadyHeld) {
+    mutex.release();
+  }
+  return staged;
+}
 
 /** Peta entri gerbang aktif untuk proses ini (satu per direktori kanonik). */
 const activeGateDepth = new Map();
@@ -172,6 +323,9 @@ export function bindHeldLease({
 
 export function clearHeldLeasesForTests() {
   heldLeases.clear();
+  for (const dir of Array.from(heldKernelMutexes.keys())) {
+    releaseKernelMutex(dir);
+  }
   rememberedLockDir = null;
   rememberedLeaseId = null;
   rememberedPid = null;
@@ -1610,6 +1764,7 @@ export function releaseProcessLock({
   }
 
   if (removed) {
+    releaseKernelMutex(resolvedDir);
     const currentHeld = heldLeases.get(resolvedDir);
     if (currentHeld && currentHeld.pid === pid && (!expectedLeaseId || currentHeld.leaseId === expectedLeaseId)) {
       heldLeases.delete(resolvedDir);

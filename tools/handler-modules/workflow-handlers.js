@@ -23,7 +23,7 @@ import {
   currentIsAlive,
   currentIsHolderProcess,
   DEFAULT_LOCK_STALE_MS,
-  stageProcessLockTransition,
+  stageProcessLockTransitionAsync,
   commitProcessLockTransition,
   rollbackProcessLockTransition,
 } from "../../process-lock.js";
@@ -476,7 +476,7 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
   // Stage 2: Acquire target project lock BEFORE mutating focus binding,
   // session pointer, or workflow state, while keeping source lock held until
   // commit (F6 + F7 remediation).
-  const stagedLock = stageProcessLockTransition({
+  const stagedLock = await stageProcessLockTransitionAsync({
     fromDir: currentLockDir,
     toDir: targetLockDir,
     projectDir: project.dir,

@@ -31,6 +31,10 @@ import {
   acquireMaintenanceAdmissionBarrier,
   releaseMaintenanceAdmissionBarrier,
   stageProcessLockTransition,
+  acquireKernelMutex,
+  releaseKernelMutex,
+  acquireProcessLockAsync,
+  stageProcessLockTransitionAsync,
   GATE_FILENAME,
   GATE_RECOVER_FILENAME,
   DEFAULT_LOCK_STALE_MS,
@@ -2312,6 +2316,62 @@ test("R3-6 Legacy Admission Barrier & Fail-Closed Quiescence Inspection on EACCE
     const stagedOpen = stageProcessLockTransition({ toDir: lockDirA, projectDir: repoA });
     assert.equal(stagedOpen.ok, true);
     releaseProcessLock({ dir: lockDirA, leaseId: stagedOpen.leaseId });
+  });
+});
+
+test("Option B OS-Owned Kernel Mutex: Two real child processes are kernel-excluded and SIGKILL auto-releases mutex for immediate successor acquisition", async () => {
+  await withWorkspace(async (base) => {
+    const repo = await createRepo(base, "optb-repo");
+    const bucket = projectKey(canonicalProjectPath(repo));
+    const lockDir = path.join(base, "state", "projects", bucket);
+    await mkdir(lockDir, { recursive: true });
+
+    const processLockUrl = pathToFileURL(path.resolve("process-lock.js")).href;
+    const holderScript = `
+      import { acquireProcessLockAsync } from ${JSON.stringify(processLockUrl)};
+      const res = await acquireProcessLockAsync({ dir: process.env.TEST_LOCK_DIR });
+      process.send({ type: "ACQUIRED", acquired: res.acquired, leaseId: res.leaseId || null, pid: process.pid });
+      setInterval(() => {}, 1000);
+    `;
+
+    // 1. Child A acquires OS-owned kernel mutex + mcp-process.lock
+    const childA = spawn(process.execPath, ["--input-type=module", "-e", holderScript], {
+      env: { ...process.env, TEST_LOCK_DIR: lockDir },
+      stdio: ["ignore", "pipe", "pipe", "ipc"],
+    });
+    const msgA = await new Promise((resolve, reject) => {
+      childA.once("message", resolve);
+      childA.once("error", reject);
+    });
+    assert.equal(msgA.acquired, true);
+    assert.ok(msgA.leaseId);
+
+    // 2. Competing in-process/child acquisition on same bucket MUST be rejected by OS kernel mutex
+    const contender = await acquireProcessLockAsync({ dir: lockDir, mutexTimeoutMs: 20 });
+    assert.equal(contender.acquired, false);
+    assert.equal(contender.kernelMutexBusy, true);
+    assert.equal(contender.reason, "foreign_lock");
+
+    // 3. SIGKILL Child A -> OS kernel immediately releases the mutex without operator recovery
+    const exitA = new Promise((resolve) => childA.once("exit", resolve));
+    childA.kill("SIGKILL");
+    await exitA;
+
+    // 4. Child B immediately acquires ownership cleanly without force or operator intervention
+    const childB = spawn(process.execPath, ["--input-type=module", "-e", holderScript], {
+      env: { ...process.env, TEST_LOCK_DIR: lockDir },
+      stdio: ["ignore", "pipe", "pipe", "ipc"],
+    });
+    const msgB = await new Promise((resolve, reject) => {
+      childB.once("message", resolve);
+      childB.once("error", reject);
+    });
+    assert.equal(msgB.acquired, true, "Successor Child B must acquire immediately after Child A SIGKILL");
+    assert.notEqual(msgB.leaseId, msgA.leaseId);
+
+    const exitB = new Promise((resolve) => childB.once("exit", resolve));
+    childB.kill("SIGKILL");
+    await exitB;
   });
 });
 
