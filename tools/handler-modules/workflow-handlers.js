@@ -17,10 +17,10 @@ import {
   MIN_WAIVER_REASON,
   MAX_WAIVER_REASON,
 } from "./docs.js";
-import { activeForeignLock, projectLockDir, currentIsAlive, DEFAULT_LOCK_STALE_MS } from "../../process-lock.js";
+import { activeForeignLock, projectLockDir, currentIsAlive, DEFAULT_LOCK_STALE_MS, relocateProcessLock } from "../../process-lock.js";
 import { reportEventSafe, updateSessionTitle, buildSnapshot, reportSnapshot } from "../../monitor.js";
 import { exec, resolveProjectDir, setActiveProjectDir } from "../../exec.js";
-import { pinSessionProject, resolveHistoryFile, readSessionProject, readFocusBinding, claimFocusBinding } from "../../workflow-state.js";
+import { pinSessionProject, resolveHistoryFile, readSessionProject, readFocusBinding, claimFocusBinding, resolveTargetProjectState, findActiveForeignTaskInProject } from "../../workflow-state.js";
 import {
   captureRepositoryIdentity,
   evaluateProjectSwitch,
@@ -213,90 +213,6 @@ export async function handleStartTask(args, workflowState, git, zettlyOptions = 
   // Penanda proses sudah ada sejak sebelumnya, tetapi hanya DICATAT sebagai
   // peringatan, jadi tidak ada yang menghentikan tabrakan.
   //
-  // Sekarang `start_task` menolak memulai bila ada proses MCP lain yang hidup
-  // DAN baru saja bekerja (ada detak dalam 10 menit) pada proyek yang sama.
-  // Penanda yang basi diabaikan supaya proses MCP yang tertinggal tidak
-  // memblokir selamanya. `force: true` tetap tersedia untuk pemilik mesin yang
-  // tahu apa yang ia lakukan, dan alasannya dicatat di jawaban.
-  const foreignLock = activeForeignLock({
-    dir: projectLockDir(workflowState.stateFile),
-    isAlive: currentIsAlive(),
-  });
-
-  if (foreignLock && args.force !== true) {
-    const minutes = Math.max(1, Math.round(foreignLock.ageMs / 60000));
-    const host = foreignLock.host ? ` di ${foreignLock.host}` : "";
-    const started = Number.isFinite(Number(foreignLock.startedAt))
-      ? new Date(Number(foreignLock.startedAt)).toISOString()
-      : "waktu tidak diketahui";
-
-    return textResponse(
-      `⚠️ Dibatalkan: sesi lain sedang mengerjakan proyek ini.\n\n` +
-        `Proses MCP PID ${foreignLock.pid}${host} berdetak ${minutes} menit lalu ` +
-        `(hidup sejak ${started}).\n` +
-        `Dua sesi pada satu working tree saling menimpa berkas: pada 31 Oktober 2026 ` +
-        `satu sesi kehilangan seluruh suntingannya tanpa pesan.\n\n` +
-        `Pilih salah satu:\n` +
-        `  1. Tutup jendela OpenCode yang lain, lalu ulangi 'start_task'.\n` +
-        `  2. Beri sesi ini worktree sendiri: opencode.worktree_create, lalu jalankan sesi dari sana.\n` +
-        `  3. Kalau Anda yakin sesi itu sudah tidak dipakai, ulangi dengan { "force": true }.\n\n` +
-        `Penanda dianggap basi setelah ${Math.round(DEFAULT_LOCK_STALE_MS / 60000)} menit tanpa detak.\n` +
-        `Task BELUM dimulai; tidak ada state yang diubah.`
-    );
-  }
-
-  // Task HIDUP milik proses lain tidak boleh dihapus, bahkan dengan `force`.
-  //
-  // 1 November 2026: satu sesi kehilangan seluruh Definition of Done-nya dua
-  // kali dalam satu jam. Penyebabnya bukan hanya tabrakan berkas - `force: true`
-  // bisa melewati `activeForeignLock`, lalu `reset()` mengosongkan
-  // `definitionOfDone` milik task yang sedang dikerjakan sesi lain. Bukti DoD
-  // yang sudah dikumpulkan tidak bisa dipulihkan dari arsip `history`.
-  //
-  // Penjaga ini membaca ISI STATE, bukan berkas lock: state adalah kebenaran,
-  // lock hanya petunjuk. Kalau lock hilang atau rusak, penjaga tetap bekerja.
-  // `force` tetap berguna untuk satu kasus sah - pemiliknya sudah mati.
-  {
-    const disk = await workflowState.readDiskState();
-    if (disk) {
-      const phase = typeof disk.currentPhase === "string" ? disk.currentPhase : "idle";
-      const description = typeof disk.taskDescription === "string" ? disk.taskDescription.trim() : "";
-      const ownerPid = Number(disk.owner?.pid);
-      const foreignOwner = Number.isFinite(ownerPid) && ownerPid !== process.pid;
-
-      // Batas basi, sama seperti `activeForeignLock`. Tanpa ini, proses MCP yang
-      // ditinggal hidup setelah jendela OpenCode-nya ditutup - keadaan normal di
-      // mesin ini, lihat `cleanup-stale-mcp` - memblokir `start_task` SELAMANYA,
-      // dan `force` pun tidak menolong. Penjaga yang mustahil dilewati akan
-      // dilewati orang dengan membunuh proses; itu lebih buruk daripada kedaluwarsa.
-      const ownerSeenAt = Number(disk.owner?.updatedAt);
-      const ownerFresh =
-        Number.isFinite(ownerSeenAt) && Date.now() - ownerSeenAt < DEFAULT_LOCK_STALE_MS;
-
-      if (phase !== "idle" && description !== "" && foreignOwner && ownerFresh && currentIsAlive()(ownerPid)) {
-        const seen = Number.isFinite(ownerSeenAt)
-          ? new Date(ownerSeenAt).toISOString()
-          : "waktu tidak diketahui";
-
-        return textResponse(
-          `⚠️ Dibatalkan: task lain sedang berjalan di proses MCP PID ${ownerPid}.\n\n` +
-            `Task      : "${description}"\n` +
-            `Fase      : ${phase}\n` +
-            `Pemilik   : PID ${ownerPid}, terakhir menulis state ${seen}\n\n` +
-            `Memulai task baru di sini akan mengosongkan Definition of Done task itu, dan buktinya ` +
-            `tidak bisa dipulihkan dari history. Karena itu 'force' TIDAK bisa melewati penjaga ini ` +
-            `selama pemiliknya masih menulis.\n\n` +
-            `Pilih salah satu:\n` +
-            `  1. Selesaikan atau batalkan task itu dari sesi pemiliknya (complete_task / drop_task).\n` +
-            `  2. Beri sesi ini worktree sendiri: opencode.worktree_create, lalu jalankan sesi dari sana.\n` +
-            `  3. Kalau proses itu sudah tidak dipakai, tutup jendelanya. Penjaga berhenti menghalangi ` +
-            `setelah ${Math.round(DEFAULT_LOCK_STALE_MS / 60000)} menit tanpa tulisan state.\n\n` +
-            `Task BELUM dimulai; tidak ada state yang diubah.`
-        );
-      }
-    }
-  }
-
   // Validasi rencana. Skema mewajibkan `plan`; bila agen tidak mengirimnya,
   // rencana SEMENTARA diturunkan dari DoD supaya progres tetap bisa dibaca,
   // dan jawabannya menyebut terus terang bahwa urutannya belum benar.
@@ -332,6 +248,109 @@ export async function handleStartTask(args, workflowState, git, zettlyOptions = 
   const project = resolveTaskProject(args);
   if (!project.ok) {
     return textResponse(project.message);
+  }
+
+  // Resolusi identitas proyek target dan berkas state target SEBELUM validasi lock.
+  // Ini mencegah tabrakan palsu saat dua klien MCP (mis. Antigravity dan Codex)
+  // start di direktori kerja bersama (C:\Users\mahardhika) namun menargetkan
+  // repositori proyek yang berbeda.
+  const targetResolution = resolveTargetProjectState({
+    stateFile: workflowState.stateFile,
+    projectDir: project.dir,
+  });
+  const targetStateFile = targetResolution.stateFile;
+  const targetLockDir = projectLockDir(targetStateFile);
+  const currentLockDir = projectLockDir(workflowState.stateFile);
+
+  // Penjaga lock proses lain pada PROYEK TARGET:
+  // Sekarang `start_task` menolak memulai bila ada proses MCP lain yang hidup
+  // DAN baru saja bekerja (ada detak dalam 10 menit) pada proyek yang sama.
+  // Penanda yang basi diabaikan supaya proses MCP yang tertinggal tidak
+  // memblokir selamanya. `force: true` tetap tersedia untuk pemilik mesin yang
+  // tahu apa yang ia lakukan, dan alasannya dicatat di jawaban.
+  const foreignLock = activeForeignLock({
+    dir: targetLockDir,
+    isAlive: currentIsAlive(),
+  });
+
+  if (foreignLock && args.force !== true) {
+    const minutes = Math.max(1, Math.round(foreignLock.ageMs / 60000));
+    const host = foreignLock.host ? ` di ${foreignLock.host}` : "";
+    const started = Number.isFinite(Number(foreignLock.startedAt))
+      ? new Date(Number(foreignLock.startedAt)).toISOString()
+      : "waktu tidak diketahui";
+
+    return textResponse(
+      `⚠️ Dibatalkan: sesi lain sedang mengerjakan proyek ini.\n\n` +
+        `Proses MCP PID ${foreignLock.pid}${host} berdetak ${minutes} menit lalu ` +
+        `(hidup sejak ${started}).\n` +
+        `Dua sesi pada satu working tree saling menimpa berkas: pada 31 Oktober 2026 ` +
+        `satu sesi kehilangan seluruh suntingannya tanpa pesan.\n\n` +
+        `Pilih salah satu:\n` +
+        `  1. Tutup jendela OpenCode yang lain, lalu ulangi 'start_task'.\n` +
+        `  2. Beri sesi ini worktree sendiri: opencode.worktree_create, lalu jalankan sesi dari sana.\n` +
+        `  3. Kalau Anda yakin sesi itu sudah tidak dipakai, ulangi dengan { "force": true }.\n\n` +
+        `Penanda dianggap basi setelah ${Math.round(DEFAULT_LOCK_STALE_MS / 60000)} menit tanpa detak.\n` +
+        `Task BELUM dimulai; tidak ada state yang diubah.`
+    );
+  }
+
+  // Task HIDUP milik proses lain tidak boleh dihapus, bahkan dengan `force`.
+  // findActiveForeignTaskInProject memeriksa disk state pada proyek target.
+  {
+    let foreignTask = findActiveForeignTaskInProject({
+      projectDirPath: targetResolution.projectDirPath,
+      targetStateFile,
+      ownPid: process.pid,
+      isAlive: currentIsAlive(),
+      staleMs: DEFAULT_LOCK_STALE_MS,
+    });
+
+    if (!foreignTask && targetStateFile === workflowState.stateFile) {
+      const disk = await workflowState.readDiskState();
+      if (disk) {
+        const phase = typeof disk.currentPhase === "string" ? disk.currentPhase : "idle";
+        const description = typeof disk.taskDescription === "string" ? disk.taskDescription.trim() : "";
+        const ownerPid = Number(disk.owner?.pid);
+        const foreignOwner = Number.isFinite(ownerPid) && ownerPid !== process.pid;
+        const ownerSeenAt = Number(disk.owner?.updatedAt);
+        const ownerFresh =
+          Number.isFinite(ownerSeenAt) && Date.now() - ownerSeenAt < DEFAULT_LOCK_STALE_MS;
+
+        if (phase !== "idle" && description !== "" && foreignOwner && ownerFresh && currentIsAlive()(ownerPid)) {
+          foreignTask = {
+            file: targetStateFile,
+            disk,
+            phase,
+            description,
+            ownerPid,
+            ownerSeenAt,
+          };
+        }
+      }
+    }
+
+    if (foreignTask) {
+      const seen = Number.isFinite(foreignTask.ownerSeenAt)
+        ? new Date(foreignTask.ownerSeenAt).toISOString()
+        : "waktu tidak diketahui";
+
+      return textResponse(
+        `⚠️ Dibatalkan: task lain sedang berjalan di proses MCP PID ${foreignTask.ownerPid}.\n\n` +
+          `Task      : "${foreignTask.description}"\n` +
+          `Fase      : ${foreignTask.phase}\n` +
+          `Pemilik   : PID ${foreignTask.ownerPid}, terakhir menulis state ${seen}\n\n` +
+          `Memulai task baru di sini akan mengosongkan Definition of Done task itu, dan buktinya ` +
+          `tidak bisa dipulihkan dari history. Karena itu 'force' TIDAK bisa melewati penjaga ini ` +
+          `selama pemiliknya masih menulis.\n\n` +
+          `Pilih salah satu:\n` +
+          `  1. Selesaikan atau batalkan task itu dari sesi pemiliknya (complete_task / drop_task).\n` +
+          `  2. Beri sesi ini worktree sendiri: opencode.worktree_create, lalu jalankan sesi dari sana.\n` +
+          `  3. Kalau proses itu sudah tidak dipakai, tutup jendelanya. Penjaga berhenti menghalangi ` +
+          `setelah ${Math.round(DEFAULT_LOCK_STALE_MS / 60000)} menit tanpa tulisan state.\n\n` +
+          `Task BELUM dimulai; tidak ada state yang diubah.`
+      );
+    }
   }
 
   // Repository identity preflight.
@@ -424,6 +443,41 @@ export async function handleStartTask(args, workflowState, git, zettlyOptions = 
           `Task NOT started; the previous task and its evidence are unchanged.`
       );
     }
+  }
+
+  // Pindahkan penanda proses dari direktori startup CWD ke direktori target project.
+  // Lock target diambil secara atomik dengan lease token baru. Bila lock lama dimiliki
+  // oleh proses ini dan direktori berbeda, lock startup dilepas dengan aman supaya
+  // tidak menghalangi proses lain di direktori startup.
+  const relocated = relocateProcessLock({
+    fromDir: currentLockDir,
+    toDir: targetLockDir,
+    force: args.force === true,
+    isAlive: currentIsAlive(),
+  });
+
+  if (!relocated.ok && args.force !== true) {
+    const holder = relocated.holder;
+    const minutes = holder ? Math.max(1, Math.round(holder.ageMs / 60000)) : 1;
+    const host = holder?.host ? ` di ${holder.host}` : "";
+    const started = holder && Number.isFinite(Number(holder.startedAt))
+      ? new Date(Number(holder.startedAt)).toISOString()
+      : "waktu tidak diketahui";
+    const pid = holder?.pid || "tidak diketahui";
+
+    return textResponse(
+      `⚠️ Dibatalkan: sesi lain sedang mengerjakan proyek ini.\n\n` +
+        `Proses MCP PID ${pid}${host} berdetak ${minutes} menit lalu ` +
+        `(hidup sejak ${started}).\n` +
+        `Dua sesi pada satu working tree saling menimpa berkas: pada 31 Oktober 2026 ` +
+        `satu sesi kehilangan seluruh suntingannya tanpa pesan.\n\n` +
+        `Pilih salah satu:\n` +
+        `  1. Tutup jendela OpenCode yang lain, lalu ulangi 'start_task'.\n` +
+        `  2. Beri sesi ini worktree sendiri: opencode.worktree_create, lalu jalankan sesi dari sana.\n` +
+        `  3. Kalau Anda yakin sesi itu sudah tidak dipakai, ulangi dengan { "force": true }.\n\n` +
+        `Penanda dianggap basi setelah ${Math.round(DEFAULT_LOCK_STALE_MS / 60000)} menit tanpa detak.\n` +
+        `Task BELUM dimulai; tidak ada state yang diubah.`
+    );
   }
 
   // Selamatkan dulu pekerjaan yang mungkin tertimpa. Ini menangani dua kasus:
@@ -520,6 +574,9 @@ export async function handleStartTask(args, workflowState, git, zettlyOptions = 
     if (pinned && pinned.stateFile !== workflowState.stateFile) {
       // Bawa task yang baru saja disiapkan ke berkas proyek yang benar.
       const carried = { ...workflowState.state };
+      if (typeof workflowState.close === "function") {
+        await workflowState.close();
+      }
       workflowState.stateFile = pinned.stateFile;
       workflowState.historyFile = resolveHistoryFile(pinned.stateFile);
       workflowState.state = carried;

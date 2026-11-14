@@ -60,7 +60,11 @@ async function withWorkspace(fn) {
     process.chdir(previousCwd);
     if (previousState === undefined) delete process.env.DEV_WORKFLOW_STATE_FILE;
     else process.env.DEV_WORKFLOW_STATE_FILE = previousState;
-    await rm(base, { recursive: true, force: true });
+    try {
+      const { closeLocalAdapters } = await import("../db/index.js");
+      await closeLocalAdapters();
+    } catch {}
+    await rm(base, { recursive: true, force: true, maxRetries: 3 });
   }
 }
 

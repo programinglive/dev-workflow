@@ -22,6 +22,7 @@
  */
 
 import { exec as execCallback } from "node:child_process";
+import { existsSync, realpathSync } from "node:fs";
 import path from "node:path";
 
 function text(value) {
@@ -39,8 +40,15 @@ function text(value) {
 export function normalizeRepoPath(value) {
   const raw = text(value);
   if (!raw) return "";
-  let resolved = path.resolve(raw).replace(/\\/g, "/");
-  resolved = resolved.replace(/\/+$/, "");
+  let resolved = path.resolve(raw);
+  if (existsSync(resolved)) {
+    try {
+      resolved = typeof realpathSync.native === "function"
+        ? realpathSync.native(resolved)
+        : realpathSync(resolved);
+    } catch {}
+  }
+  resolved = resolved.replace(/\\/g, "/").replace(/\/+$/, "");
   if (resolved === "") resolved = "/";
   return process.platform === "win32" ? resolved.toLowerCase() : resolved;
 }
@@ -164,7 +172,9 @@ export async function captureRepositoryIdentity({ dir, execImpl = defaultExec } 
   const head = await run("rev-parse HEAD");
   const commonDirRaw = await run("rev-parse --git-common-dir");
 
-  const resolvedRoot = path.resolve(root);
+  const resolvedRoot = (normalizeRepoPath(target) === normalizeRepoPath(root))
+    ? target
+    : path.resolve(root);
   const commonDir = commonDirRaw ? path.resolve(target, commonDirRaw) : "";
   const worktree = Boolean(commonDir) && normalizeRepoPath(commonDir) !== normalizeRepoPath(path.join(resolvedRoot, ".git"));
 

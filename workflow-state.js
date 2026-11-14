@@ -889,13 +889,31 @@ export function resolveStateFile({ sessionId = null } = {}) {
   return path.join(userDir, sessionStateFilename(process.env, sessionId));
 }
 
-function canonicalPath(candidate) {
-  const resolved = path.resolve(candidate);
-  try {
-    return realpathSync(resolved);
-  } catch {
-    return resolved;
+export function canonicalProjectPath(candidate) {
+  const raw = String(candidate || "").trim();
+  if (!raw || raw.includes("\0")) {
+    return "";
   }
+  const resolved = path.resolve(raw);
+  let real = resolved;
+  try {
+    real = typeof realpathSync.native === "function"
+      ? realpathSync.native(resolved)
+      : realpathSync(resolved);
+  } catch {
+    real = resolved;
+  }
+  const normalized = path.normalize(real);
+  const parsed = path.parse(normalized);
+  const stripped = normalized === parsed.root ? normalized : normalized.replace(/[\\/]+$/, "");
+  if (/^[a-z]:[\\/]/i.test(stripped)) {
+    return stripped[0].toUpperCase() + stripped.slice(1);
+  }
+  return stripped;
+}
+
+function canonicalPath(candidate) {
+  return canonicalProjectPath(candidate);
 }
 
 /**
@@ -903,14 +921,163 @@ function canonicalPath(candidate) {
  * potongan hash supaya dua proyek bernama sama (mis. `clinic` di dua root)
  * tidak bertabrakan.
  */
-function projectKey(projectRoot) {
-  const resolved = canonicalPath(projectRoot);
+export function projectKey(projectRoot) {
+  const resolved = canonicalProjectPath(projectRoot);
   const nama = path.basename(resolved)
     .replace(/[^A-Za-z0-9._-]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 40) || "proyek";
   const hash = createHash("sha1").update(resolved.toLowerCase()).digest("hex").slice(0, 10);
   return `${nama}-${hash}`;
+}
+
+/**
+ * Authoritative canonical project identity resolver.
+ * Resolves relative paths, symlinks/junctions, separator differences, and
+ * Windows drive-letter casing without mutating any state on disk.
+ */
+export function resolveCanonicalProjectIdentity(projectDir, { mustExist = false } = {}) {
+  if (typeof projectDir !== "string" || projectDir.trim() === "" || projectDir.includes("\0")) {
+    return {
+      ok: false,
+      error: "INVALID_PROJECT_DIR",
+      message: "projectDir must be a non-empty valid filesystem path.",
+    };
+  }
+  const resolved = path.resolve(projectDir.trim());
+  if (mustExist && !existsSync(resolved)) {
+    return {
+      ok: false,
+      error: "PROJECT_DIR_NOT_FOUND",
+      message: `Project directory does not exist: ${resolved}`,
+    };
+  }
+  const canonical = canonicalProjectPath(resolved);
+  if (!canonical) {
+    return {
+      ok: false,
+      error: "INVALID_PROJECT_DIR",
+      message: "projectDir could not be canonicalized.",
+    };
+  }
+  const bucketKey = projectKey(canonical);
+  const comparisonKey =
+    process.platform === "win32" || process.platform === "darwin"
+      ? canonical.replace(/\\/g, "/").toLowerCase()
+      : canonical.replace(/\\/g, "/");
+  return {
+    ok: true,
+    raw: projectDir,
+    projectDir: canonical,
+    bucketKey,
+    comparisonKey,
+  };
+}
+
+/**
+ * Pre-resolve the target project's state bucket and session state file
+ * BEFORE mutating session pointers or checking locks.
+ *
+ * This prevents startup-CWD false lock collisions when two MCP clients launch
+ * in the same working directory (e.g. C:\Users\mahardhika) and then call
+ * start_task with an explicit target projectDir.
+ */
+export function resolveTargetProjectState({ stateFile, projectDir } = {}) {
+  const resolvedState = path.resolve(String(stateFile || ""));
+  const hasTargetProject = typeof projectDir === "string" && projectDir.trim() !== "";
+  const canonicalTarget = hasTargetProject ? canonicalProjectPath(projectDir) : "";
+
+  if (canonicalTarget && resolvedState.split(path.sep).includes(PROJECTS_DIR)) {
+    const baseDir = resolveBaseDirFromState(resolvedState);
+    const sessionKey = sessionKeyFromStateFile(resolvedState);
+    const bucketKey = projectKey(canonicalTarget);
+    const projectDirPath = path.join(baseDir, PROJECTS_DIR, bucketKey);
+    const targetStateFile = path.join(
+      getUserScopedDir(projectDirPath),
+      sessionStateFilename(process.env, sessionKey),
+    );
+    return {
+      isPinnedLayout: true,
+      projectDir: canonicalTarget,
+      bucketKey,
+      projectDirPath,
+      stateFile: targetStateFile,
+    };
+  }
+
+  return {
+    isPinnedLayout: false,
+    projectDir: canonicalTarget,
+    bucketKey: canonicalTarget ? projectKey(canonicalTarget) : "",
+    projectDirPath: path.dirname(resolvedState),
+    stateFile: resolvedState,
+  };
+}
+
+/**
+ * Inspect the target project's state file(s) for an active live task owned by
+ * a foreign process. Checks both the target session state file and sibling
+ * session state files inside the target project bucket.
+ */
+export function findActiveForeignTaskInProject({
+  projectDirPath,
+  targetStateFile,
+  ownPid = process.pid,
+  now = Date.now(),
+  staleMs = 10 * 60 * 1000,
+  isAlive = () => true,
+} = {}) {
+  const candidateFiles = new Set();
+  if (targetStateFile) {
+    candidateFiles.add(path.resolve(targetStateFile));
+  }
+  if (projectDirPath && existsSync(projectDirPath)) {
+    const rootState = path.join(projectDirPath, STATE_FILENAME);
+    if (existsSync(rootState)) candidateFiles.add(path.resolve(rootState));
+    const usersRoot = path.join(projectDirPath, "users");
+    if (existsSync(usersRoot)) {
+      try {
+        for (const uEntry of readdirSync(usersRoot, { withFileTypes: true })) {
+          if (!uEntry.isDirectory()) continue;
+          const uDir = path.join(usersRoot, uEntry.name);
+          for (const fEntry of readdirSync(uDir, { withFileTypes: true })) {
+            if (fEntry.isFile() && fEntry.name.startsWith("workflow-state") && fEntry.name.endsWith(".json")) {
+              candidateFiles.add(path.resolve(path.join(uDir, fEntry.name)));
+            }
+          }
+        }
+      } catch {
+        // Best-effort directory scan; individual unreadable entries are skipped.
+      }
+    }
+  }
+
+  for (const file of candidateFiles) {
+    if (!existsSync(file)) continue;
+    try {
+      const disk = parseStateJson(readFileSync(file, "utf8"));
+      if (!disk || typeof disk !== "object") continue;
+      const phase = typeof disk.currentPhase === "string" ? disk.currentPhase : "idle";
+      const description = typeof disk.taskDescription === "string" ? disk.taskDescription.trim() : "";
+      const ownerPid = Number(disk.owner?.pid);
+      const foreignOwner = Number.isFinite(ownerPid) && ownerPid > 0 && ownerPid !== ownPid;
+      const ownerSeenAt = Number(disk.owner?.updatedAt);
+      const ownerFresh = Number.isFinite(ownerSeenAt) && now - ownerSeenAt < staleMs;
+      if (phase !== "idle" && description !== "" && foreignOwner && ownerFresh && isAlive(ownerPid)) {
+        return {
+          file,
+          disk,
+          phase,
+          description,
+          ownerPid,
+          ownerSeenAt,
+        };
+      }
+    } catch {
+      // Ignore corrupt or unreadable sibling files during foreign-task scan.
+    }
+  }
+  return null;
 }
 
 /**

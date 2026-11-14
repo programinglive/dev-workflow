@@ -14,7 +14,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { fileURLToPath } from "url";
 import path from "path";
-import { acquireProcessLock, releaseProcessLock, lockWarning, projectLockDir, refreshProcessLock, HEARTBEAT_MS } from "./process-lock.js";
+import { acquireProcessLock, releaseProcessLock, releaseActiveProcessLock, lockWarning, projectLockDir, refreshProcessLock, HEARTBEAT_MS } from "./process-lock.js";
 import { exec, setActiveProjectDir } from "./exec.js";
 import { normalizeRequestArgs, shellEscape } from "./utils.js";
 import { createGitFacade } from "./git-facade.js";
@@ -239,7 +239,7 @@ export async function main() {
     const lockDir = projectLockDir(workflowState.stateFile);
     const warning = lockWarning(acquireProcessLock({ dir: lockDir }));
     if (warning) safeLog('error', warning);
-    process.once('exit', () => releaseProcessLock({ dir: lockDir }));
+    process.once('exit', () => releaseActiveProcessLock({ fallbackDir: lockDir }));
 
     // Detak jantung penanda proses.
     //
