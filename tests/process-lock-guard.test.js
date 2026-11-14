@@ -129,30 +129,34 @@ test("start_task menolak saat proses MCP lain masih aktif di proyek yang sama", 
     const state = new WorkflowState(stateFile);
     await state.load();
 
-    await writeLock(dir, { pid: 4242, startedAt: Date.now(), heartbeatAt: Date.now(), host: "MMCH" });
-    setIsAliveForTests(() => true);
+    try {
+      await writeLock(dir, { pid: 4242, startedAt: Date.now(), heartbeatAt: Date.now(), host: "MMCH" });
+      setIsAliveForTests(() => true);
 
-    const response = await handleToolCall({
-      request: {
-        params: {
-          name: "start_task",
-          arguments: { description: "Kerjakan sesuatu", type: "feature", definitionOfDone: ["build lulus"] },
+      const response = await handleToolCall({
+        request: {
+          params: {
+            name: "start_task",
+            arguments: { description: "Kerjakan sesuatu", type: "feature", definitionOfDone: ["build lulus"] },
+          },
         },
-      },
-      normalizeRequestArgs,
-      workflowState: state,
-      exec: async () => ({ stdout: "" }),
-      git: {},
-      utils: testUtils,
-    });
-    const out = response?.content?.[0]?.text || "";
+        normalizeRequestArgs,
+        workflowState: state,
+        exec: async () => ({ stdout: "" }),
+        git: {},
+        utils: testUtils,
+      });
+      const out = response?.content?.[0]?.text || "";
 
-    assert.match(out, /sesi lain sedang mengerjakan proyek ini/);
-    assert.match(out, /PID 4242/);
-    assert.match(out, /MMCH/);
-    assert.match(out, /force/);
-    assert.equal(state.state.taskDescription, "", "task tidak boleh dimulai");
-    assert.equal(state.state.currentPhase, "idle");
+      assert.match(out, /sesi lain sedang mengerjakan proyek ini/);
+      assert.match(out, /PID 4242/);
+      assert.match(out, /MMCH/);
+      assert.match(out, /force/);
+      assert.equal(state.state.taskDescription, "", "task tidak boleh dimulai");
+      assert.equal(state.state.currentPhase, "idle");
+    } finally {
+      await state.close();
+    }
   });
 });
 
@@ -162,29 +166,33 @@ test("start_task tetap boleh jalan saat penanda lain sudah basi", async () => {
     const state = new WorkflowState(stateFile);
     await state.load();
 
-    await writeLock(dir, {
-      pid: 4242,
-      startedAt: Date.now() - 3 * 60 * 60 * 1000,
-      heartbeatAt: Date.now() - DEFAULT_LOCK_STALE_MS - 60_000,
-    });
-    setIsAliveForTests(() => true);
+    try {
+      await writeLock(dir, {
+        pid: 4242,
+        startedAt: Date.now() - 3 * 60 * 60 * 1000,
+        heartbeatAt: Date.now() - DEFAULT_LOCK_STALE_MS - 60_000,
+      });
+      setIsAliveForTests(() => true);
 
-    const response = await handleToolCall({
-      request: {
-        params: {
-          name: "start_task",
-          arguments: { description: "Kerjakan sesuatu", type: "feature", definitionOfDone: ["build lulus"] },
+      const response = await handleToolCall({
+        request: {
+          params: {
+            name: "start_task",
+            arguments: { description: "Kerjakan sesuatu", type: "feature", definitionOfDone: ["build lulus"] },
+          },
         },
-      },
-      normalizeRequestArgs,
-      workflowState: state,
-      exec: async () => ({ stdout: "" }),
-      git: {},
-      utils: testUtils,
-    });
+        normalizeRequestArgs,
+        workflowState: state,
+        exec: async () => ({ stdout: "" }),
+        git: {},
+        utils: testUtils,
+      });
 
-    assert.match(response?.content?.[0]?.text || "", /Task Started/);
-    assert.equal(state.state.currentPhase, "coding");
+      assert.match(response?.content?.[0]?.text || "", /Task Started/);
+      assert.equal(state.state.currentPhase, "coding");
+    } finally {
+      await state.close();
+    }
   });
 });
 
@@ -194,30 +202,34 @@ test("force true melewati penolakan dan tetap mencatat task", async () => {
     const state = new WorkflowState(stateFile);
     await state.load();
 
-    await writeLock(dir, { pid: 4242, startedAt: Date.now(), heartbeatAt: Date.now() });
-    setIsAliveForTests(() => true);
+    try {
+      await writeLock(dir, { pid: 4242, startedAt: Date.now(), heartbeatAt: Date.now() });
+      setIsAliveForTests(() => true);
 
-    const response = await handleToolCall({
-      request: {
-        params: {
-          name: "start_task",
-          arguments: {
-            description: "Kerjakan sesuatu",
-            type: "feature",
-            definitionOfDone: ["build lulus"],
-            force: true,
+      const response = await handleToolCall({
+        request: {
+          params: {
+            name: "start_task",
+            arguments: {
+              description: "Kerjakan sesuatu",
+              type: "feature",
+              definitionOfDone: ["build lulus"],
+              force: true,
+            },
           },
         },
-      },
-      normalizeRequestArgs,
-      workflowState: state,
-      exec: async () => ({ stdout: "" }),
-      git: {},
-      utils: testUtils,
-    });
+        normalizeRequestArgs,
+        workflowState: state,
+        exec: async () => ({ stdout: "" }),
+        git: {},
+        utils: testUtils,
+      });
 
-    assert.match(response?.content?.[0]?.text || "", /Task Started/);
-    assert.equal(state.state.currentPhase, "coding");
+      assert.match(response?.content?.[0]?.text || "", /Task Started/);
+      assert.equal(state.state.currentPhase, "coding");
+    } finally {
+      await state.close();
+    }
   });
 });
 

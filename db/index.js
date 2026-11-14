@@ -148,4 +148,16 @@ export async function getState(userId, projectPath) {
   return await db.getState(userId, projectPath);
 }
 
+export async function closeLocalAdapters() {
+  for (const adapter of localAdapters.values()) {
+    try {
+      await adapter.close();
+    } catch {
+      // Ignore close errors during adapter teardown
+    }
+  }
+  localAdapters.clear();
+}
+
+
 
