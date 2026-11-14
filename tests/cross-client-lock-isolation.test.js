@@ -24,8 +24,15 @@ import {
   acquireLockGate,
   withLockGate,
   recoverAbandonedLockGate,
+  mintTrustedGateRecoveryAuthority,
+  publishCompleteJsonFile,
+  detectIncompatibleLegacyWriters,
   verifyLegacyFleetQuiescence,
+  acquireMaintenanceAdmissionBarrier,
+  releaseMaintenanceAdmissionBarrier,
+  stageProcessLockTransition,
   GATE_FILENAME,
+  GATE_RECOVER_FILENAME,
   DEFAULT_LOCK_STALE_MS,
   LOCK_PROTOCOL_VERSION,
 } from "../process-lock.js";
@@ -1288,13 +1295,13 @@ test("R2-1 Gate Safety: Two real child processes at deterministic contention bar
       authorizeAbandonedGateRecovery: false,
     });
     assert.equal(unauthRec.ok, false);
-    assert.equal(unauthRec.reason, "authorization_required");
+    assert.equal(unauthRec.reason, "trusted_recovery_authority_required");
 
     // 4. Spawn TWO real child processes (Worker B and Worker C) that both observe `deadToken`
     // and pause at a deterministic IPC barrier before attempting recovery + acquisition.
     const processLockModuleUrl = pathToFileURL(path.resolve("process-lock.js")).href;
     const workerScript = `
-      import { acquireLockGate, recoverAbandonedLockGate } from ${JSON.stringify(processLockModuleUrl)};
+      import { acquireLockGate, recoverAbandonedLockGate, mintTrustedGateRecoveryAuthority } from ${JSON.stringify(processLockModuleUrl)};
       import { readFileSync } from "node:fs";
       import path from "node:path";
 
@@ -1308,10 +1315,14 @@ test("R2-1 Gate Safety: Two real child processes at deterministic contention bar
 
       process.on("message", (msg) => {
         if (msg && msg.type === "PROCEED_RECOVERY") {
+          const recoveryAuthority = mintTrustedGateRecoveryAuthority({
+            operatorId: "ops-test",
+            reason: "R2-1 barrier recovery",
+          });
           const rec = recoverAbandonedLockGate({
             dir: lockDir,
             expectedToken: observedGate.token,
-            authorizeAbandonedGateRecovery: true,
+            recoveryAuthority,
           });
           const acq = acquireLockGate(lockDir, { timeoutMs: 120 });
           process.send({
@@ -1339,7 +1350,7 @@ test("R2-1 Gate Safety: Two real child processes at deterministic contention bar
 
     const spawnGateWorker = (role) => {
       const child = spawn(process.execPath, ["--input-type=module", "-e", workerScript], {
-        env: { ...process.env, TEST_LOCK_DIR: lockDir, TEST_ROLE: role },
+        env: { ...process.env, TEST_LOCK_DIR: lockDir, TEST_ROLE: role, DEVWF_OPERATOR_GATE_RECOVERY: "1" },
         stdio: ["ignore", "pipe", "pipe", "ipc"],
       });
       return child;
@@ -1901,6 +1912,406 @@ test("R2-5 Legacy Exclusion & Fleet Quiescence: Legacy v1 lock in unpinned bucke
     assert.match(resAfterQuiescence?.content?.[0]?.text || "", /Task Started/);
 
     await wsV2.close();
+  });
+});
+
+test("R3-1 & R3-2 Trusted Gate Recovery Authority, Abandoned Recovery Lock Fail-Closed, and Atomic Link Enforcement", async () => {
+  await withWorkspace(async (base) => {
+    const lockDir = path.join(base, "r3-1-gate-dir");
+    await mkdir(lockDir, { recursive: true });
+    const gateFile = path.join(lockDir, GATE_FILENAME);
+    const recoverLockFile = path.join(lockDir, GATE_RECOVER_FILENAME);
+    const deadToken = "dead-r31-token";
+
+    writeFileSync(
+      gateFile,
+      JSON.stringify({ pid: 999998, incarnationId: "dead-inc", token: deadToken, startedAt: Date.now() - 60_000 }),
+      "utf8",
+    );
+    setIsAliveForTests((pid) => pid === process.pid);
+
+    // 1. Plain boolean `authorizeAbandonedGateRecovery: true` MUST be rejected
+    const forgedBool = recoverAbandonedLockGate({
+      dir: lockDir,
+      expectedToken: deadToken,
+      authorizeAbandonedGateRecovery: true,
+    });
+    assert.equal(forgedBool.ok, false);
+    assert.equal(forgedBool.reason, "trusted_recovery_authority_required");
+    assert.equal(existsSync(gateFile), true, "Gate must remain intact when boolean-only recovery is attempted");
+
+    // 2. Minting authority without DEVWF_OPERATOR_GATE_RECOVERY=1 MUST throw
+    const prevEnv = process.env.DEVWF_OPERATOR_GATE_RECOVERY;
+    delete process.env.DEVWF_OPERATOR_GATE_RECOVERY;
+    assert.throws(
+      () => mintTrustedGateRecoveryAuthority({ operatorId: "handler", reason: "unauthorized" }),
+      (err) => err?.code === "OPERATOR_RECOVERY_AUTH_REQUIRED",
+    );
+
+    // 3. Abandoned mcp-process.gate.recover.lock MUST fail closed without adding a recursive lock layer
+    writeFileSync(
+      recoverLockFile,
+      JSON.stringify({ pid: 999997, incarnationId: "dead-rec", token: "dead-rec-tok", startedAt: Date.now() - 60_000 }),
+      "utf8",
+    );
+    const acqWithDeadRecover = acquireLockGate(lockDir, { timeoutMs: 100 });
+    assert.equal(acqWithDeadRecover.ok, false);
+    assert.equal(acqWithDeadRecover.error, "LOCK_GATE_RECOVERY_ABANDONED");
+
+    process.env.DEVWF_OPERATOR_GATE_RECOVERY = "1";
+    try {
+      const auth = mintTrustedGateRecoveryAuthority({ operatorId: "ops-r31", reason: "verified cleanup" });
+      const recWithDeadRecover = recoverAbandonedLockGate({
+        dir: lockDir,
+        expectedToken: deadToken,
+        recoveryAuthority: auth,
+      });
+      assert.equal(recWithDeadRecover.ok, false);
+      assert.equal(recWithDeadRecover.reason, "recovery_lock_abandoned");
+    } finally {
+      if (prevEnv === undefined) delete process.env.DEVWF_OPERATOR_GATE_RECOVERY;
+      else process.env.DEVWF_OPERATOR_GATE_RECOVERY = prevEnv;
+    }
+
+    // 4. R3-2: On a non-existent/unwritable parent or simulated unsupported link, publishCompleteJsonFile
+    // never falls back to partial writeFileSync(..., { flag: "wx" }) on !replaceIfExists
+    assert.throws(
+      () => publishCompleteJsonFile(path.join(base, "missing-dir", "gate.lock"), { ok: true }, { replaceIfExists: false }),
+      (err) => Boolean(err && err.code),
+    );
+  });
+});
+
+test("R3-3 Detached AsyncLocalStorage Context: Detached child C scheduled by A cannot bypass B after A completes", async () => {
+  await withWorkspace(async (base) => {
+    const repo = await createRepo(base, "r3-3-repo");
+    const bucket = projectKey(canonicalProjectPath(repo));
+    const lockDir = path.join(base, "state", "projects", bucket);
+    const stateFile = path.join(lockDir, "users", "u1", "workflow-state.ses_r33.json");
+    await mkdir(path.dirname(stateFile), { recursive: true });
+
+    const ws = new WorkflowState(stateFile, { sessionId: "ses_r33" });
+    await ws.load();
+
+    const events = [];
+    let cStartedPromise;
+    let releaseB;
+    const bBarrier = new Promise((resolve) => {
+      releaseB = resolve;
+    });
+    let releaseCTrigger;
+    const cTrigger = new Promise((resolve) => {
+      releaseCTrigger = resolve;
+    });
+
+    // 1. A enters ws.runSerialized AND withLockGate, schedules detached child C, then A completes
+    await ws.runSerialized(async () => {
+      events.push("A:start");
+      // Detached child C inherits A's AsyncLocalStorage context, but waits for cTrigger
+      cStartedPromise = (async () => {
+        await cTrigger;
+        events.push("C:resumed_attempt_bypass");
+        return await ws.runSerialized(async () => {
+          events.push("C:entered_serialized");
+          return "C-done";
+        });
+      })();
+      events.push("A:end");
+    });
+
+    // 2. B obtains ws.runSerialized and waits at bBarrier
+    const bPromise = ws.runSerialized(async () => {
+      events.push("B:entered_serialized");
+      // 3. While B is waiting inside serialized critical section, resume detached child C!
+      releaseCTrigger();
+      await new Promise((r) => setTimeout(r, 40));
+      events.push("B:before_exit");
+      await bBarrier;
+      events.push("B:exited_serialized");
+      return "B-done";
+    });
+
+    // Give C plenty of time to attempt to enter while B is waiting
+    await new Promise((r) => setTimeout(r, 60));
+    assert.equal(
+      events.includes("C:entered_serialized"),
+      false,
+      "Detached child C MUST NOT bypass B's serialized critical section after A completed",
+    );
+
+    releaseB();
+    const [bRes, cRes] = await Promise.all([bPromise, cStartedPromise]);
+    assert.equal(bRes, "B-done");
+    assert.equal(cRes, "C-done");
+
+    const bExitIdx = events.indexOf("B:exited_serialized");
+    const cEnterIdx = events.indexOf("C:entered_serialized");
+    assert.ok(bExitIdx >= 0 && cEnterIdx > bExitIdx, `C must enter strictly after B exits (${events.join(", ")})`);
+
+    // Same adversarial check for withLockGate(lockDir, ...)
+    const gateEvents = [];
+    let gateC;
+    let releaseGateB;
+    const gateBBarrier = new Promise((r) => {
+      releaseGateB = r;
+    });
+    let triggerGateC;
+    const gateCTrigger = new Promise((r) => {
+      triggerGateC = r;
+    });
+
+    await withLockGate(lockDir, async () => {
+      gateEvents.push("A:gate");
+      gateC = (async () => {
+        await gateCTrigger;
+        return await withLockGate(lockDir, async () => {
+          gateEvents.push("C:gate");
+        });
+      })();
+    });
+
+    const gateB = withLockGate(lockDir, async () => {
+      gateEvents.push("B:gate_enter");
+      triggerGateC();
+      await new Promise((r) => setTimeout(r, 40));
+      await gateBBarrier;
+      gateEvents.push("B:gate_exit");
+    });
+
+    await new Promise((r) => setTimeout(r, 60));
+    assert.equal(gateEvents.includes("C:gate"), false, "Detached child C must not bypass B on withLockGate");
+    releaseGateB();
+    await Promise.all([gateB, gateC]);
+    assert.ok(gateEvents.indexOf("C:gate") > gateEvents.indexOf("B:gate_exit"));
+
+    await ws.close();
+  });
+});
+
+test("R3-4 & R3-5 Journal Recovery Concurrency, Newer-Owner Non-Overwrite, Summary Preservation, and Fail-Closed Persistence", async () => {
+  await withWorkspace(async (base) => {
+    const repoA = await createRepo(base, "r34-repo-a");
+    const repoB = await createRepo(base, "r34-repo-b");
+    const bucketA = projectKey(canonicalProjectPath(repoA));
+    const bucketB = projectKey(canonicalProjectPath(repoB));
+    const lockDirA = path.join(base, "state", "projects", bucketA);
+    const lockDirB = path.join(base, "state", "projects", bucketB);
+    const stateFileA = path.join(lockDirA, "users", "u1", "workflow-state.ses_r34.json");
+    const stateBase = path.join(base, "state");
+
+    const ws = new WorkflowState(stateFileA, { sessionId: "ses_r34" });
+    await ws.load();
+    const startA = await handleStartTask(
+      {
+        description: "Initial Repo A task",
+        type: "feature",
+        projectDir: repoA,
+        definitionOfDone: ["dod 1"],
+        plan: ["step 1"],
+      },
+      ws,
+      {},
+    );
+    assert.match(startA?.content?.[0]?.text || "", /Task Started/);
+    const pinnedA = ws.stateFile;
+
+    // 1. Failure during commit marking must NOT silently succeed; it must trigger rollback!
+    // Point `journalFile` inside an existing regular file (`pinnedA`) so `writeJournalFileAtomic` throws ENOTDIR/EEXIST.
+    const commitFailRes = await handleStartTask(
+      {
+        description: "Task failing at commit marking",
+        type: "feature",
+        projectDir: repoB,
+        allowProjectSwitch: true,
+        projectSwitchReason: "test",
+        definitionOfDone: ["dod b"],
+        plan: ["step b"],
+      },
+      ws,
+      {},
+      {
+        transitionHooks: {
+          afterSave: async ({ transitionJournal }) => {
+            transitionJournal.journalFile = path.join(pinnedA, "j.json");
+          },
+        },
+      },
+    );
+    assert.match(commitFailRes?.content?.[0]?.text || "", /Dibatalkan/);
+    assert.equal(ws.state.taskDescription, "Initial Repo A task");
+
+    // 1b. Failure during journal creation (`beginTransitionJournal` with invalid path) must throw & fail closed
+    const regularFile = path.join(base, "regular-file.txt");
+    writeFileSync(regularFile, "not-a-dir", "utf8");
+    await assert.rejects(
+      () =>
+        import("../workflow-state.js").then((m) =>
+          m.beginTransitionJournal({
+            sourceStateFile: path.join(regularFile, "workflow-state.json"),
+            targetStateFile: path.join(regularFile, "workflow-state.json"),
+            sessionId: "ses_r34",
+          }),
+        ),
+      (err) => Boolean(err && err.code),
+    );
+
+    // 2. Concurrent recoverers separated by deterministic barrier + newer-owner preservation:
+    // Seed a crashed STAGED journal from dead PID 888881, plus a newer legitimate write on Repo A
+    // and a newer project-summary.json!
+    const sessionsDir = path.join(stateBase, "sessions");
+    await mkdir(sessionsDir, { recursive: true });
+    const journalFile = path.join(sessionsDir, "transition-ses_r34.journal.json");
+    const summaryFileA = path.join(path.dirname(pinnedA), "project-summary.json");
+
+    // Simulate newer legitimate owner having updated pinnedA AFTER the crashed journal started
+    ws.state.taskDescription = "Newer legitimate task by live owner";
+    ws.state.transitionJournalId = "newer-journal-id";
+    await ws.save();
+    writeFileSync(summaryFileA, JSON.stringify({ totalTasks: 42, sentinel: "newer-summary-must-survive" }), "utf8");
+
+    const crashedJournal = {
+      journalId: "crashed-old-journal",
+      phase: "STAGED",
+      pid: 888881,
+      incarnationId: "dead-inc-r34",
+      startedAt: Date.now() - 120_000,
+      baseDir: stateBase,
+      sessionKey: "ses_r34",
+      journalFile,
+      sourceStateFile: pinnedA,
+      targetStateFile: path.join(lockDirB, "users", "u1", "workflow-state.ses_r34.json"),
+      sourceStateSnap: {
+        file: pinnedA,
+        existed: true,
+        raw: JSON.stringify({ taskDescription: "Stale pre-crash task", owner: { pid: 888881 } }),
+      },
+      targetStateSnap: {
+        file: path.join(lockDirB, "users", "u1", "workflow-state.ses_r34.json"),
+        existed: false,
+        raw: null,
+      },
+      sourceDbSnapshot: null,
+      targetDbSnapshot: null,
+      priorSessionPointer: null,
+      priorFocusBinding: null,
+    };
+    writeFileSync(journalFile, JSON.stringify(crashedJournal, null, 2), "utf8");
+    setIsAliveForTests((pid) => pid === process.pid);
+
+    let releaseRecBarrier;
+    const recBarrier = new Promise((r) => {
+      releaseRecBarrier = r;
+    });
+    let notifyRec1Locked;
+    const rec1Locked = new Promise((r) => {
+      notifyRec1Locked = r;
+    });
+
+    const rec1Promise = reconcilePendingTransitionJournals({
+      baseDir: stateBase,
+      hooks: {
+        onRecoveryLockAcquired: async () => {
+          notifyRec1Locked();
+          await recBarrier;
+        },
+      },
+    });
+
+    await rec1Locked;
+    // Recoverer 2 runs while Recoverer 1 holds the exclusive recovery lock: MUST skip!
+    const rec2Res = await reconcilePendingTransitionJournals({ baseDir: stateBase });
+    assert.equal(rec2Res.length, 1);
+    assert.equal(rec2Res[0].action, "recovery_in_progress");
+    assert.equal(existsSync(journalFile), true, "Journal must still exist while Recoverer 1 holds lock");
+
+    releaseRecBarrier();
+    const rec1Res = await rec1Promise;
+    assert.equal(rec1Res[0].action, "rolled_back");
+    assert.equal(existsSync(journalFile), false, "Journal cleaned up after Recoverer 1 finishes");
+
+    // Verify newer legitimate state on pinnedA and project-summary.json were NOT overwritten!
+    const diskAfterRec = JSON.parse(readFileSync(pinnedA, "utf8"));
+    assert.equal(diskAfterRec.taskDescription, "Newer legitimate task by live owner");
+    const summaryAfterRec = JSON.parse(readFileSync(summaryFileA, "utf8"));
+    assert.equal(summaryAfterRec.sentinel, "newer-summary-must-survive");
+
+    // 3. Crash during recovery (abandoned recover.lock) preserves journal evidence and fails closed
+    writeFileSync(journalFile, JSON.stringify(crashedJournal, null, 2), "utf8");
+    writeFileSync(
+      `${journalFile}.recover.lock`,
+      JSON.stringify({ pid: 888882, incarnationId: "dead-rec-worker", token: "dead-rec", startedAt: Date.now() }),
+      "utf8",
+    );
+    const recWithDeadLock = await reconcilePendingTransitionJournals({ baseDir: stateBase });
+    assert.equal(recWithDeadLock[0].action, "recovery_lock_abandoned");
+    assert.equal(existsSync(journalFile), true, "Journal evidence must be preserved when recovery lock is abandoned");
+
+    // 4. Repeated recovery after restart (after dead recover lock is cleared) completes idempotently
+    await rm(`${journalFile}.recover.lock`, { force: true });
+    const recRepeated = await reconcilePendingTransitionJournals({ baseDir: stateBase });
+    assert.equal(recRepeated[0].action, "rolled_back");
+    assert.equal(existsSync(journalFile), false);
+
+    await ws.close();
+  });
+});
+
+test("R3-6 Legacy Admission Barrier & Fail-Closed Quiescence Inspection on EACCES", async () => {
+  await withWorkspace(async (base) => {
+    const repoA = await createRepo(base, "r36-repo-a");
+    const bucketA = projectKey(canonicalProjectPath(repoA));
+    const stateBase = path.join(base, "state");
+    const lockDirA = path.join(stateBase, "projects", bucketA);
+    await mkdir(lockDirA, { recursive: true });
+
+    // 1. Permission-denied / unreadable projectsRoot MUST fail closed in both
+    // verifyLegacyFleetQuiescence and detectIncompatibleLegacyWriters!
+    const eaccesReaddir = () => {
+      const err = new Error("EACCES: permission denied");
+      err.code = "EACCES";
+      throw err;
+    };
+
+    const quiescenceOnErr = verifyLegacyFleetQuiescence({
+      baseDir: stateBase,
+      readdirSyncImpl: eaccesReaddir,
+    });
+    assert.equal(quiescenceOnErr.quiescent, false, "Quiescence MUST fail closed on EACCES");
+    assert.ok(quiescenceOnErr.inspectionErrors.length > 0);
+
+    const legacyOnErr = detectIncompatibleLegacyWriters({
+      toDir: lockDirA,
+      readdirSyncImpl: eaccesReaddir,
+    });
+    assert.equal(legacyOnErr.detected, true, "Legacy detection MUST fail closed on EACCES");
+    assert.equal(legacyOnErr.failClosed, true);
+    assert.equal(legacyOnErr.reason, "legacy_inspection_failed");
+
+    // 2. Maintenance admission barrier blocks stageProcessLockTransition until released
+    const maintToken = "maint-r36-token";
+    const barrierRes = acquireMaintenanceAdmissionBarrier({
+      baseDir: stateBase,
+      maintenanceToken: maintToken,
+      operatorId: "ops-r36",
+      reason: "cutover",
+    });
+    assert.equal(barrierRes.ok, true);
+
+    const stagedBlocked = stageProcessLockTransition({ toDir: lockDirA, projectDir: repoA });
+    assert.equal(stagedBlocked.ok, false);
+    assert.equal(stagedBlocked.reason, "admission_barrier_active");
+
+    // Wrong token cannot release barrier
+    const badRel = releaseMaintenanceAdmissionBarrier({ baseDir: stateBase, maintenanceToken: "wrong" });
+    assert.equal(badRel.ok, false);
+
+    // Correct token reopens admission
+    const goodRel = releaseMaintenanceAdmissionBarrier({ baseDir: stateBase, maintenanceToken: maintToken });
+    assert.equal(goodRel.ok, true);
+
+    const stagedOpen = stageProcessLockTransition({ toDir: lockDirA, projectDir: repoA });
+    assert.equal(stagedOpen.ok, true);
+    releaseProcessLock({ dir: lockDirA, leaseId: stagedOpen.leaseId });
   });
 });
 

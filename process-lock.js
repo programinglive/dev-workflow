@@ -460,7 +460,7 @@ function sameLockIdentity(a, b) {
  * tulis isi lengkap ke berkas sementara, lalu pasang dengan `linkSync` (eksklusif)
  * atau ganti di bawah perlindungan gerbang (`replaceIfExists`).
  */
-function publishCompleteJsonFile(targetFile, payloadObj, { replaceIfExists = false, pid = process.pid } = {}) {
+export function publishCompleteJsonFile(targetFile, payloadObj, { replaceIfExists = false, pid = process.pid } = {}) {
   const tmpFile = `${targetFile}.init.${pid}.${Date.now()}-${Math.random().toString(16).slice(2, 10)}.tmp`;
   const content = JSON.stringify(payloadObj);
   writeFileSync(tmpFile, content, { encoding: "utf8", flag: "wx" });
@@ -483,8 +483,14 @@ function publishCompleteJsonFile(targetFile, payloadObj, { replaceIfExists = fal
         (linkError.code === "ENOSYS" || linkError.code === "EXDEV" || linkError.code === "EPERM")
       ) {
         if (!replaceIfExists) {
-          writeFileSync(targetFile, content, { encoding: "utf8", flag: "wx" });
-          return;
+          // R3-2: Jangan pernah jatuh ke `writeFileSync(..., { flag: "wx" })`
+          // pada target karena membuka jendela inisialisasi parsial 0-byte.
+          const unsupportedErr = new Error(
+            `Atomic linkSync publication unsupported for ${targetFile} (${linkError.code})`,
+          );
+          unsupportedErr.code = "UNSUPPORTED_ATOMIC_LINK";
+          unsupportedErr.cause = linkError;
+          throw unsupportedErr;
         }
         renameSync(tmpFile, targetFile);
         return;
@@ -570,6 +576,7 @@ function isGateStaleParsed(parsed, { isAlive, isHolderProcess, shouldConsultDefa
 function releaseGateEntry(resolvedDir, entry) {
   entry.count -= 1;
   if (entry.count <= 0 && !entry.cleanedUp) {
+    entry.active = false;
     entry.cleanedUp = true;
     if (activeGateDepth.get(resolvedDir) === entry) {
       activeGateDepth.delete(resolvedDir);
@@ -593,32 +600,78 @@ function releaseGateEntry(resolvedDir, entry) {
 }
 
 /**
+ * R3-1: Set kapabilitas pemulihan gerbang tepercaya yang tidak dapat dipalsukan
+ * oleh pemanggil biasa atau handler permintaan MCP melalui flag boolean.
+ */
+const TRUSTED_GATE_RECOVERY_AUTHORITIES = new WeakSet();
+
+/**
+ * Mencetak kapabilitas otoritas pemulihan gerbang tepercaya hanya ketika proses
+ * dijalankan dalam konteks pemeliharaan operator eksplisit (`DEVWF_OPERATOR_GATE_RECOVERY=1`).
+ */
+export function mintTrustedGateRecoveryAuthority({
+  operatorId = "",
+  reason = "",
+  env = process.env,
+} = {}) {
+  if (String(env?.DEVWF_OPERATOR_GATE_RECOVERY || "").trim() !== "1") {
+    const err = new Error(
+      "Trusted gate recovery authority requires explicit operator maintenance context (DEVWF_OPERATOR_GATE_RECOVERY=1).",
+    );
+    err.code = "OPERATOR_RECOVERY_AUTH_REQUIRED";
+    throw err;
+  }
+  if (!operatorId || typeof operatorId !== "string" || operatorId.trim() === "") {
+    const err = new Error("operatorId is required to mint gate recovery authority.");
+    err.code = "OPERATOR_ID_REQUIRED";
+    throw err;
+  }
+  if (!reason || typeof reason !== "string" || reason.trim() === "") {
+    const err = new Error("reason is required to mint gate recovery authority.");
+    err.code = "RECOVERY_REASON_REQUIRED";
+    throw err;
+  }
+  const authority = Object.freeze({
+    operatorId: operatorId.trim(),
+    reason: reason.trim(),
+    issuedAt: Date.now(),
+    pid: process.pid,
+    incarnationId: PROCESS_INCARNATION_ID,
+  });
+  TRUSTED_GATE_RECOVERY_AUTHORITIES.add(authority);
+  return authority;
+}
+
+export function isTrustedGateRecoveryAuthority(authority) {
+  return Boolean(authority && TRUSTED_GATE_RECOVERY_AUTHORITIES.has(authority));
+}
+
+/**
  * Pemulihan gerbang lock yang ditinggalkan proses mati secara terkendali dan
- * memerlukan otorisasi eksplisit (`authorizeAbandonedGateRecovery: true`) serta
- * pencocokan token (`expectedToken`) di bawah kunci pemulihan eksklusif (R2-1).
+ * memerlukan kapabilitas tepercaya (`recoveryAuthority`) serta pencocokan token
+ * (`expectedToken`) di bawah kunci pemulihan eksklusif (R2-1 / R3-1).
  *
- * ATURAN KEAMANAN (R2-1):
- *   - Akuisisi normal (`acquireLockGate`) TIDAK PERNAH me-rename atau menghapus
- *     `mcp-process.gate.lock` milik proses lain secara otomatis, sehingga tidak
- *     pernah bisa menghapus gerbang milik suksesor yang baru masuk.
- *   - Fungsi ini memulihkan gerbang yang ditinggalkan proses mati hanya bila
- *     diotorisasi secara eksplisit dan `expectedToken` masih cocok dengan berkas
- *     di disk di bawah kunci pemulihan `mcp-process.gate.recover.lock`.
+ * ATURAN KEAMANAN (R2-1 / R3-1):
+ *   - Flag boolean `authorizeAbandonedGateRecovery: true` TIDAK lagi diterima;
+ *     pemulihan wajib menyertakan `recoveryAuthority` dari `mintTrustedGateRecoveryAuthority`.
+ *   - Bila `mcp-process.gate.recover.lock` sendiri ditinggalkan proses mati, fungsi
+ *     ini gagal tertutup (`recovery_lock_abandoned`) tanpa menambah lapisan lock baru.
  */
 export function recoverAbandonedLockGate({
   dir,
   expectedToken = null,
-  authorizeAbandonedGateRecovery = false,
+  recoveryAuthority = null,
+  authorizeAbandonedGateRecovery: _ignoredBooleanFlag = false,
   pid = process.pid,
   isAlive = currentIsAlive(),
   isHolderProcess = currentIsHolderProcess(),
   hooks = null,
 } = {}) {
-  if (authorizeAbandonedGateRecovery !== true) {
+  if (!isTrustedGateRecoveryAuthority(recoveryAuthority)) {
     return {
       ok: false,
       recovered: false,
-      reason: "authorization_required",
+      reason: "trusted_recovery_authority_required",
     };
   }
   if (!dir) {
@@ -654,6 +707,7 @@ export function recoverAbandonedLockGate({
         incarnationId: PROCESS_INCARNATION_ID,
         token: recoverToken,
         expectedToken,
+        operatorId: recoveryAuthority.operatorId,
         startedAt: Date.now(),
         host,
       },
@@ -661,10 +715,30 @@ export function recoverAbandonedLockGate({
     );
   } catch (error) {
     if (error && error.code === "EEXIST") {
+      const existingRecover = readGateDetailed(recoverLockFile, { waitForPartialInit: false });
+      if (
+        existingRecover.status === "corrupt" ||
+        (existingRecover.status === "ok" &&
+          isGateStaleParsed(existingRecover.gate, {
+            isAlive,
+            isHolderProcess,
+            shouldConsultDefaultHolder,
+            host,
+          }))
+      ) {
+        return {
+          ok: false,
+          recovered: false,
+          reason: "recovery_lock_abandoned",
+          recoverLockFile,
+          holder: existingRecover.gate || null,
+        };
+      }
       return {
         ok: false,
         recovered: false,
         reason: "recovery_in_progress",
+        holder: existingRecover.gate || null,
       };
     }
     return {
@@ -807,6 +881,7 @@ export function acquireLockGate(
 
   if (
     contextEntry &&
+    contextEntry.active === true &&
     !contextEntry.cleanedUp &&
     contextEntry.pid === pid &&
     contextEntry.incarnationId === PROCESS_INCARNATION_ID
@@ -862,8 +937,28 @@ export function acquireLockGate(
   let contentionNotified = false;
 
   while (true) {
-    // Tunggu bila pemulihan gerbang berotorisasi sedang berlangsung pada direktori ini.
+    // Tunggu bila pemulihan gerbang berotorisasi sedang berlangsung pada direktori ini;
+    // gagal tertutup bila berkas pemulihan ternyata ditinggalkan proses mati.
     if (existsSync(recoverLockFile)) {
+      const recoverDetailed = readGateDetailed(recoverLockFile, { waitForPartialInit: false });
+      if (
+        recoverDetailed.status === "corrupt" ||
+        (recoverDetailed.status === "ok" &&
+          isGateStaleParsed(recoverDetailed.gate, {
+            isAlive,
+            isHolderProcess,
+            shouldConsultDefaultHolder,
+            host,
+          }))
+      ) {
+        return {
+          ok: false,
+          error: "LOCK_GATE_RECOVERY_ABANDONED",
+          abandoned: true,
+          recoverLockFile,
+          holder: recoverDetailed.gate || null,
+        };
+      }
       if (Date.now() >= deadline) {
         return {
           ok: false,
@@ -917,6 +1012,7 @@ export function acquireLockGate(
         token: gateToken,
         gateFile,
         count: 1,
+        active: true,
         cleanedUp: false,
         contextMap: activeContextMap,
         allReleasedPromise,
@@ -1065,6 +1161,7 @@ export function withLockGate(dir, fn, options = {}) {
   // Panggilan bersarang (nested) di dalam konteks eksekusi yang sama:
   if (
     contextEntry &&
+    contextEntry.active === true &&
     !contextEntry.cleanedUp &&
     contextEntry.pid === (options.pid || process.pid) &&
     contextEntry.incarnationId === PROCESS_INCARNATION_ID
@@ -1576,35 +1673,52 @@ export function detectIncompatibleLegacyWriters({
   staleMs = DEFAULT_LOCK_STALE_MS,
   isAlive = currentIsAlive(),
   isHolderProcess = currentIsHolderProcess(),
+  readdirSyncImpl = readdirSync,
 } = {}) {
   const dirsToCheck = new Set();
   if (toDir) dirsToCheck.add(path.resolve(toDir));
   if (fromDir) dirsToCheck.add(path.resolve(fromDir));
 
-  // R2-5: Proses legacy v1 memeriksa `mcp-process.lock` pada direktori kerjanya
-  // SEBELUM membaca/menulis penunjuk sesi `<base>/sessions/*.json`. Akibatnya,
-  // penunjuk sesi bisa belum ada (missing) atau masih menunjuk proyek lama
-  // (outdated) saat proses legacy mulai memutasi repositori target. Oleh sebab
-  // itu, bila berada di tata letak `<base>/projects/<bucket>`, pindai SELURUH
-  // bucket di `<base>/projects/*` tanpa bergantung pada kelengkapan penunjuk sesi.
+  // R2-5 + R3-6: Pindai SELURUH bucket di `<base>/projects/*`; bila pembacaan
+  // direktori gagal (mis. EACCES/EPERM), gagal tertutup (`legacy_inspection_failed`).
   const candidateDirs = [toDir, fromDir].filter(Boolean).map((d) => path.resolve(d));
   for (const cand of candidateDirs) {
     if (path.basename(path.dirname(cand)) === "projects") {
       const projectsRoot = path.dirname(cand);
       if (existsSync(projectsRoot)) {
         try {
-          for (const bEntry of readdirSync(projectsRoot, { withFileTypes: true })) {
+          for (const bEntry of readdirSyncImpl(projectsRoot, { withFileTypes: true })) {
             if (bEntry.isDirectory()) {
               dirsToCheck.add(path.join(projectsRoot, bEntry.name));
             }
           }
-        } catch {}
+        } catch (error) {
+          return {
+            detected: true,
+            failClosed: true,
+            reason: "legacy_inspection_failed",
+            dir: projectsRoot,
+            error: (error && (error.code || error.message)) || "EACCES",
+            holder: null,
+          };
+        }
       }
     }
   }
 
   for (const checkDir of dirsToCheck) {
-    const lock = readProcessLock({ dir: checkDir });
+    const detailedLock = readProcessLockDetailed({ dir: checkDir });
+    if (detailedLock.status === "unreadable") {
+      return {
+        detected: true,
+        failClosed: true,
+        reason: "legacy_inspection_failed",
+        dir: checkDir,
+        error: detailedLock.error?.code || detailedLock.error?.message || "EACCES",
+        holder: null,
+      };
+    }
+    const lock = detailedLock.lock;
     if (!lock || lock.pid === pid) continue;
     if (!isLegacyLock(lock)) continue;
 
@@ -1629,24 +1743,33 @@ export function detectIncompatibleLegacyWriters({
     const targetLock = readProcessLock({ dir: resolvedTo });
     const stateCandidateFiles = [];
     try {
-      for (const entry of readdirSync(resolvedTo, { withFileTypes: true })) {
+      for (const entry of readdirSyncImpl(resolvedTo, { withFileTypes: true })) {
         if (entry.isFile() && entry.name.startsWith("workflow-state") && entry.name.endsWith(".json")) {
           stateCandidateFiles.push(path.join(resolvedTo, entry.name));
         }
       }
       const usersDir = path.join(resolvedTo, "users");
       if (existsSync(usersDir)) {
-        for (const uEntry of readdirSync(usersDir, { withFileTypes: true })) {
+        for (const uEntry of readdirSyncImpl(usersDir, { withFileTypes: true })) {
           if (!uEntry.isDirectory()) continue;
           const uPath = path.join(usersDir, uEntry.name);
-          for (const fEntry of readdirSync(uPath, { withFileTypes: true })) {
+          for (const fEntry of readdirSyncImpl(uPath, { withFileTypes: true })) {
             if (fEntry.isFile() && fEntry.name.startsWith("workflow-state") && fEntry.name.endsWith(".json")) {
               stateCandidateFiles.push(path.join(uPath, fEntry.name));
             }
           }
         }
       }
-    } catch {}
+    } catch (error) {
+      return {
+        detected: true,
+        failClosed: true,
+        reason: "legacy_inspection_failed",
+        dir: resolvedTo,
+        error: (error && (error.code || error.message)) || "EACCES",
+        holder: null,
+      };
+    }
 
     const targetNorm = projectDir ? path.resolve(projectDir).replace(/\\/g, "/").toLowerCase() : "";
     for (const sFile of stateCandidateFiles) {
@@ -1703,6 +1826,100 @@ export function detectIncompatibleLegacyWriters({
  * tidak ada gerbang yang ditinggalkan (`LOCK_GATE_ABANDONED`), dan tidak ada
  * jurnal transisi yang menggantung pada `<baseDir>`.
  */
+const ADMISSION_BARRIER_FILENAME = "maintenance-admission.json";
+
+export function admissionBarrierPath(baseDir) {
+  return path.join(path.resolve(baseDir), ADMISSION_BARRIER_FILENAME);
+}
+
+/**
+ * Menerbitkan penghalang admisi pemeliharaan (maintenance admission barrier)
+ * pada `<baseDir>/maintenance-admission.json` untuk menahan peluncuran/aktivitas
+ * baru selama transisi armada v1 -> v2 (R3-6).
+ */
+export function acquireMaintenanceAdmissionBarrier({
+  baseDir,
+  maintenanceToken,
+  operatorId = "operator",
+  reason = "protocol_v2_cutover",
+  minProtocolVersion = LOCK_PROTOCOL_VERSION,
+  pid = process.pid,
+} = {}) {
+  if (!baseDir || !maintenanceToken) {
+    return { ok: false, reason: "invalid_arguments" };
+  }
+  const barrierFile = admissionBarrierPath(baseDir);
+  mkdirSync(path.dirname(barrierFile), { recursive: true });
+  const payload = {
+    state: "DRAINING",
+    maintenanceToken,
+    operatorId,
+    reason,
+    minProtocolVersion,
+    pid,
+    incarnationId: PROCESS_INCARNATION_ID,
+    startedAt: Date.now(),
+    host: safeHostname(),
+  };
+  try {
+    publishCompleteJsonFile(barrierFile, payload, { replaceIfExists: false, pid });
+    return { ok: true, barrierFile, barrier: payload };
+  } catch (error) {
+    if (error && error.code === "EEXIST") {
+      return { ok: false, reason: "barrier_already_active", barrierFile };
+    }
+    return { ok: false, reason: "barrier_write_error", error: error?.code || error?.message || "EACCES" };
+  }
+}
+
+export function checkLegacyAdmissionBarrier({ baseDir, maintenanceToken = null } = {}) {
+  if (!baseDir) return { blocked: false, barrier: null };
+  const barrierFile = admissionBarrierPath(baseDir);
+  if (!existsSync(barrierFile)) return { blocked: false, barrier: null };
+  try {
+    const parsed = JSON.parse(readFileSync(barrierFile, "utf8"));
+    if (!parsed || typeof parsed !== "object") {
+      return { blocked: true, reason: "corrupt_admission_barrier", barrierFile };
+    }
+    if (parsed.state === "OPEN") {
+      return { blocked: false, barrier: parsed };
+    }
+    if (maintenanceToken && parsed.maintenanceToken === maintenanceToken) {
+      return { blocked: false, barrier: parsed, authorizedByToken: true };
+    }
+    return { blocked: true, reason: "admission_barrier_active", barrierFile, barrier: parsed };
+  } catch (error) {
+    return {
+      blocked: true,
+      reason: "unreadable_admission_barrier",
+      barrierFile,
+      error: error?.code || error?.message || "EACCES",
+    };
+  }
+}
+
+export function releaseMaintenanceAdmissionBarrier({ baseDir, maintenanceToken } = {}) {
+  if (!baseDir || !maintenanceToken) return { ok: false, reason: "invalid_arguments" };
+  const barrierFile = admissionBarrierPath(baseDir);
+  if (!existsSync(barrierFile)) return { ok: false, reason: "barrier_missing" };
+  try {
+    const parsed = JSON.parse(readFileSync(barrierFile, "utf8"));
+    if (!parsed || parsed.maintenanceToken !== maintenanceToken) {
+      return { ok: false, reason: "maintenance_token_mismatch" };
+    }
+    unlinkSync(barrierFile);
+    return { ok: true, released: true, barrierFile };
+  } catch (error) {
+    return { ok: false, reason: "barrier_release_error", error: error?.code || error?.message || "EACCES" };
+  }
+}
+
+/**
+ * Memverifikasi keheningan armada (fleet quiescence) secara fail-closed sebelum atau
+ * sesudah aktivasi Protokol v2 (R2-5 + R3-6): memastikan tidak ada proses legacy v1
+ * yang masih hidup, tidak ada gerbang/lock pemulihan yang ditinggalkan, tidak ada
+ * jurnal transisi yang menggantung, dan TIDAK ada direktori/berkas yang gagal dibaca.
+ */
 export function verifyLegacyFleetQuiescence({
   baseDir = null,
   dirs = [],
@@ -1711,20 +1928,32 @@ export function verifyLegacyFleetQuiescence({
   staleMs = DEFAULT_LOCK_STALE_MS,
   isAlive = currentIsAlive(),
   isHolderProcess = currentIsHolderProcess(),
+  readdirSyncImpl = readdirSync,
 } = {}) {
   const bucketDirs = new Set((Array.isArray(dirs) ? dirs : []).filter(Boolean).map((d) => path.resolve(d)));
   const resolvedBase = baseDir ? path.resolve(baseDir) : null;
+  const inspectionErrors = [];
 
   if (resolvedBase) {
-    const projectsRoot = path.join(resolvedBase, "projects");
-    if (existsSync(projectsRoot)) {
-      try {
-        for (const entry of readdirSync(projectsRoot, { withFileTypes: true })) {
-          if (entry.isDirectory()) {
-            bucketDirs.add(path.join(projectsRoot, entry.name));
+    if (!existsSync(resolvedBase)) {
+      inspectionErrors.push({ dir: resolvedBase, reason: "base_dir_missing" });
+    } else {
+      const projectsRoot = path.join(resolvedBase, "projects");
+      if (existsSync(projectsRoot)) {
+        try {
+          for (const entry of readdirSyncImpl(projectsRoot, { withFileTypes: true })) {
+            if (entry.isDirectory()) {
+              bucketDirs.add(path.join(projectsRoot, entry.name));
+            }
           }
+        } catch (error) {
+          inspectionErrors.push({
+            dir: projectsRoot,
+            reason: "projects_root_unreadable",
+            error: error?.code || error?.message || "EACCES",
+          });
         }
-      } catch {}
+      }
     }
   }
 
@@ -1737,8 +1966,17 @@ export function verifyLegacyFleetQuiescence({
     (isAlive === defaultIsAlive && !isAliveOverride);
 
   for (const dir of bucketDirs) {
-    const lock = readProcessLock({ dir });
-    if (lock && lock.pid !== pid && isLegacyLock(lock)) {
+    const detailedLock = readProcessLockDetailed({ dir });
+    if (detailedLock.status === "unreadable") {
+      inspectionErrors.push({
+        dir,
+        reason: "lock_unreadable",
+        error: detailedLock.error?.code || detailedLock.error?.message || "EACCES",
+      });
+    } else if (detailedLock.status === "corrupt") {
+      inspectionErrors.push({ dir, reason: "lock_corrupt" });
+    } else if (detailedLock.lock && detailedLock.lock.pid !== pid && isLegacyLock(detailedLock.lock)) {
+      const lock = detailedLock.lock;
       const liveness = evaluateLockHolderLiveness(
         { ...lock, _lockDir: dir },
         { pid, now, staleMs, isAlive, isHolderProcess, host },
@@ -1756,7 +1994,14 @@ export function verifyLegacyFleetQuiescence({
     const gateFile = processGatePath({ dir });
     if (existsSync(gateFile)) {
       const gateDetailed = readGateDetailed(gateFile, { waitForPartialInit: false });
-      if (
+      if (gateDetailed.status === "unreadable") {
+        inspectionErrors.push({
+          dir,
+          gateFile,
+          reason: "gate_unreadable",
+          error: gateDetailed.error?.code || gateDetailed.error?.message || "EACCES",
+        });
+      } else if (
         gateDetailed.status === "corrupt" ||
         (gateDetailed.status === "ok" &&
           isGateStaleParsed(gateDetailed.gate, {
@@ -1774,26 +2019,54 @@ export function verifyLegacyFleetQuiescence({
         });
       }
     }
+
+    const recoverLockFile = path.join(dir, GATE_RECOVER_FILENAME);
+    if (existsSync(recoverLockFile)) {
+      const recDetailed = readGateDetailed(recoverLockFile, { waitForPartialInit: false });
+      if (recDetailed.status !== "missing") {
+        abandonedGates.push({
+          dir,
+          gateFile: recoverLockFile,
+          status: `recover_${recDetailed.status}`,
+          holder: recDetailed.gate || null,
+        });
+      }
+    }
   }
 
   if (resolvedBase) {
     const sessionsDir = path.join(resolvedBase, "sessions");
     if (existsSync(sessionsDir)) {
       try {
-        for (const sEntry of readdirSync(sessionsDir, { withFileTypes: true })) {
+        for (const sEntry of readdirSyncImpl(sessionsDir, { withFileTypes: true })) {
           if (sEntry.isFile() && sEntry.name.startsWith("transition-") && sEntry.name.endsWith(".journal.json")) {
             pendingJournals.push(path.join(sessionsDir, sEntry.name));
           }
         }
-      } catch {}
+      } catch (error) {
+        inspectionErrors.push({
+          dir: sessionsDir,
+          reason: "sessions_dir_unreadable",
+          error: error?.code || error?.message || "EACCES",
+        });
+      }
     }
   }
 
+  const admissionBarrier = resolvedBase ? checkLegacyAdmissionBarrier({ baseDir: resolvedBase }) : { blocked: false, barrier: null };
+  const quiescent =
+    legacyWriters.length === 0 &&
+    abandonedGates.length === 0 &&
+    pendingJournals.length === 0 &&
+    inspectionErrors.length === 0;
+
   return {
-    quiescent: legacyWriters.length === 0 && abandonedGates.length === 0 && pendingJournals.length === 0,
+    quiescent,
     legacyWriters,
     abandonedGates,
     pendingJournals,
+    inspectionErrors,
+    admissionBarrier,
   };
 }
 
@@ -1823,6 +2096,19 @@ export function stageProcessLockTransition({
   const sourceDir = fromDir ? path.resolve(fromDir) : null;
   const previousLease = getRememberedLockLease();
   const heldSourceLease = sourceDir ? getHeldLeaseForDir(sourceDir, pid) : null;
+
+  // R3-6: Hormati penghalang admisi pemeliharaan pada state root bila sedang aktif.
+  if (path.basename(path.dirname(targetDir)) === "projects") {
+    const baseDir = path.dirname(path.dirname(targetDir));
+    const barrierCheck = checkLegacyAdmissionBarrier({ baseDir });
+    if (barrierCheck.blocked) {
+      return {
+        ok: false,
+        reason: barrierCheck.reason || "admission_barrier_active",
+        barrier: barrierCheck.barrier || null,
+      };
+    }
+  }
 
   // Periksa penulis legacy yang tidak kompatibel (F4).
   const legacyCheck = detectIncompatibleLegacyWriters({

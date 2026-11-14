@@ -24,6 +24,8 @@ import {
   readProcessLock,
   releaseProcessLock,
   recoverAbandonedLockGate,
+  isTrustedGateRecoveryAuthority,
+  publishCompleteJsonFile,
   PROCESS_INCARNATION_ID,
   GATE_FILENAME,
   ProjectOwnershipLostError,
@@ -1704,9 +1706,55 @@ function captureFileSnapshot(filePath) {
   }
 }
 
-function restoreFileSnapshot(snap) {
-  if (!snap || !snap.file) return;
+function isStateSupersededByNewerOwner(currentObj, snap, journal, role) {
+  if (!currentObj || typeof currentObj !== "object" || !journal) return false;
+  const currentJournalId = currentObj.transitionJournalId || null;
+  if (currentJournalId && currentJournalId === journal.journalId) {
+    // Written by this exact crashed transition: safe to roll back.
+    return false;
+  }
+  if (currentJournalId && currentJournalId !== journal.journalId) {
+    // Written by a different, newer transition.
+    return true;
+  }
+  const curPid = Number(currentObj?.owner?.pid);
+  const curUpdatedAt = currentObj?.owner?.updatedAt ? Date.parse(currentObj.owner.updatedAt) : NaN;
+  if (role === "target") {
+    // Target state belongs to a newer owner if it has an active task or different PID
+    // and was not stamped with our journalId.
+    if (Number.isFinite(curPid) && curPid > 0 && curPid !== journal.pid) {
+      return true;
+    }
+    if (Number.isFinite(curUpdatedAt) && curUpdatedAt > (journal.startedAt || 0) && (!snap || !snap.existed)) {
+      return true;
+    }
+  } else {
+    // Source state: if a newer PID or newer timestamp (after journal started) modified it
+    // without our journalId, do not overwrite newer legitimate state.
+    if (Number.isFinite(curPid) && curPid > 0 && curPid !== journal.pid) {
+      return true;
+    }
+    if (Number.isFinite(curUpdatedAt) && curUpdatedAt > (journal.startedAt || 0)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function restoreFileSnapshot(snap, journal = null, role = "source") {
+  if (!snap || !snap.file) return { ok: true, skipped: false };
   try {
+    if (existsSync(snap.file)) {
+      try {
+        const curObj = JSON.parse(readFileSync(snap.file, "utf8"));
+        if (isStateSupersededByNewerOwner(curObj, snap, journal, role)) {
+          return { ok: true, skippedNewerOwner: true };
+        }
+      } catch {}
+    } else if (!snap.existed || snap.raw === null) {
+      return { ok: true, alreadyAbsent: true };
+    }
+
     if (!snap.existed || snap.raw === null) {
       if (existsSync(snap.file)) unlinkSync(snap.file);
     } else {
@@ -1715,7 +1763,10 @@ function restoreFileSnapshot(snap) {
       writeFileSync(tmp, snap.raw, "utf8");
       renameSync(tmp, snap.file);
     }
-  } catch {}
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error?.code || error?.message || "FILE_RESTORE_FAILED" };
+  }
 }
 
 function restoreFocusBindingSnapshotSync(snapshot) {
@@ -1747,11 +1798,6 @@ async function captureDbRowSnapshot(stateFile, sessionKey) {
         "SELECT state_json, version, updated_at FROM workflow_state WHERE user_id = ? AND project_path = ? AND session_key = ?",
       )
       .get(userId, projectPath, sessionKey);
-    const summaryRow = db.db
-      .prepare(
-        "SELECT total_tasks, task_types, last_active, updated_at, recent_tasks FROM project_summary WHERE user_id = ? AND project_path = ?",
-      )
-      .get(userId, projectPath);
     return {
       stateFile: resolved,
       userId,
@@ -1761,8 +1807,6 @@ async function captureDbRowSnapshot(stateFile, sessionKey) {
       stateJson: rawRow ? rawRow.state_json : null,
       version: rawRow ? rawRow.version : null,
       updatedAt: rawRow ? rawRow.updated_at : null,
-      summaryExisted: Boolean(summaryRow),
-      summaryRow: summaryRow || null,
     };
   } catch {
     return {
@@ -1774,18 +1818,43 @@ async function captureDbRowSnapshot(stateFile, sessionKey) {
       stateJson: null,
       version: null,
       updatedAt: null,
-      summaryExisted: false,
-      summaryRow: null,
     };
   }
 }
 
-async function restoreDbRowSnapshot(dbSnap) {
-  if (!dbSnap || !dbSnap.stateFile) return false;
+async function restoreDbRowSnapshot(dbSnap, journal = null, role = "source") {
+  if (!dbSnap || !dbSnap.stateFile) return { ok: true, skipped: false };
   try {
     const mod = await import("./db/index.js");
     const db = await mod.getLocalAdapter({ stateFile: dbSnap.stateFile });
     await db.connect();
+
+    const currentRow = db.db
+      .prepare(
+        "SELECT state_json, version, updated_at FROM workflow_state WHERE user_id = ? AND project_path = ? AND session_key = ?",
+      )
+      .get(dbSnap.userId, dbSnap.projectPath, dbSnap.sessionKey);
+
+    if (currentRow && currentRow.state_json) {
+      let curObj = null;
+      try {
+        curObj = JSON.parse(currentRow.state_json);
+      } catch {}
+      if (curObj && isStateSupersededByNewerOwner(curObj, dbSnap, journal, role)) {
+        return { ok: true, skippedNewerOwner: true };
+      }
+      if (
+        role === "source" &&
+        dbSnap.existed &&
+        Number.isFinite(Number(dbSnap.version)) &&
+        Number.isFinite(Number(currentRow.version)) &&
+        Number(currentRow.version) > Number(dbSnap.version) &&
+        (!curObj || curObj.transitionJournalId !== journal?.journalId)
+      ) {
+        return { ok: true, skippedNewerOwner: true };
+      }
+    }
+
     if (!dbSnap.existed || dbSnap.stateJson === null) {
       db.db
         .prepare(
@@ -1817,35 +1886,11 @@ async function restoreDbRowSnapshot(dbSnap) {
         );
     }
 
-    if (!dbSnap.summaryExisted || !dbSnap.summaryRow) {
-      db.db
-        .prepare("DELETE FROM project_summary WHERE user_id = ? AND project_path = ?")
-        .run(dbSnap.userId, dbSnap.projectPath);
-    } else {
-      db.db
-        .prepare(
-          `INSERT INTO project_summary (user_id, project_path, total_tasks, task_types, last_active, updated_at, recent_tasks)
-           VALUES (?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(user_id, project_path) DO UPDATE SET
-             total_tasks = excluded.total_tasks,
-             task_types = excluded.task_types,
-             last_active = excluded.last_active,
-             updated_at = excluded.updated_at,
-             recent_tasks = excluded.recent_tasks`,
-        )
-        .run(
-          dbSnap.userId,
-          dbSnap.projectPath,
-          dbSnap.summaryRow.total_tasks,
-          dbSnap.summaryRow.task_types,
-          dbSnap.summaryRow.last_active,
-          dbSnap.summaryRow.updated_at,
-          dbSnap.summaryRow.recent_tasks,
-        );
-    }
-    return true;
-  } catch {
-    return false;
+    // R3-4: Jangan pernah menghapus atau menimpa `project_summary` agar
+    // ringkasan proyek dan riwayat task yang lebih baru tidak pernah terhapus.
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error?.code || error?.message || "DB_RESTORE_FAILED" };
   }
 }
 
@@ -1899,11 +1944,7 @@ export async function beginTransitionJournal({
     targetStateFile: resolvedTarget,
     targetHistoryFile,
     sourceStateSnap: captureFileSnapshot(resolvedSource),
-    sourceHistorySnap: captureFileSnapshot(sourceHistoryFile),
-    sourceSummarySnap: captureFileSnapshot(sourceSummaryFile),
     targetStateSnap: captureFileSnapshot(resolvedTarget),
-    targetHistorySnap: captureFileSnapshot(targetHistoryFile),
-    targetSummarySnap: captureFileSnapshot(targetSummaryFile),
     sourceDbSnapshot,
     targetDbSnapshot,
     priorSessionPointer: captureSessionPointerSnapshot(resolvedSource),
@@ -1928,55 +1969,98 @@ export async function beginTransitionJournal({
     },
   };
 
-  try {
-    writeJournalFileAtomic(journalFile, journal);
-  } catch {}
+  // R3-5: Kegagalan menulis jurnal transisi WAJIB menggagalkan transisi (fail-closed).
+  writeJournalFileAtomic(journalFile, journal);
 
   return journal;
 }
 
 /**
- * Titik Komit Otoritatif (Authoritative Commit Point) untuk transisi (R2-4).
- * Begitu jurnal ditandai `COMMITTED`, rekonsiliasi pasca-crash akan menyelesaikan
- * transisi ke depan (melepas lock asal), bukan memutar balik ke proyek asal.
+ * Titik Komit Otoritatif (Authoritative Commit Point) untuk transisi (R2-4 + R3-5).
+ * Kegagalan menandai `COMMITTED` akan melempar galat agar rollback dijalankan.
  */
 export function markTransitionJournalCommitted(journal) {
-  if (!journal || !journal.journalFile) return false;
+  if (!journal || !journal.journalFile) {
+    throw new Error("Cannot mark missing transition journal as committed.");
+  }
   journal.phase = "COMMITTED";
   journal.committedAt = Date.now();
-  try {
-    writeJournalFileAtomic(journal.journalFile, journal);
-    return true;
-  } catch {
-    return false;
-  }
+  writeJournalFileAtomic(journal.journalFile, journal);
+  return true;
 }
 
 export function completeTransitionJournal(journal) {
   if (!journal || !journal.journalFile) return false;
+  if (existsSync(journal.journalFile)) {
+    unlinkSync(journal.journalFile);
+  }
+  return true;
+}
+
+function acquireJournalRecoveryLock(journalFile, journalId, { isAlive = currentIsAlive(), isHolderProcess = currentIsHolderProcess() } = {}) {
+  const recoverLockFile = `${journalFile}.recover.lock`;
+  const recoverToken = `jrec-${process.pid}-${PROCESS_INCARNATION_ID}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
   try {
-    if (existsSync(journal.journalFile)) {
-      unlinkSync(journal.journalFile);
+    publishCompleteJsonFile(
+      recoverLockFile,
+      {
+        pid: process.pid,
+        incarnationId: PROCESS_INCARNATION_ID,
+        token: recoverToken,
+        journalId: journalId || null,
+        startedAt: Date.now(),
+        host: os.hostname(),
+      },
+      { replaceIfExists: false, pid: process.pid },
+    );
+    return { ok: true, recoverLockFile, token: recoverToken };
+  } catch (error) {
+    if (error && error.code === "EEXIST") {
+      try {
+        const existing = JSON.parse(readFileSync(recoverLockFile, "utf8"));
+        if (existing && !isJournalOwnerConfirmedDead(existing, { isAlive, isHolderProcess })) {
+          return { ok: false, reason: "recovery_in_progress", recoverLockFile, holder: existing };
+        }
+        return { ok: false, reason: "recovery_lock_abandoned", recoverLockFile, holder: existing };
+      } catch {
+        return { ok: false, reason: "recovery_lock_abandoned", recoverLockFile, holder: null };
+      }
     }
-    return true;
-  } catch {
-    return false;
+    return { ok: false, reason: "recovery_lock_error", error: error?.code || error?.message || "EACCES" };
   }
 }
 
-function releaseOrphanedLockFromJournal(dir, expectedLeaseId, deadPid) {
-  if (!dir || !expectedLeaseId) return false;
+function releaseJournalRecoveryLock(lockHandle) {
+  if (!lockHandle || !lockHandle.ok || !lockHandle.recoverLockFile) return;
+  try {
+    if (existsSync(lockHandle.recoverLockFile)) {
+      const disk = JSON.parse(readFileSync(lockHandle.recoverLockFile, "utf8"));
+      if (disk && disk.token === lockHandle.token) {
+        unlinkSync(lockHandle.recoverLockFile);
+      }
+    }
+  } catch {}
+}
+
+function releaseOrphanedLockFromJournal(dir, expectedLeaseId, deadPid, { recoveryAuthority = null } = {}) {
+  if (!dir || !expectedLeaseId) return { ok: false, reason: "missing_args" };
   const resolvedDir = path.resolve(dir);
   const gateFile = path.join(resolvedDir, GATE_FILENAME);
   if (existsSync(gateFile)) {
     try {
       const gateData = JSON.parse(readFileSync(gateFile, "utf8"));
       if (gateData && gateData.pid === deadPid && gateData.token) {
-        recoverAbandonedLockGate({
+        if (!isTrustedGateRecoveryAuthority(recoveryAuthority)) {
+          return { ok: false, reason: "abandoned_gate_requires_trusted_authority", gateFile };
+        }
+        const gateRec = recoverAbandonedLockGate({
           dir: resolvedDir,
           expectedToken: gateData.token,
-          authorizeAbandonedGateRecovery: true,
+          recoveryAuthority,
         });
+        if (!gateRec.ok) {
+          return { ok: false, reason: gateRec.reason || "gate_recovery_failed", gateFile };
+        }
       }
     } catch {}
   }
@@ -1989,20 +2073,17 @@ function releaseOrphanedLockFromJournal(dir, expectedLeaseId, deadPid) {
       preserveRemembered: true,
     });
   }
-  return false;
+  return { ok: true, alreadyAbsent: true };
 }
 
-function rollbackJournalFilesAndLocksSync(journal, { isCrashRecovery = false } = {}) {
-  if (!journal) return;
+function rollbackJournalFilesAndLocksSync(journal, { isCrashRecovery = false, recoveryAuthority = null } = {}) {
+  if (!journal) return { ok: true };
 
+  const results = [];
   if (journal.targetStateFile && journal.targetStateFile !== journal.sourceStateFile) {
-    restoreFileSnapshot(journal.targetStateSnap);
-    restoreFileSnapshot(journal.targetHistorySnap);
-    restoreFileSnapshot(journal.targetSummarySnap);
+    results.push(restoreFileSnapshot(journal.targetStateSnap, journal, "target"));
   }
-  restoreFileSnapshot(journal.sourceStateSnap);
-  restoreFileSnapshot(journal.sourceHistorySnap);
-  restoreFileSnapshot(journal.sourceSummarySnap);
+  results.push(restoreFileSnapshot(journal.sourceStateSnap, journal, "source"));
 
   if (journal.priorSessionPointer) {
     restoreSessionPointerSnapshot(journal.priorSessionPointer);
@@ -2012,17 +2093,20 @@ function rollbackJournalFilesAndLocksSync(journal, { isCrashRecovery = false } =
   }
 
   if (isCrashRecovery && journal.relocatedLock && journal.toLockDir && journal.toLockDir !== journal.fromLockDir) {
-    releaseOrphanedLockFromJournal(journal.toLockDir, journal.toLeaseId, journal.pid);
+    releaseOrphanedLockFromJournal(journal.toLockDir, journal.toLeaseId, journal.pid, { recoveryAuthority });
   }
+
+  const failed = results.find((r) => r && r.ok === false);
+  return failed ? { ok: false, error: failed.error } : { ok: true };
 }
 
 /**
  * Memutar balik seluruh perubahan transisi (baik target maupun asal) secara
- * idempoten ketika langkah transisi gagal sebelum `COMMITTED` (R2-4).
+ * idempoten ketika langkah transisi gagal sebelum `COMMITTED` (R2-4 + R3-4).
  */
 export async function rollbackTransitionJournal(
   journal,
-  { workflowState = null, stagedLock = null, setActiveProjectDirFn = null } = {},
+  { workflowState = null, stagedLock = null, setActiveProjectDirFn = null, recoveryAuthority = null, hooks = null } = {},
 ) {
   if (!journal) return false;
 
@@ -2036,14 +2120,30 @@ export async function rollbackTransitionJournal(
     }
   } catch {}
 
-  if (journal.targetDbSnapshot && journal.targetStateFile !== journal.sourceStateFile) {
-    await restoreDbRowSnapshot(journal.targetDbSnapshot);
-  }
-  if (journal.sourceDbSnapshot) {
-    await restoreDbRowSnapshot(journal.sourceDbSnapshot);
+  if (typeof hooks?.onBeforeRestore === "function") {
+    await hooks.onBeforeRestore({ journal });
   }
 
-  rollbackJournalFilesAndLocksSync(journal, { isCrashRecovery: !stagedLock });
+  let targetDbRes = { ok: true };
+  if (journal.targetDbSnapshot && journal.targetStateFile !== journal.sourceStateFile) {
+    targetDbRes = await restoreDbRowSnapshot(journal.targetDbSnapshot, journal, "target");
+  }
+  const sourceDbRes = journal.sourceDbSnapshot
+    ? await restoreDbRowSnapshot(journal.sourceDbSnapshot, journal, "source")
+    : { ok: true };
+
+  if (!targetDbRes.ok || !sourceDbRes.ok) {
+    // R3-5: Pertahankan jurnal di disk sebagai bukti bila pemulihan DB gagal.
+    return false;
+  }
+
+  const fileRes = rollbackJournalFilesAndLocksSync(journal, {
+    isCrashRecovery: !stagedLock,
+    recoveryAuthority,
+  });
+  if (!fileRes.ok) {
+    return false;
+  }
 
   if (journal.priorFocusBinding) {
     await restoreFocusBindingSnapshot(journal.priorFocusBinding);
@@ -2064,6 +2164,10 @@ export async function rollbackTransitionJournal(
 
   if (typeof setActiveProjectDirFn === "function" && journal.priorInMemory) {
     setActiveProjectDirFn(journal.priorInMemory.activeProjectDir || "");
+  }
+
+  if (typeof hooks?.onBeforeCompleteJournal === "function") {
+    await hooks.onBeforeCompleteJournal({ journal });
   }
 
   completeTransitionJournal(journal);
@@ -2096,6 +2200,7 @@ export function reconcilePendingTransitionJournalsSync({
   stateFile = null,
   isAlive = currentIsAlive(),
   isHolderProcess = currentIsHolderProcess(),
+  recoveryAuthority = null,
 } = {}) {
   const resolvedBase = baseDir
     ? path.resolve(baseDir)
@@ -2130,20 +2235,46 @@ export function reconcilePendingTransitionJournalsSync({
       continue;
     }
 
-    journal.journalFile = journalFile;
-    if (journal.phase === "COMMITTED") {
-      if (journal.relocatedLock && journal.fromLockDir && journal.fromLockDir !== journal.toLockDir) {
-        releaseOrphanedLockFromJournal(journal.fromLockDir, journal.fromLeaseId, journal.pid);
+    const recLock = acquireJournalRecoveryLock(journalFile, journal.journalId, { isAlive, isHolderProcess });
+    if (!recLock.ok) {
+      reconciled.push({
+        journalId: journal.journalId,
+        sessionKey: journal.sessionKey,
+        action: recLock.reason || "recovery_skipped",
+      });
+      continue;
+    }
+
+    try {
+      if (!existsSync(journalFile)) continue;
+      journal.journalFile = journalFile;
+      if (journal.phase === "COMMITTED") {
+        if (journal.relocatedLock && journal.fromLockDir && journal.fromLockDir !== journal.toLockDir) {
+          releaseOrphanedLockFromJournal(journal.fromLockDir, journal.fromLeaseId, journal.pid, { recoveryAuthority });
+        }
+        try {
+          completeTransitionJournal(journal);
+          reconciled.push({ journalId: journal.journalId, sessionKey: journal.sessionKey, action: "committed_cleanup" });
+        } catch (err) {
+          reconciled.push({
+            journalId: journal.journalId,
+            sessionKey: journal.sessionKey,
+            action: "committed_cleanup_failed",
+            error: err?.code || err?.message || "CLEANUP_FAILED",
+          });
+        }
+      } else if (journal.phase === "STAGED") {
+        const res = rollbackJournalFilesAndLocksSync(journal, { isCrashRecovery: true, recoveryAuthority });
+        if (res.ok) {
+          journal.phase = "FILES_ROLLED_BACK";
+          try {
+            writeJournalFileAtomic(journalFile, journal);
+          } catch {}
+          reconciled.push({ journalId: journal.journalId, sessionKey: journal.sessionKey, action: "staged_files_rolled_back" });
+        }
       }
-      completeTransitionJournal(journal);
-      reconciled.push({ journalId: journal.journalId, sessionKey: journal.sessionKey, action: "committed_cleanup" });
-    } else if (journal.phase === "STAGED") {
-      rollbackJournalFilesAndLocksSync(journal, { isCrashRecovery: true });
-      journal.phase = "FILES_ROLLED_BACK";
-      try {
-        writeJournalFileAtomic(journalFile, journal);
-      } catch {}
-      reconciled.push({ journalId: journal.journalId, sessionKey: journal.sessionKey, action: "staged_files_rolled_back" });
+    } finally {
+      releaseJournalRecoveryLock(recLock);
     }
   }
 
@@ -2152,13 +2283,15 @@ export function reconcilePendingTransitionJournalsSync({
 
 /**
  * Rekonsiliasi penuh (termasuk baris SQLite pada database target & asal) atas
- * jurnal transisi yang ditinggalkan proses yang mati mendadak (R2-4).
+ * jurnal transisi yang ditinggalkan proses yang mati mendadak (R2-4 + R3-4).
  */
 export async function reconcilePendingTransitionJournals({
   baseDir = null,
   stateFile = null,
   isAlive = currentIsAlive(),
   isHolderProcess = currentIsHolderProcess(),
+  recoveryAuthority = null,
+  hooks = null,
 } = {}) {
   const resolvedBase = baseDir
     ? path.resolve(baseDir)
@@ -2193,28 +2326,57 @@ export async function reconcilePendingTransitionJournals({
       continue;
     }
 
-    journal.journalFile = journalFile;
-    if (journal.phase === "COMMITTED") {
-      if (journal.relocatedLock && journal.fromLockDir && journal.fromLockDir !== journal.toLockDir) {
-        releaseOrphanedLockFromJournal(journal.fromLockDir, journal.fromLeaseId, journal.pid);
+    const recLock = acquireJournalRecoveryLock(journalFile, journal.journalId, { isAlive, isHolderProcess });
+    if (!recLock.ok) {
+      reconciled.push({
+        journalId: journal.journalId,
+        sessionKey: journal.sessionKey,
+        action: recLock.reason || "recovery_skipped",
+      });
+      continue;
+    }
+
+    try {
+      if (typeof hooks?.onRecoveryLockAcquired === "function") {
+        await hooks.onRecoveryLockAcquired({ journal, recoverLockFile: recLock.recoverLockFile });
       }
-      completeTransitionJournal(journal);
-      reconciled.push({
-        journalId: journal.journalId,
-        sessionKey: journal.sessionKey,
-        action: "committed_cleanup",
-        sourceStateFile: journal.sourceStateFile,
-        targetStateFile: journal.targetStateFile,
-      });
-    } else {
-      await rollbackTransitionJournal(journal);
-      reconciled.push({
-        journalId: journal.journalId,
-        sessionKey: journal.sessionKey,
-        action: "rolled_back",
-        sourceStateFile: journal.sourceStateFile,
-        targetStateFile: journal.targetStateFile,
-      });
+      if (!existsSync(journalFile)) continue;
+      // Re-read journal under exclusive recovery lock before taking action.
+      journal = JSON.parse(readFileSync(journalFile, "utf8"));
+      journal.journalFile = journalFile;
+      if (journal.phase === "COMMITTED") {
+        if (journal.relocatedLock && journal.fromLockDir && journal.fromLockDir !== journal.toLockDir) {
+          releaseOrphanedLockFromJournal(journal.fromLockDir, journal.fromLeaseId, journal.pid, { recoveryAuthority });
+        }
+        try {
+          completeTransitionJournal(journal);
+          reconciled.push({
+            journalId: journal.journalId,
+            sessionKey: journal.sessionKey,
+            action: "committed_cleanup",
+            sourceStateFile: journal.sourceStateFile,
+            targetStateFile: journal.targetStateFile,
+          });
+        } catch (err) {
+          reconciled.push({
+            journalId: journal.journalId,
+            sessionKey: journal.sessionKey,
+            action: "committed_cleanup_failed",
+            error: err?.code || err?.message || "CLEANUP_FAILED",
+          });
+        }
+      } else {
+        const rolledBack = await rollbackTransitionJournal(journal, { recoveryAuthority, hooks });
+        reconciled.push({
+          journalId: journal.journalId,
+          sessionKey: journal.sessionKey,
+          action: rolledBack ? "rolled_back" : "rollback_failed_evidence_preserved",
+          sourceStateFile: journal.sourceStateFile,
+          targetStateFile: journal.targetStateFile,
+        });
+      }
+    } finally {
+      releaseJournalRecoveryLock(recLock);
     }
   }
 
@@ -2580,8 +2742,13 @@ export class WorkflowState {
    * async requests in the same process never bypass the queue.
    */
   async runSerialized(fn) {
-    const activeInstances = serializedExecutionStorage.getStore();
-    if (activeInstances && activeInstances.has(this)) {
+    const activeMap = serializedExecutionStorage.getStore();
+    const existingCap = activeMap instanceof Map ? activeMap.get(this) : null;
+    if (
+      existingCap &&
+      existingCap.active === true &&
+      existingCap.epoch === this._activeSerializationEpoch
+    ) {
       return await fn();
     }
     const previous = this._opQueue;
@@ -2590,12 +2757,21 @@ export class WorkflowState {
       releaseQueue = resolve;
     });
     await previous.catch(() => {});
-    const nextInstances = new Set(activeInstances || []);
-    nextInstances.add(this);
+    this._serializationEpoch = (this._serializationEpoch || 0) + 1;
+    const epoch = this._serializationEpoch;
+    this._activeSerializationEpoch = epoch;
+    const capability = { active: true, epoch };
+    const nextMap = new Map(activeMap instanceof Map ? activeMap : []);
+    nextMap.set(this, capability);
     this._inSerializedOp += 1;
     try {
-      return await serializedExecutionStorage.run(nextInstances, fn);
+      return await serializedExecutionStorage.run(nextMap, fn);
     } finally {
+      capability.active = false;
+      if (this._activeSerializationEpoch === epoch) {
+        this._activeSerializationEpoch = 0;
+      }
+      nextMap.delete(this);
       this._inSerializedOp -= 1;
       releaseQueue();
     }
