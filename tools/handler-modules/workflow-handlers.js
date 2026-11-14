@@ -17,10 +17,33 @@ import {
   MIN_WAIVER_REASON,
   MAX_WAIVER_REASON,
 } from "./docs.js";
-import { activeForeignLock, projectLockDir, currentIsAlive, DEFAULT_LOCK_STALE_MS, relocateProcessLock } from "../../process-lock.js";
+import {
+  activeForeignLock,
+  projectLockDir,
+  currentIsAlive,
+  currentIsHolderProcess,
+  DEFAULT_LOCK_STALE_MS,
+  stageProcessLockTransition,
+  commitProcessLockTransition,
+  rollbackProcessLockTransition,
+} from "../../process-lock.js";
 import { reportEventSafe, updateSessionTitle, buildSnapshot, reportSnapshot } from "../../monitor.js";
 import { exec, resolveProjectDir, setActiveProjectDir } from "../../exec.js";
-import { pinSessionProject, resolveHistoryFile, readSessionProject, readFocusBinding, claimFocusBinding, resolveTargetProjectState, findActiveForeignTaskInProject } from "../../workflow-state.js";
+import {
+  pinSessionProject,
+  resolveHistoryFile,
+  readSessionProject,
+  readFocusBinding,
+  claimFocusBinding,
+  resolveTargetProjectState,
+  findActiveForeignTaskInProject,
+  parseOwnerTimestamp,
+  captureSessionPointerSnapshot,
+  restoreSessionPointerSnapshot,
+  captureFocusBindingSnapshot,
+  restoreFocusBindingSnapshot,
+  ProjectOwnershipLostError,
+} from "../../workflow-state.js";
 import {
   captureRepositoryIdentity,
   evaluateProjectSwitch,
@@ -297,12 +320,13 @@ export async function handleStartTask(args, workflowState, git, zettlyOptions = 
 
   // Task HIDUP milik proses lain tidak boleh dihapus, bahkan dengan `force`.
   // findActiveForeignTaskInProject memeriksa disk state pada proyek target.
-  {
+  const detectForeignTaskOnTarget = async () => {
     let foreignTask = findActiveForeignTaskInProject({
       projectDirPath: targetResolution.projectDirPath,
       targetStateFile,
       ownPid: process.pid,
       isAlive: currentIsAlive(),
+      isHolderProcess: currentIsHolderProcess(),
       staleMs: DEFAULT_LOCK_STALE_MS,
     });
 
@@ -313,7 +337,7 @@ export async function handleStartTask(args, workflowState, git, zettlyOptions = 
         const description = typeof disk.taskDescription === "string" ? disk.taskDescription.trim() : "";
         const ownerPid = Number(disk.owner?.pid);
         const foreignOwner = Number.isFinite(ownerPid) && ownerPid !== process.pid;
-        const ownerSeenAt = Number(disk.owner?.updatedAt);
+        const ownerSeenAt = parseOwnerTimestamp(disk.owner?.updatedAt);
         const ownerFresh =
           Number.isFinite(ownerSeenAt) && Date.now() - ownerSeenAt < DEFAULT_LOCK_STALE_MS;
 
@@ -329,27 +353,35 @@ export async function handleStartTask(args, workflowState, git, zettlyOptions = 
         }
       }
     }
+    return foreignTask;
+  };
 
+  const formatForeignTaskRefusal = (foreignTask) => {
+    const seen = Number.isFinite(foreignTask.ownerSeenAt)
+      ? new Date(foreignTask.ownerSeenAt).toISOString()
+      : "waktu tidak diketahui";
+
+    return textResponse(
+      `⚠️ Dibatalkan: task lain sedang berjalan di proses MCP PID ${foreignTask.ownerPid}.\n\n` +
+        `Task      : "${foreignTask.description}"\n` +
+        `Fase      : ${foreignTask.phase}\n` +
+        `Pemilik   : PID ${foreignTask.ownerPid}, terakhir menulis state ${seen}\n\n` +
+        `Memulai task baru di sini akan mengosongkan Definition of Done task itu, dan buktinya ` +
+        `tidak bisa dipulihkan dari history. Karena itu 'force' TIDAK bisa melewati penjaga ini ` +
+        `selama pemiliknya masih menulis.\n\n` +
+        `Pilih salah satu:\n` +
+        `  1. Selesaikan atau batalkan task itu dari sesi pemiliknya (complete_task / drop_task).\n` +
+        `  2. Beri sesi ini worktree sendiri: opencode.worktree_create, lalu jalankan sesi dari sana.\n` +
+        `  3. Kalau proses itu sudah tidak dipakai, tutup jendelanya. Penjaga berhenti menghalangi ` +
+        `setelah ${Math.round(DEFAULT_LOCK_STALE_MS / 60000)} menit tanpa tulisan state.\n\n` +
+        `Task BELUM dimulai; tidak ada state yang diubah.`
+    );
+  };
+
+  {
+    const foreignTask = await detectForeignTaskOnTarget();
     if (foreignTask) {
-      const seen = Number.isFinite(foreignTask.ownerSeenAt)
-        ? new Date(foreignTask.ownerSeenAt).toISOString()
-        : "waktu tidak diketahui";
-
-      return textResponse(
-        `⚠️ Dibatalkan: task lain sedang berjalan di proses MCP PID ${foreignTask.ownerPid}.\n\n` +
-          `Task      : "${foreignTask.description}"\n` +
-          `Fase      : ${foreignTask.phase}\n` +
-          `Pemilik   : PID ${foreignTask.ownerPid}, terakhir menulis state ${seen}\n\n` +
-          `Memulai task baru di sini akan mengosongkan Definition of Done task itu, dan buktinya ` +
-          `tidak bisa dipulihkan dari history. Karena itu 'force' TIDAK bisa melewati penjaga ini ` +
-          `selama pemiliknya masih menulis.\n\n` +
-          `Pilih salah satu:\n` +
-          `  1. Selesaikan atau batalkan task itu dari sesi pemiliknya (complete_task / drop_task).\n` +
-          `  2. Beri sesi ini worktree sendiri: opencode.worktree_create, lalu jalankan sesi dari sana.\n` +
-          `  3. Kalau proses itu sudah tidak dipakai, tutup jendelanya. Penjaga berhenti menghalangi ` +
-          `setelah ${Math.round(DEFAULT_LOCK_STALE_MS / 60000)} menit tanpa tulisan state.\n\n` +
-          `Task BELUM dimulai; tidak ada state yang diubah.`
-      );
+      return formatForeignTaskRefusal(foreignTask);
     }
   }
 
@@ -395,9 +427,8 @@ export async function handleStartTask(args, workflowState, git, zettlyOptions = 
     return textResponse(switchDecision.message);
   }
 
-  // Focus binding: a focus is a container for one project's work. Reusing a
-  // focus that another project already owns would make the focus report work it
-  // does not own - the same defect in the opposite direction.
+  // Focus binding preflight: check if already bound to another project before
+  // acquiring or relocating any locks.
   const requestedRepoKey = parseRemoteIdentity(requestedIdentity.remote)?.key || "";
   const requestedFocusId = Number(args.focusId);
   const hasRequestedFocus = Number.isSafeInteger(requestedFocusId) && requestedFocusId > 0;
@@ -421,44 +452,40 @@ export async function handleStartTask(args, workflowState, git, zettlyOptions = 
         );
       }
     }
-
-    // Claim the focus before any state is reset. The claim is exclusive across
-    // operating-system processes: a concurrent start that bound the same focus
-    // to another project holds the focus lock, and this call either waits for a
-    // bounded time and then reports the conflict, or loses the atomic create.
-    const claimed = await claimFocusBinding({
-      stateFile: workflowState.stateFile,
-      focusId: requestedFocusId,
-      projectDir: project.dir,
-      repoKey: requestedRepoKey,
-    });
-    if (claimed && claimed.ok === false) {
-      return textResponse(
-        `⚠️ Refused: focus ${requestedFocusId} could not be claimed.\n\n` +
-          `Reason: ${claimed.reason || "unknown"}\n` +
-          (claimed.existing
-            ? `Focus bound to: ${claimed.existing.projectDir || claimed.existing.repoKey || "(unknown)"}\n`
-            : "") +
-          `Requested repo: ${requestedIdentity.root || project.dir}\n\n` +
-          `Task NOT started; the previous task and its evidence are unchanged.`
-      );
-    }
   }
 
-  // Pindahkan penanda proses dari direktori startup CWD ke direktori target project.
-  // Lock target diambil secara atomik dengan lease token baru. Bila lock lama dimiliki
-  // oleh proses ini dan direktori berbeda, lock startup dilepas dengan aman supaya
-  // tidak menghalangi proses lain di direktori startup.
-  const relocated = relocateProcessLock({
+  // Stage 2: Acquire target project lock BEFORE mutating focus binding,
+  // session pointer, or workflow state, while keeping source lock held until
+  // commit (F6 + F7 remediation).
+  const stagedLock = stageProcessLockTransition({
     fromDir: currentLockDir,
     toDir: targetLockDir,
+    projectDir: project.dir,
     force: args.force === true,
     isAlive: currentIsAlive(),
+    isHolderProcess: currentIsHolderProcess(),
   });
 
-  if (!relocated.ok && args.force !== true) {
-    const holder = relocated.holder;
-    const minutes = holder ? Math.max(1, Math.round(holder.ageMs / 60000)) : 1;
+  if (!stagedLock.ok) {
+    const holder = stagedLock.holder;
+    if (stagedLock.reason === "legacy_writer_active") {
+      return textResponse(
+        `⚠️ Dibatalkan: terdeteksi penulis protokol lama (legacy v1) yang masih hidup pada proyek ini ` +
+          `(PID ${holder?.pid || "tidak diketahui"}).\n\n` +
+          `Protokol v2 menolak bekerja berdampingan dengan proses v1 yang belum mendukung lease fencing.\n` +
+          `Restart klien MCP lama terlebih dahulu sebelum memulai task di working tree ini.\n\n` +
+          `Task BELUM dimulai; tidak ada state yang diubah.`
+      );
+    }
+    if (stagedLock.reason === "write_error" || stagedLock.error) {
+      return textResponse(
+        `⚠️ Dibatalkan: gagal menulis berkas kunci proyek di "${targetLockDir}" ` +
+          `(${stagedLock.error?.code || stagedLock.error?.message || "I/O error"}).\n\n` +
+          `Kepemilikan eksklusif tidak dapat diverifikasi (fail-closed).\n` +
+          `Task BELUM dimulai; tidak ada state yang diubah.`
+      );
+    }
+    const minutes = holder ? Math.max(1, Math.round((holder.ageMs || 0) / 60000)) : 1;
     const host = holder?.host ? ` di ${holder.host}` : "";
     const started = holder && Number.isFinite(Number(holder.startedAt))
       ? new Date(Number(holder.startedAt)).toISOString()
@@ -480,123 +507,235 @@ export async function handleStartTask(args, workflowState, git, zettlyOptions = 
     );
   }
 
-  // Selamatkan dulu pekerjaan yang mungkin tertimpa. Ini menangani dua kasus:
-  //   1. Proses MCP LAIN menulis berkas state setelah kita memuatnya.
-  //   2. Task kita sendiri yang belum selesai lalu diganti task baru.
-  const preservedBeforeSave = await workflowState.reconcileWithDisk();
-  // The previous task's identity, captured before reset() wipes it:
-  // assignWorkflowIdentity compares description+projectDir+workflowTaskId to
-  // decide card identity, and carries zettly and taskOrigin into the new card.
-  const previousTaskIdentity = {taskDescription:workflowState.state.taskDescription,projectDir:workflowState.state.projectDir,workflowTaskId:workflowState.state.workflowTaskId,zettly:workflowState.state.zettly,taskOrigin:workflowState.state.taskOrigin};
-  const { archivedTask } = workflowState.reset({ archive: true });
-
-  workflowState.state.currentPhase = "coding";
-  // Disimpan DI STATE, bukan hanya di memori proses.
-  //
-  // MENGAPA: `started_at` sebelumnya diisi dari `this.sessionStartedAt` milik
-  // proses. Nilai itu hilang setiap proses MCP restart, sehingga dashboard
-  // menerima startedAt kosong dan counter durasi tidak pernah muncul. Dengan
-  // menyimpannya di state, waktunya ikut tersimpan ke disk dan bertahan.
-  workflowState.state.taskStartedAt = new Date().toISOString();
-  workflowState.state.classification = classify(args);
-  workflowState.state.taskDescription = args.description;
-  // The checkpoint needs to know which machine owns this task, and the commit
-  // the session started from -- without a base there is no bounded way to list
-  // the commits this session made, and a later revert could not be scoped.
-  workflowState.state.machine = String(
-    env.DEVWF_MACHINE || os.hostname() || "unknown"
-  );
-  // baseSha is filled in after reset() below, because reset() clears projectDir
-  // and reconcileWithDisk() can replace it from an idle state on disk. Reading it
-  // here would always yield null.
-  workflowState.state.checkpoint = {
-    checkpointedAt: null,
-    summary: "",
-    baseSha: null,
-    commits: [],
-    handover: null,
-  };
-  // `state.parentTask` is written by assignWorkflowIdentity below: one card
-  // per task, so the previous card's identity links the two cards.
-  workflowState.state.taskType = args.type;
-  workflowState.state.plan = planDerived
-    ? createPlan(dodCheck.items.map((text) => `Complete: ${text}`))
-    : createPlan(planCheck.items);
-  workflowState.state.definitionOfDone = dodCheck.items.map((text, index) => ({
-    id: `dod-${index + 1}`,
-    text,
-    status: "open",
-    evidence: "",
-    waivedReason: "",
-    revision: 0,
-    updatedAt: new Date().toISOString(),
-  }));
-  workflowState.state.dodSource = "manual";
-  workflowState.state.dodFactoryTaskId = "";
-  workflowState.state.dodRevision = 0;
-  workflowState.state.testsSkipped = false;
-  workflowState.state.testsSkippedReason = "";
-  workflowState.state.commitAndPushCompleted = false;
-  workflowState.state.lastCommitMessage = "";
-  workflowState.state.lastPushBranch = "";
-  // Setelah reset(), pasang projectDir yang sudah tervalidasi.
-  workflowState.state.projectDir = project.dir;
-  setActiveProjectDir(project.dir);
-
-  // The identity contract is the answer to "what was this task allowed to
-  // touch", written once so a later operation can compare against it instead of
-  // guessing from the task text.
-  workflowState.state.identityContract = buildIdentityContract({
-    projectId: requestedRepoKey || path.basename(requestedIdentity.root || project.dir),
-    identity: requestedIdentity,
-    focusId: hasRequestedFocus ? requestedFocusId : null,
-    allowedOperations: ["read", "write", "commit", "push"],
-  });
-
-  // Now that the directory is resolved for THIS task, record the commit the task
-  // started from. Everything a later revert may touch is measured from here.
-  workflowState.state.checkpoint.baseSha = await resolveBaseSha(workflowState.state.projectDir);
-
-  // Catat proyek yang BENAR untuk sesi ini, lalu pindahkan state ke sana.
-  //
-  // Tanpa langkah ini identitas proyek hanya ditebak dari `process.cwd()`, yang
-  // milik PROSES MCP dan sering bukan tempat sesi bekerja. Diukur 1 November
-  // 2026: satu direktori `projects/Default-Project-<hash>/` menampung state dari
-  // sesi yang mengerjakan `D:\code\belajar`, repo uji, dan repo ini sekaligus -
-  // history tercampur dan `start_task` saling menolak antar proyek.
-  if (workflowState.state.projectDir) {
-    const pinned = pinSessionProject({
-      stateFile: workflowState.stateFile,
-      projectDir: workflowState.state.projectDir,
-      focusId: hasRequestedFocus ? requestedFocusId : null,
-    });
-
-    if (pinned && pinned.stateFile !== workflowState.stateFile) {
-      // Bawa task yang baru saja disiapkan ke berkas proyek yang benar.
-      const carried = { ...workflowState.state };
-      if (typeof workflowState.close === "function") {
-        await workflowState.close();
-      }
-      workflowState.stateFile = pinned.stateFile;
-      workflowState.historyFile = resolveHistoryFile(pinned.stateFile);
-      workflowState.state = carried;
-      await workflowState.load();
-      workflowState.state = carried;
+  // Re-verify foreign task under the newly acquired target project lock so a
+  // task written right before lock acquisition cannot be overwritten.
+  {
+    const foreignTaskAfterLock = await detectForeignTaskOnTarget();
+    if (foreignTaskAfterLock) {
+      rollbackProcessLockTransition(stagedLock);
+      return formatForeignTaskRefusal(foreignTaskAfterLock);
     }
   }
 
-  // Bind the focus to the verified repository on first use. First writer wins:
-  // a focus already bound to another project is never rebound implicitly.
-  // (The claim happens before reset(); see the preflight block above.)
+  // Stage 3: Capture full rollback snapshots before any state / pointer / focus
+  // mutation (F7 transactional transition).
+  const transitionHooks = zettlyOptions?.transitionHooks || null;
+  const priorStateSnapshot = structuredClone(workflowState.state);
+  const priorStateFile = workflowState.stateFile;
+  const priorHistoryFile = workflowState.historyFile;
+  const priorStateVersion = workflowState.stateVersion;
+  const priorLoadedTask = workflowState.loadedTask;
+  const priorBoundLease = workflowState.boundLockLease ? { ...workflowState.boundLockLease } : null;
+  const priorActiveProjectDir = priorStateSnapshot.projectDir || "";
+  const priorSessionPointer = captureSessionPointerSnapshot(priorStateFile);
+  const priorFocusBinding = hasRequestedFocus
+    ? captureFocusBindingSnapshot({ stateFile: priorStateFile, focusId: requestedFocusId })
+    : null;
 
-  // Catat berkas yang SUDAH kotor sebelum task ini dimulai.
-  //
-  // Saat commit nanti, berkas itu tidak boleh ikut ter-stage lewat `git add .`:
-  // itu pekerjaan sesi lain yang kebetulan berada di working tree yang sama.
-  // Kejadian nyata 31 Okt 2026: dua baris `billing.yaml` milik sesi lain masuk
-  // commit sesi ini, dan tidak ada yang bisa membedakannya dari luar.
-  workflowState.state.dirtyAtStart = await captureDirtyAtStart(git);
-  assignWorkflowIdentity(workflowState.state,previousTaskIdentity,args);
+  let preservedBeforeSave = null;
+  let archivedTask = null;
+  let reconciled = null;
+  const warnings = [];
+
+  try {
+    if (typeof transitionHooks?.afterStageLock === "function") {
+      await transitionHooks.afterStageLock({ stagedLock });
+    }
+
+    if (hasRequestedFocus) {
+      const claimed = await claimFocusBinding({
+        stateFile: workflowState.stateFile,
+        focusId: requestedFocusId,
+        projectDir: project.dir,
+        repoKey: requestedRepoKey,
+      });
+      if (claimed && claimed.ok === false) {
+        rollbackProcessLockTransition(stagedLock);
+        return textResponse(
+          `⚠️ Refused: focus ${requestedFocusId} could not be claimed.\n\n` +
+            `Reason: ${claimed.reason || "unknown"}\n` +
+            (claimed.existing
+              ? `Focus bound to: ${claimed.existing.projectDir || claimed.existing.repoKey || "(unknown)"}\n`
+              : "") +
+            `Requested repo: ${requestedIdentity.root || project.dir}\n\n` +
+            `Task NOT started; the previous task and its evidence are unchanged.`
+        );
+      }
+      if (typeof transitionHooks?.afterClaimFocus === "function") {
+        await transitionHooks.afterClaimFocus({ claimed });
+      }
+    }
+
+    // Pre-compute git baseline before mutating workflowState in-memory fields.
+    const resolvedBaseSha = await resolveBaseSha(project.dir);
+    if (typeof transitionHooks?.afterResolveBaseSha === "function") {
+      await transitionHooks.afterResolveBaseSha({ resolvedBaseSha });
+    }
+
+    // Selamatkan dulu pekerjaan yang mungkin tertimpa.
+    preservedBeforeSave = await workflowState.reconcileWithDisk();
+    const previousTaskIdentity = {
+      taskDescription: workflowState.state.taskDescription,
+      projectDir: workflowState.state.projectDir,
+      workflowTaskId: workflowState.state.workflowTaskId,
+      zettly: workflowState.state.zettly,
+      taskOrigin: workflowState.state.taskOrigin,
+    };
+    const resetResult = workflowState.reset({ archive: true });
+    archivedTask = resetResult.archivedTask;
+
+    workflowState.state.currentPhase = "coding";
+    workflowState.state.taskStartedAt = new Date().toISOString();
+    workflowState.state.classification = classify(args);
+    workflowState.state.taskDescription = args.description;
+    workflowState.state.machine = String(
+      env.DEVWF_MACHINE || os.hostname() || "unknown"
+    );
+    workflowState.state.checkpoint = {
+      checkpointedAt: null,
+      summary: "",
+      baseSha: resolvedBaseSha,
+      commits: [],
+      handover: null,
+    };
+    workflowState.state.taskType = args.type;
+    workflowState.state.plan = planDerived
+      ? createPlan(dodCheck.items.map((text) => `Complete: ${text}`))
+      : createPlan(planCheck.items);
+    workflowState.state.definitionOfDone = dodCheck.items.map((text, index) => ({
+      id: `dod-${index + 1}`,
+      text,
+      status: "open",
+      evidence: "",
+      waivedReason: "",
+      revision: 0,
+      updatedAt: new Date().toISOString(),
+    }));
+    workflowState.state.dodSource = "manual";
+    workflowState.state.dodFactoryTaskId = "";
+    workflowState.state.dodRevision = 0;
+    workflowState.state.testsSkipped = false;
+    workflowState.state.testsSkippedReason = "";
+    workflowState.state.commitAndPushCompleted = false;
+    workflowState.state.lastCommitMessage = "";
+    workflowState.state.lastPushBranch = "";
+    workflowState.state.projectDir = project.dir;
+    setActiveProjectDir(project.dir);
+
+    workflowState.state.identityContract = buildIdentityContract({
+      projectId: requestedRepoKey || path.basename(requestedIdentity.root || project.dir),
+      identity: requestedIdentity,
+      focusId: hasRequestedFocus ? requestedFocusId : null,
+      allowedOperations: ["read", "write", "commit", "push"],
+    });
+
+    if (typeof workflowState.bindLockLease === "function") {
+      workflowState.bindLockLease({ dir: targetLockDir, leaseId: stagedLock.leaseId });
+    }
+
+    if (workflowState.state.projectDir) {
+      const pinned = pinSessionProject({
+        stateFile: workflowState.stateFile,
+        projectDir: workflowState.state.projectDir,
+        focusId: hasRequestedFocus ? requestedFocusId : null,
+        expectedLeaseId: stagedLock.leaseId,
+        requireLease: true,
+      });
+
+      if (typeof transitionHooks?.afterPinSession === "function") {
+        await transitionHooks.afterPinSession({ pinned });
+      }
+
+      if (pinned && pinned.stateFile !== workflowState.stateFile) {
+        const carried = { ...workflowState.state };
+        if (typeof workflowState.close === "function") {
+          await workflowState.close();
+        }
+        workflowState.stateFile = pinned.stateFile;
+        workflowState.historyFile = resolveHistoryFile(pinned.stateFile);
+        if (typeof workflowState.bindLockLease === "function") {
+          workflowState.bindLockLease({ dir: targetLockDir, leaseId: stagedLock.leaseId });
+        }
+        workflowState.state = carried;
+        await workflowState.load();
+        workflowState.state = carried;
+      }
+    }
+
+    workflowState.state.dirtyAtStart = await captureDirtyAtStart(git);
+    assignWorkflowIdentity(workflowState.state, previousTaskIdentity, args);
+
+    let initialFlow = typeof args.mermaidFlow === 'string' ? args.mermaidFlow.trim() : (typeof args.mermaidCode === 'string' ? args.mermaidCode.trim() : '');
+    let flowValid = false;
+    if (initialFlow) {
+      try {
+        flowGraph(initialFlow);
+        flowValid = true;
+      } catch (err) {
+        warnings.push(`⚠️ Provided mermaidFlow is invalid (${err.message}); falling back to auto-generated architecture flow.`);
+      }
+    }
+    if (!flowValid) {
+      initialFlow = generateDefaultFlow(args.description, workflowState.state.plan);
+    }
+    workflowState.state.featureFlowCreated = true;
+    workflowState.state.mermaidCode = initialFlow;
+    workflowState.state.featureFlowDescription = args.description;
+
+    if (typeof transitionHooks?.beforeSave === "function") {
+      await transitionHooks.beforeSave({ workflowState, stagedLock });
+    }
+
+    reconciled = await workflowState.save({ allowReplaceRunningTask: true });
+    if (!reconciled || reconciled.verified === false || reconciled.conflict) {
+      throw new Error(
+        reconciled?.conflict?.reason ||
+          "Target project state persistence could not be verified.",
+      );
+    }
+
+    if (typeof transitionHooks?.afterSave === "function") {
+      await transitionHooks.afterSave({ reconciled, stagedLock });
+    }
+
+    commitProcessLockTransition(stagedLock);
+  } catch (transitionError) {
+    // Full transactional rollback of lock, session pointer, focus binding, and
+    // workflowState (F7).
+    try {
+      if (typeof workflowState.close === "function" && workflowState.stateFile !== priorStateFile) {
+        await workflowState.close();
+      }
+    } catch {}
+    workflowState.stateFile = priorStateFile;
+    workflowState.historyFile = priorHistoryFile;
+    workflowState.stateVersion = priorStateVersion;
+    workflowState.loadedTask = priorLoadedTask;
+    workflowState.state = priorStateSnapshot;
+    if (typeof workflowState.bindLockLease === "function") {
+      workflowState.bindLockLease(priorBoundLease);
+    }
+    setActiveProjectDir(priorActiveProjectDir);
+    restoreSessionPointerSnapshot(priorSessionPointer);
+    if (priorFocusBinding) {
+      await restoreFocusBindingSnapshot(priorFocusBinding);
+    }
+    rollbackProcessLockTransition(stagedLock);
+    try {
+      if (priorStateVersion !== null) {
+        await workflowState.save({ allowReplaceRunningTask: true });
+      } else if (typeof workflowState._exportJson === "function") {
+        await workflowState._exportJson();
+      }
+    } catch {}
+
+    return textResponse(
+      `⚠️ Dibatalkan: transisi menuju proyek "${project.dir}" gagal di tengah jalan ` +
+        `(${transitionError?.message || String(transitionError)}).\n\n` +
+        `Seluruh state workflow, penunjuk sesi, ikatan focus, dan kunci proses telah ` +
+        `dikembalikan ke kondisi sebelum 'start_task' dipanggil.`
+    );
+  }
 
   // Sinkronkan judul sesi AI (OpenCode / Monitor) ke deskripsi task baru
   try {
@@ -607,30 +746,6 @@ export async function handleStartTask(args, workflowState, git, zettlyOptions = 
   } catch {
     // Best effort: kegagalan penamaan sesi tidak boleh mengganggu start_task
   }
-
-  const warnings = [];
-
-  let initialFlow = typeof args.mermaidFlow === 'string' ? args.mermaidFlow.trim() : (typeof args.mermaidCode === 'string' ? args.mermaidCode.trim() : '');
-  let flowValid = false;
-  if (initialFlow) {
-    try {
-      flowGraph(initialFlow);
-      flowValid = true;
-    } catch (err) {
-      warnings.push(`⚠️ Provided mermaidFlow is invalid (${err.message}); falling back to auto-generated architecture flow.`);
-    }
-  }
-  if (!flowValid) {
-    initialFlow = generateDefaultFlow(args.description, workflowState.state.plan);
-  }
-  workflowState.state.featureFlowCreated = true;
-  workflowState.state.mermaidCode = initialFlow;
-  workflowState.state.featureFlowDescription = args.description;
-
-  // start_task memang bermaksud MENGGANTI task, jadi ia boleh menang atas
-  // task berjalan. Task yang diganti tetap diarsipkan oleh reconcileWithDisk,
-  // bukan dihapus.
-  const reconciled = await workflowState.save({ allowReplaceRunningTask: true });
 
   await reportEventSafe(
     workflowState.state,

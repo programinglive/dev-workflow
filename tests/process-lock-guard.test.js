@@ -10,7 +10,10 @@ import {
   processLockPath,
   refreshProcessLock,
   setIsAliveForTests,
+  setIsHolderProcessForTests,
+  clearHeldLeasesForTests,
   DEFAULT_LOCK_STALE_MS,
+  LOCK_PROTOCOL_VERSION,
 } from "../process-lock.js";
 import { WorkflowState } from "../workflow-state.js";
 import { handleToolCall } from "../tools/handlers.js";
@@ -27,10 +30,10 @@ import { testUtils } from "./test-helpers.js";
  * menghentikan tabrakan.
  *
  * Yang diuji di sini:
- *   1. Penanda lain yang HIDUP dan BARU SAJA BEKERJA menolak `start_task`.
- *   2. Penanda yang basi tidak memblokir, karena proses MCP yang tertinggal
- *      hidup bukan alasan melarang sesi baru bekerja.
- *   3. `force: true` tetap tersedia untuk pemilik mesin.
+ *   1. Penanda lain yang HIDUP menolak `start_task` (bahkan jika detaknya tua;
+ *      pengambilalihan tanpa force hanya boleh saat pemegang terkonfirmasi mati).
+ *   2. Penanda yang pemegangnya sudah MATI dipulihkan secara atomik.
+ *   3. `force: true` tetap tersedia untuk pemilik mesin terhadap sesi v2.
  */
 
 async function withTempDir(callback) {
@@ -39,17 +42,25 @@ async function withTempDir(callback) {
     await callback(dir);
   } finally {
     setIsAliveForTests(null);
+    setIsHolderProcessForTests(null);
+    clearHeldLeasesForTests();
     await rm(dir, { recursive: true, force: true });
   }
 }
 
 async function writeLock(dir, payload) {
-  await writeFile(processLockPath({ dir }), JSON.stringify(payload), "utf8");
+  const fullPayload = {
+    protocolVersion: LOCK_PROTOCOL_VERSION,
+    leaseId: payload.leaseId || `lease-test-${payload.pid || 0}`,
+    incarnationId: payload.incarnationId || `inc-test-${payload.pid || 0}`,
+    ...payload,
+  };
+  await writeFile(processLockPath({ dir }), JSON.stringify(fullPayload), "utf8");
 }
 
-test("activeForeignLock mengabaikan penanda milik proses ini sendiri", async () => {
+test("activeForeignLock mengabaikan penanda milik proses ini sendiri saat lease dipegang", async () => {
   await withTempDir(async (dir) => {
-    await writeLock(dir, { pid: process.pid, startedAt: Date.now(), heartbeatAt: Date.now() });
+    acquireProcessLock({ dir, pid: process.pid, now: Date.now() });
 
     const holder = activeForeignLock({ dir, pid: process.pid, isAlive: () => true });
 
@@ -81,27 +92,30 @@ test("activeForeignLock menemukan proses lain yang hidup dan baru bekerja", asyn
   });
 });
 
-test("activeForeignLock mengabaikan penanda yang basi walau prosesnya masih hidup", async () => {
+test("activeForeignLock tetap melindungi proses yang masih hidup walau detaknya sudah tua (F4 no heartbeat-only takeover)", async () => {
   await withTempDir(async (dir) => {
     const now = Date.now();
-    // Proses MCP yang tertinggal hidup setelah jendela OpenCode-nya ditutup.
     await writeLock(dir, {
       pid: 4242,
       startedAt: now - 3 * 60 * 60 * 1000,
       heartbeatAt: now - DEFAULT_LOCK_STALE_MS - 60_000,
     });
 
-    const holder = activeForeignLock({ dir, pid: process.pid, now, isAlive: () => true });
+    const holderAlive = activeForeignLock({ dir, pid: process.pid, now, isAlive: () => true });
+    assert.ok(holderAlive, "proses yang masih hidup tidak boleh diambil alih hanya karena detaknya tua");
+    assert.equal(holderAlive.staleHeartbeat, true);
 
-    assert.equal(holder, null, "penanda basi tidak boleh memblokir sesi baru");
+    const holderDead = activeForeignLock({ dir, pid: process.pid, now, isAlive: () => false });
+    assert.equal(holderDead, null, "penanda basi yang prosesnya sudah mati boleh diambil alih");
   });
 });
 
 test("refreshProcessLock hanya menyegarkan penanda milik sendiri", async () => {
   await withTempDir(async (dir) => {
-    await writeLock(dir, { pid: process.pid, startedAt: 1, heartbeatAt: 1 });
+    const acq = acquireProcessLock({ dir, pid: process.pid, now: 1 });
+    assert.equal(acq.acquired, true);
 
-    const touched = refreshProcessLock({ dir, pid: process.pid, now: 55555 });
+    const touched = refreshProcessLock({ dir, pid: process.pid, leaseId: acq.leaseId, now: 55555 });
     assert.equal(touched, true);
 
     const stored = JSON.parse(await readFile(processLockPath({ dir }), "utf8"));
@@ -160,7 +174,7 @@ test("start_task menolak saat proses MCP lain masih aktif di proyek yang sama", 
   });
 });
 
-test("start_task tetap boleh jalan saat penanda lain sudah basi", async () => {
+test("start_task tetap boleh jalan saat pemegang penanda lain sudah mati", async () => {
   await withTempDir(async (dir) => {
     const stateFile = path.join(dir, "state.json");
     const state = new WorkflowState(stateFile);
@@ -172,7 +186,7 @@ test("start_task tetap boleh jalan saat penanda lain sudah basi", async () => {
         startedAt: Date.now() - 3 * 60 * 60 * 1000,
         heartbeatAt: Date.now() - DEFAULT_LOCK_STALE_MS - 60_000,
       });
-      setIsAliveForTests(() => true);
+      setIsAliveForTests((pid) => pid === process.pid);
 
       const response = await handleToolCall({
         request: {
