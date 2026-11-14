@@ -21,6 +21,11 @@ import {
   setIsHolderForTests,
   clearHeldLeasesForTests,
   defaultIsHolderProcess,
+  acquireLockGate,
+  withLockGate,
+  recoverAbandonedLockGate,
+  verifyLegacyFleetQuiescence,
+  GATE_FILENAME,
   DEFAULT_LOCK_STALE_MS,
   LOCK_PROTOCOL_VERSION,
 } from "../process-lock.js";
@@ -34,6 +39,8 @@ import {
   parseOwnerTimestamp,
   readSessionPointer,
   readFocusBinding,
+  resolveStateFile,
+  reconcilePendingTransitionJournals,
   ProjectOwnershipLostError,
 } from "../workflow-state.js";
 import { handleToolCall } from "../tools/handlers.js";
@@ -1247,5 +1254,655 @@ test("Real Git Worktree & Windows Junction Isolation: Independent worktrees oper
     await ws3.close();
   });
 });
+
+test("R2-1 Gate Safety: Two real child processes at deterministic contention barrier cannot rename a successor's gate, and abandoned gate fails closed until authorized recovery", async () => {
+  await withWorkspace(async (base) => {
+    const lockDir = path.join(base, "r2-1-gate-dir");
+    await mkdir(lockDir, { recursive: true });
+    const gateFile = path.join(lockDir, GATE_FILENAME);
+
+    // 1. Seed an abandoned gate left by a confirmed-dead PID (999881)
+    const deadToken = "gate-dead-owner-token-999881";
+    writeFileSync(
+      gateFile,
+      JSON.stringify({
+        pid: 999881,
+        incarnationId: "inc-dead-999881",
+        token: deadToken,
+        startedAt: Date.now() - 10_000,
+        acquiredAt: Date.now() - 10_000,
+      }),
+      "utf8",
+    );
+
+    // 2. Normal acquireLockGate MUST fail closed (`LOCK_GATE_ABANDONED`) without renaming/deleting the gate
+    const normalAcq = acquireLockGate(lockDir, { timeoutMs: 100 });
+    assert.equal(normalAcq.ok, false, "Normal acquireLockGate must fail closed on abandoned gate");
+    assert.equal(normalAcq.error, "LOCK_GATE_ABANDONED");
+    assert.equal(existsSync(gateFile), true, "Abandoned gate file must remain on disk until authorized recovery");
+
+    // 3. Unauthorized recovery MUST be refused
+    const unauthRec = recoverAbandonedLockGate({
+      dir: lockDir,
+      expectedToken: deadToken,
+      authorizeAbandonedGateRecovery: false,
+    });
+    assert.equal(unauthRec.ok, false);
+    assert.equal(unauthRec.reason, "authorization_required");
+
+    // 4. Spawn TWO real child processes (Worker B and Worker C) that both observe `deadToken`
+    // and pause at a deterministic IPC barrier before attempting recovery + acquisition.
+    const processLockModuleUrl = pathToFileURL(path.resolve("process-lock.js")).href;
+    const workerScript = `
+      import { acquireLockGate, recoverAbandonedLockGate } from ${JSON.stringify(processLockModuleUrl)};
+      import { readFileSync } from "node:fs";
+      import path from "node:path";
+
+      const lockDir = process.env.TEST_LOCK_DIR;
+      const role = process.env.TEST_ROLE;
+      const gateFile = path.join(lockDir, "mcp-process.gate.lock");
+
+      // Both workers observe the initial dead gate token before the barrier
+      const observedGate = JSON.parse(readFileSync(gateFile, "utf8"));
+      process.send({ type: "OBSERVED_DEAD_GATE", role, pid: process.pid, observedToken: observedGate.token });
+
+      process.on("message", (msg) => {
+        if (msg && msg.type === "PROCEED_RECOVERY") {
+          const rec = recoverAbandonedLockGate({
+            dir: lockDir,
+            expectedToken: observedGate.token,
+            authorizeAbandonedGateRecovery: true,
+          });
+          const acq = acquireLockGate(lockDir, { timeoutMs: 120 });
+          process.send({
+            type: "RESULT",
+            role,
+            pid: process.pid,
+            rec,
+            acqOk: acq.ok,
+            acqError: acq.error || null,
+            acqToken: acq.token || null,
+          });
+          if (acq.ok) {
+            process.on("message", (m2) => {
+              if (m2 && m2.type === "RELEASE_AND_EXIT") {
+                acq.release();
+                process.exit(0);
+              }
+            });
+          } else {
+            process.exit(0);
+          }
+        }
+      });
+    `;
+
+    const spawnGateWorker = (role) => {
+      const child = spawn(process.execPath, ["--input-type=module", "-e", workerScript], {
+        env: { ...process.env, TEST_LOCK_DIR: lockDir, TEST_ROLE: role },
+        stdio: ["ignore", "pipe", "pipe", "ipc"],
+      });
+      return child;
+    };
+
+    const workerB = spawnGateWorker("B");
+    const workerC = spawnGateWorker("C");
+
+    const waitForMessage = (child, expectedType) =>
+      new Promise((resolve, reject) => {
+        const onMsg = (m) => {
+          if (m && m.type === expectedType) {
+            child.off("message", onMsg);
+            resolve(m);
+          }
+        };
+        child.on("message", onMsg);
+        child.once("error", reject);
+        child.once("exit", (code) => {
+          reject(new Error(`Worker exited early (${code}) waiting for ${expectedType}`));
+        });
+      });
+
+    // Both Worker B and Worker C reach the deterministic barrier having observed `deadToken`
+    const [obsB, obsC] = await Promise.all([
+      waitForMessage(workerB, "OBSERVED_DEAD_GATE"),
+      waitForMessage(workerC, "OBSERVED_DEAD_GATE"),
+    ]);
+    assert.equal(obsB.observedToken, deadToken);
+    assert.equal(obsC.observedToken, deadToken);
+
+    // Release Worker B first: Worker B recovers `deadToken` and acquires its new live gate `tokenB`
+    const resBPromise = waitForMessage(workerB, "RESULT");
+    workerB.send({ type: "PROCEED_RECOVERY" });
+    const resB = await resBPromise;
+    assert.equal(resB.rec.ok, true, "Worker B must recover the abandoned gate");
+    assert.equal(resB.acqOk, true, "Worker B must acquire the new gate");
+    assert.ok(resB.acqToken && resB.acqToken !== deadToken);
+
+    // Now while Worker B actively holds its live gate (`resB.acqToken`), release Worker C from the barrier!
+    const resCPromise = waitForMessage(workerC, "RESULT");
+    workerC.send({ type: "PROCEED_RECOVERY" });
+    const resC = await resCPromise;
+
+    // Worker C MUST NOT rename or remove Worker B's gate!
+    assert.equal(resC.rec.ok, false, "Delayed Worker C must NOT recover over Worker B's new gate");
+    assert.equal(resC.rec.reason, "gate_token_mismatch");
+    assert.equal(resC.rec.actualToken, resB.acqToken);
+    assert.equal(resC.acqOk, false, "Worker C must not acquire the gate while Worker B holds it");
+    assert.equal(resC.acqError, "LOCK_GATE_TIMEOUT");
+
+    // Verify on disk that Worker B's gate is still intact and untouched
+    const diskGateWhileHeld = JSON.parse(readFileSync(gateFile, "utf8"));
+    assert.equal(diskGateWhileHeld.token, resB.acqToken, "Worker B's gate token on disk must remain intact");
+    assert.equal(diskGateWhileHeld.pid, workerB.pid);
+
+    // Let Worker B release its gate and exit cleanly
+    const exitB = new Promise((resolve) => workerB.once("exit", resolve));
+    workerB.send({ type: "RELEASE_AND_EXIT" });
+    await exitB;
+    assert.equal(existsSync(gateFile), false, "Worker B's gate must be unlinked upon release");
+  });
+});
+
+test("R2-2 Async Reentrant Gate Release: Inner reentrant async operation completing after outer exit or exception cleans up gate when last valid holder exits", async () => {
+  await withWorkspace(async (base) => {
+    const lockDir = path.join(base, "r2-2-reentrant-dir");
+    await mkdir(lockDir, { recursive: true });
+    const gateFile = path.join(lockDir, GATE_FILENAME);
+
+    let releaseInnerBarrier;
+    const innerBarrier = new Promise((resolve) => {
+      releaseInnerBarrier = resolve;
+    });
+    let innerPromise;
+
+    // 1. Outer withLockGate spawns a nested reentrant withLockGate whose async work finishes AFTER outer exits
+    await withLockGate(lockDir, async () => {
+      assert.equal(existsSync(gateFile), true, "Gate file must exist during outer withLockGate");
+      innerPromise = withLockGate(lockDir, async () => {
+        await innerBarrier;
+        return "inner-completed";
+      });
+    });
+
+    // At this exact point, outer `withLockGate` has exited, but `innerPromise` is still inside its critical section!
+    assert.equal(
+      existsSync(gateFile),
+      true,
+      "Gate file must remain on disk while inner reentrant holder is still active",
+    );
+
+    // Now let the inner reentrant holder finish
+    releaseInnerBarrier();
+    const innerResult = await innerPromise;
+    assert.equal(innerResult, "inner-completed");
+
+    // As soon as the last valid holder (`innerPromise`) exits, the gate MUST be cleaned up!
+    assert.equal(
+      existsSync(gateFile),
+      false,
+      "Gate file must be unlinked when the last valid holder (inner reentrant) exits",
+    );
+
+    // 2. Exception unwinding in both nested and outer scopes must never strand the gate
+    await assert.rejects(
+      () =>
+        withLockGate(lockDir, async () => {
+          await assert.rejects(
+            () =>
+              withLockGate(lockDir, async () => {
+                throw new Error("INNER_GATE_FAILURE");
+              }),
+            /INNER_GATE_FAILURE/,
+          );
+          throw new Error("OUTER_GATE_FAILURE");
+        }),
+      /OUTER_GATE_FAILURE/,
+    );
+    assert.equal(existsSync(gateFile), false, "Gate file must not be stranded after exceptions");
+
+    // Verify a subsequent fresh acquisition works with reentrant: false
+    const nextGate = acquireLockGate(lockDir);
+    assert.equal(nextGate.ok, true);
+    assert.equal(nextGate.reentrant, false);
+    nextGate.release();
+    assert.equal(existsSync(gateFile), false);
+  });
+});
+
+test("R2-3 Async Serialization & Execution-Context Isolation: Independent Request B arriving while Request A is suspended at await cannot bypass queue or gate", async () => {
+  await withWorkspace(async (base) => {
+    const lockDir = path.join(base, "state", "projects", "r2-3-isolation");
+    const stateFile = path.join(lockDir, "users", "u1", "workflow-state.ses_r23.json");
+    await mkdir(path.dirname(stateFile), { recursive: true });
+
+    // Part 1: `withLockGate` & `acquireLockGate` execution-context isolation
+    const gateEvents = [];
+    let reqAEnteredResolve;
+    const reqAEntered = new Promise((resolve) => {
+      reqAEnteredResolve = resolve;
+    });
+    let releaseReqA;
+    const reqAGateBarrier = new Promise((resolve) => {
+      releaseReqA = resolve;
+    });
+
+    const reqAPromise = withLockGate(lockDir, async () => {
+      gateEvents.push("A:enter");
+      reqAEnteredResolve();
+      await reqAGateBarrier;
+
+      // Nested call within Request A's own AsyncLocalStorage context MUST be recognized as reentrant
+      await withLockGate(lockDir, async () => {
+        gateEvents.push("A-nested:enter");
+        await new Promise((r) => setTimeout(r, 10));
+        gateEvents.push("A-nested:exit");
+      });
+
+      gateEvents.push("A:exit");
+    });
+
+    // Wait until Request A has acquired the gate and suspended at `await reqAGateBarrier`
+    await reqAEntered;
+
+    // Independent synchronous acquireLockGate from outside Request A's context MUST NOT be treated as reentrant!
+    const syncContend = acquireLockGate(lockDir, { timeoutMs: 50 });
+    assert.equal(syncContend.ok, false, "Independent sync caller must NOT bypass gate as reentrant");
+    assert.equal(syncContend.error, "LOCK_GATE_BUSY_IN_PROCESS");
+
+    // Independent async Request B arriving while Request A is at `await` MUST queue until Request A exits
+    const reqBPromise = withLockGate(lockDir, async () => {
+      gateEvents.push("B:enter");
+      await new Promise((r) => setTimeout(r, 5));
+      gateEvents.push("B:exit");
+    });
+
+    // Give microtasks/timers a chance to run while Request A is still paused
+    await new Promise((r) => setTimeout(r, 25));
+    assert.deepEqual(
+      gateEvents,
+      ["A:enter"],
+      "Request B must NOT enter withLockGate while Request A is suspended at an await",
+    );
+
+    releaseReqA();
+    await Promise.all([reqAPromise, reqBPromise]);
+    assert.deepEqual(
+      gateEvents,
+      ["A:enter", "A-nested:enter", "A-nested:exit", "A:exit", "B:enter", "B:exit"],
+      "Request B must execute strictly after Request A and its nested calls complete",
+    );
+
+    // Part 2: `WorkflowState.runSerialized` execution-context isolation
+    const lease = acquireProcessLock({ dir: lockDir, pid: process.pid });
+    const ws = new WorkflowState(stateFile);
+    ws.bindLockLease({ dir: lockDir, leaseId: lease.leaseId });
+    await ws.load();
+
+    const wsEvents = [];
+    let wsAEnteredResolve;
+    const wsAEntered = new Promise((resolve) => {
+      wsAEnteredResolve = resolve;
+    });
+    let releaseWsA;
+    const wsABarrier = new Promise((resolve) => {
+      releaseWsA = resolve;
+    });
+
+    const opAPromise = ws.runSerialized(async () => {
+      wsEvents.push("wsA:start");
+      ws.state.currentPhase = "coding";
+      ws.state.taskDescription = "Task mutated by Request A";
+      wsAEnteredResolve();
+      await wsABarrier;
+
+      // Nested save() inside Request A's context must execute reentrantly without deadlocking
+      await ws.save({ allowReplaceRunningTask: true });
+      wsEvents.push(`wsA:saved:${ws.state.taskDescription}`);
+    });
+
+    await wsAEntered;
+
+    // Independent Request B arrives after Request A has suspended at `await wsABarrier`
+    const opBPromise = ws.runSerialized(async () => {
+      wsEvents.push("wsB:start");
+      ws.state.taskDescription = "Task mutated by Request B";
+      await ws.save({ allowReplaceRunningTask: true });
+      wsEvents.push(`wsB:saved:${ws.state.taskDescription}`);
+    });
+
+    await new Promise((r) => setTimeout(r, 25));
+    assert.deepEqual(
+      wsEvents,
+      ["wsA:start"],
+      "Independent Request B must NOT bypass runSerialized queue while Request A is awaiting",
+    );
+    assert.equal(
+      ws.state.taskDescription,
+      "Task mutated by Request A",
+      "Shared WorkflowState must not be mutated by Request B before Request A finishes",
+    );
+
+    releaseWsA();
+    await Promise.all([opAPromise, opBPromise]);
+
+    assert.deepEqual(wsEvents, [
+      "wsA:start",
+      "wsA:saved:Task mutated by Request A",
+      "wsB:start",
+      "wsB:saved:Task mutated by Request B",
+    ]);
+
+    await ws.close();
+  });
+});
+
+test("R2-4 Durable Transition Safety & Crash Recovery: Post-save failure and abrupt SIGKILL mid-transition leave zero phantom target tasks and reconcile cleanly on restart", async () => {
+  await withWorkspace(async (base) => {
+    const repoA = await createRepo(base, "r24-repo-a");
+    const repoB = await createRepo(base, "r24-repo-b");
+
+    const bucketA = projectKey(canonicalProjectPath(repoA));
+    const bucketB = projectKey(canonicalProjectPath(repoB));
+    const lockDirA = path.join(base, "state", "projects", bucketA);
+    const lockDirB = path.join(base, "state", "projects", bucketB);
+    const stateFileA = path.join(lockDirA, "users", "u1", "workflow-state.ses_r24.json");
+    const stateFileB = path.join(lockDirB, "users", "u1", "workflow-state.ses_r24.json");
+
+    const ws = new WorkflowState(stateFileA, { sessionId: "ses_r24" });
+    await ws.load();
+
+    // 1. Establish initial active task on Repo A
+    const startA = await handleStartTask(
+      {
+        description: "Authoritative task on Repo A",
+        type: "feature",
+        projectDir: repoA,
+        focusId: 81,
+        definitionOfDone: ["dod A1"],
+        plan: ["step A1"],
+      },
+      ws,
+      {},
+    );
+    assert.match(startA?.content?.[0]?.text || "", /Task Started/);
+    const pinnedStateFileA = ws.stateFile;
+    ws.state.definitionOfDone[0].status = "done";
+    ws.state.definitionOfDone[0].evidence = "Verified on Repo A";
+    await ws.save();
+
+    // 2. Part 1: Failure injected in `afterSave` (AFTER target state has been saved to Repo B's SQLite & JSON!)
+    let targetExistedDuringAfterSave = false;
+    const failedPostSave = await handleStartTask(
+      {
+        description: "Uncommitted task on Repo B that fails after save",
+        type: "feature",
+        projectDir: repoB,
+        focusId: 89,
+        allowProjectSwitch: true,
+        projectSwitchReason: "Testing post-save failure rollback",
+        definitionOfDone: ["dod B1"],
+        plan: ["step B1"],
+      },
+      ws,
+      {},
+      {
+        transitionHooks: {
+          afterSave: async () => {
+            targetExistedDuringAfterSave = existsSync(ws.stateFile);
+            throw new Error("POST_SAVE_BEFORE_COMMIT_FAILURE");
+          },
+        },
+      },
+    );
+
+    assert.equal(targetExistedDuringAfterSave, true, "Target state file must have been written before afterSave threw");
+    assert.match(failedPostSave?.content?.[0]?.text || "", /POST_SAVE_BEFORE_COMMIT_FAILURE/);
+
+    // Verify Repo A is intact
+    assert.equal(ws.state.taskDescription, "Authoritative task on Repo A");
+    assert.equal(ws.state.projectDir, repoA);
+    assert.equal(ws.state.definitionOfDone[0].status, "done");
+    assert.equal(ws.state.definitionOfDone[0].evidence, "Verified on Repo A");
+
+    // Verify Repo B has ZERO committed state left behind on disk or in SQLite!
+    assert.equal(
+      existsSync(ws.stateFile.replace(bucketA, bucketB)),
+      false,
+      "Target state JSON file on Repo B must be removed on post-save rollback",
+    );
+    const probeB = new WorkflowState(stateFileB, { sessionId: "ses_r24" });
+    await probeB.load();
+    assert.equal(probeB.state.currentPhase, "idle", "Repo B SQLite row must be rolled back to idle/deleted");
+    assert.equal(probeB.state.taskDescription, "", "Repo B must not retain uncommitted task description in SQLite");
+    await probeB.close();
+    // Clean up probeB's initial empty export soPart 2 starts clean
+    await rm(lockDirB, { recursive: true, force: true });
+
+    await ws.close();
+
+    // 3. Part 2: Abrupt process crash (SIGKILL) after target state & session pointer are saved, before commit
+    const handlersModuleUrl = pathToFileURL(path.resolve("tools/handler-modules/workflow-handlers.js")).href;
+    const wfStateModuleUrl = pathToFileURL(path.resolve("workflow-state.js")).href;
+    const crashWorkerScript = `
+      import { WorkflowState } from ${JSON.stringify(wfStateModuleUrl)};
+      import { handleStartTask } from ${JSON.stringify(handlersModuleUrl)};
+
+      const stateFileA = process.env.TEST_STATE_FILE_A;
+      const repoB = process.env.TEST_REPO_B;
+
+      const ws = new WorkflowState(stateFileA, { sessionId: "ses_r24" });
+      await ws.load();
+
+      await handleStartTask(
+        {
+          description: "Crashed mid-transition task on Repo B",
+          type: "feature",
+          projectDir: repoB,
+          focusId: 90,
+          allowProjectSwitch: true,
+          projectSwitchReason: "Testing SIGKILL crash recovery",
+          definitionOfDone: ["crash dod"],
+          plan: ["crash step"],
+        },
+        ws,
+        {},
+        {
+          transitionHooks: {
+            afterSave: async ({ transitionJournal }) => {
+              process.send({
+                type: "PAUSED_AFTER_TARGET_SAVE",
+                pid: process.pid,
+                targetStateFile: ws.stateFile,
+                journalFile: transitionJournal.journalFile,
+              });
+              // Hang until parent sends SIGKILL
+              await new Promise(() => {});
+            },
+          },
+        },
+      );
+    `;
+
+    const crashChild = spawn(process.execPath, ["--input-type=module", "-e", crashWorkerScript], {
+      env: {
+        ...process.env,
+        DEV_WORKFLOW_STATE_FILE: path.join(base, "state", "workflow-state.json"),
+        TEST_STATE_FILE_A: pinnedStateFileA,
+        TEST_REPO_B: repoB,
+      },
+      stdio: ["ignore", "pipe", "pipe", "ipc"],
+    });
+
+    const pausedMsg = await new Promise((resolve, reject) => {
+      crashChild.on("message", (m) => {
+        if (m && m.type === "PAUSED_AFTER_TARGET_SAVE") resolve(m);
+      });
+      crashChild.once("error", reject);
+      crashChild.once("exit", (code) => reject(new Error(`Crash child exited prematurely (${code})`)));
+    });
+
+    // Verify before SIGKILL that the uncommitted transition artifacts exist on disk:
+    assert.equal(existsSync(pausedMsg.journalFile), true, "Transition journal must exist on disk before commit");
+    assert.equal(existsSync(pausedMsg.targetStateFile), true, "Target state file was written before crash");
+    assert.equal(
+      readSessionPointer(path.join(base, "state"), "ses_r24")?.projectDir,
+      canonicalProjectPath(repoB),
+      "Session pointer points to Repo B prior to crash",
+    );
+
+    // Abruptly terminate the child process (SIGKILL)
+    const childExitPromise = new Promise((resolve) => crashChild.once("exit", resolve));
+    crashChild.kill("SIGKILL");
+    await childExitPromise;
+
+    // Now simulate restart: resolveStateFile + WorkflowState.load() must automatically reconcile the journal!
+    process.env.DEV_WORKFLOW_STATE_FILE = path.join(base, "state", "workflow-state.json");
+    const resolvedAfterCrash = resolveStateFile({ sessionId: "ses_r24" });
+    assert.equal(
+      path.resolve(resolvedAfterCrash),
+      path.resolve(pinnedStateFileA),
+      "resolveStateFile must synchronously restore session pointer to Repo A after crash",
+    );
+
+    const wsRecovered = new WorkflowState(resolvedAfterCrash, { sessionId: "ses_r24" });
+    await wsRecovered.load();
+
+    // 1. Journal file must be cleaned up after reconciliation
+    assert.equal(existsSync(pausedMsg.journalFile), false, "Journal file must be removed after reconciliation");
+
+    // 2. Repo A's original task and DoD evidence must be intact
+    assert.equal(wsRecovered.state.taskDescription, "Authoritative task on Repo A");
+    assert.equal(wsRecovered.state.projectDir, repoA);
+    assert.equal(wsRecovered.state.definitionOfDone[0].status, "done");
+    assert.equal(wsRecovered.state.definitionOfDone[0].evidence, "Verified on Repo A");
+
+    // 3. Repo B's uncommitted state file, SQLite row, Focus #90 binding, and staged lock must all be rolled back!
+    assert.equal(existsSync(pausedMsg.targetStateFile), false, "Repo B uncommitted JSON state file must be removed");
+    assert.equal(
+      readFocusBinding({ stateFile: wsRecovered.stateFile, focusId: 90 }),
+      null,
+      "Focus #90 binding from crashed transition must be rolled back",
+    );
+    assert.equal(
+      readProcessLockDetailed({ dir: lockDirB }).status,
+      "missing",
+      "Staged lock on Repo B from crashed transition must be released",
+    );
+
+    const probeBAfterCrash = new WorkflowState(pausedMsg.targetStateFile, { sessionId: "ses_r24" });
+    await probeBAfterCrash.load();
+    assert.equal(probeBAfterCrash.state.currentPhase, "idle");
+    assert.equal(probeBAfterCrash.state.taskDescription, "");
+    await probeBAfterCrash.close();
+    await wsRecovered.close();
+  });
+});
+
+test("R2-5 Legacy Exclusion & Fleet Quiescence: Legacy v1 lock in unpinned bucket with missing or outdated session pointer is refused, and verifyLegacyFleetQuiescence detects all incompatible states", async () => {
+  await withWorkspace(async (base) => {
+    const repoA = await createRepo(base, "r25-repo-a");
+    const repoC = await createRepo(base, "r25-repo-c");
+
+    const stateBase = path.join(base, "state");
+    const unpinnedLegacyBucket = path.join(stateBase, "projects", "default-startup-cwd-hash");
+    const clientV2Bucket = path.join(stateBase, "projects", "v2-startup-cwd-hash");
+    const stateFileV2 = path.join(clientV2Bucket, "users", "u1", "workflow-state.ses_v2.json");
+    await mkdir(unpinnedLegacyBucket, { recursive: true });
+    await mkdir(path.dirname(stateFileV2), { recursive: true });
+
+    // Seed a live legacy v1 lock (no leaseId, no protocolVersion: 2) in `unpinnedLegacyBucket`
+    // with NO session pointer in `<base>/state/sessions/` at all!
+    const legacyPid = 78888;
+    writeFileSync(
+      processLockPath({ dir: unpinnedLegacyBucket }),
+      JSON.stringify({
+        pid: legacyPid,
+        startedAt: Date.now() - 30_000,
+        heartbeatAt: Date.now() - 5_000,
+      }),
+      "utf8",
+    );
+
+    setIsAliveForTests((pid) => pid === legacyPid || pid === process.pid);
+    setIsHolderForTests(() => true);
+
+    // 1. Verify fleet quiescence check detects the live legacy v1 writer even with missing session pointer
+    const quiescence1 = verifyLegacyFleetQuiescence({ baseDir: stateBase });
+    assert.equal(quiescence1.quiescent, false);
+    assert.equal(quiescence1.legacyWriters.length, 1);
+    assert.equal(quiescence1.legacyWriters[0].pid, legacyPid);
+
+    // 2. Case 1 (Missing session pointer): V2 `handleStartTask` on `repoA` MUST refuse (`legacy_writer_active`)
+    const wsV2 = new WorkflowState(stateFileV2, { sessionId: "ses_v2" });
+    await wsV2.load();
+    const resMissingPtr = await handleStartTask(
+      {
+        description: "V2 task while legacy writer has missing session pointer",
+        type: "feature",
+        projectDir: repoA,
+        definitionOfDone: ["dod 1"],
+        plan: ["step 1"],
+      },
+      wsV2,
+      {},
+    );
+    assert.match(
+      resMissingPtr?.content?.[0]?.text || "",
+      /penulis protokol lama \(legacy v1\)/i,
+      "V2 start_task must refuse when a live legacy v1 lock exists in the shared state root without a session pointer",
+    );
+
+    // 3. Case 2 (Outdated session pointer pointing to `repoC` while legacy v1 is alive): MUST also refuse!
+    await mkdir(path.join(stateBase, "sessions"), { recursive: true });
+    writeFileSync(
+      path.join(stateBase, "sessions", "ses_legacy.json"),
+      JSON.stringify({
+        projectDir: canonicalProjectPath(repoC),
+        projectDirPath: path.join(stateBase, "projects", projectKey(canonicalProjectPath(repoC))),
+        updatedAt: new Date().toISOString(),
+      }),
+      "utf8",
+    );
+
+    const resOutdatedPtr = await handleStartTask(
+      {
+        description: "V2 task while legacy writer has outdated session pointer",
+        type: "feature",
+        projectDir: repoA,
+        definitionOfDone: ["dod 1"],
+        plan: ["step 1"],
+      },
+      wsV2,
+      {},
+    );
+    assert.match(
+      resOutdatedPtr?.content?.[0]?.text || "",
+      /penulis protokol lama \(legacy v1\)/i,
+      "V2 start_task must refuse when a live legacy v1 lock exists with an outdated session pointer",
+    );
+
+    // 4. Once the legacy v1 process is terminated (quiesced), `verifyLegacyFleetQuiescence` passes and V2 succeeds!
+    setIsAliveForTests((pid) => pid === process.pid);
+    const quiescence2 = verifyLegacyFleetQuiescence({ baseDir: stateBase });
+    assert.equal(quiescence2.quiescent, true, "Fleet must be reported quiescent once legacy v1 process is gone");
+
+    const resAfterQuiescence = await handleStartTask(
+      {
+        description: "V2 task after legacy writer quiesced",
+        type: "feature",
+        projectDir: repoA,
+        definitionOfDone: ["dod 1"],
+        plan: ["step 1"],
+      },
+      wsV2,
+      {},
+    );
+    assert.match(resAfterQuiescence?.content?.[0]?.text || "", /Task Started/);
+
+    await wsV2.close();
+  });
+});
+
 
 

@@ -42,6 +42,11 @@ import {
   restoreSessionPointerSnapshot,
   captureFocusBindingSnapshot,
   restoreFocusBindingSnapshot,
+  beginTransitionJournal,
+  markTransitionJournalCommitted,
+  completeTransitionJournal,
+  rollbackTransitionJournal,
+  reconcilePendingTransitionJournals,
   ProjectOwnershipLostError,
 } from "../../workflow-state.js";
 import {
@@ -204,7 +209,21 @@ async function captureDirtyAtStart(git) {
 }
 
 export async function handleStartTask(args, workflowState, git, zettlyOptions = {}) {
+  if (workflowState && typeof workflowState.runSerialized === "function") {
+    return await workflowState.runSerialized(() =>
+      handleStartTaskSerialized(args, workflowState, git, zettlyOptions),
+    );
+  }
+  return await handleStartTaskSerialized(args, workflowState, git, zettlyOptions);
+}
+
+async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions = {}) {
   const env = zettlyOptions?.env || process.env;
+  if (workflowState?.stateFile) {
+    try {
+      await reconcilePendingTransitionJournals({ stateFile: workflowState.stateFile });
+    } catch {}
+  }
   // `task` is a natural alias for `description`. Accepting it as an unknown key
   // silently created an empty task, which then had no Todo and no drawing, so
   // the monitor showed no flow. Normalise it, and refuse an empty description.
@@ -517,20 +536,27 @@ export async function handleStartTask(args, workflowState, git, zettlyOptions = 
     }
   }
 
-  // Stage 3: Capture full rollback snapshots before any state / pointer / focus
-  // mutation (F7 transactional transition).
+  // Stage 3: Capture full rollback snapshots and durable transition journal
+  // before any state / pointer / focus mutation (F7 + R2-4).
   const transitionHooks = zettlyOptions?.transitionHooks || null;
   const priorStateSnapshot = structuredClone(workflowState.state);
   const priorStateFile = workflowState.stateFile;
-  const priorHistoryFile = workflowState.historyFile;
   const priorStateVersion = workflowState.stateVersion;
   const priorLoadedTask = workflowState.loadedTask;
   const priorBoundLease = workflowState.boundLockLease ? { ...workflowState.boundLockLease } : null;
   const priorActiveProjectDir = priorStateSnapshot.projectDir || "";
-  const priorSessionPointer = captureSessionPointerSnapshot(priorStateFile);
-  const priorFocusBinding = hasRequestedFocus
-    ? captureFocusBindingSnapshot({ stateFile: priorStateFile, focusId: requestedFocusId })
-    : null;
+  const transitionJournal = await beginTransitionJournal({
+    sourceStateFile: priorStateFile,
+    targetStateFile,
+    sessionId: workflowState.sessionId || null,
+    focusId: hasRequestedFocus ? requestedFocusId : null,
+    stagedLock,
+    priorStateSnapshot,
+    priorStateVersion,
+    priorLoadedTask,
+    priorBoundLease,
+    priorActiveProjectDir,
+  });
 
   let preservedBeforeSave = null;
   let archivedTask = null;
@@ -539,7 +565,7 @@ export async function handleStartTask(args, workflowState, git, zettlyOptions = 
 
   try {
     if (typeof transitionHooks?.afterStageLock === "function") {
-      await transitionHooks.afterStageLock({ stagedLock });
+      await transitionHooks.afterStageLock({ stagedLock, transitionJournal });
     }
 
     if (hasRequestedFocus) {
@@ -550,6 +576,7 @@ export async function handleStartTask(args, workflowState, git, zettlyOptions = 
         repoKey: requestedRepoKey,
       });
       if (claimed && claimed.ok === false) {
+        completeTransitionJournal(transitionJournal);
         rollbackProcessLockTransition(stagedLock);
         return textResponse(
           `⚠️ Refused: focus ${requestedFocusId} could not be claimed.\n\n` +
@@ -562,14 +589,14 @@ export async function handleStartTask(args, workflowState, git, zettlyOptions = 
         );
       }
       if (typeof transitionHooks?.afterClaimFocus === "function") {
-        await transitionHooks.afterClaimFocus({ claimed });
+        await transitionHooks.afterClaimFocus({ claimed, transitionJournal });
       }
     }
 
     // Pre-compute git baseline before mutating workflowState in-memory fields.
     const resolvedBaseSha = await resolveBaseSha(project.dir);
     if (typeof transitionHooks?.afterResolveBaseSha === "function") {
-      await transitionHooks.afterResolveBaseSha({ resolvedBaseSha });
+      await transitionHooks.afterResolveBaseSha({ resolvedBaseSha, transitionJournal });
     }
 
     // Selamatkan dulu pekerjaan yang mungkin tertimpa.
@@ -643,7 +670,7 @@ export async function handleStartTask(args, workflowState, git, zettlyOptions = 
       });
 
       if (typeof transitionHooks?.afterPinSession === "function") {
-        await transitionHooks.afterPinSession({ pinned });
+        await transitionHooks.afterPinSession({ pinned, transitionJournal });
       }
 
       if (pinned && pinned.stateFile !== workflowState.stateFile) {
@@ -683,7 +710,7 @@ export async function handleStartTask(args, workflowState, git, zettlyOptions = 
     workflowState.state.featureFlowDescription = args.description;
 
     if (typeof transitionHooks?.beforeSave === "function") {
-      await transitionHooks.beforeSave({ workflowState, stagedLock });
+      await transitionHooks.beforeSave({ workflowState, stagedLock, transitionJournal });
     }
 
     reconciled = await workflowState.save({ allowReplaceRunningTask: true });
@@ -695,31 +722,21 @@ export async function handleStartTask(args, workflowState, git, zettlyOptions = 
     }
 
     if (typeof transitionHooks?.afterSave === "function") {
-      await transitionHooks.afterSave({ reconciled, stagedLock });
+      await transitionHooks.afterSave({ reconciled, stagedLock, transitionJournal });
     }
 
+    // Authoritative Commit Point (R2-4):
+    markTransitionJournalCommitted(transitionJournal);
     commitProcessLockTransition(stagedLock);
+    completeTransitionJournal(transitionJournal);
   } catch (transitionError) {
-    // Full transactional rollback of lock, session pointer, focus binding, and
-    // workflowState (F7).
-    try {
-      if (typeof workflowState.close === "function" && workflowState.stateFile !== priorStateFile) {
-        await workflowState.close();
-      }
-    } catch {}
-    workflowState.stateFile = priorStateFile;
-    workflowState.historyFile = priorHistoryFile;
-    workflowState.stateVersion = priorStateVersion;
-    workflowState.loadedTask = priorLoadedTask;
-    workflowState.state = priorStateSnapshot;
-    if (typeof workflowState.bindLockLease === "function") {
-      workflowState.bindLockLease(priorBoundLease);
-    }
-    setActiveProjectDir(priorActiveProjectDir);
-    restoreSessionPointerSnapshot(priorSessionPointer);
-    if (priorFocusBinding) {
-      await restoreFocusBindingSnapshot(priorFocusBinding);
-    }
+    // Full transactional rollback of target state/DB, source state/DB, lock,
+    // session pointer, and focus binding (F7 + R2-4).
+    await rollbackTransitionJournal(transitionJournal, {
+      workflowState,
+      stagedLock,
+      setActiveProjectDirFn: setActiveProjectDir,
+    });
     rollbackProcessLockTransition(stagedLock);
     try {
       if (priorStateVersion !== null) {

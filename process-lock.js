@@ -28,6 +28,7 @@ import {
   statSync,
   readdirSync,
 } from "fs";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { execFileSync } from "child_process";
 import { randomUUID } from "crypto";
 import os from "os";
@@ -35,6 +36,7 @@ import path from "path";
 
 export const LOCK_FILENAME = "mcp-process.lock";
 export const GATE_FILENAME = "mcp-process.gate.lock";
+export const GATE_RECOVER_FILENAME = "mcp-process.gate.recover.lock";
 export const LOCK_PROTOCOL_VERSION = 2;
 
 export const DEFAULT_LOCK_STALE_MS = 10 * 60 * 1000;
@@ -62,8 +64,14 @@ export class ProjectOwnershipLostError extends Error {
 /** Peta lease aktif yang dipegang proses ini per direktori lock kanonik. */
 const heldLeases = new Map();
 
-/** Peta kedalaman re-entrancy gerbang lock untuk proses ini. */
+/** Peta entri gerbang aktif untuk proses ini (satu per direktori kanonik). */
 const activeGateDepth = new Map();
+
+/** Penyimpanan konteks eksekusi asinkron untuk kepemilikan re-entrant gerbang (R2-2 & R2-3). */
+const gateExecutionStorage = new AsyncLocalStorage();
+
+/** Antrean asinkron dalam-proses per direktori agar permintaan paralel tidak melewati gerbang (R2-3). */
+const inProcessGateQueues = new Map();
 
 /** Direktori lock dan lease aktif utama yang diingat proses ini. */
 let rememberedLockDir = null;
@@ -490,26 +498,45 @@ function publishCompleteJsonFile(targetFile, payloadObj, { replaceIfExists = fal
   }
 }
 
-function isGateStale(gateFile, { isAlive, isHolderProcess, shouldConsultDefaultHolder, host }) {
-  let raw;
-  try {
-    raw = readFileSync(gateFile, "utf8");
-  } catch (err) {
-    if (err && err.code === "ENOENT") return false;
-    return false;
-  }
-
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
+function readGateDetailed(gateFile, { waitForPartialInit = true } = {}) {
+  const deadline = waitForPartialInit ? Date.now() + PARTIAL_INIT_GRACE_MS : 0;
+  while (true) {
+    let raw;
     try {
-      const st = statSync(gateFile);
-      return Date.now() - st.mtimeMs > 250;
-    } catch {
-      return false;
+      raw = readFileSync(gateFile, "utf8");
+    } catch (error) {
+      if (error && error.code === "ENOENT") {
+        return { status: "missing", gate: null, error: null };
+      }
+      return { status: "unreadable", gate: null, error };
     }
+
+    if (raw && raw.trim() !== "") {
+      try {
+        const parsed = JSON.parse(raw);
+        if (
+          parsed &&
+          typeof parsed === "object" &&
+          Number.isFinite(Number(parsed.pid)) &&
+          typeof parsed.token === "string" &&
+          parsed.token.trim() !== ""
+        ) {
+          return { status: "ok", gate: parsed, error: null };
+        }
+      } catch {
+        // Kemungkinan inisialisasi parsial dari penulis eksternal; tunggu singkat.
+      }
+    }
+
+    if (!waitForPartialInit || Date.now() >= deadline) {
+      return { status: "corrupt", gate: null, error: null };
+    }
+    sleepSync(10);
   }
+}
+
+function isGateStaleParsed(parsed, { isAlive, isHolderProcess, shouldConsultDefaultHolder, host }) {
+  if (!parsed || typeof parsed !== "object") return false;
 
   const gatePid = Number(parsed?.pid);
   if (!Number.isFinite(gatePid) || gatePid <= 0) {
@@ -540,47 +567,277 @@ function isGateStale(gateFile, { isAlive, isHolderProcess, shouldConsultDefaultH
   return false;
 }
 
-function tryRecoverStaleGate(gateFile, expectedCheckFn) {
-  if (typeof expectedCheckFn === "function" && !expectedCheckFn()) {
-    return false;
+function releaseGateEntry(resolvedDir, entry) {
+  entry.count -= 1;
+  if (entry.count <= 0 && !entry.cleanedUp) {
+    entry.cleanedUp = true;
+    if (activeGateDepth.get(resolvedDir) === entry) {
+      activeGateDepth.delete(resolvedDir);
+    }
+    if (entry.contextMap && entry.contextMap.get(resolvedDir) === entry) {
+      entry.contextMap.delete(resolvedDir);
+    }
+    try {
+      const diskRaw = readFileSync(entry.gateFile, "utf8");
+      const diskGate = JSON.parse(diskRaw);
+      if (diskGate && diskGate.token === entry.token) {
+        unlinkSync(entry.gateFile);
+      }
+    } catch {}
+    if (typeof entry.onFullyReleased === "function") {
+      const notify = entry.onFullyReleased;
+      entry.onFullyReleased = null;
+      notify();
+    }
   }
-  const tombstone = `${gateFile}.stale.${process.pid}.${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
-  try {
-    renameSync(gateFile, tombstone);
-  } catch {
-    return false;
+}
+
+/**
+ * Pemulihan gerbang lock yang ditinggalkan proses mati secara terkendali dan
+ * memerlukan otorisasi eksplisit (`authorizeAbandonedGateRecovery: true`) serta
+ * pencocokan token (`expectedToken`) di bawah kunci pemulihan eksklusif (R2-1).
+ *
+ * ATURAN KEAMANAN (R2-1):
+ *   - Akuisisi normal (`acquireLockGate`) TIDAK PERNAH me-rename atau menghapus
+ *     `mcp-process.gate.lock` milik proses lain secara otomatis, sehingga tidak
+ *     pernah bisa menghapus gerbang milik suksesor yang baru masuk.
+ *   - Fungsi ini memulihkan gerbang yang ditinggalkan proses mati hanya bila
+ *     diotorisasi secara eksplisit dan `expectedToken` masih cocok dengan berkas
+ *     di disk di bawah kunci pemulihan `mcp-process.gate.recover.lock`.
+ */
+export function recoverAbandonedLockGate({
+  dir,
+  expectedToken = null,
+  authorizeAbandonedGateRecovery = false,
+  pid = process.pid,
+  isAlive = currentIsAlive(),
+  isHolderProcess = currentIsHolderProcess(),
+  hooks = null,
+} = {}) {
+  if (authorizeAbandonedGateRecovery !== true) {
+    return {
+      ok: false,
+      recovered: false,
+      reason: "authorization_required",
+    };
   }
+  if (!dir) {
+    return {
+      ok: false,
+      recovered: false,
+      reason: "invalid_dir",
+    };
+  }
+  if (!expectedToken || typeof expectedToken !== "string" || expectedToken.trim() === "") {
+    return {
+      ok: false,
+      recovered: false,
+      reason: "expected_token_required",
+    };
+  }
+
+  const resolvedDir = path.resolve(dir);
+  const gateFile = processGatePath({ dir: resolvedDir });
+  const recoverLockFile = path.join(resolvedDir, GATE_RECOVER_FILENAME);
+  const recoverToken = `recover-${pid}-${PROCESS_INCARNATION_ID}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+  const host = safeHostname();
+  const shouldConsultDefaultHolder =
+    isHolderProcess !== defaultIsHolderProcess ||
+    (isAlive === defaultIsAlive && !isAliveOverride);
+
   try {
-    unlinkSync(tombstone);
-  } catch {}
-  return true;
+    mkdirSync(resolvedDir, { recursive: true });
+    publishCompleteJsonFile(
+      recoverLockFile,
+      {
+        pid,
+        incarnationId: PROCESS_INCARNATION_ID,
+        token: recoverToken,
+        expectedToken,
+        startedAt: Date.now(),
+        host,
+      },
+      { replaceIfExists: false, pid },
+    );
+  } catch (error) {
+    if (error && error.code === "EEXIST") {
+      return {
+        ok: false,
+        recovered: false,
+        reason: "recovery_in_progress",
+      };
+    }
+    return {
+      ok: false,
+      recovered: false,
+      reason: "recovery_lock_error",
+      error: (error && (error.code || error.message)) || "EACCES",
+    };
+  }
+
+  try {
+    const detailed = readGateDetailed(gateFile, { waitForPartialInit: true });
+    if (detailed.status === "missing") {
+      return {
+        ok: false,
+        recovered: false,
+        reason: "gate_missing",
+      };
+    }
+    if (detailed.status === "unreadable") {
+      return {
+        ok: false,
+        recovered: false,
+        reason: "gate_unreadable",
+      };
+    }
+
+    if (detailed.status === "corrupt") {
+      if (expectedToken !== "CORRUPT_GATE") {
+        return {
+          ok: false,
+          recovered: false,
+          reason: "gate_token_mismatch",
+          actualToken: null,
+        };
+      }
+    } else {
+      const gate = detailed.gate;
+      if (gate.token !== expectedToken) {
+        return {
+          ok: false,
+          recovered: false,
+          reason: "gate_token_mismatch",
+          actualToken: gate.token,
+          holder: gate,
+        };
+      }
+      if (!isGateStaleParsed(gate, { isAlive, isHolderProcess, shouldConsultDefaultHolder, host })) {
+        return {
+          ok: false,
+          recovered: false,
+          reason: "gate_holder_alive",
+          holder: gate,
+        };
+      }
+    }
+
+    if (typeof hooks?.onBeforeUnlinkAbandonedGate === "function") {
+      hooks.onBeforeUnlinkAbandonedGate({
+        dir: resolvedDir,
+        gateFile,
+        gate: detailed.gate,
+        expectedToken,
+      });
+    }
+
+    // Verifikasi ulang di bawah `recoverLockFile` tepat sebelum unlink.
+    const verify = readGateDetailed(gateFile, { waitForPartialInit: false });
+    if (verify.status === "missing") {
+      return {
+        ok: false,
+        recovered: false,
+        reason: "gate_missing",
+      };
+    }
+    if (verify.status === "ok" && verify.gate.token !== expectedToken) {
+      return {
+        ok: false,
+        recovered: false,
+        reason: "gate_token_mismatch",
+        actualToken: verify.gate.token,
+        holder: verify.gate,
+      };
+    }
+
+    unlinkSync(gateFile);
+    return {
+      ok: true,
+      recovered: true,
+      dir: resolvedDir,
+      recoveredToken: expectedToken,
+      previousHolder: detailed.gate || null,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      recovered: false,
+      reason: "unlink_failed",
+      error: (error && (error.code || error.message)) || "unknown",
+    };
+  } finally {
+    try {
+      const raw = readFileSync(recoverLockFile, "utf8");
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.token === recoverToken) {
+        unlinkSync(recoverLockFile);
+      }
+    } catch {}
+  }
 }
 
 /**
  * Mengambil gerbang eksklusif (`mcp-process.gate.lock`) untuk satu direktori lock.
- * Mendukung re-entrancy di dalam proses & inkarnasi yang sama.
+ *
+ * ATURAN KEAMANAN (R2-1, R2-2, R2-3):
+ *   1. Re-entrancy HANYA diizinkan di dalam konteks eksekusi asinkron yang sama
+ *      (`gateExecutionStorage` / `AsyncLocalStorage`). Permintaan paralel di
+ *      proses yang sama TIDAK PERNAH dianggap re-entrant.
+ *   2. Penutupan gerbang (`releaseGateEntry`) dieksekusi saat pemegang valid
+ *      terakhir (`entry.count === 0`) keluar, baik itu pemegang luar maupun
+ *      pemegang bersarang (nested), sehingga gerbang tidak pernah tertinggal.
+ *   3. Bila gerbang dipegang oleh proses yang sudah mati, akuisisi normal SELALU
+ *      gagal tertutup (`LOCK_GATE_ABANDONED`) tanpa me-rename berkas gerbang,
+ *      sehingga tidak pernah ada balapan pathname yang menghapus gerbang suksesor.
  */
-function acquireLockGate(
+export function acquireLockGate(
   dir,
   {
     pid = process.pid,
     timeoutMs = DEFAULT_GATE_TIMEOUT_MS,
     isAlive = currentIsAlive(),
     isHolderProcess = currentIsHolderProcess(),
+    hooks = null,
+    _scopedContextMap = null,
   } = {},
 ) {
   const resolvedDir = path.resolve(dir);
-  const existingEntry = activeGateDepth.get(resolvedDir);
-  if (existingEntry && existingEntry.pid === pid && existingEntry.incarnationId === PROCESS_INCARNATION_ID) {
-    existingEntry.count += 1;
+  const storeMap = _scopedContextMap || gateExecutionStorage.getStore();
+  const contextEntry = storeMap ? storeMap.get(resolvedDir) : null;
+
+  if (
+    contextEntry &&
+    !contextEntry.cleanedUp &&
+    contextEntry.pid === pid &&
+    contextEntry.incarnationId === PROCESS_INCARNATION_ID
+  ) {
+    contextEntry.count += 1;
     let released = false;
     return {
       ok: true,
       reentrant: true,
+      token: contextEntry.token,
       release() {
         if (released) return;
         released = true;
-        existingEntry.count -= 1;
+        releaseGateEntry(resolvedDir, contextEntry);
+      },
+    };
+  }
+
+  // R2-3: Bila konteks eksekusi LAIN di dalam proses yang sama sedang memegang
+  // gerbang untuk `resolvedDir`, jangan pernah menganggap panggilan ini re-entrant
+  // dan jangan memblokir event loop tunggal dengan spin sinkron.
+  const otherInProcessHolder = activeGateDepth.get(resolvedDir);
+  if (otherInProcessHolder && !otherInProcessHolder.cleanedUp) {
+    return {
+      ok: false,
+      reentrant: false,
+      error: "LOCK_GATE_BUSY_IN_PROCESS",
+      holder: {
+        pid: otherInProcessHolder.pid,
+        incarnationId: otherInProcessHolder.incarnationId,
+        token: otherInProcessHolder.token,
       },
     };
   }
@@ -595,14 +852,28 @@ function acquireLockGate(
   }
 
   const gateFile = processGatePath({ dir: resolvedDir });
+  const recoverLockFile = path.join(resolvedDir, GATE_RECOVER_FILENAME);
   const host = safeHostname();
   const shouldConsultDefaultHolder =
     isHolderProcess !== defaultIsHolderProcess ||
     (isAlive === defaultIsAlive && !isAliveOverride);
   const deadline = Date.now() + Math.max(50, Number(timeoutMs) || DEFAULT_GATE_TIMEOUT_MS);
   const gateToken = `${pid}-${PROCESS_INCARNATION_ID}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+  let contentionNotified = false;
 
   while (true) {
+    // Tunggu bila pemulihan gerbang berotorisasi sedang berlangsung pada direktori ini.
+    if (existsSync(recoverLockFile)) {
+      if (Date.now() >= deadline) {
+        return {
+          ok: false,
+          error: "LOCK_GATE_RECOVERY_BUSY",
+        };
+      }
+      sleepSync(2);
+      continue;
+    }
+
     const gatePayload = {
       pid,
       incarnationId: PROCESS_INCARNATION_ID,
@@ -614,33 +885,59 @@ function acquireLockGate(
 
     try {
       publishCompleteJsonFile(gateFile, gatePayload, { replaceIfExists: false, pid });
+
+      // Bila `recoverLockFile` muncul berbarengan tepat saat kita menerbitkan
+      // gerbang, mundur secara bersih agar pemulihan dan akuisisi tidak beririsan.
+      if (existsSync(recoverLockFile)) {
+        try {
+          const diskRaw = readFileSync(gateFile, "utf8");
+          const diskGate = JSON.parse(diskRaw);
+          if (diskGate && diskGate.token === gateToken) {
+            unlinkSync(gateFile);
+          }
+        } catch {}
+        if (Date.now() >= deadline) {
+          return {
+            ok: false,
+            error: "LOCK_GATE_RECOVERY_BUSY",
+          };
+        }
+        sleepSync(2);
+        continue;
+      }
+
+      const activeContextMap = storeMap || new Map();
+      let resolveFullyReleased;
+      const allReleasedPromise = new Promise((resolve) => {
+        resolveFullyReleased = resolve;
+      });
       const entry = {
         pid,
         incarnationId: PROCESS_INCARNATION_ID,
         token: gateToken,
         gateFile,
         count: 1,
+        cleanedUp: false,
+        contextMap: activeContextMap,
+        allReleasedPromise,
+        onFullyReleased: resolveFullyReleased,
       };
       activeGateDepth.set(resolvedDir, entry);
+      activeContextMap.set(resolvedDir, entry);
+      if (!storeMap) {
+        gateExecutionStorage.enterWith(activeContextMap);
+      }
 
       let released = false;
       return {
         ok: true,
         reentrant: false,
+        token: gateToken,
+        _entry: entry,
         release() {
           if (released) return;
           released = true;
-          entry.count -= 1;
-          if (entry.count <= 0) {
-            activeGateDepth.delete(resolvedDir);
-            try {
-              const diskRaw = readFileSync(gateFile, "utf8");
-              const diskGate = JSON.parse(diskRaw);
-              if (diskGate && diskGate.token === gateToken) {
-                unlinkSync(gateFile);
-              }
-            } catch {}
-          }
+          releaseGateEntry(resolvedDir, entry);
         },
       };
     } catch (error) {
@@ -652,17 +949,62 @@ function acquireLockGate(
       }
     }
 
-    if (isGateStale(gateFile, { isAlive, isHolderProcess, shouldConsultDefaultHolder, host })) {
-      tryRecoverStaleGate(gateFile, () =>
-        isGateStale(gateFile, { isAlive, isHolderProcess, shouldConsultDefaultHolder, host }),
-      );
+    const detailed = readGateDetailed(gateFile, { waitForPartialInit: true });
+    if (detailed.status === "missing") {
       continue;
+    }
+
+    if (!contentionNotified && typeof hooks?.onGateContention === "function") {
+      contentionNotified = true;
+      hooks.onGateContention({
+        dir: resolvedDir,
+        gateFile,
+        status: detailed.status,
+        gate: detailed.gate,
+      });
+    }
+
+    if (detailed.status === "unreadable") {
+      return {
+        ok: false,
+        error: (detailed.error && (detailed.error.code || detailed.error.message)) || "EACCES",
+      };
+    }
+
+    if (detailed.status === "corrupt") {
+      return {
+        ok: false,
+        error: "LOCK_GATE_CORRUPT",
+        abandoned: true,
+        gateFile,
+      };
+    }
+
+    // R2-1: Bila pemegang gerbang sudah terbukti mati, JANGAN PERNAH me-rename
+    // atau menghapus `gateFile` secara otomatis (fail-closed).
+    if (
+      isGateStaleParsed(detailed.gate, {
+        isAlive,
+        isHolderProcess,
+        shouldConsultDefaultHolder,
+        host,
+      })
+    ) {
+      return {
+        ok: false,
+        error: "LOCK_GATE_ABANDONED",
+        abandoned: true,
+        gateFile,
+        holder: detailed.gate,
+      };
     }
 
     if (Date.now() >= deadline) {
       return {
         ok: false,
         error: "LOCK_GATE_TIMEOUT",
+        gateFile,
+        holder: detailed.gate,
       };
     }
 
@@ -670,32 +1012,93 @@ function acquireLockGate(
   }
 }
 
+function executeInGateScope(resolvedDir, fn, options = {}, existingContextMap = null) {
+  const scopedMap = existingContextMap ? new Map(existingContextMap) : new Map();
+  return gateExecutionStorage.run(scopedMap, () => {
+    const gate = acquireLockGate(resolvedDir, { ...options, _scopedContextMap: scopedMap });
+    if (!gate.ok) {
+      const err = new Error(`Failed to acquire lock gate for ${resolvedDir}: ${gate.error}`);
+      err.code = gate.error || "LOCK_GATE_FAILED";
+      err.details = gate;
+      throw err;
+    }
+
+    let isAsync = false;
+    try {
+      const result = fn();
+      if (result && typeof result.then === "function") {
+        isAsync = true;
+        if (!gate.reentrant && gate._entry) {
+          const prevQueue = inProcessGateQueues.get(resolvedDir) || Promise.resolve();
+          const queuedPromise = prevQueue
+            .catch(() => {})
+            .then(() => gate._entry.allReleasedPromise);
+          inProcessGateQueues.set(resolvedDir, queuedPromise);
+          queuedPromise.finally(() => {
+            if (inProcessGateQueues.get(resolvedDir) === queuedPromise) {
+              inProcessGateQueues.delete(resolvedDir);
+            }
+          });
+        }
+        return result.finally(() => {
+          gate.release();
+        });
+      }
+      return result;
+    } finally {
+      if (!isAsync) {
+        gate.release();
+      }
+    }
+  });
+}
+
 /**
- * Menjalankan `fn` (sinkron atau asinkron) di dalam gerbang eksklusif `dir`.
+ * Menjalankan `fn` (sinkron atau asinkron) di dalam gerbang eksklusif `dir`
+ * dengan isolasi konteks eksekusi `AsyncLocalStorage` (R2-2 & R2-3).
  */
 export function withLockGate(dir, fn, options = {}) {
-  const gate = acquireLockGate(dir, options);
-  if (!gate.ok) {
-    const err = new Error(`Failed to acquire lock gate for ${dir}: ${gate.error}`);
-    err.code = gate.error || "LOCK_GATE_FAILED";
-    throw err;
+  const resolvedDir = path.resolve(dir);
+  const currentStore = gateExecutionStorage.getStore();
+  const contextEntry = currentStore ? currentStore.get(resolvedDir) : null;
+
+  // Panggilan bersarang (nested) di dalam konteks eksekusi yang sama:
+  if (
+    contextEntry &&
+    !contextEntry.cleanedUp &&
+    contextEntry.pid === (options.pid || process.pid) &&
+    contextEntry.incarnationId === PROCESS_INCARNATION_ID
+  ) {
+    return executeInGateScope(resolvedDir, fn, options, currentStore);
   }
 
-  let isAsync = false;
-  try {
-    const result = fn();
-    if (result && typeof result.then === "function") {
-      isAsync = true;
-      return result.finally(() => {
-        gate.release();
+  // R2-3: Bila ada operasi asinkron lain di proses yang sama yang sedang
+  // memegang gerbang `resolvedDir`, antrekan panggilan independen ini secara
+  // asinkron hingga pemegang sebelumnya (beserta seluruh panggilan bersarangnya)
+  // selesai melepas gerbang.
+  const activeOther = activeGateDepth.get(resolvedDir);
+  const pendingQueue = inProcessGateQueues.get(resolvedDir);
+  if ((activeOther && !activeOther.cleanedUp) || pendingQueue) {
+    const waitTarget = pendingQueue || activeOther?.allReleasedPromise || Promise.resolve();
+    let releaseTurn;
+    const myTurnDone = new Promise((resolve) => {
+      releaseTurn = resolve;
+    });
+    const nextQueue = waitTarget.catch(() => {}).then(() => myTurnDone);
+    inProcessGateQueues.set(resolvedDir, nextQueue);
+
+    return waitTarget
+      .catch(() => {})
+      .then(() => executeInGateScope(resolvedDir, fn, options, currentStore))
+      .finally(() => {
+        releaseTurn();
+        if (inProcessGateQueues.get(resolvedDir) === nextQueue) {
+          inProcessGateQueues.delete(resolvedDir);
+        }
       });
-    }
-    return result;
-  } finally {
-    if (!isAsync) {
-      gate.release();
-    }
   }
+
+  return executeInGateScope(resolvedDir, fn, options, currentStore);
 }
 
 function rememberLockLease({
@@ -912,12 +1315,13 @@ export function acquireProcessLock({
   }
 
   // Langkah 2: Masuk gerbang eksklusif (`mcp-process.gate.lock`).
-  const gate = acquireLockGate(resolvedDir, { pid, isAlive, isHolderProcess });
+  const gate = acquireLockGate(resolvedDir, { pid, isAlive, isHolderProcess, hooks });
   if (!gate.ok) {
     return {
       acquired: false,
       wrote: false,
       error: gate.error || "LOCK_GATE_FAILED",
+      ...(gate.abandoned ? { abandonedGate: true, gateHolder: gate.holder || null } : {}),
     };
   }
 
@@ -1159,7 +1563,9 @@ export function releaseActiveProcessLock({ pid = process.pid, fallbackDir = null
 
 /**
  * Mendeteksi keberadaan penulis legacy (v1 tanpa `leaseId` / `protocolVersion: 2`)
- * yang masih hidup pada direktori awal, direktori target, atau penunjuk sesi.
+ * yang masih hidup pada direktori awal, direktori target, seluruh bucket proyek
+ * di pohon state yang sama (bahkan bila penunjuk sesi hilang atau usang), atau
+ * berkas state aktif milik proyek target (R2-5).
  */
 export function detectIncompatibleLegacyWriters({
   fromDir = null,
@@ -1175,34 +1581,25 @@ export function detectIncompatibleLegacyWriters({
   if (toDir) dirsToCheck.add(path.resolve(toDir));
   if (fromDir) dirsToCheck.add(path.resolve(fromDir));
 
-  // Bila berada di tata letak `<base>/projects/<bucket>`, periksa juga apakah
-  // ada penunjuk sesi di `<base>/sessions/*.json` yang menunjuk `projectDir`
-  // atau `toDir` sementara proses legacy memegang lock di bucket startup-nya.
-  const resolvedTo = toDir ? path.resolve(toDir) : null;
-  if (resolvedTo && path.basename(path.dirname(resolvedTo)) === "projects") {
-    const projectsRoot = path.dirname(resolvedTo);
-    const baseDir = path.dirname(projectsRoot);
-    const sessionsDir = path.join(baseDir, "sessions");
-    if (existsSync(sessionsDir) && existsSync(projectsRoot)) {
-      const targetNorm = projectDir ? path.resolve(projectDir).replace(/\\/g, "/").toLowerCase() : "";
-      try {
-        for (const sEntry of readdirSync(sessionsDir, { withFileTypes: true })) {
-          if (!sEntry.isFile() || !sEntry.name.endsWith(".json") || sEntry.name.startsWith("focus-")) continue;
-          try {
-            const ptr = JSON.parse(readFileSync(path.join(sessionsDir, sEntry.name), "utf8"));
-            const ptrProj = typeof ptr?.projectDir === "string" ? path.resolve(ptr.projectDir).replace(/\\/g, "/").toLowerCase() : "";
-            const ptrDirPath = typeof ptr?.projectDirPath === "string" ? path.resolve(ptr.projectDirPath) : "";
-            if ((targetNorm && ptrProj === targetNorm) || (ptrDirPath && ptrDirPath === resolvedTo)) {
-              // Sesi ini menunjuk proyek target; periksa semua bucket yang punya lock legacy.
-              for (const bEntry of readdirSync(projectsRoot, { withFileTypes: true })) {
-                if (bEntry.isDirectory()) {
-                  dirsToCheck.add(path.join(projectsRoot, bEntry.name));
-                }
-              }
+  // R2-5: Proses legacy v1 memeriksa `mcp-process.lock` pada direktori kerjanya
+  // SEBELUM membaca/menulis penunjuk sesi `<base>/sessions/*.json`. Akibatnya,
+  // penunjuk sesi bisa belum ada (missing) atau masih menunjuk proyek lama
+  // (outdated) saat proses legacy mulai memutasi repositori target. Oleh sebab
+  // itu, bila berada di tata letak `<base>/projects/<bucket>`, pindai SELURUH
+  // bucket di `<base>/projects/*` tanpa bergantung pada kelengkapan penunjuk sesi.
+  const candidateDirs = [toDir, fromDir].filter(Boolean).map((d) => path.resolve(d));
+  for (const cand of candidateDirs) {
+    if (path.basename(path.dirname(cand)) === "projects") {
+      const projectsRoot = path.dirname(cand);
+      if (existsSync(projectsRoot)) {
+        try {
+          for (const bEntry of readdirSync(projectsRoot, { withFileTypes: true })) {
+            if (bEntry.isDirectory()) {
+              dirsToCheck.add(path.join(projectsRoot, bEntry.name));
             }
-          } catch {}
-        }
-      } catch {}
+          }
+        } catch {}
+      }
     }
   }
 
@@ -1224,7 +1621,180 @@ export function detectIncompatibleLegacyWriters({
     }
   }
 
+  // Periksa juga apakah ada berkas state aktif pada `toDir` yang ditulis oleh
+  // proses hidup tanpa lease protokol v2 pada `toDir` (mis. penulis legacy yang
+  // berkas lock startup-nya berada di luar pohon `<base>/projects`).
+  const resolvedTo = toDir ? path.resolve(toDir) : null;
+  if (resolvedTo && existsSync(resolvedTo)) {
+    const targetLock = readProcessLock({ dir: resolvedTo });
+    const stateCandidateFiles = [];
+    try {
+      for (const entry of readdirSync(resolvedTo, { withFileTypes: true })) {
+        if (entry.isFile() && entry.name.startsWith("workflow-state") && entry.name.endsWith(".json")) {
+          stateCandidateFiles.push(path.join(resolvedTo, entry.name));
+        }
+      }
+      const usersDir = path.join(resolvedTo, "users");
+      if (existsSync(usersDir)) {
+        for (const uEntry of readdirSync(usersDir, { withFileTypes: true })) {
+          if (!uEntry.isDirectory()) continue;
+          const uPath = path.join(usersDir, uEntry.name);
+          for (const fEntry of readdirSync(uPath, { withFileTypes: true })) {
+            if (fEntry.isFile() && fEntry.name.startsWith("workflow-state") && fEntry.name.endsWith(".json")) {
+              stateCandidateFiles.push(path.join(uPath, fEntry.name));
+            }
+          }
+        }
+      }
+    } catch {}
+
+    const targetNorm = projectDir ? path.resolve(projectDir).replace(/\\/g, "/").toLowerCase() : "";
+    for (const sFile of stateCandidateFiles) {
+      try {
+        const parsed = JSON.parse(readFileSync(sFile, "utf8"));
+        const phase = typeof parsed?.currentPhase === "string" ? parsed.currentPhase : "idle";
+        const desc = typeof parsed?.taskDescription === "string" ? parsed.taskDescription.trim() : "";
+        if (phase === "idle" || !desc) continue;
+
+        const ownerPid = Number(parsed?.owner?.pid);
+        if (!Number.isFinite(ownerPid) || ownerPid <= 0 || ownerPid === pid) continue;
+
+        const stateProjNorm =
+          typeof parsed?.projectDir === "string" && parsed.projectDir.trim()
+            ? path.resolve(parsed.projectDir).replace(/\\/g, "/").toLowerCase()
+            : "";
+        if (targetNorm && stateProjNorm && stateProjNorm !== targetNorm) continue;
+
+        // Bila pemilik state aktif ini memiliki lock v2 yang sah pada `resolvedTo`,
+        // maka ia bukan penulis legacy (ditangani oleh pemeriksaan `foreign_lock` biasa).
+        if (targetLock && targetLock.pid === ownerPid && !isLegacyLock(targetLock)) {
+          continue;
+        }
+
+        const ownerStartedAt = parsed?.owner?.updatedAt ? Date.parse(parsed.owner.updatedAt) : now;
+        const liveness = evaluateLockHolderLiveness(
+          { pid: ownerPid, startedAt: Number.isFinite(ownerStartedAt) ? ownerStartedAt : now, _lockDir: resolvedTo },
+          { pid, now, staleMs, isAlive, isHolderProcess },
+        );
+        if (!liveness.isConfirmedDead) {
+          return {
+            detected: true,
+            dir: resolvedTo,
+            holder: {
+              pid: ownerPid,
+              startedAt: Number.isFinite(ownerStartedAt) ? ownerStartedAt : now,
+              ageMs: liveness.age,
+              staleHeartbeat: liveness.staleHeartbeat,
+              legacy: true,
+              source: "unleashed_active_state",
+            },
+          };
+        }
+      } catch {}
+    }
+  }
+
   return { detected: false, holder: null };
+}
+
+/**
+ * Memverifikasi keheningan armada (fleet quiescence) sebelum atau sesudah aktivasi
+ * Protokol v2 (R2-5): memastikan tidak ada proses legacy v1 yang masih hidup,
+ * tidak ada gerbang yang ditinggalkan (`LOCK_GATE_ABANDONED`), dan tidak ada
+ * jurnal transisi yang menggantung pada `<baseDir>`.
+ */
+export function verifyLegacyFleetQuiescence({
+  baseDir = null,
+  dirs = [],
+  pid = process.pid,
+  now = Date.now(),
+  staleMs = DEFAULT_LOCK_STALE_MS,
+  isAlive = currentIsAlive(),
+  isHolderProcess = currentIsHolderProcess(),
+} = {}) {
+  const bucketDirs = new Set((Array.isArray(dirs) ? dirs : []).filter(Boolean).map((d) => path.resolve(d)));
+  const resolvedBase = baseDir ? path.resolve(baseDir) : null;
+
+  if (resolvedBase) {
+    const projectsRoot = path.join(resolvedBase, "projects");
+    if (existsSync(projectsRoot)) {
+      try {
+        for (const entry of readdirSync(projectsRoot, { withFileTypes: true })) {
+          if (entry.isDirectory()) {
+            bucketDirs.add(path.join(projectsRoot, entry.name));
+          }
+        }
+      } catch {}
+    }
+  }
+
+  const legacyWriters = [];
+  const abandonedGates = [];
+  const pendingJournals = [];
+  const host = safeHostname();
+  const shouldConsultDefaultHolder =
+    isHolderProcess !== defaultIsHolderProcess ||
+    (isAlive === defaultIsAlive && !isAliveOverride);
+
+  for (const dir of bucketDirs) {
+    const lock = readProcessLock({ dir });
+    if (lock && lock.pid !== pid && isLegacyLock(lock)) {
+      const liveness = evaluateLockHolderLiveness(
+        { ...lock, _lockDir: dir },
+        { pid, now, staleMs, isAlive, isHolderProcess, host },
+      );
+      if (!liveness.isConfirmedDead) {
+        legacyWriters.push({
+          dir,
+          pid: lock.pid,
+          startedAt: lock.startedAt || null,
+          ageMs: liveness.age,
+        });
+      }
+    }
+
+    const gateFile = processGatePath({ dir });
+    if (existsSync(gateFile)) {
+      const gateDetailed = readGateDetailed(gateFile, { waitForPartialInit: false });
+      if (
+        gateDetailed.status === "corrupt" ||
+        (gateDetailed.status === "ok" &&
+          isGateStaleParsed(gateDetailed.gate, {
+            isAlive,
+            isHolderProcess,
+            shouldConsultDefaultHolder,
+            host,
+          }))
+      ) {
+        abandonedGates.push({
+          dir,
+          gateFile,
+          status: gateDetailed.status,
+          holder: gateDetailed.gate || null,
+        });
+      }
+    }
+  }
+
+  if (resolvedBase) {
+    const sessionsDir = path.join(resolvedBase, "sessions");
+    if (existsSync(sessionsDir)) {
+      try {
+        for (const sEntry of readdirSync(sessionsDir, { withFileTypes: true })) {
+          if (sEntry.isFile() && sEntry.name.startsWith("transition-") && sEntry.name.endsWith(".journal.json")) {
+            pendingJournals.push(path.join(sessionsDir, sEntry.name));
+          }
+        }
+      } catch {}
+    }
+  }
+
+  return {
+    quiescent: legacyWriters.length === 0 && abandonedGates.length === 0 && pendingJournals.length === 0,
+    legacyWriters,
+    abandonedGates,
+    pendingJournals,
+  };
 }
 
 /**
