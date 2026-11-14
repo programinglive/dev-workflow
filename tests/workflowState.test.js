@@ -125,6 +125,7 @@ test("resolveStateFile prefers current working directory when multiple project m
 
   const sourceModulePath = fileURLToPath(new URL("../workflow-state.js", import.meta.url));
   await copyFile(sourceModulePath, path.join(moduleDir, "workflow-state.js"));
+  await cp(new URL("../process-lock.js", import.meta.url), path.join(moduleDir, "process-lock.js"));
   await cp(new URL("../ai-sessions.js", import.meta.url), path.join(moduleDir, "ai-sessions.js"));
   await cp(new URL("../repository.js", import.meta.url), path.join(moduleDir, "repository.js"));
   await cp(new URL("../task-provenance.js", import.meta.url), path.join(moduleDir, "task-provenance.js"));
@@ -192,6 +193,7 @@ test("WorkflowState mirrors state file to compatibility locations", async () => 
   await mkdir(path.join(tempRoot, "dist"), { recursive: true });
   await mkdir(stateDir, { recursive: true });
   await copyFile(sourceModulePath, path.join(moduleDir, "workflow-state.js"));
+  await cp(new URL("../process-lock.js", import.meta.url), path.join(moduleDir, "process-lock.js"));
   await cp(new URL("../ai-sessions.js", import.meta.url), path.join(moduleDir, "ai-sessions.js"));
   await cp(new URL("../repository.js", import.meta.url), path.join(moduleDir, "repository.js"));
   await cp(new URL("../task-provenance.js", import.meta.url), path.join(moduleDir, "task-provenance.js"));
@@ -239,6 +241,7 @@ test("WorkflowState avoids filesystem root when no project markers found", async
 
   const sourceModulePath = fileURLToPath(new URL("../workflow-state.js", import.meta.url));
   await copyFile(sourceModulePath, path.join(moduleDir, "workflow-state.js"));
+  await cp(new URL("../process-lock.js", import.meta.url), path.join(moduleDir, "process-lock.js"));
   await cp(new URL("../ai-sessions.js", import.meta.url), path.join(moduleDir, "ai-sessions.js"));
   await cp(new URL("../repository.js", import.meta.url), path.join(moduleDir, "repository.js"));
   await cp(new URL("../task-provenance.js", import.meta.url), path.join(moduleDir, "task-provenance.js"));
