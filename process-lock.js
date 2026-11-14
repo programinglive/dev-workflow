@@ -27,6 +27,7 @@ import {
   linkSync,
   statSync,
   readdirSync,
+  realpathSync,
 } from "fs";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { execFileSync } from "child_process";
@@ -65,41 +66,288 @@ export class ProjectOwnershipLostError extends Error {
 /** Peta lease aktif yang dipegang proses ini per direktori lock kanonik. */
 const heldLeases = new Map();
 
-/** Peta mutex kernel OS yang sedang dipegang proses ini per direktori lock kanonik. */
-const heldKernelMutexes = new Map();
+export const OPTION_B_LOCK_PROTOCOL_VERSION = 3;
+export const SUPPORTED_KERNEL_MUTEX_PLATFORMS = new Set(["win32", "linux"]);
 
-export function kernelMutexEndpoint(dir) {
-  const resolved = path.resolve(dir);
-  const canonical = process.platform === "win32" ? resolved.toLowerCase() : resolved;
-  const digest = createHash("sha256").update(canonical).digest();
-  const hex32 = digest.toString("hex").slice(0, 32);
-  if (process.platform === "win32") {
-    return { path: `\\\\.\\pipe\\devwf-lock-${hex32}`, exclusive: true };
+/** Map of active OS-owned worktree mutex capabilities keyed by canonical worktree identity. */
+const heldWorktreeMutexes = new Map();
+
+function normalizeWorktreeString(targetPath, platform = process.platform) {
+  let normalized = path.resolve(String(targetPath || ""));
+  const root = path.parse(normalized).root;
+  while (normalized.length > root.length && (normalized.endsWith("/") || normalized.endsWith("\\"))) {
+    normalized = normalized.slice(0, -1);
   }
-  if (process.platform === "linux") {
-    return { path: `\0devwf-lock-${hex32}`, exclusive: true };
-  }
-  return { host: "127.0.0.1", port: 30000 + (digest.readUInt32BE(0) % 30000), exclusive: true };
+  return platform === "win32" ? normalized.toLowerCase() : normalized;
 }
 
 /**
- * Mengambil mutex eksklusif milik kernel OS (Windows Named Pipe / Linux abstract
- * Unix socket / macOS exclusive loopback listener) untuk `dir`.
- * Mutex ini dilepas otomatis oleh kernel OS jika proses mati mendadak (SIGKILL).
+ * Resolve the canonical Git working-tree root for `projectDir`.
+ * Rejects nonexistent, non-directory, or non-Git paths without ancestor fallback.
  */
-export async function acquireKernelMutex(dir, { timeoutMs = 150, pid = process.pid } = {}) {
-  const resolvedDir = path.resolve(dir);
-  const existing = heldKernelMutexes.get(resolvedDir);
-  if (existing && existing.pid === pid && existing.active) {
+export function resolveCanonicalWorktreeRoot(projectDir, platform = process.platform) {
+  if (typeof projectDir !== "string" || projectDir.trim() === "" || projectDir.includes("\0")) {
     return {
-      ok: true,
-      alreadyHeld: true,
-      endpoint: existing.endpoint,
-      release() {},
+      ok: false,
+      error: "INVALID_PROJECT_DIR",
+      message: "projectDir must be a non-empty valid filesystem path.",
+    };
+  }
+  const resolved = path.resolve(projectDir.trim());
+  let stat = null;
+  try {
+    stat = statSync(resolved);
+  } catch {
+    stat = null;
+  }
+  if (!stat || !stat.isDirectory()) {
+    return {
+      ok: false,
+      error: "PROJECT_DIR_NOT_FOUND",
+      message: `Project directory does not exist or is not a directory: ${resolved}`,
     };
   }
 
-  const endpoint = kernelMutexEndpoint(resolvedDir);
+  let realDir = resolved;
+  try {
+    realDir = typeof realpathSync.native === "function"
+      ? realpathSync.native(resolved)
+      : realpathSync(resolved);
+  } catch {
+    realDir = resolved;
+  }
+
+  let current = realDir;
+  const { root } = path.parse(current);
+  while (true) {
+    if (existsSync(path.join(current, ".git"))) {
+      let realWorktreeRoot = current;
+      try {
+        realWorktreeRoot = typeof realpathSync.native === "function"
+          ? realpathSync.native(current)
+          : realpathSync(current);
+      } catch {
+        realWorktreeRoot = current;
+      }
+      const canonicalKey = normalizeWorktreeString(realWorktreeRoot, platform);
+      return {
+        ok: true,
+        worktreeRoot: realWorktreeRoot,
+        canonicalKey,
+      };
+    }
+    if (current === root) break;
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+
+  return {
+    ok: false,
+    error: "NOT_A_GIT_WORKTREE",
+    message: `Directory is not inside a Git working tree: ${resolved}`,
+  };
+}
+
+/**
+ * Derive the OS-owned kernel mutex endpoint from canonical Git working-tree identity.
+ * Fails closed on macOS (darwin) and any unsupported platform.
+ */
+export function worktreeMutexEndpoint(canonicalWorktreeKey, platform = process.platform) {
+  if (!SUPPORTED_KERNEL_MUTEX_PLATFORMS.has(platform)) {
+    return {
+      supported: false,
+      platform,
+      error: "PLATFORM_UNSUPPORTED_KERNEL_MUTEX",
+      message:
+        `OS-owned kernel mutex is not natively verified on platform "${platform}" ` +
+        `(macOS activation is BLOCKED to avoid TCP port collision false ownership).`,
+    };
+  }
+  const normalizedKey = normalizeWorktreeString(canonicalWorktreeKey, platform);
+  const digest = createHash("sha256").update(`worktree:${normalizedKey}`).digest();
+  const hex32 = digest.toString("hex").slice(0, 32);
+  if (platform === "win32") {
+    return {
+      supported: true,
+      platform: "win32",
+      canonicalKey: normalizedKey,
+      path: `\\\\.\\pipe\\devwf-wt-${hex32}`,
+      exclusive: true,
+    };
+  }
+  return {
+    supported: true,
+    platform: "linux",
+    canonicalKey: normalizedKey,
+    path: `\0devwf-wt-${hex32}`,
+    exclusive: true,
+  };
+}
+
+/**
+ * Derive endpoint from either a `projectDir` (preferred, canonical worktree)
+ * or explicit worktree identity. Preserved name for compatibility with Option B tests.
+ */
+export function kernelMutexEndpoint(dirOrOptions, platform = process.platform) {
+  if (dirOrOptions && typeof dirOrOptions === "object" && dirOrOptions.projectDir) {
+    const wt = resolveCanonicalWorktreeRoot(dirOrOptions.projectDir, platform);
+    if (!wt.ok) return { supported: false, error: wt.error, message: wt.message };
+    return worktreeMutexEndpoint(wt.canonicalKey, platform);
+  }
+  const raw = typeof dirOrOptions === "string" ? dirOrOptions : dirOrOptions?.dir;
+  if (!raw) {
+    return { supported: false, error: "INVALID_MUTEX_TARGET", message: "Missing mutex target." };
+  }
+  const wt = resolveCanonicalWorktreeRoot(raw, platform);
+  if (wt.ok) {
+    return worktreeMutexEndpoint(wt.canonicalKey, platform);
+  }
+  return worktreeMutexEndpoint(raw, platform);
+}
+
+function finalizeCapabilityRelease(capability) {
+  if (!capability) return;
+  capability.active = false;
+  if (heldWorktreeMutexes.get(capability.canonicalKey) === capability) {
+    heldWorktreeMutexes.delete(capability.canonicalKey);
+  }
+  try {
+    capability.server?.close();
+  } catch {}
+  const waiters = capability._drainWaiters.splice(0);
+  for (const resolve of waiters) {
+    try {
+      resolve(true);
+    } catch {}
+  }
+}
+
+export function getHeldWorktreeCapability(projectDirOrKey, platform = process.platform) {
+  if (!projectDirOrKey) return null;
+  const wt = resolveCanonicalWorktreeRoot(projectDirOrKey, platform);
+  const key = wt.ok ? wt.canonicalKey : normalizeWorktreeString(projectDirOrKey, platform);
+  const cap = heldWorktreeMutexes.get(key) || null;
+  if (!cap || !cap.active || !cap.server?.listening) return null;
+  return cap;
+}
+
+export function listHeldWorktreeCapabilities() {
+  return Array.from(heldWorktreeMutexes.values()).filter(
+    (cap) => cap && cap.active && cap.server?.listening,
+  );
+}
+
+export function assertWorktreeCapabilityLive(
+  capability,
+  { operation = "protected_write", allowDrainingInFlight = false } = {},
+) {
+  if (!capability || typeof capability !== "object") {
+    throw new ProjectOwnershipLostError(
+      `Project ownership lost before ${operation}: missing OS kernel mutex capability.`,
+      { operation, reason: "missing_kernel_capability" },
+    );
+  }
+  const current = heldWorktreeMutexes.get(capability.canonicalKey);
+  if (
+    current !== capability ||
+    !capability.active ||
+    !capability.server ||
+    !capability.server.listening
+  ) {
+    throw new ProjectOwnershipLostError(
+      `Project ownership lost before ${operation}: OS kernel mutex is no longer held.`,
+      {
+        operation,
+        canonicalKey: capability.canonicalKey,
+        endpoint: capability.endpoint,
+        reason: "kernel_mutex_lost",
+      },
+    );
+  }
+  if (capability.releaseRequested && (!allowDrainingInFlight || capability.inFlightCount <= 0)) {
+    throw new ProjectOwnershipLostError(
+      `Project ownership lost before ${operation}: OS kernel mutex release already requested.`,
+      {
+        operation,
+        canonicalKey: capability.canonicalKey,
+        endpoint: capability.endpoint,
+        reason: "kernel_mutex_releasing",
+      },
+    );
+  }
+  return true;
+}
+
+export async function useWorktreeCapability(
+  capability,
+  asyncFn,
+  { operation = "protected_write" } = {},
+) {
+  assertWorktreeCapabilityLive(capability, { operation, allowDrainingInFlight: false });
+  capability.inFlightCount += 1;
+  try {
+    return await asyncFn(capability);
+  } finally {
+    capability.inFlightCount = Math.max(0, capability.inFlightCount - 1);
+    if (capability.releaseRequested && capability.inFlightCount === 0) {
+      finalizeCapabilityRelease(capability);
+    }
+  }
+}
+
+export async function acquireWorktreeMutex({
+  projectDir,
+  timeoutMs = 50,
+  pid = process.pid,
+  platform = process.platform,
+} = {}) {
+  const wt = resolveCanonicalWorktreeRoot(projectDir, platform);
+  if (!wt.ok) {
+    return {
+      ok: false,
+      reason: "invalid_project_dir",
+      error: wt.error,
+      message: wt.message,
+    };
+  }
+
+  const endpoint = worktreeMutexEndpoint(wt.canonicalKey, platform);
+  if (!endpoint.supported) {
+    return {
+      ok: false,
+      supported: false,
+      reason: "unsupported_platform",
+      error: endpoint.error,
+      message: endpoint.message,
+      worktreeRoot: wt.worktreeRoot,
+      canonicalKey: wt.canonicalKey,
+    };
+  }
+
+  const existing = heldWorktreeMutexes.get(wt.canonicalKey);
+  if (existing && existing.pid === pid && existing.active && existing.server?.listening) {
+    if (existing.releaseRequested) {
+      return {
+        ok: false,
+        reason: "capability_draining",
+        error: "KERNEL_MUTEX_RELEASING",
+        worktreeRoot: wt.worktreeRoot,
+        canonicalKey: wt.canonicalKey,
+        endpoint: endpoint.path,
+      };
+    }
+    return {
+      ok: true,
+      alreadyHeld: true,
+      capability: existing,
+      worktreeRoot: wt.worktreeRoot,
+      canonicalKey: wt.canonicalKey,
+      endpoint: endpoint.path,
+    };
+  }
+
+  const listenTarget = { path: endpoint.path, exclusive: true };
   const deadline = Date.now() + Math.max(0, Number(timeoutMs) || 0);
 
   while (true) {
@@ -108,23 +356,42 @@ export async function acquireKernelMutex(dir, { timeoutMs = 150, pid = process.p
     try {
       await new Promise((resolve, reject) => {
         server.once("error", reject);
-        server.listen(endpoint, resolve);
+        server.listen(listenTarget, resolve);
       });
-      const record = {
-        server,
+      const capability = {
+        token: randomUUID(),
         pid,
-        endpoint,
+        incarnationId: PROCESS_INCARNATION_ID,
+        worktreeRoot: wt.worktreeRoot,
+        canonicalKey: wt.canonicalKey,
+        endpoint: endpoint.path,
+        server,
         active: true,
+        releaseRequested: false,
+        inFlightCount: 0,
+        _drainWaiters: [],
         acquiredAt: Date.now(),
       };
-      heldKernelMutexes.set(resolvedDir, record);
+      server.once("close", () => {
+        capability.active = false;
+        if (heldWorktreeMutexes.get(capability.canonicalKey) === capability) {
+          heldWorktreeMutexes.delete(capability.canonicalKey);
+        }
+      });
+      server.once("error", () => {
+        capability.active = false;
+        if (heldWorktreeMutexes.get(capability.canonicalKey) === capability) {
+          heldWorktreeMutexes.delete(capability.canonicalKey);
+        }
+      });
+      heldWorktreeMutexes.set(wt.canonicalKey, capability);
       return {
         ok: true,
         alreadyHeld: false,
-        endpoint,
-        release() {
-          releaseKernelMutex(resolvedDir, record);
-        },
+        capability,
+        worktreeRoot: wt.worktreeRoot,
+        canonicalKey: wt.canonicalKey,
+        endpoint: endpoint.path,
       };
     } catch (error) {
       try {
@@ -134,9 +401,13 @@ export async function acquireKernelMutex(dir, { timeoutMs = 150, pid = process.p
         if (Date.now() >= deadline) {
           return {
             ok: false,
-            error: "KERNEL_MUTEX_HELD",
+            reason: "foreign_lock",
+            kernelMutexBusy: true,
             code: "EADDRINUSE",
-            endpoint,
+            error: "KERNEL_MUTEX_HELD",
+            endpoint: endpoint.path,
+            worktreeRoot: wt.worktreeRoot,
+            canonicalKey: wt.canonicalKey,
           };
         }
         await new Promise((r) => setTimeout(r, 15));
@@ -144,75 +415,110 @@ export async function acquireKernelMutex(dir, { timeoutMs = 150, pid = process.p
       }
       return {
         ok: false,
+        reason: "mutex_error",
         error: (error && (error.code || error.message)) || "KERNEL_MUTEX_ERROR",
         code: error?.code || "KERNEL_MUTEX_ERROR",
-        endpoint,
+        endpoint: endpoint.path,
+        worktreeRoot: wt.worktreeRoot,
+        canonicalKey: wt.canonicalKey,
       };
     }
   }
 }
 
-export function releaseKernelMutex(dir, expectedRecord = null) {
-  if (!dir) return false;
-  const resolvedDir = path.resolve(dir);
-  const record = heldKernelMutexes.get(resolvedDir);
-  if (!record) return false;
-  if (expectedRecord && record !== expectedRecord) return false;
-  record.active = false;
-  heldKernelMutexes.delete(resolvedDir);
+export function releaseWorktreeMutex(capabilityOrKey) {
+  if (!capabilityOrKey) return Promise.resolve(false);
+  const cap =
+    typeof capabilityOrKey === "string"
+      ? heldWorktreeMutexes.get(normalizeWorktreeString(capabilityOrKey))
+      : capabilityOrKey;
+  if (!cap) return Promise.resolve(false);
+
+  cap.releaseRequested = true;
+  if (cap.inFlightCount > 0) {
+    return new Promise((resolve) => {
+      cap._drainWaiters.push(resolve);
+    });
+  }
+  finalizeCapabilityRelease(cap);
+  return Promise.resolve(true);
+}
+
+export function releaseAllWorktreeMutexesSync() {
+  for (const cap of Array.from(heldWorktreeMutexes.values())) {
+    cap.releaseRequested = true;
+    finalizeCapabilityRelease(cap);
+  }
+}
+
+/**
+ * Record informational lock metadata under an already-held OS kernel mutex.
+ * Used only for diagnostics (e.g. displaying holder PID) and legacy overlap detection.
+ */
+export function writeKernelLockMetadata({ dir, capability, projectDir = "" } = {}) {
+  if (!dir || !capability) return { wrote: false, error: "missing_args" };
+  assertWorktreeCapabilityLive(capability, {
+    operation: "writeKernelLockMetadata",
+    allowDrainingInFlight: true,
+  });
+  const lockDir = path.resolve(dir);
+  const lockFile = path.join(lockDir, LOCK_FILENAME);
+  const payload = {
+    protocolVersion: OPTION_B_LOCK_PROTOCOL_VERSION,
+    kernelMutex: true,
+    pid: capability.pid,
+    leaseId: capability.token,
+    incarnationId: capability.incarnationId,
+    worktreeRoot: capability.worktreeRoot,
+    canonicalKey: capability.canonicalKey,
+    projectDir: projectDir || capability.worktreeRoot,
+    endpoint: capability.endpoint,
+    host: os.hostname(),
+    startedAt: capability.acquiredAt,
+    updatedAt: Date.now(),
+  };
   try {
-    record.server.close();
-  } catch {}
-  return true;
+    mkdirSync(lockDir, { recursive: true });
+    const tmp = path.join(lockDir, `${LOCK_FILENAME}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`);
+    writeFileSync(tmp, JSON.stringify(payload, null, 2), "utf8");
+    renameSync(tmp, lockFile);
+    return { wrote: true, payload };
+  } catch (error) {
+    return { wrote: false, error: error?.code || error?.message || "WRITE_FAILED" };
+  }
 }
 
-export async function acquireProcessLockAsync(options = {}) {
-  const resolvedDir = path.resolve(options.dir || process.cwd());
-  const mutex = await acquireKernelMutex(resolvedDir, {
-    timeoutMs: options.mutexTimeoutMs ?? 50,
-    pid: options.pid ?? process.pid,
-  });
-  if (!mutex.ok) {
-    const holder = readProcessLock({ dir: resolvedDir });
-    return {
-      acquired: false,
-      wrote: false,
-      reason: "foreign_lock",
-      kernelMutexBusy: true,
-      holder: holder || { pid: null, kernelMutexBusy: true },
-    };
-  }
-  const result = acquireProcessLock(options);
-  if (!result.acquired && !mutex.alreadyHeld) {
-    mutex.release();
-  }
-  return result;
+/**
+ * Detect whether a live legacy (pre-Option-B) writer without kernel mutex support
+ * currently holds a lock in `dir`.
+ */
+export function findActiveLegacyWriter({ dir, isAlive = isPidAlive, ownPid = process.pid } = {}) {
+  if (!dir) return null;
+  const resolvedDir = path.resolve(dir);
+  const lock = readProcessLock({ dir: resolvedDir });
+  if (!lock || !Number.isFinite(Number(lock.pid))) return null;
+  if (Number(lock.pid) === ownPid) return null;
+  const isOptionB = Number(lock.protocolVersion) >= OPTION_B_LOCK_PROTOCOL_VERSION && lock.kernelMutex === true;
+  if (isOptionB) return null;
+  if (!isAlive(Number(lock.pid))) return null;
+  return lock;
 }
 
-export async function stageProcessLockTransitionAsync(options = {}) {
-  const { toDir } = options;
-  if (!toDir) {
-    return { ok: false, reason: "missing_target_dir" };
+export async function acquireKernelMutex(dirOrOptions, options = {}) {
+  if (dirOrOptions && typeof dirOrOptions === "object" && !Array.isArray(dirOrOptions)) {
+    return acquireWorktreeMutex(dirOrOptions);
   }
-  const targetDir = path.resolve(toDir);
-  const mutex = await acquireKernelMutex(targetDir, {
-    timeoutMs: options.mutexTimeoutMs ?? 50,
+  const projectDir = options.projectDir || dirOrOptions;
+  return acquireWorktreeMutex({
+    projectDir,
+    timeoutMs: options.timeoutMs ?? 150,
     pid: options.pid ?? process.pid,
+    platform: options.platform ?? process.platform,
   });
-  if (!mutex.ok) {
-    const holder = readProcessLock({ dir: targetDir });
-    return {
-      ok: false,
-      reason: "foreign_lock",
-      kernelMutexBusy: true,
-      holder: holder || { pid: null, kernelMutexBusy: true },
-    };
-  }
-  const staged = stageProcessLockTransition(options);
-  if (!staged.ok && !mutex.alreadyHeld) {
-    mutex.release();
-  }
-  return staged;
+}
+
+export function releaseKernelMutex(capabilityOrDir) {
+  return releaseWorktreeMutex(capabilityOrDir);
 }
 
 /** Peta entri gerbang aktif untuk proses ini (satu per direktori kanonik). */
@@ -323,9 +629,7 @@ export function bindHeldLease({
 
 export function clearHeldLeasesForTests() {
   heldLeases.clear();
-  for (const dir of Array.from(heldKernelMutexes.keys())) {
-    releaseKernelMutex(dir);
-  }
+  releaseAllWorktreeMutexesSync();
   rememberedLockDir = null;
   rememberedLeaseId = null;
   rememberedPid = null;

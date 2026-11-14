@@ -514,7 +514,7 @@ test("keeps the single-writer lock in force", async () => {
     setIsAliveForTests(() => true);
     try {
       const refused = await handleStartTask(taskArgs(repo), state, null);
-      assert.match(text(refused), /sesi lain|another session/i);
+      assert.match(text(refused), /sesi lain|another session|penulis protokol lama|legacy/i);
     } finally {
       setIsAliveForTests(null);
     }
