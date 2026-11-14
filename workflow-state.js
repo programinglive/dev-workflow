@@ -1260,7 +1260,9 @@ export function captureSessionPointerSnapshot(stateFile) {
 }
 
 export function restoreSessionPointerSnapshot(snapshot, journal = null) {
-  if (!snapshot || !snapshot.applicable || !snapshot.file) return false;
+  if (!snapshot || !snapshot.applicable || !snapshot.file) {
+    return { ok: true, notApplicable: true };
+  }
   try {
     if (existsSync(snapshot.file) && journal) {
       try {
@@ -1274,7 +1276,7 @@ export function restoreSessionPointerSnapshot(snapshot, journal = null) {
             } catch {}
           }
           if (!Number.isFinite(snapTs) || curTs !== snapTs) {
-            return false;
+            return { ok: true, skippedNewerOwner: true };
           }
         }
       } catch {}
@@ -1285,9 +1287,9 @@ export function restoreSessionPointerSnapshot(snapshot, journal = null) {
       mkdirSync(path.dirname(snapshot.file), { recursive: true });
       writeFileSync(snapshot.file, snapshot.raw, "utf8");
     }
-    return true;
-  } catch {
-    return false;
+    return { ok: true, skippedNewerOwner: false };
+  } catch (error) {
+    return { ok: false, error: error?.code || error?.message || "SESSION_POINTER_RESTORE_FAILED" };
   }
 }
 
@@ -1349,6 +1351,7 @@ export function pinSessionProject({
   const projectDirPath = path.join(baseDir, PROJECTS_DIR, projectKey(target));
   const focus = Number(focusId);
 
+  let pointerWriteError = null;
   const writePointer = () => {
     try {
       mkdirSync(path.join(baseDir, SESSIONS_DIR), { recursive: true });
@@ -1369,8 +1372,8 @@ export function pinSessionProject({
         "utf8",
       );
       renameSync(tmpFile, ptrFile);
-    } catch {
-      // Penunjuk gagal ditulis bukan alasan menggagalkan pemanggil non-ketat.
+    } catch (err) {
+      pointerWriteError = err?.code || err?.message || "SESSION_POINTER_WRITE_FAILED";
     }
   };
 
@@ -1396,6 +1399,8 @@ export function pinSessionProject({
   }
 
   return {
+    ok: !pointerWriteError,
+    error: pointerWriteError,
     projectDirPath,
     stateFile: path.join(getUserScopedDir(projectDirPath), sessionStateFilename(process.env, sessionKey)),
   };
@@ -1715,10 +1720,12 @@ export function captureFocusBindingSnapshot({ stateFile, focusId } = {}) {
 
 export async function restoreFocusBindingSnapshot(snapshot, journal = null) {
   if (!snapshot || !snapshot.applicable || !snapshot.file || !snapshot.baseDir || !snapshot.focusId) {
-    return false;
+    return { ok: true, notApplicable: true };
   }
   const lock = await acquireFocusLock({ baseDir: snapshot.baseDir, focusId: snapshot.focusId });
-  if (!lock || !lock.ok) return false;
+  if (!lock || !lock.ok) {
+    return { ok: false, error: lock?.reason || "FOCUS_LOCK_BUSY" };
+  }
   try {
     if (existsSync(snapshot.file) && journal) {
       try {
@@ -1732,7 +1739,7 @@ export async function restoreFocusBindingSnapshot(snapshot, journal = null) {
             } catch {}
           }
           if (!Number.isFinite(snapTs) || curTs !== snapTs) {
-            return false;
+            return { ok: true, skippedNewerOwner: true };
           }
         }
       } catch {}
@@ -1743,9 +1750,9 @@ export async function restoreFocusBindingSnapshot(snapshot, journal = null) {
       mkdirSync(path.dirname(snapshot.file), { recursive: true });
       writeFileSync(snapshot.file, snapshot.raw, "utf8");
     }
-    return true;
-  } catch {
-    return false;
+    return { ok: true, skippedNewerOwner: false };
+  } catch (error) {
+    return { ok: false, error: error?.code || error?.message || "FOCUS_BINDING_RESTORE_FAILED" };
   } finally {
     if (lock && lock.ok && lock.file) {
       try {
@@ -1843,7 +1850,9 @@ function restoreFileSnapshot(snap, journal = null, role = "source") {
 }
 
 function restoreFocusBindingSnapshotSync(snapshot, journal = null) {
-  if (!snapshot || !snapshot.applicable || !snapshot.file) return false;
+  if (!snapshot || !snapshot.applicable || !snapshot.file) {
+    return { ok: true, notApplicable: true };
+  }
   let lockFile = null;
   if (snapshot.baseDir && snapshot.focusId) {
     const candidateLock = focusLockPath(snapshot.baseDir, snapshot.focusId);
@@ -1859,15 +1868,15 @@ function restoreFocusBindingSnapshotSync(snapshot, journal = null) {
           linkSync(tmp, candidateLock);
           lockFile = candidateLock;
         } else {
-          return false;
+          return { ok: false, error: "FOCUS_LOCK_BUSY" };
         }
       } finally {
         try {
           unlinkSync(tmp);
         } catch {}
       }
-    } catch {
-      return false;
+    } catch (error) {
+      return { ok: false, error: error?.code || error?.message || "FOCUS_LOCK_ERROR" };
     }
   }
   try {
@@ -1883,7 +1892,7 @@ function restoreFocusBindingSnapshotSync(snapshot, journal = null) {
             } catch {}
           }
           if (!Number.isFinite(snapTs) || curTs !== snapTs) {
-            return false;
+            return { ok: true, skippedNewerOwner: true };
           }
         }
       } catch {}
@@ -1894,9 +1903,9 @@ function restoreFocusBindingSnapshotSync(snapshot, journal = null) {
       mkdirSync(path.dirname(snapshot.file), { recursive: true });
       writeFileSync(snapshot.file, snapshot.raw, "utf8");
     }
-    return true;
-  } catch {
-    return false;
+    return { ok: true, skippedNewerOwner: false };
+  } catch (error) {
+    return { ok: false, error: error?.code || error?.message || "FOCUS_BINDING_RESTORE_FAILED" };
   } finally {
     if (lockFile) {
       try {
@@ -2023,6 +2032,8 @@ async function restoreDbRowSnapshot(dbSnap, journal = null, role = "source") {
 export async function beginTransitionJournal({
   sourceStateFile,
   targetStateFile,
+  sourceProjectDir = "",
+  targetProjectDir = "",
   sessionId = null,
   focusId = null,
   stagedLock = null,
@@ -2052,6 +2063,37 @@ export async function beginTransitionJournal({
       ? sourceDbSnapshot
       : await captureDbRowSnapshot(resolvedTarget, sessionKey);
 
+  const sourceStateSnap = captureFileSnapshot(resolvedSource);
+  const targetStateSnap = captureFileSnapshot(resolvedTarget);
+  const priorSessionPointer = captureSessionPointerSnapshot(resolvedSource);
+  const priorFocusBinding =
+    Number.isSafeInteger(Number(focusId)) && Number(focusId) > 0
+      ? captureFocusBindingSnapshot({ stateFile: resolvedSource, focusId: Number(focusId) })
+      : null;
+
+  const extractSnapProjectDir = (snap) => {
+    if (!snap || typeof snap.raw !== "string" || !snap.raw.trim()) return "";
+    try {
+      const obj = JSON.parse(snap.raw);
+      return typeof obj?.projectDir === "string" ? obj.projectDir.trim() : "";
+    } catch {
+      return "";
+    }
+  };
+
+  const resolvedSourceProjectDir =
+    (typeof sourceProjectDir === "string" && sourceProjectDir.trim()) ||
+    extractSnapProjectDir(sourceStateSnap) ||
+    extractSnapProjectDir(priorSessionPointer) ||
+    (typeof priorStateSnapshot?.projectDir === "string" && priorStateSnapshot.projectDir.trim()) ||
+    (typeof priorActiveProjectDir === "string" && priorActiveProjectDir.trim()) ||
+    "";
+  const resolvedTargetProjectDir =
+    (typeof targetProjectDir === "string" && targetProjectDir.trim()) ||
+    extractSnapProjectDir(targetStateSnap) ||
+    resolvedSourceProjectDir ||
+    "";
+
   const journal = {
     journalId: randomUUID(),
     phase: "STAGED",
@@ -2061,19 +2103,18 @@ export async function beginTransitionJournal({
     baseDir,
     sessionKey,
     journalFile,
+    sourceProjectDir: resolvedSourceProjectDir,
+    targetProjectDir: resolvedTargetProjectDir,
     sourceStateFile: resolvedSource,
     sourceHistoryFile,
     targetStateFile: resolvedTarget,
     targetHistoryFile,
-    sourceStateSnap: captureFileSnapshot(resolvedSource),
-    targetStateSnap: captureFileSnapshot(resolvedTarget),
+    sourceStateSnap,
+    targetStateSnap,
     sourceDbSnapshot,
     targetDbSnapshot,
-    priorSessionPointer: captureSessionPointerSnapshot(resolvedSource),
-    priorFocusBinding:
-      Number.isSafeInteger(Number(focusId)) && Number(focusId) > 0
-        ? captureFocusBindingSnapshot({ stateFile: resolvedSource, focusId: Number(focusId) })
-        : null,
+    priorSessionPointer,
+    priorFocusBinding,
     fromLockDir: stagedLock?.fromDir || null,
     fromLeaseId:
       stagedLock?.heldSourceLease?.leaseId ||
@@ -2213,11 +2254,17 @@ function rollbackJournalFilesAndLocksSync(
   const anySuperseded =
     supersededByNewerOwner || results.some((r) => Boolean(r && r.skippedNewerOwner));
 
-  if (!anySuperseded && journal.priorSessionPointer) {
-    restoreSessionPointerSnapshot(journal.priorSessionPointer, journal);
+  if (!anySuperseded && journal.priorSessionPointer && journal.priorSessionPointer.applicable) {
+    const ptrRes = restoreSessionPointerSnapshot(journal.priorSessionPointer, journal);
+    if (ptrRes && ptrRes.ok === false) {
+      return { ok: false, error: ptrRes.error || "SESSION_POINTER_RESTORE_FAILED" };
+    }
   }
-  if (!anySuperseded && !skipFocusSync && journal.priorFocusBinding) {
-    restoreFocusBindingSnapshotSync(journal.priorFocusBinding, journal);
+  if (!anySuperseded && !skipFocusSync && journal.priorFocusBinding && journal.priorFocusBinding.applicable) {
+    const focusRes = restoreFocusBindingSnapshotSync(journal.priorFocusBinding, journal);
+    if (focusRes && focusRes.ok === false) {
+      return { ok: false, error: focusRes.error || "FOCUS_BINDING_RESTORE_FAILED" };
+    }
   }
 
   if (isCrashRecovery && journal.relocatedLock && journal.toLockDir && journal.toLockDir !== journal.fromLockDir) {
@@ -2226,6 +2273,54 @@ function rollbackJournalFilesAndLocksSync(
 
   const failed = results.find((r) => r && r.ok === false);
   return failed ? { ok: false, error: failed.error } : { ok: true, skippedNewerOwner: anySuperseded };
+}
+
+function extractVerifiedJournalWorktrees(journal) {
+  if (!journal || typeof journal !== "object") {
+    return { ok: false, reason: "invalid_journal", worktrees: [] };
+  }
+  const parseRawDir = (raw) => {
+    if (typeof raw !== "string" || !raw.trim()) return "";
+    try {
+      const obj = JSON.parse(raw);
+      return typeof obj?.projectDir === "string" ? obj.projectDir.trim() : "";
+    } catch {
+      return "";
+    }
+  };
+  const rawDirs = [
+    journal.sourceProjectDir,
+    journal.targetProjectDir,
+    parseRawDir(journal.sourceStateSnap?.raw),
+    parseRawDir(journal.targetStateSnap?.raw),
+    parseRawDir(journal.sourceDbSnapshot?.stateJson),
+    parseRawDir(journal.targetDbSnapshot?.stateJson),
+    parseRawDir(journal.priorSessionPointer?.raw),
+    parseRawDir(journal.priorFocusBinding?.raw),
+    journal.priorInMemory?.state?.projectDir,
+    journal.priorInMemory?.activeProjectDir,
+  ]
+    .map((d) => (typeof d === "string" ? d.trim() : ""))
+    .filter(Boolean);
+
+  if (rawDirs.length === 0) {
+    return { ok: false, reason: "missing_worktree_identity", worktrees: [] };
+  }
+
+  const byKey = new Map();
+  for (const dir of rawDirs) {
+    const wt = resolveCanonicalWorktreeRoot(dir);
+    if (!wt.ok) {
+      return { ok: false, reason: wt.error || "invalid_worktree_identity", worktrees: [] };
+    }
+    if (!byKey.has(wt.canonicalKey)) {
+      byKey.set(wt.canonicalKey, wt);
+    }
+  }
+  const sorted = Array.from(byKey.values()).sort((a, b) =>
+    a.canonicalKey.localeCompare(b.canonicalKey),
+  );
+  return { ok: true, worktrees: sorted };
 }
 
 /**
@@ -2248,26 +2343,27 @@ export async function rollbackTransitionJournal(
     }
   } catch {}
 
+  const verifiedWorktrees = extractVerifiedJournalWorktrees(journal);
+  if (!verifiedWorktrees.ok || verifiedWorktrees.worktrees.length === 0) {
+    // Missing or invalid worktree identity: fail closed and preserve journal evidence on disk.
+    return false;
+  }
+
   const acquiredRecoveryCaps = [];
-  const candidateDirs = [journal.sourceProjectDir, journal.targetProjectDir].filter(
-    (d) => typeof d === "string" && d.trim() !== "",
-  );
+  const recoveryOwnerKey = journal.sessionKey ? `recovery:${journal.sessionKey}` : `recovery:${process.pid}`;
   try {
-    for (const dir of new Set(candidateDirs)) {
+    for (const wt of verifiedWorktrees.worktrees) {
       const m = await acquireWorktreeMutex({
-        projectDir: dir,
+        projectDir: wt.worktreeRoot,
         timeoutMs: 25,
-        ownerKey: journal.sessionKey ? `recovery:${journal.sessionKey}` : null,
+        ownerKey: recoveryOwnerKey,
       });
-      if (m.ok && !m.alreadyHeld && m.capability) {
-        acquiredRecoveryCaps.push(m.capability);
-      } else if (
-        !m.ok &&
-        m.reason !== "invalid_project_dir" &&
-        m.reason !== "unsupported_platform"
-      ) {
-        // Another live owner currently holds the worktree mutex; do not overwrite its state!
+      if (!m.ok || !m.capability) {
+        // Required worktree mutex could not be acquired: fail closed and preserve journal.
         return false;
+      }
+      if (!m.alreadyHeld) {
+        acquiredRecoveryCaps.push(m.capability);
       }
     }
 
@@ -2300,8 +2396,11 @@ export async function rollbackTransitionJournal(
       return false;
     }
 
-    if (!dbSuperseded && !fileRes.skippedNewerOwner && journal.priorFocusBinding) {
-      await restoreFocusBindingSnapshot(journal.priorFocusBinding, journal);
+    if (!dbSuperseded && !fileRes.skippedNewerOwner && journal.priorFocusBinding && journal.priorFocusBinding.applicable) {
+      const focusRes = await restoreFocusBindingSnapshot(journal.priorFocusBinding, journal);
+      if (!focusRes || focusRes.ok === false) {
+        return false;
+      }
     }
 
     if (workflowState && journal.priorInMemory) {
@@ -2409,32 +2508,14 @@ export function reconcilePendingTransitionJournalsSync({
 
     try {
       if (!existsSync(journalFile)) continue;
-      journal.journalFile = journalFile;
-      if (journal.phase === "COMMITTED") {
-        if (journal.relocatedLock && journal.fromLockDir && journal.fromLockDir !== journal.toLockDir) {
-          releaseOrphanedLockFromJournal(journal.fromLockDir, journal.fromLeaseId, journal.pid, { recoveryAuthority });
-        }
-        try {
-          completeTransitionJournal(journal);
-          reconciled.push({ journalId: journal.journalId, sessionKey: journal.sessionKey, action: "committed_cleanup" });
-        } catch (err) {
-          reconciled.push({
-            journalId: journal.journalId,
-            sessionKey: journal.sessionKey,
-            action: "committed_cleanup_failed",
-            error: err?.code || err?.message || "CLEANUP_FAILED",
-          });
-        }
-      } else if (journal.phase === "STAGED") {
-        const res = rollbackJournalFilesAndLocksSync(journal, { isCrashRecovery: true, recoveryAuthority });
-        if (res.ok) {
-          journal.phase = "FILES_ROLLED_BACK";
-          try {
-            writeJournalFileAtomic(journalFile, journal);
-          } catch {}
-          reconciled.push({ journalId: journal.journalId, sessionKey: journal.sessionKey, action: "staged_files_rolled_back" });
-        }
-      }
+      // Under Option B, synchronous journal recovery cannot acquire async OS worktree
+      // mutexes and therefore MUST NOT mutate files, pointers, focus bindings, or delete
+      // journal evidence. Preserve the journal for async mutex-fenced recovery.
+      reconciled.push({
+        journalId: journal.journalId,
+        sessionKey: journal.sessionKey,
+        action: "sync_recovery_unsupported_requires_async_worktree_mutex",
+      });
     } finally {
       releaseJournalRecoveryLock(recLock);
     }
@@ -2507,25 +2588,67 @@ export async function reconcilePendingTransitionJournals({
       journal = JSON.parse(readFileSync(journalFile, "utf8"));
       journal.journalFile = journalFile;
       if (journal.phase === "COMMITTED") {
-        if (journal.relocatedLock && journal.fromLockDir && journal.fromLockDir !== journal.toLockDir) {
-          releaseOrphanedLockFromJournal(journal.fromLockDir, journal.fromLeaseId, journal.pid, { recoveryAuthority });
+        const verifiedWorktrees = extractVerifiedJournalWorktrees(journal);
+        if (!verifiedWorktrees.ok || verifiedWorktrees.worktrees.length === 0) {
+          reconciled.push({
+            journalId: journal.journalId,
+            sessionKey: journal.sessionKey,
+            action: "committed_cleanup_failed_invalid_worktree",
+          });
+          continue;
         }
+        const acquiredCaps = [];
+        const recoveryOwnerKey = journal.sessionKey ? `recovery:${journal.sessionKey}` : `recovery:${process.pid}`;
+        let allAcquired = true;
         try {
-          completeTransitionJournal(journal);
-          reconciled.push({
-            journalId: journal.journalId,
-            sessionKey: journal.sessionKey,
-            action: "committed_cleanup",
-            sourceStateFile: journal.sourceStateFile,
-            targetStateFile: journal.targetStateFile,
-          });
-        } catch (err) {
-          reconciled.push({
-            journalId: journal.journalId,
-            sessionKey: journal.sessionKey,
-            action: "committed_cleanup_failed",
-            error: err?.code || err?.message || "CLEANUP_FAILED",
-          });
+          for (const wt of verifiedWorktrees.worktrees) {
+            const m = await acquireWorktreeMutex({
+              projectDir: wt.worktreeRoot,
+              timeoutMs: 25,
+              ownerKey: recoveryOwnerKey,
+            });
+            if (!m.ok || !m.capability) {
+              allAcquired = false;
+              break;
+            }
+            if (!m.alreadyHeld) {
+              acquiredCaps.push(m.capability);
+            }
+          }
+          if (!allAcquired) {
+            reconciled.push({
+              journalId: journal.journalId,
+              sessionKey: journal.sessionKey,
+              action: "committed_cleanup_worktree_mutex_busy",
+            });
+            continue;
+          }
+          if (journal.relocatedLock && journal.fromLockDir && journal.fromLockDir !== journal.toLockDir) {
+            releaseOrphanedLockFromJournal(journal.fromLockDir, journal.fromLeaseId, journal.pid, { recoveryAuthority });
+          }
+          try {
+            completeTransitionJournal(journal);
+            reconciled.push({
+              journalId: journal.journalId,
+              sessionKey: journal.sessionKey,
+              action: "committed_cleanup",
+              sourceStateFile: journal.sourceStateFile,
+              targetStateFile: journal.targetStateFile,
+            });
+          } catch (err) {
+            reconciled.push({
+              journalId: journal.journalId,
+              sessionKey: journal.sessionKey,
+              action: "committed_cleanup_failed",
+              error: err?.code || err?.message || "CLEANUP_FAILED",
+            });
+          }
+        } finally {
+          for (const cap of acquiredCaps) {
+            try {
+              await releaseWorktreeMutex(cap);
+            } catch {}
+          }
         }
       } else {
         const rolledBack = await rollbackTransitionJournal(journal, { recoveryAuthority, hooks });
@@ -2975,12 +3098,29 @@ export class WorkflowState {
     return this.boundKernelCapability;
   }
 
+  _capabilityMatchesSession(cap) {
+    if (!cap) return false;
+    if (!cap.ownerKey) return true;
+    const explicitSessionKey =
+      (typeof this._sessionKey === "function" ? this._sessionKey()?.key : "") ||
+      this.sessionId ||
+      "";
+    const stateFileKey = this.stateFile ? path.resolve(String(this.stateFile)) : "";
+    if (explicitSessionKey && cap.ownerKey === explicitSessionKey) return true;
+    if (stateFileKey && cap.ownerKey === stateFileKey) return true;
+    if (!explicitSessionKey && !stateFileKey && cap.ownerKey === String(process.pid)) return true;
+    return false;
+  }
+
   _resolveKernelCapability() {
     if (this.boundKernelCapability) {
-      return this.boundKernelCapability;
+      return this._capabilityMatchesSession(this.boundKernelCapability)
+        ? this.boundKernelCapability
+        : null;
     }
     if (this.state?.projectDir) {
-      return getHeldWorktreeCapability(this.state.projectDir);
+      const cap = getHeldWorktreeCapability(this.state.projectDir);
+      return this._capabilityMatchesSession(cap) ? cap : null;
     }
     return null;
   }
@@ -2991,6 +3131,20 @@ export class WorkflowState {
     }
     const cap = this._resolveKernelCapability();
     assertWorktreeCapabilityLive(cap, { operation, allowDrainingInFlight });
+    if (!this._capabilityMatchesSession(cap)) {
+      const explicitSessionKey =
+        (typeof this._sessionKey === "function" ? this._sessionKey()?.key : "") ||
+        this.sessionId ||
+        "";
+      throw new ProjectOwnershipLostError(
+        `Worktree capability session mismatch before ${operation}: capability belongs to "${cap.ownerKey}", not session "${explicitSessionKey || this.stateFile || process.pid}".`,
+        {
+          operation,
+          capabilityOwnerKey: cap.ownerKey,
+          sessionKey: explicitSessionKey || this.stateFile || String(process.pid),
+        },
+      );
+    }
     if (this.state?.projectDir) {
       const wt = resolveCanonicalWorktreeRoot(this.state.projectDir);
       if (wt.ok && wt.canonicalKey !== cap.canonicalKey) {

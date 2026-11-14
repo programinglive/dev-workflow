@@ -70,6 +70,17 @@ function runChildWithPipeCleanup(launcher) {
  */
 export const PACKAGE_DIR = path.dirname(fileURLToPath(import.meta.url));
 
+function isValidGitHead(headPath) {
+  try {
+    if (!existsSync(headPath)) return false;
+    if (!statSync(headPath).isFile()) return false;
+    const headContent = readFileSync(headPath, "utf8").trim();
+    return headContent.startsWith("ref:") || /^[0-9a-f]{40,64}$/i.test(headContent);
+  } catch {
+    return false;
+  }
+}
+
 function isValidGitMarker(dir) {
   const gitPath = path.join(dir, ".git");
   let gitStat = null;
@@ -85,25 +96,13 @@ function isValidGitMarker(dir) {
       if (!match || !match[1]) return false;
       const targetGitDir = path.resolve(dir, match[1].trim());
       if (!statSync(targetGitDir).isDirectory()) return false;
-      const headPath = path.join(targetGitDir, "HEAD");
-      if (existsSync(headPath) && !statSync(headPath).isFile()) return false;
-      return true;
+      return isValidGitHead(path.join(targetGitDir, "HEAD"));
     } catch {
       return false;
     }
   }
   if (gitStat.isDirectory()) {
-    try {
-      const entries = readdirSync(gitPath);
-      if (entries.length === 0) return true;
-      const headPath = path.join(gitPath, "HEAD");
-      if (!existsSync(headPath)) return false;
-      if (!statSync(headPath).isFile()) return false;
-      const headContent = readFileSync(headPath, "utf8").trim();
-      return headContent.startsWith("ref:") || /^[0-9a-f]{40,64}$/i.test(headContent);
-    } catch {
-      return false;
-    }
+    return isValidGitHead(path.join(gitPath, "HEAD"));
   }
   return false;
 }

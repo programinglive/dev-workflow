@@ -115,7 +115,8 @@ test("resolveStateFile memakai session id yang diberikan", async () => {
 test("dua sesi lewat handleToolCall tidak saling menimpa task", async () => {
   await withProject(async (projectRoot) => {
     const repoB = path.join(projectRoot, "worktree-b");
-    await mkdir(path.join(repoB, ".git"), { recursive: true });
+    await mkdir(repoB, { recursive: true });
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repoB });
     const state = new WorkflowState();
     await state.load();
 
@@ -179,7 +180,8 @@ test("tanpa metadata sesi, perilaku lama dipertahankan (satu berkas)", async () 
 test("berpindah sesi memuat state sesi itu, bukan menyalin yang lama", async () => {
   await withProject(async (projectRoot) => {
     const repoY = path.join(projectRoot, "worktree-y");
-    await mkdir(path.join(repoY, ".git"), { recursive: true });
+    await mkdir(repoY, { recursive: true });
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repoY });
     const state = new WorkflowState();
     await state.load();
 

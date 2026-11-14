@@ -629,6 +629,16 @@ test("Adversarial 11 (F1 / A5): Two distinct sessions in the same MCP process ca
       const out2 = res2?.content?.[0]?.text || "";
       assert.match(out2, /Dibatalkan|Refused|sesi lain/i, `Expected Beta start_task to be refused, got: ${out2}`);
       assert.equal(ws2.state.currentPhase, "idle");
+
+      // Session Beta also CANNOT borrow Session Alpha's worktree capability via the ordinary write fence
+      ws2.state.projectDir = repo;
+      ws2.state.currentPhase = "coding";
+      ws2.state.taskDescription = "Illicit Beta write borrowing Alpha capability";
+      await assert.rejects(
+        () => ws2.save({ allowReplaceRunningTask: true }),
+        (err) => err instanceof ProjectOwnershipLostError || err?.code === "PROJECT_OWNERSHIP_LOST",
+        "Session Beta must be blocked at the write fence from borrowing Session Alpha's capability",
+      );
     } finally {
       if (ws1.boundKernelCapability) {
         await releaseWorktreeMutex(ws1.boundKernelCapability);
@@ -679,7 +689,7 @@ test("Adversarial 12 (F2 / A7 / B7): Corrupt lock metadata and quiescence inspec
   });
 });
 
-test("Adversarial 13 (A2): Directory with invalid .git file is rejected fail-closed", async () => {
+test("Adversarial 13 (A2 / A7): Invalid .git file, empty .git directory, and non-Git identity with populated paths are rejected fail-closed", async () => {
   await withTempWorkspace(async (base) => {
     const fakeRepo = path.join(base, "fake-git-file-repo");
     await mkdir(fakeRepo, { recursive: true });
@@ -693,6 +703,30 @@ test("Adversarial 13 (A2): Directory with invalid .git file is rejected fail-clo
     assert.equal(acq.ok, false);
     assert.equal(acq.error, "INVALID_GIT_WORKTREE");
 
+    // Empty .git directory without HEAD must also be rejected fail-closed
+    const emptyGitRepo = path.join(base, "empty-git-dir-repo");
+    await mkdir(path.join(emptyGitRepo, ".git"), { recursive: true });
+    const resolvedEmpty = resolveCanonicalWorktreeRoot(emptyGitRepo);
+    assert.equal(resolvedEmpty.ok, false);
+    assert.equal(resolvedEmpty.error, "INVALID_GIT_WORKTREE");
+
+    const { captureRepositoryIdentity, evaluateProjectSwitch } = await import("../repository-identity.js");
+    const emptyIdentity = await captureRepositoryIdentity({ dir: emptyGitRepo });
+    assert.equal(emptyIdentity.isGitRepo, false);
+
+    // evaluateProjectSwitch must reject isGitRepo: false even when path fields are populated
+    const switchRefusal = evaluateProjectSwitch({
+      requested: {
+        isGitRepo: false,
+        root: emptyGitRepo,
+        workspaceKey: emptyGitRepo,
+        projectDir: emptyGitRepo,
+      },
+      session: null,
+    });
+    assert.equal(switchRefusal.ok, false);
+    assert.equal(switchRefusal.code, "NOT_A_GIT_REPOSITORY");
+
     const stateFile = path.join(base, "state", "projects", "fake", "users", "u1", "workflow-state.json");
     const ws = new WorkflowState(stateFile);
     ws.requireKernelMutex = true;
@@ -701,6 +735,11 @@ test("Adversarial 13 (A2): Directory with invalid .git file is rejected fail-clo
       const res = await handleStartTask(makeStartArgs(fakeRepo, "Fake git repo task", 81), ws, null);
       const out = res?.content?.[0]?.text || "";
       assert.match(out, /Refused|not a valid Git working tree|Dibatalkan/i, `Expected invalid git worktree refusal, got: ${out}`);
+      assert.equal(ws.state.currentPhase, "idle");
+
+      const resEmpty = await handleStartTask(makeStartArgs(emptyGitRepo, "Empty .git dir task", 81), ws, null);
+      const outEmpty = resEmpty?.content?.[0]?.text || "";
+      assert.match(outEmpty, /Refused|not a valid Git working tree|Dibatalkan/i, `Expected empty .git dir refusal, got: ${outEmpty}`);
       assert.equal(ws.state.currentPhase, "idle");
     } finally {
       await ws.close();
@@ -734,6 +773,7 @@ test("Adversarial 14 (F4 / A6 / B5): Post-SQLite-commit error preserves committe
       assert.doesNotMatch(out, /dikembalikan ke kondisi sebelum/i, "Must NOT falsely claim pre-commit rollback after SQLite commit");
       assert.equal(ws.state.currentPhase, "coding", "In-memory task state must remain committed");
       assert.equal(ws.state.taskDescription, "Committed task surviving post-commit error");
+      assert.equal(ws.state.pendingProjectionRepair, null, "Verified projection repair must clear pendingProjectionRepair");
       assert.ok(ws.boundKernelCapability && ws.boundKernelCapability.active, "Target worktree capability must remain held");
 
       const verifyWs = new WorkflowState(ws.stateFile, { sessionId: "ses_postcommit" });
@@ -747,5 +787,68 @@ test("Adversarial 14 (F4 / A6 / B5): Post-SQLite-commit error preserves committe
       }
       await ws.close();
     }
+  });
+});
+
+test("Adversarial 15 (F3 / B2 / B4 / B6): Manual journal recovery requires verified worktree mutexes and refuses sync/unlocked mutations", async () => {
+  await withTempWorkspace(async (base) => {
+    const repo = await createRepo(base, "journal-recovery-repo");
+    const stateBase = path.join(base, "state");
+    const sessionsDir = path.join(stateBase, "sessions");
+    await mkdir(sessionsDir, { recursive: true });
+    const journalFile = path.join(sessionsDir, "transition-ses_jrec.journal.json");
+
+    const { reconcilePendingTransitionJournalsSync, reconcilePendingTransitionJournals } = await import("../workflow-state.js");
+
+    // 1. Journal without verified worktree identity must fail closed and preserve journal evidence
+    const unverifiedJournal = {
+      journalId: "j-missing-wt",
+      phase: "STAGED",
+      pid: 999991,
+      incarnationId: "dead-inc-j1",
+      startedAt: Date.now() - 60_000,
+      baseDir: stateBase,
+      sessionKey: "ses_jrec",
+      journalFile,
+      sourceStateFile: path.join(stateBase, "projects", "b1", "users", "u1", "workflow-state.ses_jrec.json"),
+      targetStateFile: path.join(stateBase, "projects", "b2", "users", "u1", "workflow-state.ses_jrec.json"),
+    };
+    await writeFile(journalFile, JSON.stringify(unverifiedJournal, null, 2), "utf8");
+    setIsAliveForTests((pid) => pid === process.pid);
+
+    const syncRes = reconcilePendingTransitionJournalsSync({ baseDir: stateBase });
+    assert.equal(syncRes.length, 1);
+    assert.equal(syncRes[0].action, "sync_recovery_unsupported_requires_async_worktree_mutex");
+    assert.equal(existsSync(journalFile), true, "Sync recovery must preserve journal without mutating files");
+
+    const asyncMissingWt = await reconcilePendingTransitionJournals({ baseDir: stateBase });
+    assert.equal(asyncMissingWt.length, 1);
+    assert.equal(asyncMissingWt[0].action, "rollback_failed_evidence_preserved");
+    assert.equal(existsSync(journalFile), true, "Async recovery must preserve journal when worktree identity is missing");
+
+    // 2. Journal with valid worktree identity held by a live worktree mutex owner must refuse and preserve journal
+    const validJournal = {
+      ...unverifiedJournal,
+      journalId: "j-valid-wt",
+      sourceProjectDir: repo,
+      targetProjectDir: repo,
+    };
+    await writeFile(journalFile, JSON.stringify(validJournal, null, 2), "utf8");
+    const liveMutex = await acquireWorktreeMutex({ projectDir: repo, ownerKey: "live_owner_session" });
+    assert.equal(liveMutex.ok, true);
+    try {
+      const busyRes = await reconcilePendingTransitionJournals({ baseDir: stateBase });
+      assert.equal(busyRes.length, 1);
+      assert.equal(busyRes[0].action, "rollback_failed_evidence_preserved");
+      assert.equal(existsSync(journalFile), true, "Journal must be preserved while live owner holds worktree mutex");
+    } finally {
+      await releaseWorktreeMutex(liveMutex.capability);
+    }
+
+    // 3. Once the worktree mutex is free, async recovery acquires the worktree mutex and completes rollback
+    const freeRes = await reconcilePendingTransitionJournals({ baseDir: stateBase });
+    assert.equal(freeRes.length, 1);
+    assert.equal(freeRes[0].action, "rolled_back");
+    assert.equal(existsSync(journalFile), false);
   });
 });

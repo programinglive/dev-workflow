@@ -85,7 +85,8 @@ async function withWorkspace(callback) {
 
 async function createRepo(dir, name) {
   const repoDir = path.join(dir, name);
-  await mkdir(path.join(repoDir, ".git"), { recursive: true });
+  await mkdir(repoDir, { recursive: true });
+  spawnSync("git", ["init", "-q", "-b", "main"], { cwd: repoDir, encoding: "utf8" });
   await writeFile(path.join(repoDir, "README.md"), `# ${name}\n`, "utf8");
   return repoDir;
 }
@@ -2159,6 +2160,9 @@ test("R3-4 & R3-5 Journal Recovery Concurrency, Newer-Owner Non-Overwrite, Summa
     ws.state.taskDescription = "Newer legitimate task by live owner";
     ws.state.transitionJournalId = "newer-journal-id";
     await ws.save();
+    if (ws.boundKernelCapability) {
+      await releaseKernelMutex(ws.boundKernelCapability);
+    }
     writeFileSync(summaryFileA, JSON.stringify({ totalTasks: 42, sentinel: "newer-summary-must-survive" }), "utf8");
 
     const crashedJournal = {
@@ -2170,6 +2174,8 @@ test("R3-4 & R3-5 Journal Recovery Concurrency, Newer-Owner Non-Overwrite, Summa
       baseDir: stateBase,
       sessionKey: "ses_r34",
       journalFile,
+      sourceProjectDir: repoA,
+      targetProjectDir: repoB,
       sourceStateFile: pinnedA,
       targetStateFile: path.join(lockDirB, "users", "u1", "workflow-state.ses_r34.json"),
       sourceStateSnap: {
