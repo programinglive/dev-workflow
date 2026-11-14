@@ -890,9 +890,12 @@ export function resolveStateFile({ sessionId = null } = {}) {
 }
 
 export function canonicalProjectPath(candidate) {
-  const raw = String(candidate || "").trim();
+  let raw = String(candidate || "").trim();
   if (!raw || raw.includes("\0")) {
     return "";
+  }
+  if (process.platform !== "win32" && raw.includes("\\")) {
+    raw = raw.replace(/\\/g, "/");
   }
   const resolved = path.resolve(raw);
   let real = resolved;
@@ -983,7 +986,11 @@ export function resolveCanonicalProjectIdentity(projectDir, { mustExist = false 
  * start_task with an explicit target projectDir.
  */
 export function resolveTargetProjectState({ stateFile, projectDir } = {}) {
-  const resolvedState = path.resolve(String(stateFile || ""));
+  let rawState = String(stateFile || "");
+  if (process.platform !== "win32" && rawState.includes("\\")) {
+    rawState = rawState.replace(/\\/g, "/");
+  }
+  const resolvedState = path.resolve(rawState);
   const hasTargetProject = typeof projectDir === "string" && projectDir.trim() !== "";
   const canonicalTarget = hasTargetProject ? canonicalProjectPath(projectDir) : "";
 
@@ -1087,7 +1094,11 @@ export function findActiveForeignTaskInProject({
  * tata letak sudah berubah sekali dan akan berubah lagi.
  */
 function resolveBaseDirFromState(stateFile) {
-  const resolved = path.resolve(stateFile);
+  let raw = String(stateFile || "");
+  if (process.platform !== "win32" && raw.includes("\\")) {
+    raw = raw.replace(/\\/g, "/");
+  }
+  const resolved = path.resolve(raw);
   const segments = resolved.split(path.sep);
   const index = segments.lastIndexOf(PROJECTS_DIR);
   if (index > 0) {
