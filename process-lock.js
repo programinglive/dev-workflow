@@ -81,6 +81,18 @@ function normalizeWorktreeString(targetPath, platform = process.platform) {
   return platform === "win32" ? normalized.toLowerCase() : normalized;
 }
 
+function isValidGitHeadFile(headPath) {
+  try {
+    if (!existsSync(headPath)) return false;
+    const headStat = statSync(headPath);
+    if (!headStat.isFile()) return false;
+    const headContent = readFileSync(headPath, "utf8").trim();
+    return headContent.startsWith("ref:") || /^[0-9a-f]{40,64}$/i.test(headContent);
+  } catch {
+    return false;
+  }
+}
+
 function isValidGitWorktreeMarker(dir) {
   const gitPath = path.join(dir, ".git");
   let gitStat = null;
@@ -97,28 +109,13 @@ function isValidGitWorktreeMarker(dir) {
       const targetGitDir = path.resolve(dir, match[1].trim());
       const targetStat = statSync(targetGitDir);
       if (!targetStat.isDirectory()) return false;
-      const headPath = path.join(targetGitDir, "HEAD");
-      if (existsSync(headPath) && !statSync(headPath).isFile()) return false;
-      return true;
+      return isValidGitHeadFile(path.join(targetGitDir, "HEAD"));
     } catch {
       return false;
     }
   }
   if (gitStat.isDirectory()) {
-    try {
-      const entries = readdirSync(gitPath);
-      if (entries.length === 0) {
-        return true;
-      }
-      const headPath = path.join(gitPath, "HEAD");
-      if (!existsSync(headPath)) return false;
-      const headStat = statSync(headPath);
-      if (!headStat.isFile()) return false;
-      const headContent = readFileSync(headPath, "utf8").trim();
-      return headContent.startsWith("ref:") || /^[0-9a-f]{40,64}$/i.test(headContent);
-    } catch {
-      return false;
-    }
+    return isValidGitHeadFile(path.join(gitPath, "HEAD"));
   }
   return false;
 }
@@ -562,9 +559,9 @@ export function writeKernelLockMetadata({ dir, capability, projectDir = "" } = {
     const tmp = path.join(lockDir, `${LOCK_FILENAME}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`);
     writeFileSync(tmp, JSON.stringify(payload, null, 2), "utf8");
     renameSync(tmp, lockFile);
-    return { wrote: true, payload };
+    return { ok: true, wrote: true, payload };
   } catch (error) {
-    return { wrote: false, error: error?.code || error?.message || "WRITE_FAILED" };
+    return { ok: false, wrote: false, error: error?.code || error?.message || "WRITE_FAILED" };
   }
 }
 

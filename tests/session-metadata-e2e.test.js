@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -83,8 +83,10 @@ test("MCP SDK meneruskan _meta sessionID sampai ke state di disk", async () => {
   const projectRoot = await mkdtemp(path.join(tmpdir(), "mcp-meta-e2e-"));
   const repoA = path.join(projectRoot, "repo-a");
   const repoB = path.join(projectRoot, "repo-b");
-  await mkdir(path.join(repoA, ".git"), { recursive: true });
-  await mkdir(path.join(repoB, ".git"), { recursive: true });
+  await mkdir(repoA, { recursive: true });
+  await mkdir(repoB, { recursive: true });
+  spawnSync("git", ["init", "-q", "-b", "main"], { cwd: repoA, encoding: "utf8" });
+  spawnSync("git", ["init", "-q", "-b", "main"], { cwd: repoB, encoding: "utf8" });
   await writeFile(path.join(projectRoot, "package.json"), JSON.stringify({ name: "fixture" }));
 
   const server = startServer({

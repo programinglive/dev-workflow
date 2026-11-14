@@ -795,45 +795,74 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
     if (committedToSqlite) {
       // Authoritative SQLite commit already succeeded under the live OS mutex.
       // Never roll back committed SQLite state or release the target capability;
-      // instead, reconcile reconstructible post-commit projections under the live fence.
+      // instead, reconcile reconstructible post-commit projections under the live fence
+      // and verify every repair outcome.
+      const repairErrors = [];
       try {
         await useWorktreeCapability(
           targetMutex.capability,
           async () => {
             if (workflowState.state.projectDir) {
               try {
-                pinSessionProject({
+                const pinRes = pinSessionProject({
                   stateFile: workflowState.stateFile,
                   projectDir: workflowState.state.projectDir,
                   focusId: hasRequestedFocus ? requestedFocusId : null,
                   kernelCapability: targetMutex.capability,
                   requireKernelMutex: true,
                 });
-              } catch {}
+                if (pinRes && pinRes.ok === false) {
+                  repairErrors.push(`pinSessionProject:${pinRes.error || "FAILED"}`);
+                }
+              } catch (err) {
+                repairErrors.push(`pinSessionProject:${err?.message || String(err)}`);
+              }
             }
             try {
-              writeKernelLockMetadata({
+              const metaRes = writeKernelLockMetadata({
                 dir: targetLockDir,
                 capability: targetMutex.capability,
                 projectDir: targetMutex.worktreeRoot,
               });
-            } catch {}
+              if (!metaRes || metaRes.ok === false) {
+                repairErrors.push(`writeKernelLockMetadata:${metaRes?.error || "FAILED"}`);
+              }
+            } catch (err) {
+              repairErrors.push(`writeKernelLockMetadata:${err?.message || String(err)}`);
+            }
             if (typeof workflowState._exportJson === "function") {
               try {
-                workflowState._exportJson();
-              } catch {}
+                await workflowState._exportJson();
+              } catch (err) {
+                repairErrors.push(`exportJson:${err?.message || String(err)}`);
+              }
             }
           },
           { operation: "start_task_post_commit_reconcile" },
         );
-      } catch {}
+      } catch (fenceErr) {
+        repairErrors.push(`reconcileFence:${fenceErr?.message || String(fenceErr)}`);
+      }
       if (priorKernelCapability && priorKernelCapability !== targetMutex.capability) {
         await releaseWorktreeMutex(priorKernelCapability);
       }
-      warnings.push(
-        `⚠️ Post-commit projection warning reconciled (${transitionError?.message || String(transitionError)}). ` +
-          `Authoritative SQLite task commit was preserved.`
-      );
+      if (repairErrors.length > 0) {
+        workflowState.state.pendingProjectionRepair = {
+          failedAt: new Date().toISOString(),
+          triggerError: transitionError?.message || String(transitionError),
+          repairErrors,
+        };
+        warnings.push(
+          `⚠️ Authoritative SQLite task commit succeeded and was preserved, but post-commit projection repair is PENDING ` +
+            `(trigger: ${transitionError?.message || String(transitionError)}; repairErrors: ${repairErrors.join(", ")}).`
+        );
+      } else {
+        workflowState.state.pendingProjectionRepair = null;
+        warnings.push(
+          `⚠️ Post-commit projection warning reconciled and verified (${transitionError?.message || String(transitionError)}). ` +
+            `Authoritative SQLite task commit was preserved.`
+        );
+      }
     } else {
       // Pre-commit failure: restore in-memory state cleanly; prior SQLite state & DoD evidence were not overwritten.
       if (claimedNewFocus && hasRequestedFocus) {

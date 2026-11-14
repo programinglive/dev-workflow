@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -139,7 +140,7 @@ test("acquireProcessLock mencatat detak pertama saat mengambil alih", async () =
 
 test("start_task menolak saat proses MCP lain masih aktif di proyek yang sama", async () => {
   await withTempDir(async (dir) => {
-    await mkdir(path.join(dir, ".git"), { recursive: true });
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: dir, stdio: "ignore" });
     const stateFile = path.join(dir, "state.json");
     const state = new WorkflowState(stateFile);
     await state.load();
@@ -175,7 +176,7 @@ test("start_task menolak saat proses MCP lain masih aktif di proyek yang sama", 
 
 test("start_task tetap boleh jalan saat pemegang penanda lain sudah mati", async () => {
   await withTempDir(async (dir) => {
-    await mkdir(path.join(dir, ".git"), { recursive: true });
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: dir, stdio: "ignore" });
     const stateFile = path.join(dir, "state.json");
     const state = new WorkflowState(stateFile);
     await state.load();
@@ -212,7 +213,7 @@ test("start_task tetap boleh jalan saat pemegang penanda lain sudah mati", async
 
 test("Option B menolak force true saat pemegang aktif masih hidup", async () => {
   await withTempDir(async (dir) => {
-    await mkdir(path.join(dir, ".git"), { recursive: true });
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: dir, stdio: "ignore" });
     const stateFile = path.join(dir, "state.json");
     const state = new WorkflowState(stateFile);
     await state.load();
