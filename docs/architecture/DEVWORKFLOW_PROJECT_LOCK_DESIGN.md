@@ -170,6 +170,11 @@ process.once('exit', () => releaseActiveProcessLock({ fallbackDir: lockDir }));
 | R2-3 Async execution-context isolation | `AsyncLocalStorage` (`gateExecutionStorage` & `serializedExecutionStorage`) + `inProcessGateQueues` | R2-3 (concurrent Request A & Request B at `await`) |
 | R2-4 Durable transition & crash recovery | `<base>/sessions/transition-<sessionKey>.journal.json` + `markTransitionJournalCommitted` + `rollbackTransitionJournal` + `reconcilePendingTransitionJournals` | R2-4 (post-save failure + `SIGKILL` crash recovery) |
 | R2-5 Legacy exclusion & fleet quiescence | Unconditional `<base>/projects/*/mcp-process.lock` scan + `verifyLegacyFleetQuiescence` | R2-5 (missing/outdated session pointer + quiescence gate) |
+| R3-1 Trusted recovery authority | Unforgeable `WeakSet` capability (`mintTrustedGateRecoveryAuthority` under `DEVWF_OPERATOR_GATE_RECOVERY=1`) + fail-closed `recovery_lock_abandoned` | R3-1 (boolean rejection + dead recover lock) |
+| R3-2 Atomic link publication | Removed `writeFileSync(..., { flag: "wx" })` fallback; throws `UNSUPPORTED_ATOMIC_LINK` | R3-2 (atomic link enforcement) |
+| R3-3 Async capability lifetime | Epoch-scoped capability invalidated on exit in `runSerialized` & `withLockGate` | R3-3 (detached child C vs active B) |
+| R3-4 / R3-5 Journal recovery & persistence | Exclusive `.recover.lock`, `transitionJournalId` fencing, no `history`/`project_summary` clobber, fail-closed write/commit/cleanup | R3-4 & R3-5 (barrier, newer owner, crash, commit fail) |
+| R3-6 Legacy admission barrier | Fail-closed `EACCES` inspection + `maintenance-admission.json` (`acquireMaintenanceAdmissionBarrier`) | R3-6 (`EACCES` quiescence + barrier) |
 
 ---
 

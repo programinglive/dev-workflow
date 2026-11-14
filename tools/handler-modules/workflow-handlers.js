@@ -545,18 +545,27 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
   const priorLoadedTask = workflowState.loadedTask;
   const priorBoundLease = workflowState.boundLockLease ? { ...workflowState.boundLockLease } : null;
   const priorActiveProjectDir = priorStateSnapshot.projectDir || "";
-  const transitionJournal = await beginTransitionJournal({
-    sourceStateFile: priorStateFile,
-    targetStateFile,
-    sessionId: workflowState.sessionId || null,
-    focusId: hasRequestedFocus ? requestedFocusId : null,
-    stagedLock,
-    priorStateSnapshot,
-    priorStateVersion,
-    priorLoadedTask,
-    priorBoundLease,
-    priorActiveProjectDir,
-  });
+  let transitionJournal;
+  try {
+    transitionJournal = await beginTransitionJournal({
+      sourceStateFile: priorStateFile,
+      targetStateFile,
+      sessionId: workflowState.sessionId || null,
+      focusId: hasRequestedFocus ? requestedFocusId : null,
+      stagedLock,
+      priorStateSnapshot,
+      priorStateVersion,
+      priorLoadedTask,
+      priorBoundLease,
+      priorActiveProjectDir,
+    });
+  } catch (journalError) {
+    rollbackProcessLockTransition(stagedLock);
+    return textResponse(
+      `⚠️ Dibatalkan: jurnal transisi gagal dibuat (${journalError?.message || String(journalError)}).\n\n` +
+        `Transisi dihentikan secara fail-closed; seluruh state dan kunci proses tetap utuh.`
+    );
+  }
 
   let preservedBeforeSave = null;
   let archivedTask = null;
@@ -708,6 +717,7 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
     workflowState.state.featureFlowCreated = true;
     workflowState.state.mermaidCode = initialFlow;
     workflowState.state.featureFlowDescription = args.description;
+    workflowState.state.transitionJournalId = transitionJournal.journalId;
 
     if (typeof transitionHooks?.beforeSave === "function") {
       await transitionHooks.beforeSave({ workflowState, stagedLock, transitionJournal });
@@ -725,10 +735,16 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
       await transitionHooks.afterSave({ reconciled, stagedLock, transitionJournal });
     }
 
-    // Authoritative Commit Point (R2-4):
+    // Authoritative Commit Point (R2-4 + R3-5):
     markTransitionJournalCommitted(transitionJournal);
     commitProcessLockTransition(stagedLock);
-    completeTransitionJournal(transitionJournal);
+    try {
+      completeTransitionJournal(transitionJournal);
+    } catch (cleanupErr) {
+      warnings.push(
+        `⚠️ Peringatan pembersihan jurnal transisi (${cleanupErr?.code || cleanupErr?.message || String(cleanupErr)}); status COMMITTED tetap aman di disk.`
+      );
+    }
   } catch (transitionError) {
     // Full transactional rollback of target state/DB, source state/DB, lock,
     // session pointer, and focus binding (F7 + R2-4).

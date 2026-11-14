@@ -208,4 +208,19 @@ Because Legacy v1 (`protocolVersion < 2`, lacking `leaseId`, `incarnationId`, `m
 2. Repoint the managed release symlink to the prior known-good revision and run `node managed/restart-devices.cjs` across `MMCH`, `HELLOWORLD`, and `Mac`.
 3. V2's `mcp-process.lock` JSON remains backward-readable by V1 (`pid`, `startedAt`, `heartbeatAt`, `host` fields are preserved), and all `workflow.db` SQLite tables and `workflow-state.json` schemas are 100% compatible with V1, preserving all active tasks and Definitions of Done across rollback.
 
+---
+
+## 12. Round 3 Protocol Stabilization (`R3-1`–`R3-6`) & Deployment Safety Boundary
+
+1. **R3-1 (Trusted Recovery Authority):** `recoverAbandonedLockGate` rejects plain caller boolean flags (`authorizeAbandonedGateRecovery: true` $\rightarrow$ `trusted_recovery_authority_required`) and requires an unforgeable `WeakSet`-verified capability from `mintTrustedGateRecoveryAuthority` (permitted only when `DEVWF_OPERATOR_GATE_RECOVERY=1`). An abandoned `mcp-process.gate.recover.lock` fails closed (`recovery_lock_abandoned` / `LOCK_GATE_RECOVERY_ABANDONED`) without adding a recursive lock layer.
+2. **R3-2 (Atomic Link Enforcement):** `publishCompleteJsonFile(..., { replaceIfExists: false })` removes the `writeFileSync(..., { flag: "wx" })` fallback on `ENOSYS`/`EXDEV`/`EPERM` and fails closed with `UNSUPPORTED_ATOMIC_LINK`.
+3. **R3-3 (Bounded Async Ownership Lifetime):** `WorkflowState.runSerialized` and `withLockGate` bind `AsyncLocalStorage` entries to an explicit capability invalidated on operation completion (`capability.active = false` / `entry.active = false`). Detached child tasks scheduled by a completed parent cannot bypass a subsequent serialized owner.
+4. **R3-4 & R3-5 (Exclusive, Fenced, Fail-Closed Journal Recovery):**
+   - `beginTransitionJournal` and `markTransitionJournalCommitted` throw on write failure (aborting or rolling back fail-closed).
+   - `reconcilePendingTransitionJournals` acquires `${journalFile}.recover.lock` via `publishCompleteJsonFile`, preserves journal evidence if recovery fails or `recover.lock` is abandoned, and fences DB/file restoration with `transitionJournalId` / `isStateSupersededByNewerOwner` while excluding `history.json` and `project_summary` from rollback.
+5. **R3-6 (Code Safety vs. Deployment Safety & Admission Barrier):**
+   - `verifyLegacyFleetQuiescence` and `detectIncompatibleLegacyWriters` fail closed on `EACCES`/unreadable directories or locks (`inspectionErrors`, `legacy_inspection_failed`).
+   - `acquireMaintenanceAdmissionBarrier` publishes `<baseDir>/maintenance-admission.json` (`state: "DRAINING"`) to block new `stageProcessLockTransition` admissions during cutover until `releaseMaintenanceAdmissionBarrier` reopens admission.
+   - **Deployment Safety Boundary:** Sequential rollout across `MMCH`, `HELLOWORLD`, and `Mac` is not globally atomic across machines, and un-upgraded legacy v1 binaries cannot read `maintenance-admission.json`. Therefore, cutover requires an explicit operator maintenance window across all 3 workstations (halting new sessions, running `managed/rollout.cjs` + `managed/restart-devices.cjs` on all 3 hosts, and verifying `fleet-status.cjs` + `verifyLegacyFleetQuiescence` = `quiescent: true`) before reopening client admission.
+
 
