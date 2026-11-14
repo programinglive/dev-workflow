@@ -64,24 +64,30 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 // Handle tool calls
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
-  lastToolInvocationTimestamp = Date.now();
-  // Reload state from disk before each request to ensure consistency
-  if (workflowState) {
-    const sessionId = sessionKeyFromRequest(request);
-    if (sessionId) await workflowState.useSession(sessionId);
-    await workflowState.load();
-    // Repo proyek mengikuti sesi, bukan satu nilai global. Tanpa ini, sesi yang
-    // bekerja di repo lain tetap menjalankan git di WORKFLOW_PROJECT_DIR.
-    setActiveProjectDir(workflowState.state.projectDir || "");
-  }
-  return securityOutputFilter(await handleToolCall({
-    request,
-    normalizeRequestArgs,
-    workflowState,
-    exec,
-    git: createGitFacade(),
-    utils: { shellEscape, determineReleaseTypeFromCommit, createCommitMessageParts },
-  }));
+    lastToolInvocationTimestamp = Date.now();
+    const runToolRequest = async () => {
+      // Reload state from disk before each request to ensure consistency
+      if (workflowState) {
+        const sessionId = sessionKeyFromRequest(request);
+        if (sessionId) await workflowState.useSession(sessionId);
+        await workflowState.load();
+        // Repo proyek mengikuti sesi, bukan satu nilai global. Tanpa ini, sesi yang
+        // bekerja di repo lain tetap menjalankan git di WORKFLOW_PROJECT_DIR.
+        setActiveProjectDir(workflowState.state.projectDir || "");
+      }
+      return securityOutputFilter(await handleToolCall({
+        request,
+        normalizeRequestArgs,
+        workflowState,
+        exec,
+        git: createGitFacade(),
+        utils: { shellEscape, determineReleaseTypeFromCommit, createCommitMessageParts },
+      }));
+    };
+    if (workflowState && typeof workflowState.runSerialized === "function") {
+      return await workflowState.runSerialized(runToolRequest);
+    }
+    return await runToolRequest();
   } catch(error) {
     safeLog('error','MCP request failed',error);
     return {isError:true,content:[{type:'text',text:'Request failed; inspect sanitized server diagnostics.'}]};
@@ -237,7 +243,11 @@ export async function main() {
   // user bisa berbeda antar proses, sehingga keduanya tidak saling melihat.
   try {
     const lockDir = projectLockDir(workflowState.stateFile);
-    const warning = lockWarning(acquireProcessLock({ dir: lockDir }));
+    const acquired = acquireProcessLock({ dir: lockDir });
+    if (acquired.acquired && typeof workflowState.bindLockLease === "function") {
+      workflowState.bindLockLease({ dir: lockDir, leaseId: acquired.leaseId });
+    }
+    const warning = lockWarning(acquired);
     if (warning) safeLog('error', warning);
     process.once('exit', () => releaseActiveProcessLock({ fallbackDir: lockDir }));
 

@@ -15,6 +15,19 @@ import { normalizePlan } from './tools/handler-modules/plan.js';
 import { fileURLToPath } from "url";
 import { pathToFileURL } from "url";
 import { createHash } from "crypto";
+import {
+  projectLockDir,
+  withProjectOwnershipFence,
+  verifyProjectOwnership,
+  getHeldLeaseForDir,
+  readProcessLock,
+  ProjectOwnershipLostError,
+  currentIsAlive,
+  currentIsHolderProcess,
+  defaultIsHolderProcess,
+} from "./process-lock.js";
+
+export { ProjectOwnershipLostError };
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -900,9 +913,7 @@ export function canonicalProjectPath(candidate) {
   const resolved = path.resolve(raw);
   let real = resolved;
   try {
-    real = typeof realpathSync.native === "function"
-      ? realpathSync.native(resolved)
-      : realpathSync(resolved);
+    real = realpathSync(resolved);
   } catch {
     real = resolved;
   }
@@ -1022,6 +1033,56 @@ export function resolveTargetProjectState({ stateFile, projectDir } = {}) {
 }
 
 /**
+ * Parse owner.updatedAt from either numeric epoch milliseconds or ISO 8601
+ * strings (F5 remediation: `save()` writes ISO strings while legacy tests may
+ * pass numeric timestamps).
+ */
+export function parseOwnerTimestamp(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return NaN;
+    if (/^-?\d+(?:\.\d+)?$/.test(trimmed)) {
+      const numeric = Number(trimmed);
+      if (Number.isFinite(numeric)) return numeric;
+    }
+    const parsed = Date.parse(trimmed);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return NaN;
+}
+
+function hasLiveProcessLockForPid(projectDirPath, targetPid) {
+  if (!Number.isFinite(targetPid) || targetPid <= 0) return false;
+  const dirsToInspect = new Set();
+  if (projectDirPath) {
+    const resolved = path.resolve(projectDirPath);
+    dirsToInspect.add(resolved);
+    if (path.basename(path.dirname(resolved)) === PROJECTS_DIR) {
+      const projectsRoot = path.dirname(resolved);
+      if (existsSync(projectsRoot)) {
+        try {
+          for (const entry of readdirSync(projectsRoot, { withFileTypes: true })) {
+            if (entry.isDirectory()) {
+              dirsToInspect.add(path.join(projectsRoot, entry.name));
+            }
+          }
+        } catch {}
+      }
+    }
+  }
+  for (const dir of dirsToInspect) {
+    const lock = readProcessLock({ dir });
+    if (lock && Number(lock.pid) === targetPid) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Inspect the target project's state file(s) for an active live task owned by
  * a foreign process. Checks both the target session state file and sibling
  * session state files inside the target project bucket.
@@ -1033,6 +1094,7 @@ export function findActiveForeignTaskInProject({
   now = Date.now(),
   staleMs = 10 * 60 * 1000,
   isAlive = () => true,
+  isHolderProcess = currentIsHolderProcess(),
 } = {}) {
   const candidateFiles = new Set();
   if (targetStateFile) {
@@ -1067,10 +1129,29 @@ export function findActiveForeignTaskInProject({
       const phase = typeof disk.currentPhase === "string" ? disk.currentPhase : "idle";
       const description = typeof disk.taskDescription === "string" ? disk.taskDescription.trim() : "";
       const ownerPid = Number(disk.owner?.pid);
-      const foreignOwner = Number.isFinite(ownerPid) && ownerPid > 0 && ownerPid !== ownPid;
-      const ownerSeenAt = Number(disk.owner?.updatedAt);
-      const ownerFresh = Number.isFinite(ownerSeenAt) && now - ownerSeenAt < staleMs;
-      if (phase !== "idle" && description !== "" && foreignOwner && ownerFresh && isAlive(ownerPid)) {
+      const ownerMarker = typeof disk.owner?.processMarker === "string" ? disk.owner.processMarker.trim() : "";
+      const foreignOwner =
+        Number.isFinite(ownerPid) &&
+        ownerPid > 0 &&
+        (ownerPid !== ownPid || (ownerMarker !== "" && ownerMarker !== PROCESS_TOKEN));
+      if (phase === "idle" || description === "" || !foreignOwner) continue;
+
+      if (!isAlive(ownerPid)) continue;
+
+      const shouldConsultDefaultHolder =
+        isHolderProcess !== defaultIsHolderProcess ||
+        isAlive === currentIsAlive();
+      if (shouldConsultDefaultHolder) {
+        const holderCheck = isHolderProcess(ownerPid, disk.owner);
+        if (holderCheck === false) continue;
+      }
+
+      const ownerSeenAt = parseOwnerTimestamp(disk.owner?.updatedAt);
+      const holdsLiveLock = hasLiveProcessLockForPid(projectDirPath, ownerPid);
+      const ownerFresh =
+        holdsLiveLock || (Number.isFinite(ownerSeenAt) && now - ownerSeenAt < staleMs);
+
+      if (ownerFresh) {
         return {
           file,
           disk,
@@ -1135,6 +1216,37 @@ export function readSessionPointer(baseDir, sessionKey) {
   }
 }
 
+export function captureSessionPointerSnapshot(stateFile) {
+  const resolved = path.resolve(String(stateFile || ""));
+  if (!resolved.split(path.sep).includes(PROJECTS_DIR)) {
+    return { applicable: false, file: null, raw: null };
+  }
+  const baseDir = resolveBaseDirFromState(resolved);
+  const sessionKey = sessionKeyFromStateFile(resolved);
+  const file = sessionPointerPath(baseDir, sessionKey);
+  try {
+    const raw = readFileSync(file, "utf8");
+    return { applicable: true, file, raw };
+  } catch {
+    return { applicable: true, file, raw: null };
+  }
+}
+
+export function restoreSessionPointerSnapshot(snapshot) {
+  if (!snapshot || !snapshot.applicable || !snapshot.file) return false;
+  try {
+    if (snapshot.raw === null) {
+      if (existsSync(snapshot.file)) unlinkSync(snapshot.file);
+    } else {
+      mkdirSync(path.dirname(snapshot.file), { recursive: true });
+      writeFileSync(snapshot.file, snapshot.raw, "utf8");
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * The project this session has already established, read from its own state file.
  *
@@ -1167,23 +1279,21 @@ export function readSessionProject({ stateFile } = {}) {
 /**
  * Catat proyek yang sedang dikerjakan sesi ini, dan kembalikan letak state
  * yang seharusnya.
- *
- * Dipanggil `start_task` setelah `projectDir` dipin. Tanpa ini, identitas
- * proyek hanya bisa ditebak dari `process.cwd()` - dan di mesin ini semua sesi
- * berjalan dari `Documents\Default Project`, sehingga sesi yang mengerjakan
- * repo berbeda berbagi satu direktori proyek: history tercampur, lock saling
- * menolak, dan rekomendasi satu proyek muncul di proyek lain.
  */
-export function pinSessionProject({ stateFile, projectDir, focusId = null }) {
-  const target = path.resolve(String(projectDir || ""));
+export function pinSessionProject({
+  stateFile,
+  projectDir,
+  focusId = null,
+  expectedLeaseId = null,
+  requireLease = false,
+}) {
+  const target = canonicalProjectPath(projectDir);
   if (!target) {
     return null;
   }
 
   // Hanya untuk tata letak BER-PIN yang sudah berbentuk
-  // `<dasar>/projects/<proyek>/users/<user>/`. Untuk path state eksplisit
-  // (tes, CLI, skrip perbaikan) tidak ada tata letak seperti itu, dan
-  // memindahkan berkasnya justru membuat pemanggil membaca berkas kosong.
+  // `<dasar>/projects/<proyek>/users/<user>/`.
   if (!path.resolve(stateFile).split(path.sep).includes(PROJECTS_DIR)) {
     return null;
   }
@@ -1193,25 +1303,43 @@ export function pinSessionProject({ stateFile, projectDir, focusId = null }) {
   const projectDirPath = path.join(baseDir, PROJECTS_DIR, projectKey(target));
   const focus = Number(focusId);
 
-  try {
-    mkdirSync(path.join(baseDir, SESSIONS_DIR), { recursive: true });
-    writeFileSync(
-      sessionPointerPath(baseDir, sessionKey),
-      JSON.stringify(
-        {
-          projectDir: target,
-          projectDirPath,
-          focusId: Number.isSafeInteger(focus) && focus > 0 ? focus : null,
-          updatedAt: new Date().toISOString(),
-        },
-        null,
-        2,
-      ),
-      "utf8",
+  const writePointer = () => {
+    try {
+      mkdirSync(path.join(baseDir, SESSIONS_DIR), { recursive: true });
+      const ptrFile = sessionPointerPath(baseDir, sessionKey);
+      const tmpFile = `${ptrFile}.tmp.${process.pid}.${Date.now()}`;
+      writeFileSync(
+        tmpFile,
+        JSON.stringify(
+          {
+            projectDir: target,
+            projectDirPath,
+            focusId: Number.isSafeInteger(focus) && focus > 0 ? focus : null,
+            updatedAt: new Date().toISOString(),
+          },
+          null,
+          2,
+        ),
+        "utf8",
+      );
+      renameSync(tmpFile, ptrFile);
+    } catch {
+      // Penunjuk gagal ditulis bukan alasan menggagalkan pemanggil non-ketat.
+    }
+  };
+
+  if (requireLease || expectedLeaseId || existsSync(path.join(projectDirPath, "mcp-process.lock"))) {
+    withProjectOwnershipFence(
+      {
+        dir: projectDirPath,
+        expectedLeaseId,
+        requireLease,
+        operation: "pinSessionProject",
+      },
+      writePointer,
     );
-  } catch {
-    // Penunjuk gagal ditulis bukan alasan menggagalkan start_task: sesi tetap
-    // berjalan, hanya identitas proyeknya kembali ke cwd.
+  } else {
+    writePointer();
   }
 
   return {
@@ -1501,6 +1629,45 @@ export function readFocusBinding({ stateFile, focusId } = {}) {
   return readFocusBindingRecord(focusBindingPath(baseDir, id));
 }
 
+export function captureFocusBindingSnapshot({ stateFile, focusId } = {}) {
+  const id = Number(focusId);
+  if (!Number.isSafeInteger(id) || id <= 0) {
+    return { applicable: false, file: null, raw: null, focusId: null, baseDir: null };
+  }
+  const baseDir = resolveBaseDirFromState(stateFile);
+  const file = focusBindingPath(baseDir, id);
+  try {
+    const raw = readFileSync(file, "utf8");
+    return { applicable: true, file, raw, focusId: id, baseDir };
+  } catch {
+    return { applicable: true, file, raw: null, focusId: id, baseDir };
+  }
+}
+
+export async function restoreFocusBindingSnapshot(snapshot) {
+  if (!snapshot || !snapshot.applicable || !snapshot.file || !snapshot.baseDir || !snapshot.focusId) {
+    return false;
+  }
+  const lock = await acquireFocusLock({ baseDir: snapshot.baseDir, focusId: snapshot.focusId });
+  try {
+    if (snapshot.raw === null) {
+      if (existsSync(snapshot.file)) unlinkSync(snapshot.file);
+    } else {
+      mkdirSync(path.dirname(snapshot.file), { recursive: true });
+      writeFileSync(snapshot.file, snapshot.raw, "utf8");
+    }
+    return true;
+  } catch {
+    return false;
+  } finally {
+    if (lock && lock.ok && lock.file) {
+      try {
+        unlinkSync(lock.file);
+      } catch {}
+    }
+  }
+}
+
 function readFocusBindingRecord(file) {
   try {
     const data = JSON.parse(readFileSync(file, "utf-8"));
@@ -1758,6 +1925,13 @@ export class WorkflowState {
     // Berapa entri riwayat yang SUDAH ada di tabel. Dipakai supaya penyimpanan
     // hanya mengirim entri baru, bukan meng-upsert seluruh riwayat setiap kali.
     this._syncedHistoryCount = 0;
+
+    // Lease kepemilikan proyek yang terikat ke instance WorkflowState ini (F5).
+    this.boundLockLease = options.boundLockLease || null;
+    // Antrean serialisasi in-process supaya panggilan async berbarengan tidak
+    // mengacak-acak `this.state` / `this.stateFile` / `this.stateVersion`.
+    this._opQueue = Promise.resolve();
+    this._inSerializedOp = 0;
     this.state = {
       currentPhase: "idle",
       classification: "INTERNAL",
@@ -1830,6 +2004,86 @@ export class WorkflowState {
   }
 
   /**
+   * Bind an active process lock lease to this WorkflowState instance so all
+   * subsequent persistence mutations verify exclusive ownership under the
+   * cross-process gate (F5).
+   */
+  bindLockLease(lease) {
+    if (!lease || !lease.leaseId) {
+      this.boundLockLease = null;
+      return null;
+    }
+    this.boundLockLease = {
+      dir: lease.dir ? path.resolve(String(lease.dir)) : projectLockDir(this.stateFile),
+      leaseId: String(lease.leaseId),
+    };
+    return this.boundLockLease;
+  }
+
+  /**
+   * Serialize in-process async mutations against this WorkflowState instance
+   * (F5 / Phase 2 requirement 9). Re-entrant calls within an already-serialized
+   * operation execute directly without deadlocking.
+   */
+  async runSerialized(fn) {
+    if (this._inSerializedOp > 0) {
+      return await fn();
+    }
+    const previous = this._opQueue;
+    let releaseQueue;
+    this._opQueue = new Promise((resolve) => {
+      releaseQueue = resolve;
+    });
+    await previous.catch(() => {});
+    this._inSerializedOp += 1;
+    try {
+      return await fn();
+    } finally {
+      this._inSerializedOp -= 1;
+      releaseQueue();
+    }
+  }
+
+  _resolveFencingContext() {
+    const dir = projectLockDir(this.stateFile);
+    const heldForDir = getHeldLeaseForDir(dir);
+    if (heldForDir && heldForDir.leaseId) {
+      if (
+        !this.boundLockLease ||
+        path.resolve(String(this.boundLockLease.dir || "")) === path.resolve(dir)
+      ) {
+        this.boundLockLease = { dir: path.resolve(dir), leaseId: heldForDir.leaseId };
+      }
+    }
+    const boundMatchesDir =
+      this.boundLockLease &&
+      this.boundLockLease.leaseId &&
+      (!this.boundLockLease.dir ||
+        path.resolve(String(this.boundLockLease.dir)) === path.resolve(dir));
+    return {
+      dir,
+      expectedLeaseId: boundMatchesDir
+        ? this.boundLockLease.leaseId
+        : heldForDir?.leaseId || null,
+      requireLease: Boolean(boundMatchesDir || heldForDir?.leaseId),
+    };
+  }
+
+  async _withOwnershipFence(operation, fn) {
+    const ctx = this._resolveFencingContext();
+    return await withProjectOwnershipFence(
+      {
+        dir: ctx.dir,
+        stateFile: this.stateFile,
+        expectedLeaseId: ctx.expectedLeaseId,
+        requireLease: ctx.requireLease,
+        operation,
+      },
+      fn,
+    );
+  }
+
+  /**
    * Berpindah ke state milik sesi tertentu.
    *
    * Satu proses MCP bisa melayani beberapa sesi bergantian, jadi state harus
@@ -1837,82 +2091,84 @@ export class WorkflowState {
    * true bila berkas benar-benar berpindah.
    */
   async useSession(sessionId) {
-    // Identitas sesi HARUS disimpan: kunci baris SQLite memakainya. Sebelumnya
-    // `sessionId` hanya dipakai untuk memilih nama berkas, sehingga kunci state
-    // jatuh ke environment - dan satu variabel environment membuat semua sesi
-    // di proses ini berbagi satu baris.
-    const explicit = typeof sessionId === "string" ? sessionId.trim() : "";
-    const target = resolveStateFile({ sessionId });
-    if (target === this.stateFile && explicit === this.sessionId) return false;
+    return await this.runSerialized(async () => {
+      // Identitas sesi HARUS disimpan: kunci baris SQLite memakainya. Sebelumnya
+      // `sessionId` hanya dipakai untuk memilih nama berkas, sehingga kunci state
+      // jatuh ke environment - dan satu variabel environment membuat semua sesi
+      // di proses ini berbagi satu baris.
+      const explicit = typeof sessionId === "string" ? sessionId.trim() : "";
+      const target = resolveStateFile({ sessionId });
+      if (target === this.stateFile && explicit === this.sessionId) return false;
 
-    this.sessionId = explicit || null;
-    this.stateFile = target;
-    this.historyFile = resolveHistoryFile(target);
-    this.stateVersion = null;
-    // Mulai dari state bersih, lalu muat milik sesi itu. Menyalin state sesi
-    // sebelumnya akan membuat sesi baru mewarisi gerbang kualitas sesi lain.
-    this.state = {
-      currentPhase: "idle",
-      taskDescription: "",
-      bugFixed: false,
-      testsCreated: false,
-      testsPassed: false,
-      testsSkipped: false,
-      testsSkippedReason: "",
-      documentationCreated: false,
-      // Bukti berkas untuk gerbang dokumentasi. `documentationCreated` hanya
-      // berarti "agen mengaku sudah"; daftar ini berisi path yang benar-benar
-      // berubah di working tree, atau waiver dengan alasan tertulis.
-      documentationFiles: [],
-      documentationWaived: false,
-      documentationWaiverReason: "",
-      readyToCommit: false,
-      readyCheckCompleted: false,
-      released: false,
-      releaseSkipped: false,
-      releaseSkippedReason: "",
-      releaseCommand: "",
-      releaseNotes: "",
-      // Rekaman rilis yang benar-benar sampai ke produksi lewat CI/CD.
-      // `released` hanya berarti "perintah rilis dijalankan"; ini menyimpan tag,
-      // pipeline, dan site yang sudah menerimanya. Tanpa ini, upload langsung ke
-      // server tidak meninggalkan jejak apa pun di MCP.
-      deployment: null,
-      commitAndPushCompleted: false,
-      lastCommitMessage: "",
-      lastPushBranch: "",
-      // SHA yang benar-benar ter-push. Dipakai rekomendasi tindak lanjut untuk
-      // membaca diff commit ini (TODO baru, jumlah berkas) tanpa menebak HEAD.
-      lastCommitSha: "",
-      // Mesin pemilik task ini. Dipakai checkpoint supaya mesin lain tahu siapa
-      // yang memegang state hidup, dan supaya handoff bisa menyebut asal/tujuan.
-      machine: "",
-      // Rekaman checkpoint. `baseSha` diambil saat start_task sehingga daftar
-      // commit milik sesi ini bisa dihitung tanpa menebak, dan `handover` dicatat
-      // bila task diserahkan ke mesin lain.
-      checkpoint: { checkpointedAt: null, summary: "", baseSha: null, commits: [], handover: null },
-      // Repo proyek untuk sesi ini. Ditentukan saat start_task, dipakai semua
-      // operasi git berikutnya. Kosong berarti ikuti urutan resolusi di exec.js.
-      projectDir: "",
-      featureFlowCreated: false,
-      featureFlowDescription: "",
-      // Definition of Done milik task ini. Aturan dan bentuk itemnya ada di
-      // tools/handler-modules/dod.js; di sini hanya disimpan.
-      definitionOfDone: [],
-      dodSource: "",
-      dodFactoryTaskId: "",
-      // Naik setiap ada perubahan kerja baru setelah commit tercatat, sehingga
-      // bukti item `done` yang lama otomatis tidak lagi berlaku.
-      dodRevision: 0,
-      // Urutan kerja yang sedang dijalankan. Terpisah dari `definitionOfDone`:
-      // DoD adalah syarat selesai, ini adalah rencana langkahnya. Rencana tidak
-      // menjadi gerbang - ia hanya membuat progres bisa dibaca.
-      plan: [],
-      history: [],
-      taskType: "",
-    };
-    await this.load();
-    return true;
+      this.sessionId = explicit || null;
+      this.stateFile = target;
+      this.historyFile = resolveHistoryFile(target);
+      this.stateVersion = null;
+      // Mulai dari state bersih, lalu muat milik sesi itu. Menyalin state sesi
+      // sebelumnya akan membuat sesi baru mewarisi gerbang kualitas sesi lain.
+      this.state = {
+        currentPhase: "idle",
+        taskDescription: "",
+        bugFixed: false,
+        testsCreated: false,
+        testsPassed: false,
+        testsSkipped: false,
+        testsSkippedReason: "",
+        documentationCreated: false,
+        // Bukti berkas untuk gerbang dokumentasi. `documentationCreated` hanya
+        // berarti "agen mengaku sudah"; daftar ini berisi path yang benar-benar
+        // berubah di working tree, atau waiver dengan alasan tertulis.
+        documentationFiles: [],
+        documentationWaived: false,
+        documentationWaiverReason: "",
+        readyToCommit: false,
+        readyCheckCompleted: false,
+        released: false,
+        releaseSkipped: false,
+        releaseSkippedReason: "",
+        releaseCommand: "",
+        releaseNotes: "",
+        // Rekaman rilis yang benar-benar sampai ke produksi lewat CI/CD.
+        // `released` hanya berarti "perintah rilis dijalankan"; ini menyimpan tag,
+        // pipeline, dan site yang sudah menerimanya. Tanpa ini, upload langsung ke
+        // server tidak meninggalkan jejak apa pun di MCP.
+        deployment: null,
+        commitAndPushCompleted: false,
+        lastCommitMessage: "",
+        lastPushBranch: "",
+        // SHA yang benar-benar ter-push. Dipakai rekomendasi tindak lanjut untuk
+        // membaca diff commit ini (TODO baru, jumlah berkas) tanpa menebak HEAD.
+        lastCommitSha: "",
+        // Mesin pemilik task ini. Dipakai checkpoint supaya mesin lain tahu siapa
+        // yang memegang state hidup, dan supaya handoff bisa menyebut asal/tujuan.
+        machine: "",
+        // Rekaman checkpoint. `baseSha` diambil saat start_task sehingga daftar
+        // commit milik sesi ini bisa dihitung tanpa menebak, dan `handover` dicatat
+        // bila task diserahkan ke mesin lain.
+        checkpoint: { checkpointedAt: null, summary: "", baseSha: null, commits: [], handover: null },
+        // Repo proyek untuk sesi ini. Ditentukan saat start_task, dipakai semua
+        // operasi git berikutnya. Kosong berarti ikuti urutan resolusi di exec.js.
+        projectDir: "",
+        featureFlowCreated: false,
+        featureFlowDescription: "",
+        // Definition of Done milik task ini. Aturan dan bentuk itemnya ada di
+        // tools/handler-modules/dod.js; di sini hanya disimpan.
+        definitionOfDone: [],
+        dodSource: "",
+        dodFactoryTaskId: "",
+        // Naik setiap ada perubahan kerja baru setelah commit tercatat, sehingga
+        // bukti item `done` yang lama otomatis tidak lagi berlaku.
+        dodRevision: 0,
+        // Urutan kerja yang sedang dijalankan. Terpisah dari `definitionOfDone`:
+        // DoD adalah syarat selesai, ini adalah rencana langkahnya. Rencana tidak
+        // menjadi gerbang - ia hanya membuat progres bisa dibaca.
+        plan: [],
+        history: [],
+        taskType: "",
+      };
+      await this.load();
+      return true;
+    });
   }
 
   async load() {
@@ -1943,10 +2199,11 @@ export class WorkflowState {
         await this.mergeSharedHistory();
         this.loadedTask = "";
         // Ekspor awal supaya alat yang membaca JSON tidak menemui berkas hilang
-        // hanya karena sesinya belum pernah menyimpan.
-        await this._exportJson();
+        // hanya karena sesinya belum pernah menyimpan. Jika saat load awal
+        // proyek sedang dipegang penulis asing, jangan menulis ekspor kosong.
+        await this._exportJson({ allowSkipIfForeignLock: true });
         try {
-          await this.updateProjectSummary();
+          await this.updateProjectSummary({ allowSkipIfForeignLock: true });
         } catch (error) {
           safeLog("warn", `Ringkasan proyek awal gagal ditulis: ${error.message}`);
         }
@@ -2098,50 +2355,52 @@ export class WorkflowState {
       return;
     }
 
-    const hasil = await readJsonStateFile(this.historyFile, this.fs);
+    return await this._withOwnershipFence("writeHistoryFile", async () => {
+      const hasil = await readJsonStateFile(this.historyFile, this.fs);
 
-    // Berkas ada tetapi gagal dibaca (EBUSY/EACCES/EMFILE). Menulis sekarang
-    // berarti menghapus riwayat seluruh sesi lain di proyek ini - hanya karena
-    // berkasnya sedang dipegang proses lain sesaat.
-    if (hasil.status === "unreadable") {
-      throw new Error(
-        `History bersama "${this.historyFile}" tidak bisa dibaca ` +
-          `(${hasil.error?.code || hasil.error?.message}). Penulisan dibatalkan ` +
-          `supaya riwayat sesi lain tidak terhapus.`,
-      );
-    }
+      // Berkas ada tetapi gagal dibaca (EBUSY/EACCES/EMFILE). Menulis sekarang
+      // berarti menghapus riwayat seluruh sesi lain di proyek ini - hanya karena
+      // berkasnya sedang dipegang proses lain sesaat.
+      if (hasil.status === "unreadable") {
+        throw new Error(
+          `History bersama "${this.historyFile}" tidak bisa dibaca ` +
+            `(${hasil.error?.code || hasil.error?.message}). Penulisan dibatalkan ` +
+            `supaya riwayat sesi lain tidak terhapus.`,
+        );
+      }
 
-    let shared = {};
-    if (hasil.status === "corrupt") {
-      const cadangan = await backupDamagedFile(this.historyFile, this.fs);
-      console.warn(
-        `⚠️ History bersama rusak; isi aslinya disimpan di "${cadangan}" sebelum ditulis ulang.`,
-      );
-    } else if (hasil.status === "ok") {
-      shared = hasil.data && typeof hasil.data === "object" ? hasil.data : {};
-      if (shared.history !== undefined && !Array.isArray(shared.history)) {
+      let shared = {};
+      if (hasil.status === "corrupt") {
         const cadangan = await backupDamagedFile(this.historyFile, this.fs);
         console.warn(
-          `⚠️ Kolom history di "${this.historyFile}" bukan daftar; isi aslinya disimpan di "${cadangan}".`,
+          `⚠️ History bersama rusak; isi aslinya disimpan di "${cadangan}" sebelum ditulis ulang.`,
         );
-        shared = { ...shared, history: [] };
+      } else if (hasil.status === "ok") {
+        shared = hasil.data && typeof hasil.data === "object" ? hasil.data : {};
+        if (shared.history !== undefined && !Array.isArray(shared.history)) {
+          const cadangan = await backupDamagedFile(this.historyFile, this.fs);
+          console.warn(
+            `⚠️ Kolom history di "${this.historyFile}" bukan daftar; isi aslinya disimpan di "${cadangan}".`,
+          );
+          shared = { ...shared, history: [] };
+        }
       }
-    }
 
-    const merged = Array.isArray(shared.history) ? shared.history.slice() : [];
-    const seen = new Set(merged.map((entry) => this.historyKey(entry)));
-    for (const entry of this.state.history || []) {
-      const key = this.historyKey(entry);
-      if (!seen.has(key)) {
-        merged.push(entry);
-        seen.add(key);
+      const merged = Array.isArray(shared.history) ? shared.history.slice() : [];
+      const seen = new Set(merged.map((entry) => this.historyKey(entry)));
+      for (const entry of this.state.history || []) {
+        const key = this.historyKey(entry);
+        if (!seen.has(key)) {
+          merged.push(entry);
+          seen.add(key);
+        }
       }
-    }
 
-    const payload = { ...shared, history: merged };
-    assertSafeKnowledge(payload);
-    await fs.mkdir(path.dirname(this.historyFile), { recursive: true });
-    await fs.writeFile(this.historyFile, JSON.stringify(payload, null, 2));
+      const payload = { ...shared, history: merged };
+      assertSafeKnowledge(payload);
+      await fs.mkdir(path.dirname(this.historyFile), { recursive: true });
+      await fs.writeFile(this.historyFile, JSON.stringify(payload, null, 2));
+    });
   }
 
   async ensurePrimaryFile() {
@@ -2243,6 +2502,14 @@ export class WorkflowState {
   }
 
   async save(options = {}) {
+    return await this.runSerialized(async () => {
+      return await this._withOwnershipFence("save", async () => {
+        return await this._saveUnderFence(options);
+      });
+    });
+  }
+
+  async _saveUnderFence(options = {}) {
     assertSafeKnowledge(this.state);
 
     const db = await this._db();
@@ -2452,6 +2719,9 @@ export class WorkflowState {
       await this.writeHistoryFile();
       await this.updateProjectSummary();
     } catch (error) {
+      if (error instanceof ProjectOwnershipLostError || error?.code === "PROJECT_OWNERSHIP_LOST") {
+        throw error;
+      }
       safeLog("warn", `Riwayat/ringkasan gagal diperbarui: ${error.message}`);
     }
 
@@ -3032,54 +3302,75 @@ export class WorkflowState {
    * menggagalkan penyimpanan: tugasnya memudahkan pembacaan manual dan alat
    * lama, bukan menjaga data.
    */
-  async _exportJson() {
+  async _exportJson(options = {}) {
     try {
-      // Nama temp harus unik per PANGGILAN, bukan per proses. Dua export
-      // bersamaan dalam satu proses dulu memakai nama yang sama, sehingga satu
-      // rename menang dan yang lain gagal ENOENT - peringatan yang membuat
-      // proses sehat terlihat rusak.
-      const tmp = `${this.stateFile}.tmp-${process.pid}-${++this._exportSeq}`;
-      await fs.mkdir(path.dirname(this.stateFile), { recursive: true });
-      await fs.writeFile(tmp, JSON.stringify(this.state, null, 2));
+      return await this._withOwnershipFence("_exportJson", async () => {
+        // Nama temp harus unik per PANGGILAN, bukan per proses. Dua export
+        // bersamaan dalam satu proses dulu memakai nama yang sama, sehingga satu
+        // rename menang dan yang lain gagal ENOENT - peringatan yang membuat
+        // proses sehat terlihat rusak.
+        const tmp = `${this.stateFile}.tmp-${process.pid}-${++this._exportSeq}`;
+        await fs.mkdir(path.dirname(this.stateFile), { recursive: true });
+        await fs.writeFile(tmp, JSON.stringify(this.state, null, 2));
 
-      // Windows NTFS melempar EPERM bila file target sedang dikunci oleh rename/write
-      // bersamaan dalam proses yang sama. Coba ulang beberapa kali dengan jeda singkat.
-      let renamed = false;
-      for (let attempt = 0; attempt < 10; attempt++) {
-        try {
-          await fs.rename(tmp, this.stateFile);
-          renamed = true;
-          break;
-        } catch (renameErr) {
-          if ((renameErr.code === 'EPERM' || renameErr.code === 'EBUSY' || renameErr.code === 'EACCES') && attempt < 9) {
-            await new Promise((res) => setTimeout(res, 10 * (attempt + 1)));
-            continue;
+        // Windows NTFS melempar EPERM bila file target sedang dikunci oleh rename/write
+        // bersamaan dalam proses yang sama. Coba ulang beberapa kali dengan jeda singkat.
+        let renamed = false;
+        for (let attempt = 0; attempt < 10; attempt++) {
+          try {
+            await fs.rename(tmp, this.stateFile);
+            renamed = true;
+            break;
+          } catch (renameErr) {
+            if ((renameErr.code === 'EPERM' || renameErr.code === 'EBUSY' || renameErr.code === 'EACCES') && attempt < 9) {
+              await new Promise((res) => setTimeout(res, 10 * (attempt + 1)));
+              continue;
+            }
+            throw renameErr;
           }
-          throw renameErr;
         }
-      }
-      if (!renamed) {
-        throw new Error('Rename failed after retries');
-      }
+        if (!renamed) {
+          throw new Error('Rename failed after retries');
+        }
 
-      // Cermin ke lokasi kompatibilitas lama. Tetap dilakukan karena alat lama
-      // membaca jalur itu; yang berubah hanya statusnya - sekarang salinan,
-      // bukan sumber kebenaran.
-      await ensureCompatibilityLinks(this.stateFile);
-      return true;
+        // Cermin ke lokasi kompatibilitas lama. Tetap dilakukan karena alat lama
+        // membaca jalur itu; yang berubah hanya statusnya - sekarang salinan,
+        // bukan sumber kebenaran.
+        await ensureCompatibilityLinks(this.stateFile);
+        return true;
+      });
     } catch (error) {
+      if (error instanceof ProjectOwnershipLostError || error?.code === "PROJECT_OWNERSHIP_LOST") {
+        if (options.allowSkipIfForeignLock === true && !this.boundLockLease) {
+          return false;
+        }
+        throw error;
+      }
       safeLog("warn", `Ekspor JSON gagal ditulis (state tetap tersimpan di SQLite): ${error.message}`);
       return false;
     }
   }
 
-  async updateProjectSummary() {
-    assertSafeKnowledge(this.state);
-    const summaryPath = path.join(path.dirname(this.stateFile), PROJECT_SUMMARY_FILENAME);
-    const summary = this.generateProjectSummaryData();
-    assertSafeKnowledge(summary);
-    await fs.mkdir(path.dirname(summaryPath), { recursive: true });
-    await fs.writeFile(summaryPath, JSON.stringify(summary, null, 2));
+  async updateProjectSummary(options = {}) {
+    try {
+      return await this._withOwnershipFence("updateProjectSummary", async () => {
+        assertSafeKnowledge(this.state);
+        const summaryPath = path.join(path.dirname(this.stateFile), PROJECT_SUMMARY_FILENAME);
+        const summary = this.generateProjectSummaryData();
+        assertSafeKnowledge(summary);
+        await fs.mkdir(path.dirname(summaryPath), { recursive: true });
+        await fs.writeFile(summaryPath, JSON.stringify(summary, null, 2));
+      });
+    } catch (error) {
+      if (
+        (error instanceof ProjectOwnershipLostError || error?.code === "PROJECT_OWNERSHIP_LOST") &&
+        options.allowSkipIfForeignLock === true &&
+        !this.boundLockLease
+      ) {
+        return false;
+      }
+      throw error;
+    }
   }
 
   /**

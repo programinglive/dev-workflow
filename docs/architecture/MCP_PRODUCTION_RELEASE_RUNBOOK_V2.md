@@ -134,3 +134,26 @@ Read-only verification of `bw-tools` HTTP health endpoints at `2026-11-14T14:20:
    - Deleted local folders `infra-knowledge-mcp-server`, `pocketbase-mcp-server`, and `programinglive-mcp-server` (plus global `mcp-mermaid` npm package) across `MMCH`, `HELLOWORLD`, and `Mac`.
 3. **GitHub Remote Repositories:**
    - Archived `programinglive/infra-knowledge-mcp-server`, `programinglive/pocketbase-mcp-server`, and `programinglive/programinglive-mcp-server` via `gh repo archive --yes`. (Permanent deletion on GitHub requires an interactive OAuth refresh with `delete_repo` scope: `gh auth refresh -h github.com -s delete_repo`).
+
+---
+
+## 10. PR #99 Project Lock Ownership Protocol v2 (`LOCK_PROTOCOL_VERSION = 2`) & F1–F8 Remediation
+
+Under canonical DevWorkflow task `8feef683-f09a-4d2c-9cda-0b91da603a10` (Focus `#81`, Todo `#756`), `process-lock.js`, `workflow-state.js`, `tools/handler-modules/workflow-handlers.js`, and `index.js` implement **Project Lock Ownership Protocol v2** to remediate all 8 concurrency and security review findings (`F1`–`F8`):
+
+1. **Cross-Process Exclusive Gate (`mcp-process.gate.lock`):**
+   - Every critical read-verify-commit operation on `mcp-process.lock` (`acquireProcessLock`, `refreshProcessLock`, `releaseProcessLock`, `withProjectOwnershipFence`) is serialized under an atomic hard-link gate (`publishCompleteJsonFile` via `writeFileSync(tmp, ..., { flag: "wx" })` + `linkSync(tmp, targetFile)`), eliminating 0-byte partial initialization windows (`F2`) and TOCTOU overwrite/unlink races (`F1`, `F3`).
+2. **Capability-Fenced Ownership (`pid`, `leaseId`, `incarnationId`):**
+   - Ownership is bound to the 3-tuple `(pid, leaseId, incarnationId)` tracked in `heldLeases`. PID equality alone never authorizes lock re-entry, adoption, heartbeat refresh, or lock release (`F8`).
+   - `defaultIsHolderProcess` inspects OS process creation time and command line (`Win32_Process` on Windows, `/proc/<pid>/cmdline` and `ps -o etimes=,command=` on Linux) to detect PID reuse even when reused by another `node` process (`F8`).
+3. **No Heartbeat-Only Takeover & Fail-Closed Legacy Detection (`F4`):**
+   - A timed-out heartbeat (`age > staleMs`) never authorizes takeover while the holder process is still alive (`!isConfirmedDead`).
+   - Legacy v1 locks (missing `leaseId` or `protocolVersion < 2`) are detected both in `targetLockDir` and via `<base>/sessions/*.json` pointers from `fromDir`, failing closed (`legacy_writer_active`) even when `force: true`.
+4. **Protected State Persistence Fencing & In-Process Serialization (`F5`):**
+   - `WorkflowState.save()`, `_exportJson()`, `writeHistoryFile()`, `updateProjectSummary()`, and `pinSessionProject()` execute inside `withProjectOwnershipFence`, throwing `ProjectOwnershipLostError` if the process's bound `leaseId` no longer matches `mcp-process.lock`.
+   - `parseOwnerTimestamp` parses both ISO 8601 strings and epoch milliseconds, ensuring `findActiveForeignTaskInProject` and `handleStartTask` never evaluate `owner.updatedAt` as `NaN`.
+   - Concurrent in-process async calls on `WorkflowState` are serialized via `runSerialized`.
+5. **Fail-Closed Write Errors & Two-Phase Transactional Relocation (`F6`, `F7`):**
+   - `acquireProcessLock` returns `{ acquired: false, wrote: false, error }` on any filesystem error (`EACCES`, `EPERM`, `ENOSPC`, `EROFS`).
+   - `handleStartTask` stages lock acquisition (`stageProcessLockTransition`) before mutating focus bindings, session pointers, or state, and commits (`commitProcessLockTransition`) only after `workflowState.save()` succeeds; any error triggers full rollback (`rollbackProcessLockTransition`, `restoreSessionPointerSnapshot`, `restoreFocusBindingSnapshot`).
+
