@@ -80,6 +80,9 @@ CLI headless execution was independently verified via:
 
 - **PR Branch:** `fix/project-lock-session-isolation`
 - **Target Branch:** `main`
+- **PR URL:** https://github.com/programinglive/dev-workflow-mcp-server/pull/99
+- **Merge Commit SHA:** Pending review & owner authorization
+- **Pushed Commit SHA:** `15ff7df34a2e587a8bba1e0586e0fc2f1464c8ff`
 - **Managed MCP Deployment:** Per explicit user instructions, ManagedMCP promotion/deployment (`perform_release`, `node managed/rollout.cjs`) is **SKIPPED** in this task. Live MCP servers remain stable on the currently promoted release until code review is approved.
 
 ---
