@@ -1646,16 +1646,16 @@ test("R2-4 Durable Transition Safety & Crash Recovery: Post-save failure and abr
     ws.state.definitionOfDone[0].evidence = "Verified on Repo A";
     await ws.save();
 
-    // 2. Part 1: Failure injected in `afterSave` (AFTER target state has been saved to Repo B's SQLite & JSON!)
-    let targetExistedDuringAfterSave = false;
-    const failedPostSave = await handleStartTask(
+    // 2. Part 1: Pre-commit failure injected in `beforeSave` (BEFORE authoritative SQLite commit on Repo B)
+    let beforeSaveCalled = false;
+    const failedPreCommit = await handleStartTask(
       {
-        description: "Uncommitted task on Repo B that fails after save",
+        description: "Uncommitted task on Repo B that fails before SQLite commit",
         type: "feature",
         projectDir: repoB,
         focusId: 89,
         allowProjectSwitch: true,
-        projectSwitchReason: "Testing post-save failure rollback",
+        projectSwitchReason: "Testing pre-commit failure rollback",
         definitionOfDone: ["dod B1"],
         plan: ["step B1"],
       },
@@ -1663,16 +1663,16 @@ test("R2-4 Durable Transition Safety & Crash Recovery: Post-save failure and abr
       {},
       {
         transitionHooks: {
-          afterSave: async () => {
-            targetExistedDuringAfterSave = existsSync(ws.stateFile);
-            throw new Error("POST_SAVE_BEFORE_COMMIT_FAILURE");
+          beforeSave: async () => {
+            beforeSaveCalled = true;
+            throw new Error("PRE_COMMIT_BEFORE_SAVE_FAILURE");
           },
         },
       },
     );
 
-    assert.equal(targetExistedDuringAfterSave, true, "Target state file must have been written before afterSave threw");
-    assert.match(failedPostSave?.content?.[0]?.text || "", /POST_SAVE_BEFORE_COMMIT_FAILURE/);
+    assert.equal(beforeSaveCalled, true, "beforeSave hook must be invoked before SQLite commit");
+    assert.match(failedPreCommit?.content?.[0]?.text || "", /PRE_COMMIT_BEFORE_SAVE_FAILURE/);
 
     // Verify Repo A is intact
     assert.equal(ws.state.taskDescription, "Authoritative task on Repo A");
@@ -1684,14 +1684,14 @@ test("R2-4 Durable Transition Safety & Crash Recovery: Post-save failure and abr
     assert.equal(
       existsSync(ws.stateFile.replace(bucketA, bucketB)),
       false,
-      "Target state JSON file on Repo B must be removed on post-save rollback",
+      "Target state JSON file on Repo B must not exist on pre-commit rollback",
     );
     const probeB = new WorkflowState(stateFileB, { sessionId: "ses_r24" });
     await probeB.load();
-    assert.equal(probeB.state.currentPhase, "idle", "Repo B SQLite row must be rolled back to idle/deleted");
+    assert.equal(probeB.state.currentPhase, "idle", "Repo B SQLite row must remain idle");
     assert.equal(probeB.state.taskDescription, "", "Repo B must not retain uncommitted task description in SQLite");
     await probeB.close();
-    // Clean up probeB's initial empty export soPart 2 starts clean
+    // Clean up probeB's initial empty export so Part 2 starts clean
     await rm(lockDirB, { recursive: true, force: true });
 
     await ws.close();
@@ -2113,8 +2113,9 @@ test("R3-4 & R3-5 Journal Recovery Concurrency, Newer-Owner Non-Overwrite, Summa
         description: "Task failing at commit marking",
         type: "feature",
         projectDir: repoB,
+        focusId: 89,
         allowProjectSwitch: true,
-        projectSwitchReason: "test",
+        projectSwitchReason: "Testing pre-commit failure rollback in R3-4",
         definitionOfDone: ["dod b"],
         plan: ["step b"],
       },
@@ -2122,8 +2123,8 @@ test("R3-4 & R3-5 Journal Recovery Concurrency, Newer-Owner Non-Overwrite, Summa
       {},
       {
         transitionHooks: {
-          afterSave: async ({ transitionJournal }) => {
-            transitionJournal.journalFile = path.join(pinnedA, "j.json");
+          beforeSave: async () => {
+            throw new Error("PRE_COMMIT_FAILURE_R34");
           },
         },
       },

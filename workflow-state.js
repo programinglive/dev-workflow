@@ -29,6 +29,8 @@ import {
   PROCESS_INCARNATION_ID,
   GATE_FILENAME,
   ProjectOwnershipLostError,
+  acquireWorktreeMutex,
+  releaseWorktreeMutex,
   assertWorktreeCapabilityLive,
   useWorktreeCapability,
   getHeldWorktreeCapability,
@@ -847,10 +849,6 @@ export function resolveStateFile({ sessionId = null } = {}) {
     const baseDir = path.dirname(resolvedCustom);
     const sessionKey = resolveSessionKey(process.env, sessionId);
 
-    // R2-4: Rekonsiliasi sinkron atas jurnal transisi yang belum komit milik
-    // proses yang sudah mati sebelum membaca penunjuk sesi.
-    reconcilePendingTransitionJournalsSync({ baseDir });
-
     /*
      * MENGAPA ADA PENUNJUK PER SESI
      * -----------------------------
@@ -1115,8 +1113,10 @@ export function findActiveForeignTaskInProject({
   isHolderProcess = currentIsHolderProcess(),
 } = {}) {
   const candidateFiles = new Set();
-  if (targetStateFile) {
-    candidateFiles.add(path.resolve(targetStateFile));
+  const targetResolved = targetStateFile ? path.resolve(targetStateFile) : null;
+  const targetSessionKey = targetResolved ? sessionKeyFromStateFile(targetResolved) : null;
+  if (targetResolved) {
+    candidateFiles.add(targetResolved);
   }
   if (projectDirPath && existsSync(projectDirPath)) {
     const rootState = path.join(projectDirPath, STATE_FILENAME);
@@ -1148,10 +1148,19 @@ export function findActiveForeignTaskInProject({
       const description = typeof disk.taskDescription === "string" ? disk.taskDescription.trim() : "";
       const ownerPid = Number(disk.owner?.pid);
       const ownerMarker = typeof disk.owner?.processMarker === "string" ? disk.owner.processMarker.trim() : "";
+      const fileSessionKey = sessionKeyFromStateFile(file);
+      const differentSessionInSameProcess =
+        Boolean(targetResolved) &&
+        path.resolve(file) !== targetResolved &&
+        Boolean(targetSessionKey) &&
+        Boolean(fileSessionKey) &&
+        fileSessionKey !== targetSessionKey;
       const foreignOwner =
         Number.isFinite(ownerPid) &&
         ownerPid > 0 &&
-        (ownerPid !== ownPid || (ownerMarker !== "" && ownerMarker !== PROCESS_TOKEN));
+        (ownerPid !== ownPid ||
+          (ownerMarker !== "" && ownerMarker !== PROCESS_TOKEN) ||
+          differentSessionInSameProcess);
       if (phase === "idle" || description === "" || !foreignOwner) continue;
 
       if (!isAlive(ownerPid)) continue;
@@ -1250,9 +1259,26 @@ export function captureSessionPointerSnapshot(stateFile) {
   }
 }
 
-export function restoreSessionPointerSnapshot(snapshot) {
+export function restoreSessionPointerSnapshot(snapshot, journal = null) {
   if (!snapshot || !snapshot.applicable || !snapshot.file) return false;
   try {
+    if (existsSync(snapshot.file) && journal) {
+      try {
+        const cur = JSON.parse(readFileSync(snapshot.file, "utf8"));
+        const curTs = cur?.updatedAt ? Date.parse(cur.updatedAt) : NaN;
+        if (Number.isFinite(curTs) && Number.isFinite(Number(journal.startedAt)) && curTs > Number(journal.startedAt) + 5) {
+          let snapTs = NaN;
+          if (snapshot.raw) {
+            try {
+              snapTs = Date.parse(JSON.parse(snapshot.raw)?.updatedAt || "");
+            } catch {}
+          }
+          if (!Number.isFinite(snapTs) || curTs !== snapTs) {
+            return false;
+          }
+        }
+      } catch {}
+    }
     if (snapshot.raw === null) {
       if (existsSync(snapshot.file)) unlinkSync(snapshot.file);
     } else {
@@ -1687,12 +1713,30 @@ export function captureFocusBindingSnapshot({ stateFile, focusId } = {}) {
   }
 }
 
-export async function restoreFocusBindingSnapshot(snapshot) {
+export async function restoreFocusBindingSnapshot(snapshot, journal = null) {
   if (!snapshot || !snapshot.applicable || !snapshot.file || !snapshot.baseDir || !snapshot.focusId) {
     return false;
   }
   const lock = await acquireFocusLock({ baseDir: snapshot.baseDir, focusId: snapshot.focusId });
+  if (!lock || !lock.ok) return false;
   try {
+    if (existsSync(snapshot.file) && journal) {
+      try {
+        const cur = JSON.parse(readFileSync(snapshot.file, "utf8"));
+        const curTs = cur?.boundAt ? Date.parse(cur.boundAt) : NaN;
+        if (Number.isFinite(curTs) && Number.isFinite(Number(journal.startedAt)) && curTs > Number(journal.startedAt) + 5) {
+          let snapTs = NaN;
+          if (snapshot.raw) {
+            try {
+              snapTs = Date.parse(JSON.parse(snapshot.raw)?.boundAt || "");
+            } catch {}
+          }
+          if (!Number.isFinite(snapTs) || curTs !== snapTs) {
+            return false;
+          }
+        }
+      } catch {}
+    }
     if (snapshot.raw === null) {
       if (existsSync(snapshot.file)) unlinkSync(snapshot.file);
     } else {
@@ -1798,9 +1842,52 @@ function restoreFileSnapshot(snap, journal = null, role = "source") {
   }
 }
 
-function restoreFocusBindingSnapshotSync(snapshot) {
+function restoreFocusBindingSnapshotSync(snapshot, journal = null) {
   if (!snapshot || !snapshot.applicable || !snapshot.file) return false;
+  let lockFile = null;
+  if (snapshot.baseDir && snapshot.focusId) {
+    const candidateLock = focusLockPath(snapshot.baseDir, snapshot.focusId);
+    try {
+      mkdirSync(path.join(snapshot.baseDir, SESSIONS_DIR), { recursive: true });
+      const tmp = `${candidateLock}.${process.pid}.${Date.now()}.tmp`;
+      writeFileSync(tmp, JSON.stringify({ pid: process.pid, host: os.hostname(), startedAt: Date.now() }));
+      try {
+        linkSync(tmp, candidateLock);
+        lockFile = candidateLock;
+      } catch (err) {
+        if (err?.code === "EEXIST" && focusLockIsStale(candidateLock) && tryRecoverStaleLock(candidateLock)) {
+          linkSync(tmp, candidateLock);
+          lockFile = candidateLock;
+        } else {
+          return false;
+        }
+      } finally {
+        try {
+          unlinkSync(tmp);
+        } catch {}
+      }
+    } catch {
+      return false;
+    }
+  }
   try {
+    if (existsSync(snapshot.file) && journal) {
+      try {
+        const cur = JSON.parse(readFileSync(snapshot.file, "utf8"));
+        const curTs = cur?.boundAt ? Date.parse(cur.boundAt) : NaN;
+        if (Number.isFinite(curTs) && Number.isFinite(Number(journal.startedAt)) && curTs > Number(journal.startedAt) + 5) {
+          let snapTs = NaN;
+          if (snapshot.raw) {
+            try {
+              snapTs = Date.parse(JSON.parse(snapshot.raw)?.boundAt || "");
+            } catch {}
+          }
+          if (!Number.isFinite(snapTs) || curTs !== snapTs) {
+            return false;
+          }
+        }
+      } catch {}
+    }
     if (snapshot.raw === null) {
       if (existsSync(snapshot.file)) unlinkSync(snapshot.file);
     } else {
@@ -1810,6 +1897,12 @@ function restoreFocusBindingSnapshotSync(snapshot) {
     return true;
   } catch {
     return false;
+  } finally {
+    if (lockFile) {
+      try {
+        unlinkSync(lockFile);
+      } catch {}
+    }
   }
 }
 
@@ -2105,7 +2198,10 @@ function releaseOrphanedLockFromJournal(dir, expectedLeaseId, deadPid, { recover
   return { ok: true, alreadyAbsent: true };
 }
 
-function rollbackJournalFilesAndLocksSync(journal, { isCrashRecovery = false, recoveryAuthority = null } = {}) {
+function rollbackJournalFilesAndLocksSync(
+  journal,
+  { isCrashRecovery = false, recoveryAuthority = null, skipFocusSync = false, supersededByNewerOwner = false } = {},
+) {
   if (!journal) return { ok: true };
 
   const results = [];
@@ -2114,11 +2210,14 @@ function rollbackJournalFilesAndLocksSync(journal, { isCrashRecovery = false, re
   }
   results.push(restoreFileSnapshot(journal.sourceStateSnap, journal, "source"));
 
-  if (journal.priorSessionPointer) {
-    restoreSessionPointerSnapshot(journal.priorSessionPointer);
+  const anySuperseded =
+    supersededByNewerOwner || results.some((r) => Boolean(r && r.skippedNewerOwner));
+
+  if (!anySuperseded && journal.priorSessionPointer) {
+    restoreSessionPointerSnapshot(journal.priorSessionPointer, journal);
   }
-  if (journal.priorFocusBinding) {
-    restoreFocusBindingSnapshotSync(journal.priorFocusBinding);
+  if (!anySuperseded && !skipFocusSync && journal.priorFocusBinding) {
+    restoreFocusBindingSnapshotSync(journal.priorFocusBinding, journal);
   }
 
   if (isCrashRecovery && journal.relocatedLock && journal.toLockDir && journal.toLockDir !== journal.fromLockDir) {
@@ -2126,7 +2225,7 @@ function rollbackJournalFilesAndLocksSync(journal, { isCrashRecovery = false, re
   }
 
   const failed = results.find((r) => r && r.ok === false);
-  return failed ? { ok: false, error: failed.error } : { ok: true };
+  return failed ? { ok: false, error: failed.error } : { ok: true, skippedNewerOwner: anySuperseded };
 }
 
 /**
@@ -2149,58 +2248,92 @@ export async function rollbackTransitionJournal(
     }
   } catch {}
 
-  if (typeof hooks?.onBeforeRestore === "function") {
-    await hooks.onBeforeRestore({ journal });
-  }
-
-  let targetDbRes = { ok: true };
-  if (journal.targetDbSnapshot && journal.targetStateFile !== journal.sourceStateFile) {
-    targetDbRes = await restoreDbRowSnapshot(journal.targetDbSnapshot, journal, "target");
-  }
-  const sourceDbRes = journal.sourceDbSnapshot
-    ? await restoreDbRowSnapshot(journal.sourceDbSnapshot, journal, "source")
-    : { ok: true };
-
-  if (!targetDbRes.ok || !sourceDbRes.ok) {
-    // R3-5: Pertahankan jurnal di disk sebagai bukti bila pemulihan DB gagal.
-    return false;
-  }
-
-  const fileRes = rollbackJournalFilesAndLocksSync(journal, {
-    isCrashRecovery: !stagedLock,
-    recoveryAuthority,
-  });
-  if (!fileRes.ok) {
-    return false;
-  }
-
-  if (journal.priorFocusBinding) {
-    await restoreFocusBindingSnapshot(journal.priorFocusBinding);
-  }
-
-  if (workflowState && journal.priorInMemory) {
-    workflowState.stateFile = journal.sourceStateFile;
-    workflowState.historyFile = journal.sourceHistoryFile;
-    workflowState.stateVersion = journal.priorInMemory.stateVersion;
-    workflowState.loadedTask = journal.priorInMemory.loadedTask;
-    if (journal.priorInMemory.state) {
-      workflowState.state = structuredClone(journal.priorInMemory.state);
+  const acquiredRecoveryCaps = [];
+  const candidateDirs = [journal.sourceProjectDir, journal.targetProjectDir].filter(
+    (d) => typeof d === "string" && d.trim() !== "",
+  );
+  try {
+    for (const dir of new Set(candidateDirs)) {
+      const m = await acquireWorktreeMutex({
+        projectDir: dir,
+        timeoutMs: 25,
+        ownerKey: journal.sessionKey ? `recovery:${journal.sessionKey}` : null,
+      });
+      if (m.ok && !m.alreadyHeld && m.capability) {
+        acquiredRecoveryCaps.push(m.capability);
+      } else if (
+        !m.ok &&
+        m.reason !== "invalid_project_dir" &&
+        m.reason !== "unsupported_platform"
+      ) {
+        // Another live owner currently holds the worktree mutex; do not overwrite its state!
+        return false;
+      }
     }
-    if (typeof workflowState.bindLockLease === "function") {
-      workflowState.bindLockLease(journal.priorInMemory.boundLease);
+
+    if (typeof hooks?.onBeforeRestore === "function") {
+      await hooks.onBeforeRestore({ journal });
+    }
+
+    let targetDbRes = { ok: true };
+    if (journal.targetDbSnapshot && journal.targetStateFile !== journal.sourceStateFile) {
+      targetDbRes = await restoreDbRowSnapshot(journal.targetDbSnapshot, journal, "target");
+    }
+    const sourceDbRes = journal.sourceDbSnapshot
+      ? await restoreDbRowSnapshot(journal.sourceDbSnapshot, journal, "source")
+      : { ok: true };
+
+    if (!targetDbRes.ok || !sourceDbRes.ok) {
+      // R3-5: Pertahankan jurnal di disk sebagai bukti bila pemulihan DB gagal.
+      return false;
+    }
+
+    const dbSuperseded = Boolean(targetDbRes.skippedNewerOwner || sourceDbRes.skippedNewerOwner);
+
+    const fileRes = rollbackJournalFilesAndLocksSync(journal, {
+      isCrashRecovery: !stagedLock,
+      recoveryAuthority,
+      skipFocusSync: true,
+      supersededByNewerOwner: dbSuperseded,
+    });
+    if (!fileRes.ok) {
+      return false;
+    }
+
+    if (!dbSuperseded && !fileRes.skippedNewerOwner && journal.priorFocusBinding) {
+      await restoreFocusBindingSnapshot(journal.priorFocusBinding, journal);
+    }
+
+    if (workflowState && journal.priorInMemory) {
+      workflowState.stateFile = journal.sourceStateFile;
+      workflowState.historyFile = journal.sourceHistoryFile;
+      workflowState.stateVersion = journal.priorInMemory.stateVersion;
+      workflowState.loadedTask = journal.priorInMemory.loadedTask;
+      if (journal.priorInMemory.state) {
+        workflowState.state = structuredClone(journal.priorInMemory.state);
+      }
+      if (typeof workflowState.bindLockLease === "function") {
+        workflowState.bindLockLease(journal.priorInMemory.boundLease);
+      }
+    }
+
+    if (typeof setActiveProjectDirFn === "function" && journal.priorInMemory) {
+      setActiveProjectDirFn(journal.priorInMemory.activeProjectDir || "");
+    }
+
+    if (typeof hooks?.onBeforeCompleteJournal === "function") {
+      await hooks.onBeforeCompleteJournal({ journal });
+    }
+
+    completeTransitionJournal(journal);
+    return true;
+  } finally {
+    for (const cap of acquiredRecoveryCaps) {
+      try {
+        await releaseWorktreeMutex(cap);
+      } catch {}
     }
   }
-
-  if (typeof setActiveProjectDirFn === "function" && journal.priorInMemory) {
-    setActiveProjectDirFn(journal.priorInMemory.activeProjectDir || "");
-  }
-
-  if (typeof hooks?.onBeforeCompleteJournal === "function") {
-    await hooks.onBeforeCompleteJournal({ journal });
-  }
-
-  completeTransitionJournal(journal);
-  return true;
 }
 
 function isJournalOwnerConfirmedDead(journal, { isAlive = currentIsAlive(), isHolderProcess = currentIsHolderProcess() } = {}) {
@@ -2914,6 +3047,7 @@ export class WorkflowState {
       this.stateFile = target;
       this.historyFile = resolveHistoryFile(target);
       this.stateVersion = null;
+      this.boundKernelCapability = null;
       // Mulai dari state bersih, lalu muat milik sesi itu. Menyalin state sesi
       // sebelumnya akan membuat sesi baru mewarisi gerbang kualitas sesi lain.
       this.state = {
@@ -2977,30 +3111,18 @@ export class WorkflowState {
         taskType: "",
       };
       await this.load();
+      if (this.state?.projectDir) {
+        const cap = getHeldWorktreeCapability(this.state.projectDir);
+        const sKey = this._sessionKey()?.key || this.sessionId || "";
+        if (cap && (!cap.ownerKey || !sKey || cap.ownerKey === sKey)) {
+          this.boundKernelCapability = cap;
+        }
+      }
       return true;
     });
   }
 
   async load() {
-    // R2-4: Rekonsiliasi penuh (termasuk baris SQLite target & asal) atas jurnal
-    // transisi yang ditinggalkan proses mati sebelum memuat state.
-    const reconciledJournals = await reconcilePendingTransitionJournals({ stateFile: this.stateFile });
-    if (Array.isArray(reconciledJournals) && reconciledJournals.length > 0) {
-      const { key: currentSessionKey } = this._sessionKey();
-      const match = reconciledJournals.find(
-        (entry) =>
-          entry.action === "rolled_back" &&
-          entry.sessionKey === currentSessionKey &&
-          entry.sourceStateFile &&
-          path.resolve(entry.targetStateFile || "") === path.resolve(this.stateFile),
-      );
-      if (match) {
-        await this.close();
-        this.stateFile = match.sourceStateFile;
-        this.historyFile = resolveHistoryFile(match.sourceStateFile);
-      }
-    }
-
     // Berkas bernama lama (`.workflow-state.json`) dipindahkan ke nama sekarang
     // SEBELUM apa pun dibaca. Tanpa ini, pengguna yang memutakhirkan dari versi
     // pra-1.16 akan tampak kehilangan seluruh state-nya.
@@ -3339,6 +3461,7 @@ export class WorkflowState {
   }
 
   async _saveUnderFence(options = {}) {
+    this._lastSaveCommittedSqlite = false;
     assertSafeKnowledge(this.state);
 
     const db = await this._db();
@@ -3496,6 +3619,7 @@ export class WorkflowState {
       }
     }
 
+    this._lastSaveCommittedSqlite = true;
     this.stateVersion = written.version;
     this.lastReconcile = reconciled;
     this.loadedTask = this.state.taskDescription || "";

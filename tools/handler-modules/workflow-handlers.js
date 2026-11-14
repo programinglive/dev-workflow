@@ -372,6 +372,14 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
   // The comparison runs here, before `reset()`, so a refusal changes nothing:
   // the active task, its Definition of Done and its evidence stay intact.
   const requestedIdentity = await captureRepositoryIdentity({ dir: project.dir });
+  if (!requestedIdentity || !requestedIdentity.isGitRepo || !requestedIdentity.root) {
+    return textResponse(
+      `⚠️ Refused: "${project.dir}" is not a valid Git working tree.\n\n` +
+        `A task must be anchored to a real Git repository or worktree so its canonical ` +
+        `worktree mutex and repository identity can be verified fail-closed.\n\n` +
+        `Task NOT started; the previous task and its evidence are unchanged.`
+    );
+  }
   const sessionProject = readSessionProject({ stateFile: workflowState.stateFile });
   let sessionIdentity = null;
   if (sessionProject) {
@@ -431,7 +439,15 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
 
   // Stage 2 (Option B): Acquire authoritative OS-owned kernel mutex for the
   // canonical Git working tree BEFORE any state, pointer, or focus mutation.
-  const targetMutex = await acquireWorktreeMutex({ projectDir: project.dir });
+  const sessionOwnerKey =
+    (typeof workflowState?._sessionKey === "function" ? workflowState._sessionKey()?.key : "") ||
+    workflowState?.sessionId ||
+    path.resolve(String(targetStateFile || workflowState?.stateFile || "")) ||
+    String(process.pid);
+  const targetMutex = await acquireWorktreeMutex({
+    projectDir: project.dir,
+    ownerKey: sessionOwnerKey,
+  });
 
   if (!targetMutex.ok) {
     if (targetMutex.reason === "unsupported_platform") {
@@ -472,6 +488,14 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
     if (!targetMutex.alreadyHeld) {
       await releaseWorktreeMutex(targetMutex.capability);
     }
+    if (legacyWriter.inspectionError) {
+      return textResponse(
+        `⚠️ Dibatalkan: status kunci proses untuk proyek ini tidak dapat diverifikasi secara tertutup ` +
+          `(${legacyWriter.reason || legacyWriter.error || "LOCK_INSPECTION_FAILED"}).\n\n` +
+          `Kepemilikan eksklusif menolak melanjutkan saat metadata kunci korup atau tidak terbaca (fail-closed).\n` +
+          `Task BELUM dimulai; tidak ada state yang diubah.`
+      );
+    }
     const isGenuineLegacy = isLegacyLock(legacyWriter) || legacyWriter.kernelMutex === false;
     if (isGenuineLegacy) {
       return textResponse(
@@ -498,6 +522,18 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
       baseDir: stateBase,
       isAlive: currentIsAlive(),
     });
+    if (quiescence.inspectionErrors && quiescence.inspectionErrors.length > 0) {
+      if (!targetMutex.alreadyHeld) {
+        await releaseWorktreeMutex(targetMutex.capability);
+      }
+      const errItem = quiescence.inspectionErrors[0];
+      return textResponse(
+        `⚠️ Dibatalkan: pemeriksaan quiescence gagal secara tertutup ` +
+          `(${errItem.reason || errItem.error || "QUIESCENCE_INSPECTION_FAILED"}).\n\n` +
+          `Direktori atau metadata kunci tidak dapat diperiksa secara utuh (fail-closed).\n` +
+          `Task BELUM dimulai; tidak ada state yang diubah.`
+      );
+    }
     if (quiescence.legacyWriters.length > 0) {
       if (!targetMutex.alreadyHeld) {
         await releaseWorktreeMutex(targetMutex.capability);
@@ -532,7 +568,12 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
   const priorHistoryFile = workflowState.historyFile;
   const priorStateVersion = workflowState.stateVersion;
   const priorLoadedTask = workflowState.loadedTask;
-  const priorKernelCapability = workflowState.boundKernelCapability || null;
+  const rawPriorCapability = workflowState.boundKernelCapability || null;
+  const priorKernelCapability =
+    rawPriorCapability &&
+    (!rawPriorCapability.ownerKey || rawPriorCapability.ownerKey === sessionOwnerKey)
+      ? rawPriorCapability
+      : null;
   const priorRequireKernelMutex = Boolean(workflowState.requireKernelMutex);
   const priorActiveProjectDir = priorStateSnapshot.projectDir || "";
 
@@ -540,6 +581,7 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
   let archivedTask = null;
   let reconciled = null;
   let claimedNewFocus = false;
+  let sqliteCommitted = false;
   const warnings = [];
 
   try {
@@ -547,6 +589,7 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
       workflowState.bindKernelCapability(targetMutex.capability);
     }
     workflowState.requireKernelMutex = true;
+    workflowState._lastSaveCommittedSqlite = false;
 
     const committed = await useWorktreeCapability(
       targetMutex.capability,
@@ -682,6 +725,7 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
         }
 
         // Authoritative SQLite commit boundary (fenced by live OS mutex).
+        workflowState._lastSaveCommittedSqlite = false;
         reconciled = await workflowState.save({ allowReplaceRunningTask: true });
         if (!reconciled || reconciled.verified === false || reconciled.conflict) {
           throw new Error(
@@ -689,6 +733,7 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
               "Target project state persistence could not be verified.",
           );
         }
+        sqliteCommitted = true;
 
         if (typeof transitionHooks?.afterSave === "function") {
           await transitionHooks.afterSave({ reconciled, targetMutex });
@@ -745,41 +790,87 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
       await releaseWorktreeMutex(priorKernelCapability);
     }
   } catch (transitionError) {
-    // Restore in-memory state cleanly; prior SQLite state & DoD evidence were not overwritten.
-    if (claimedNewFocus && hasRequestedFocus) {
+    const committedToSqlite =
+      sqliteCommitted || Boolean(workflowState._lastSaveCommittedSqlite);
+    if (committedToSqlite) {
+      // Authoritative SQLite commit already succeeded under the live OS mutex.
+      // Never roll back committed SQLite state or release the target capability;
+      // instead, reconcile reconstructible post-commit projections under the live fence.
       try {
-        await retireFocusBinding({
-          stateFile: targetStateFile,
-          focusId: requestedFocusId,
-          reason: "rollback_on_transition_failure",
-        });
+        await useWorktreeCapability(
+          targetMutex.capability,
+          async () => {
+            if (workflowState.state.projectDir) {
+              try {
+                pinSessionProject({
+                  stateFile: workflowState.stateFile,
+                  projectDir: workflowState.state.projectDir,
+                  focusId: hasRequestedFocus ? requestedFocusId : null,
+                  kernelCapability: targetMutex.capability,
+                  requireKernelMutex: true,
+                });
+              } catch {}
+            }
+            try {
+              writeKernelLockMetadata({
+                dir: targetLockDir,
+                capability: targetMutex.capability,
+                projectDir: targetMutex.worktreeRoot,
+              });
+            } catch {}
+            if (typeof workflowState._exportJson === "function") {
+              try {
+                workflowState._exportJson();
+              } catch {}
+            }
+          },
+          { operation: "start_task_post_commit_reconcile" },
+        );
       } catch {}
-    }
-    if (workflowState.stateFile !== priorStateFile && typeof workflowState.close === "function") {
-      try {
-        await workflowState.close();
-      } catch {}
-    }
-    workflowState.state = priorStateSnapshot;
-    workflowState.stateFile = priorStateFile;
-    workflowState.historyFile = priorHistoryFile;
-    workflowState.stateVersion = priorStateVersion;
-    workflowState.loadedTask = priorLoadedTask;
-    if (typeof workflowState.bindKernelCapability === "function") {
-      workflowState.bindKernelCapability(priorKernelCapability);
-    }
-    workflowState.requireKernelMutex = priorRequireKernelMutex;
-    setActiveProjectDir(priorActiveProjectDir);
-    if (!targetMutex.alreadyHeld) {
-      await releaseWorktreeMutex(targetMutex.capability);
-    }
+      if (priorKernelCapability && priorKernelCapability !== targetMutex.capability) {
+        await releaseWorktreeMutex(priorKernelCapability);
+      }
+      warnings.push(
+        `⚠️ Post-commit projection warning reconciled (${transitionError?.message || String(transitionError)}). ` +
+          `Authoritative SQLite task commit was preserved.`
+      );
+    } else {
+      // Pre-commit failure: restore in-memory state cleanly; prior SQLite state & DoD evidence were not overwritten.
+      if (claimedNewFocus && hasRequestedFocus) {
+        try {
+          await retireFocusBinding({
+            stateFile: targetStateFile,
+            focusId: requestedFocusId,
+            reason: "rollback_on_transition_failure",
+          });
+        } catch {}
+      }
+      if (workflowState.stateFile !== priorStateFile && typeof workflowState.close === "function") {
+        try {
+          await workflowState.close();
+        } catch {}
+      }
+      workflowState.state = priorStateSnapshot;
+      workflowState.stateFile = priorStateFile;
+      workflowState.historyFile = priorHistoryFile;
+      workflowState.stateVersion = priorStateVersion;
+      workflowState.loadedTask = priorLoadedTask;
+      if (typeof workflowState.bindKernelCapability === "function") {
+        workflowState.bindKernelCapability(priorKernelCapability);
+      }
+      workflowState.requireKernelMutex = priorRequireKernelMutex;
+      setActiveProjectDir(priorActiveProjectDir);
+      if (!targetMutex.alreadyHeld) {
+        await releaseWorktreeMutex(targetMutex.capability);
+      }
 
-    return textResponse(
-      `⚠️ Dibatalkan: transisi menuju proyek "${project.dir}" gagal di tengah jalan ` +
-        `(${transitionError?.message || String(transitionError)}).\n\n` +
-        `Seluruh state workflow, penunjuk sesi, ikatan focus, dan kunci proses telah ` +
-        `dikembalikan ke kondisi sebelum 'start_task' dipanggil.`
-    );
+      return textResponse(
+        `⚠️ Dibatalkan: transisi menuju proyek "${project.dir}" gagal sebelum komit SQLite ` +
+          `(${transitionError?.message || String(transitionError)}).\n\n` +
+          `Seluruh state workflow, penunjuk sesi, ikatan focus, dan kunci proses telah ` +
+          `dikembalikan ke kondisi sebelum 'start_task' dipanggil.`
+      );
+    }
   }
 
   // Sinkronkan judul sesi AI (OpenCode / Monitor) ke deskripsi task baru
