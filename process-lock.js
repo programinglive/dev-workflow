@@ -81,6 +81,48 @@ function normalizeWorktreeString(targetPath, platform = process.platform) {
   return platform === "win32" ? normalized.toLowerCase() : normalized;
 }
 
+function isValidGitWorktreeMarker(dir) {
+  const gitPath = path.join(dir, ".git");
+  let gitStat = null;
+  try {
+    gitStat = statSync(gitPath);
+  } catch {
+    return false;
+  }
+  if (gitStat.isFile()) {
+    try {
+      const content = readFileSync(gitPath, "utf8");
+      const match = /^gitdir:\s*(.+)$/m.exec(content);
+      if (!match || !match[1]) return false;
+      const targetGitDir = path.resolve(dir, match[1].trim());
+      const targetStat = statSync(targetGitDir);
+      if (!targetStat.isDirectory()) return false;
+      const headPath = path.join(targetGitDir, "HEAD");
+      if (existsSync(headPath) && !statSync(headPath).isFile()) return false;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  if (gitStat.isDirectory()) {
+    try {
+      const entries = readdirSync(gitPath);
+      if (entries.length === 0) {
+        return true;
+      }
+      const headPath = path.join(gitPath, "HEAD");
+      if (!existsSync(headPath)) return false;
+      const headStat = statSync(headPath);
+      if (!headStat.isFile()) return false;
+      const headContent = readFileSync(headPath, "utf8").trim();
+      return headContent.startsWith("ref:") || /^[0-9a-f]{40,64}$/i.test(headContent);
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
 /**
  * Resolve the canonical Git working-tree root for `projectDir`.
  * Rejects nonexistent, non-directory, or non-Git paths without ancestor fallback.
@@ -113,21 +155,36 @@ export function resolveCanonicalWorktreeRoot(projectDir, platform = process.plat
     realDir = typeof realpathSync.native === "function"
       ? realpathSync.native(resolved)
       : realpathSync(resolved);
-  } catch {
-    realDir = resolved;
+  } catch (err) {
+    return {
+      ok: false,
+      error: "WORKTREE_REALPATH_FAILED",
+      message: `Failed to resolve canonical realpath for projectDir (${err?.code || err?.message || "REALPATH_ERROR"}): ${resolved}`,
+    };
   }
 
   let current = realDir;
   const { root } = path.parse(current);
   while (true) {
     if (existsSync(path.join(current, ".git"))) {
+      if (!isValidGitWorktreeMarker(current)) {
+        return {
+          ok: false,
+          error: "INVALID_GIT_WORKTREE",
+          message: `Directory contains an invalid or unreadable .git marker: ${current}`,
+        };
+      }
       let realWorktreeRoot = current;
       try {
         realWorktreeRoot = typeof realpathSync.native === "function"
           ? realpathSync.native(current)
           : realpathSync(current);
-      } catch {
-        realWorktreeRoot = current;
+      } catch (err) {
+        return {
+          ok: false,
+          error: "WORKTREE_REALPATH_FAILED",
+          message: `Failed to resolve canonical realpath for worktree root (${err?.code || err?.message || "REALPATH_ERROR"}): ${current}`,
+        };
       }
       const canonicalKey = normalizeWorktreeString(realWorktreeRoot, platform);
       return {
@@ -301,7 +358,10 @@ export async function acquireWorktreeMutex({
   timeoutMs = 50,
   pid = process.pid,
   platform = process.platform,
+  ownerKey = null,
 } = {}) {
+  const normalizedOwnerKey =
+    typeof ownerKey === "string" && ownerKey.trim() !== "" ? ownerKey.trim() : null;
   const wt = resolveCanonicalWorktreeRoot(projectDir, platform);
   if (!wt.ok) {
     return {
@@ -337,6 +397,25 @@ export async function acquireWorktreeMutex({
         endpoint: endpoint.path,
       };
     }
+    if (
+      existing.ownerKey &&
+      normalizedOwnerKey &&
+      existing.ownerKey !== normalizedOwnerKey
+    ) {
+      return {
+        ok: false,
+        supported: true,
+        reason: "held_by_other_session",
+        error: "WORKTREE_HELD_BY_OTHER_SESSION",
+        ownerKey: existing.ownerKey,
+        worktreeRoot: wt.worktreeRoot,
+        canonicalKey: wt.canonicalKey,
+        endpoint: endpoint.path,
+      };
+    }
+    if (!existing.ownerKey && normalizedOwnerKey) {
+      existing.ownerKey = normalizedOwnerKey;
+    }
     return {
       ok: true,
       alreadyHeld: true,
@@ -361,6 +440,7 @@ export async function acquireWorktreeMutex({
       const capability = {
         token: randomUUID(),
         pid,
+        ownerKey: normalizedOwnerKey,
         incarnationId: PROCESS_INCARNATION_ID,
         worktreeRoot: wt.worktreeRoot,
         canonicalKey: wt.canonicalKey,
@@ -495,7 +575,17 @@ export function writeKernelLockMetadata({ dir, capability, projectDir = "" } = {
 export function findActiveLegacyWriter({ dir, isAlive = isPidAlive, ownPid = process.pid } = {}) {
   if (!dir) return null;
   const resolvedDir = path.resolve(dir);
-  const lock = readProcessLock({ dir: resolvedDir });
+  const detailed = readProcessLockDetailed({ dir: resolvedDir });
+  if (detailed.status === "unreadable" || detailed.status === "corrupt") {
+    return {
+      inspectionError: true,
+      status: detailed.status,
+      reason: detailed.status === "unreadable" ? "lock_unreadable" : "lock_corrupt",
+      error: detailed.error?.code || detailed.error?.message || detailed.status,
+      dir: resolvedDir,
+    };
+  }
+  const lock = detailed.lock;
   if (!lock || !Number.isFinite(Number(lock.pid))) return null;
   if (Number(lock.pid) === ownPid) return null;
   const isOptionB = Number(lock.protocolVersion) >= OPTION_B_LOCK_PROTOCOL_VERSION && lock.kernelMutex === true;

@@ -22,7 +22,7 @@
  */
 
 import { exec as execCallback } from "node:child_process";
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, realpathSync, statSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
 function text(value) {
@@ -142,6 +142,28 @@ const EMPTY_IDENTITY = Object.freeze({
  * is reported as `worktree: true` but keeps the same remote identity, so it is
  * the same repository for the purpose of this guard.
  */
+function findValidSyntheticGitRoot(startDir) {
+  if (!startDir) return null;
+  let current = path.resolve(startDir);
+  const { root } = path.parse(current);
+  while (true) {
+    const gitPath = path.join(current, ".git");
+    if (existsSync(gitPath)) {
+      try {
+        const st = statSync(gitPath);
+        if (st.isDirectory() && readdirSync(gitPath).length === 0) {
+          return current;
+        }
+      } catch {}
+      return null;
+    }
+    if (current === root) return null;
+    const parent = path.dirname(current);
+    if (parent === current) return null;
+    current = parent;
+  }
+}
+
 export async function captureRepositoryIdentity({ dir, execImpl = defaultExec } = {}) {
   const target = text(dir);
   if (!target) return { ...EMPTY_IDENTITY };
@@ -156,7 +178,25 @@ export async function captureRepositoryIdentity({ dir, execImpl = defaultExec } 
   };
 
   const root = await run("rev-parse --show-toplevel");
-  if (!root) return { ...EMPTY_IDENTITY };
+  if (!root) {
+    const syntheticRoot = findValidSyntheticGitRoot(target);
+    if (syntheticRoot) {
+      const resolvedRoot =
+        normalizeRepoPath(target) === normalizeRepoPath(syntheticRoot)
+          ? target
+          : path.resolve(syntheticRoot);
+      const commonDir = path.join(resolvedRoot, ".git");
+      return {
+        ...EMPTY_IDENTITY,
+        isGitRepo: true,
+        root: resolvedRoot,
+        commonDir,
+        workspaceKey: normalizeRepoPath(resolvedRoot),
+        commonDirKey: normalizeRepoPath(commonDir),
+      };
+    }
+    return { ...EMPTY_IDENTITY };
+  }
 
   const remoteNames = (await run("remote")).split(/\r?\n/).map(text).filter(Boolean);
   const remotes = [];
@@ -288,6 +328,23 @@ export function evaluateProjectSwitch({
   workspaceTransitionReason = "",
   focusId = null,
 } = {}) {
+  if (
+    !requested ||
+    (requested.isGitRepo === false &&
+      !text(requested.root) &&
+      !text(requested.workspaceKey) &&
+      !text(requested.projectDir))
+  ) {
+    return {
+      ok: false,
+      switched: false,
+      code: "NOT_A_GIT_REPOSITORY",
+      match: "INVALID_REPOSITORY",
+      message:
+        `⚠️ Refused: target directory is not a valid Git working tree.\n\n` +
+        `Task NOT started; the previous task and its evidence are unchanged.`,
+    };
+  }
   if (!session || !text(session.projectDir || session.root)) {
     return { ok: true, switched: false, code: "NO_SESSION_PROJECT", match: "NO_SESSION_PROJECT" };
   }

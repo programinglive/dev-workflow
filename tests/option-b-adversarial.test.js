@@ -603,3 +603,149 @@ test("Platform requirement: macOS (darwin) and unsupported platforms fail closed
     assert.equal(acqFreebsd.reason, "unsupported_platform");
   });
 });
+
+test("Adversarial 11 (F1 / A5): Two distinct sessions in the same MCP process cannot share one worktree capability", async () => {
+  await withTempWorkspace(async (base) => {
+    const repo = await createRepo(base, "same-pid-two-sessions");
+    const bucket = projectKey(canonicalProjectPath(repo));
+    const stateFile1 = path.join(base, "state", "projects", bucket, "users", "u1", "workflow-state.ses_alpha.json");
+    const stateFile2 = path.join(base, "state", "projects", bucket, "users", "u1", "workflow-state.ses_beta.json");
+
+    const ws1 = new WorkflowState(stateFile1, { sessionId: "ses_alpha" });
+    const ws2 = new WorkflowState(stateFile2, { sessionId: "ses_beta" });
+    ws1.requireKernelMutex = true;
+    ws2.requireKernelMutex = true;
+    await ws1.load();
+    await ws2.load();
+
+    try {
+      const res1 = await handleStartTask(makeStartArgs(repo, "Alpha session task", 81), ws1, null);
+      const out1 = res1?.content?.[0]?.text || "";
+      assert.doesNotMatch(out1, /Refused|Dibatalkan/i, `Expected Alpha start_task to succeed, got: ${out1}`);
+      assert.equal(ws1.state.currentPhase, "coding");
+
+      // Session Beta in the SAME process attempts to start a task on the same worktree
+      const res2 = await handleStartTask(makeStartArgs(repo, "Beta session task", 81), ws2, null);
+      const out2 = res2?.content?.[0]?.text || "";
+      assert.match(out2, /Dibatalkan|Refused|sesi lain/i, `Expected Beta start_task to be refused, got: ${out2}`);
+      assert.equal(ws2.state.currentPhase, "idle");
+    } finally {
+      if (ws1.boundKernelCapability) {
+        await releaseWorktreeMutex(ws1.boundKernelCapability);
+      }
+      if (ws2.boundKernelCapability) {
+        await releaseWorktreeMutex(ws2.boundKernelCapability);
+      }
+      await ws1.close();
+      await ws2.close();
+    }
+  });
+});
+
+test("Adversarial 12 (F2 / A7 / B7): Corrupt lock metadata and quiescence inspection errors fail closed", async () => {
+  await withTempWorkspace(async (base) => {
+    const repo = await createRepo(base, "corrupt-lock-repo");
+    const bucket = projectKey(canonicalProjectPath(repo));
+    const stateFile = path.join(base, "state", "projects", bucket, "users", "u1", "workflow-state.json");
+    const lockDir = projectLockDir(stateFile);
+    await mkdir(lockDir, { recursive: true });
+    await writeFile(path.join(lockDir, LOCK_FILENAME), "{corrupt-json-metadata", "utf8");
+
+    const ws = new WorkflowState(stateFile);
+    ws.requireKernelMutex = true;
+    await ws.load();
+    try {
+      const res = await handleStartTask(makeStartArgs(repo, "Task with corrupt target lock", 81), ws, null);
+      const out = res?.content?.[0]?.text || "";
+      assert.match(out, /Dibatalkan|fail-closed|korup|tidak dapat diverifikasi/i, `Expected fail-closed refusal, got: ${out}`);
+      assert.equal(ws.state.currentPhase, "idle");
+
+      // Now remove target corrupt lock and put corrupt lock in a sibling bucket under state/projects
+      await rm(path.join(lockDir, LOCK_FILENAME), { force: true });
+      const siblingLockDir = path.join(base, "state", "projects", "sibling-bucket");
+      await mkdir(siblingLockDir, { recursive: true });
+      await writeFile(path.join(siblingLockDir, LOCK_FILENAME), "{corrupt-sibling-lock", "utf8");
+
+      const resSibling = await handleStartTask(makeStartArgs(repo, "Task with corrupt sibling lock", 81), ws, null);
+      const outSibling = resSibling?.content?.[0]?.text || "";
+      assert.match(outSibling, /Dibatalkan|quiescence|fail-closed/i, `Expected quiescence fail-closed refusal, got: ${outSibling}`);
+      assert.equal(ws.state.currentPhase, "idle");
+    } finally {
+      if (ws.boundKernelCapability) {
+        await releaseWorktreeMutex(ws.boundKernelCapability);
+      }
+      await ws.close();
+    }
+  });
+});
+
+test("Adversarial 13 (A2): Directory with invalid .git file is rejected fail-closed", async () => {
+  await withTempWorkspace(async (base) => {
+    const fakeRepo = path.join(base, "fake-git-file-repo");
+    await mkdir(fakeRepo, { recursive: true });
+    await writeFile(path.join(fakeRepo, ".git"), "not-a-valid-gitdir-pointer\n", "utf8");
+
+    const resolved = resolveCanonicalWorktreeRoot(fakeRepo);
+    assert.equal(resolved.ok, false);
+    assert.equal(resolved.error, "INVALID_GIT_WORKTREE");
+
+    const acq = await acquireWorktreeMutex({ projectDir: fakeRepo });
+    assert.equal(acq.ok, false);
+    assert.equal(acq.error, "INVALID_GIT_WORKTREE");
+
+    const stateFile = path.join(base, "state", "projects", "fake", "users", "u1", "workflow-state.json");
+    const ws = new WorkflowState(stateFile);
+    ws.requireKernelMutex = true;
+    await ws.load();
+    try {
+      const res = await handleStartTask(makeStartArgs(fakeRepo, "Fake git repo task", 81), ws, null);
+      const out = res?.content?.[0]?.text || "";
+      assert.match(out, /Refused|not a valid Git working tree|Dibatalkan/i, `Expected invalid git worktree refusal, got: ${out}`);
+      assert.equal(ws.state.currentPhase, "idle");
+    } finally {
+      await ws.close();
+    }
+  });
+});
+
+test("Adversarial 14 (F4 / A6 / B5): Post-SQLite-commit error preserves committed state, capability, and reconciles projections", async () => {
+  await withTempWorkspace(async (base) => {
+    const repo = await createRepo(base, "post-commit-preserve-repo");
+    const bucket = projectKey(canonicalProjectPath(repo));
+    const stateFile = path.join(base, "state", "projects", bucket, "users", "u1", "workflow-state.ses_postcommit.json");
+
+    const ws = new WorkflowState(stateFile, { sessionId: "ses_postcommit" });
+    ws.requireKernelMutex = true;
+    await ws.load();
+    try {
+      const res = await handleStartTask(
+        makeStartArgs(repo, "Committed task surviving post-commit error", 81),
+        ws,
+        null,
+        {
+          transitionHooks: {
+            afterSave: async () => {
+              throw new Error("SIMULATED_POST_COMMIT_PROJECTION_ERROR");
+            },
+          },
+        },
+      );
+      const out = res?.content?.[0]?.text || "";
+      assert.doesNotMatch(out, /dikembalikan ke kondisi sebelum/i, "Must NOT falsely claim pre-commit rollback after SQLite commit");
+      assert.equal(ws.state.currentPhase, "coding", "In-memory task state must remain committed");
+      assert.equal(ws.state.taskDescription, "Committed task surviving post-commit error");
+      assert.ok(ws.boundKernelCapability && ws.boundKernelCapability.active, "Target worktree capability must remain held");
+
+      const verifyWs = new WorkflowState(ws.stateFile, { sessionId: "ses_postcommit" });
+      await verifyWs.load();
+      assert.equal(verifyWs.state.currentPhase, "coding");
+      assert.equal(verifyWs.state.taskDescription, "Committed task surviving post-commit error");
+      await verifyWs.close();
+    } finally {
+      if (ws.boundKernelCapability) {
+        await releaseWorktreeMutex(ws.boundKernelCapability);
+      }
+      await ws.close();
+    }
+  });
+});

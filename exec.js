@@ -1,5 +1,5 @@
 import { exec as execCallback, execFile as execFileCallback } from "child_process";
-import { existsSync, statSync } from "fs";
+import { existsSync, statSync, readFileSync, readdirSync } from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { sanitize } from './security/sanitizer.js';
@@ -70,6 +70,44 @@ function runChildWithPipeCleanup(launcher) {
  */
 export const PACKAGE_DIR = path.dirname(fileURLToPath(import.meta.url));
 
+function isValidGitMarker(dir) {
+  const gitPath = path.join(dir, ".git");
+  let gitStat = null;
+  try {
+    gitStat = statSync(gitPath);
+  } catch {
+    return false;
+  }
+  if (gitStat.isFile()) {
+    try {
+      const content = readFileSync(gitPath, "utf8");
+      const match = /^gitdir:\s*(.+)$/m.exec(content);
+      if (!match || !match[1]) return false;
+      const targetGitDir = path.resolve(dir, match[1].trim());
+      if (!statSync(targetGitDir).isDirectory()) return false;
+      const headPath = path.join(targetGitDir, "HEAD");
+      if (existsSync(headPath) && !statSync(headPath).isFile()) return false;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  if (gitStat.isDirectory()) {
+    try {
+      const entries = readdirSync(gitPath);
+      if (entries.length === 0) return true;
+      const headPath = path.join(gitPath, "HEAD");
+      if (!existsSync(headPath)) return false;
+      if (!statSync(headPath).isFile()) return false;
+      const headContent = readFileSync(headPath, "utf8").trim();
+      return headContent.startsWith("ref:") || /^[0-9a-f]{40,64}$/i.test(headContent);
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
 function findRepoRoot(startDir) {
   if (!startDir) {
     return null;
@@ -80,7 +118,7 @@ function findRepoRoot(startDir) {
 
   while (true) {
     if (existsSync(path.join(current, ".git"))) {
-      return current;
+      return isValidGitMarker(current) ? current : null;
     }
 
     if (current === root) {
