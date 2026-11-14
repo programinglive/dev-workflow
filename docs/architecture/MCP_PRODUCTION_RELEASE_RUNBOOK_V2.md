@@ -92,3 +92,45 @@ Read-only verification of `bw-tools` HTTP health endpoints at `2026-11-14T14:20:
    - Commit `MCP_CONTROLLED_RELEASE_DECISION.md`, `MCP_FINAL_GO_NO_GO.md`, and `MCP_PRODUCTION_RELEASE_RUNBOOK_V2.md` to branch `docs/mcp-ecosystem-audit-consolidation`, rebase onto `a85fe4b`, and verify `security-oss-public-surface.test.js` and `website-docs-consistency.test.js`.
 4. **Explicit Owner Authorization:**
    - Obtain explicit owner instruction to execute the merges after reviewing the updated diffs and production auto-refresh behavior.
+
+
+---
+
+## 9. Production Execution Evidence (Completed 14 Nov 2026)
+
+### Gate A — PR Consolidation & Merges (`MERGED`)
+| Repository | PR | Action | Final Merged Commit SHA (`main`) | Verification |
+|---|---|---|---|---|
+| `programinglive/central-mcp-gateway` | **#2** | Ported all missing read-only CI/CD & drift tools (`ci_status`, `ci_conformance`, `deploy_state`, `runner_status`, `release_drift`, real `fleet_health`) + synced latest `knowledge/*.yaml` (`48e381b`) + removed `ssh_vm` from MCP surface; squash-merged | `20f5ace182be18cbc7d62c81ae7f5d44bd068728` | 14/14 unit & integration tests PASS |
+| `programinglive/dev-workflow-mcp-server` | **#98** | Committed final release governance docs & rebased onto `main`; squash-merged | `8efafb4e343d628705902c1e577d2e46fefeea4e` | OSS public surface security test PASS |
+
+### Gate B & C — Server Cutover & Retired Service Decommission (`COMPLETED`)
+1. **`bw-tools` (`100.77.138.14:3200`) — `central-mcp-gateway.service`:**
+   - Deployed commit `20f5ace182be18cbc7d62c81ae7f5d44bd068728` to `/opt/central-mcp-gateway` with `User=dhika`, `Group=dhika`, and `Environment=PATH=/usr/local/bin:/usr/bin:/bin`.
+   - `/health` verified: `{"status":"healthy","service":"central-mcp-gateway","toolsCount":30}` (8 PocketBase + 18 Infra/CI/CD + 4 Notify).
+   - Live tool verification passed: `pb_health` (`status: 200`), `find_domain` (`beautyworld.id` on `bw-app`), `runner_status` (`bw-tools group linux` id `58937956` online), and negative security checks (`ssh_vm` and `factory_status` rejected).
+2. **`bw-tools` (`100.77.138.14:3300`) — `infra-knowledge-mcp` Decommissioned & Deleted:**
+   - Stopped and disabled `infra-knowledge-mcp.service`, `infra-knowledge-refresh.service`, and `infra-knowledge-refresh.timer`.
+   - Removed unit files and `/etc/sudoers.d/infra-knowledge-refresh`, ran `systemctl daemon-reload`, and deleted `/opt/infra-knowledge-mcp-server`.
+   - Verified port `3300` is closed and only port `3200` is listening.
+3. **`bw-app` (`100.103.72.86`) — Factory Quarantine & PocketBase Backend Preservation:**
+   - Confirmed `factory.service` is inactive/disabled and quarantined any `/root/.factory` directory without rotating the shared PocketBase admin account.
+   - Confirmed `pocketbase.service` remains `active` on `bw-app:8090`.
+
+### Gate D — Fleet-Wide 6-MCP Synchronization & Clean Repository Setup (`COMPLETED`)
+1. **Identical 6-MCP Server Registration Across All 3 Devices (`MMCH`, `HELLOWORLD`, `Mac`) and All 5 Client Configs (`.gemini/antigravity/mcp_config.json`, `.gemini/antigravity-cli/mcp_config.json`, `.gemini/config/mcp_config.json`, `.config/opencode/opencode.json`, `.codex/config.toml`):**
+   - `central-gateway` (`http://100.77.138.14:3200/mcp` and `/sse`)
+   - `dev-workflow`
+   - `zettly`
+   - `clinic-helper`
+   - `playwright`
+   - `cloudflare` (`https://mcp.cloudflare.com/mcp`)
+   - All retired/stray registrations (`infra-knowledge`, `pocketbase`, `mermaid`, `programinglive`, `cloudflare-2`, etc.) removed (with timestamped backups `*.bak-6mcp-20261114`).
+2. **Identical Local MCP Repositories & HEAD Commits Across `MMCH`, `HELLOWORLD`, and `Mac`:**
+   - `central-mcp-gateway` $\rightarrow$ `20f5ace` (`main`)
+   - `dev-workflow-mcp-server` $\rightarrow$ `8efafb4` (`main`)
+   - `clinic-helper-mcp-server` $\rightarrow$ `45b657c` (`main`)
+   - `zettly-mcp-server` $\rightarrow$ `079f87c` (`feat/zettly-mcp-server-mvp`)
+   - Deleted local folders `infra-knowledge-mcp-server`, `pocketbase-mcp-server`, and `programinglive-mcp-server` (plus global `mcp-mermaid` npm package) across `MMCH`, `HELLOWORLD`, and `Mac`.
+3. **GitHub Remote Repositories:**
+   - Archived `programinglive/infra-knowledge-mcp-server`, `programinglive/pocketbase-mcp-server`, and `programinglive/programinglive-mcp-server` via `gh repo archive --yes`. (Permanent deletion on GitHub requires an interactive OAuth refresh with `delete_repo` scope: `gh auth refresh -h github.com -s delete_repo`).
