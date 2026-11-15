@@ -194,9 +194,12 @@ export async function handleRecordDeployment(args, context) {
   // checkout this task never started in would attach the claim to the wrong
   // project, so the identity contract is checked first.
   {
+    const hasExplicitProjectDir = typeof args.projectDir === "string" && args.projectDir.trim() !== "";
     const repoGuard = await assertMutationRepository({
       workflowState,
-      dir: workflowState.state.projectDir || getActiveProjectDir() || "",
+      dir: hasExplicitProjectDir
+        ? getActiveProjectDir() || args.projectDir.trim()
+        : workflowState.state.projectDir || getActiveProjectDir() || "",
       operation: "record_deployment",
       taskProjectDir,
     });
@@ -490,9 +493,12 @@ export async function handlePerformRelease(args, context) {
   // the checkout this task started in, never in another clone that happens to
   // share the remote.
   {
+    const hasExplicitProjectDir = typeof args.projectDir === "string" && args.projectDir.trim() !== "";
     const repoGuard = await assertMutationRepository({
       workflowState,
-      dir: workflowState.state.projectDir || getActiveProjectDir() || "",
+      dir: hasExplicitProjectDir
+        ? getActiveProjectDir() || args.projectDir.trim()
+        : workflowState.state.projectDir || getActiveProjectDir() || "",
       operation: "perform_release",
       taskProjectDir,
     });

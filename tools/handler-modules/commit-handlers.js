@@ -269,9 +269,12 @@ export async function handleCommitAndPush(args, context) {
   // in. A `projectDir` override that points at another checkout must not commit
   // there, even when the remote matches.
   {
+    const hasExplicitProjectDir = typeof args.projectDir === "string" && args.projectDir.trim() !== "";
     const repoGuard = await assertMutationRepository({
       workflowState,
-      dir: workflowState.state.projectDir,
+      dir: hasExplicitProjectDir
+        ? getActiveProjectDir() || args.projectDir.trim()
+        : workflowState.state.projectDir || getActiveProjectDir() || "",
       operation: "commit_and_push",
       taskProjectDir,
     });

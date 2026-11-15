@@ -1549,14 +1549,18 @@ export function pinSessionProject({
   let refusal = null;
   let pointerWriteError = null;
   const nowMs = Date.now();
+  const capUpdatedMs = Number(cap.acquiredAt || 0);
+  const capAcquireSeq = Number(cap.acquireSeq || 0);
+  const effectiveUpdatedAtMs = capUpdatedMs > 0 ? capUpdatedMs : nowMs;
   const payload = {
     projectDir: target,
     projectDirPath,
     ownerKey: cap.ownerKey,
     leaseId: cap.token,
     focusId: Number.isSafeInteger(focus) && focus > 0 ? focus : null,
-    updatedAtMs: nowMs,
-    updatedAt: new Date(nowMs).toISOString(),
+    updatedAtMs: effectiveUpdatedAtMs,
+    updatedAt: new Date(effectiveUpdatedAtMs).toISOString(),
+    acquireSeq: capAcquireSeq,
   };
 
   try {
@@ -1595,8 +1599,6 @@ export function pinSessionProject({
         });
       }
 
-      const capUpdatedMs = Number(cap.acquiredAt || 0);
-      const capAcquireSeq = Number(cap.acquireSeq || 0);
       for (const existingPtr of candidates) {
         if (existingPtr.ownerKey && existingPtr.ownerKey !== sessionKey) {
           refusal = {
@@ -4757,25 +4759,47 @@ export class WorkflowState {
     }
 
     // Ringkasan hanya perlu dihitung ulang bila ada yang berubah atau perbaikan sebelumnya tertunda
-    // untuk pasangan user+proyek ini (baik in-memory maupun persisten di pendingProjectionRepair).
+    // untuk pasangan user+proyek ini (baik in-memory maupun persisten di state/pendingProjectionRepair).
     if (!(this._pendingHistorySummaryRepairKeys instanceof Set)) {
       this._pendingHistorySummaryRepairKeys = new Set();
     }
     const repairKey = `${resolvedUserId || ""}::${resolvedProjectPath || ""}`;
-    const persistedRepairReasons = Array.isArray(this.state?.pendingProjectionRepair?.reasons)
-      ? this.state.pendingProjectionRepair.reasons
+    const persistedRepairMap =
+      this.state?.pendingHistorySummaryRepairKeys &&
+      typeof this.state.pendingHistorySummaryRepairKeys === "object" &&
+      !Array.isArray(this.state.pendingHistorySummaryRepairKeys)
+        ? this.state.pendingHistorySummaryRepairKeys
+        : {};
+    const persistedRepairErrors = Array.isArray(this.state?.pendingProjectionRepair?.repairErrors)
+      ? this.state.pendingProjectionRepair.repairErrors
       : [];
     const hasPendingSummaryRepair =
       this._pendingHistorySummaryRepairKeys.has(repairKey) ||
-      persistedRepairReasons.includes("history_summary_sync_failed");
+      persistedRepairMap[repairKey] === true ||
+      persistedRepairErrors.some((entry) => String(entry).startsWith("syncHistorySummary:"));
     let summaryFailed = false;
     let summaryError = null;
     if (sent > 0 || hasPendingSummaryRepair) {
       try {
         await resolvedDb.updateSummaryForUser(resolvedUserId, resolvedProjectPath);
         this._pendingHistorySummaryRepairKeys.delete(repairKey);
+        if (this.state?.pendingHistorySummaryRepairKeys && typeof this.state.pendingHistorySummaryRepairKeys === "object") {
+          delete this.state.pendingHistorySummaryRepairKeys[repairKey];
+          if (Object.keys(this.state.pendingHistorySummaryRepairKeys).length === 0) {
+            delete this.state.pendingHistorySummaryRepairKeys;
+          }
+        }
       } catch (error) {
         this._pendingHistorySummaryRepairKeys.add(repairKey);
+        if (this.state && typeof this.state === "object") {
+          const prev =
+            this.state.pendingHistorySummaryRepairKeys &&
+            typeof this.state.pendingHistorySummaryRepairKeys === "object" &&
+            !Array.isArray(this.state.pendingHistorySummaryRepairKeys)
+              ? this.state.pendingHistorySummaryRepairKeys
+              : {};
+          this.state.pendingHistorySummaryRepairKeys = { ...prev, [repairKey]: true };
+        }
         summaryFailed = true;
         summaryError = error?.message || String(error);
         safeLog("warn", `Ringkasan proyek gagal diperbarui: ${summaryError}`);
