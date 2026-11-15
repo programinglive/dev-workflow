@@ -137,6 +137,47 @@ Read-only verification of `bw-tools` HTTP health endpoints at `2026-11-14T14:20:
 
 ---
 
+## 11. Independent Final Verification Addendum (2026-11-15)
+
+**Verified by:** Principal Autonomous Release Engineer (OpenCode, HELLOWORLD)
+**Canonical Task:** `63821490-bbb3-4c75-981d-39cfc48b6b08` · Focus `#81` · Todo `#741`
+
+### 11.1 Live Production State (read-only)
+- `bw-tools` `/opt/central-mcp-gateway` `HEAD = 20f5ace182be18cbc7d62c81ae7f5d44bd068728`, matching the PR #2 squash merge commit.
+- `central-mcp-gateway.service` is `active`; `/health` = `status: healthy`, `toolsCount: 30`, `activeLegacySessions: 1`.
+- Registered tool set recomputed from the deployed source (`createUnifiedMcpServer()`) equals exactly the 30 names reported by `/health` (8 PocketBase, 18 infra/CI-CD, 4 notify).
+- Live negative calls rejected: `ssh_vm` and `factory_status` both return `Gateway Error: Tool "..." is not registered on Central MCP Gateway.`
+- PocketBase is reachable through the gateway: `pb_health` → `200` (`https://pocketbase.programinglive.com`); `pb_list_collections` returns the `users` collection schema.
+- Schema mutation remains controlled: no `pb_create_collection` tool is registered.
+
+### 11.2 Security Remediation
+- `bw-app` read-only checks: `NO_FACTORY_SERVICE_ACTIVE`, `NO_FACTORY_VHOST_CONFIGURED`, `NO_FACTORY_TOKEN_IN_ENV`; the shared PocketBase admin account was not touched.
+- `infra-knowledge-mcp-server` PR #11 (`29dc97b`) `tests/handlers.test.js` = 26/26 PASS, including `SECURITY: ssh_vm tool is strictly not registered in getToolList()` and `SECURITY: handleToolCall rejects ssh_vm invocation`.
+- `programinglive/infra-knowledge-mcp-server` is `archived: true`; PR #11 remains `OPEN` / `MERGEABLE` but `BLOCKED` because GitHub forbids merges into archived repositories. Its runtime service on `bw-tools:3300` was already decommissioned and deleted (Section 9), so no `ssh_vm` exposure remains.
+
+### 11.3 Regression Tests
+- `central-mcp-gateway` @ `20f5ace`: `npm ci && npm test` → 14/14 PASS.
+- `dev-workflow-mcp-server` @ `7fa2a5f0f`: `npm run test:security` initially FAILED because this runbook contained real Tailscale IPs (`100.77.x.x`); sanitized here to `100.x.x.14` / `100.x.x.21`. CI run `43573976468` on `7fa2a5f0f` was `failure` for the same reason.
+
+### 11.4 Fleet MCP Registrations (verified read-only)
+| Device | OpenCode | Antigravity | Codex | Retired registrations present |
+|---|---|---|---|---|
+| HELLOWORLD | 6 | 6 | 6 | none |
+| MMCH | 6 | 6 | 6 | none |
+| Mac | 6 | 6 | 6 | none |
+
+All three clients register exactly: `central-gateway`, `dev-workflow`, `zettly`, `clinic-helper`, `playwright`, `cloudflare`.
+
+### 11.5 Six-Server Reachability (this client, HELLOWORLD)
+`central-gateway` `pb_health` OK; `dev-workflow` focus/session reads OK; `zettly` note search OK; `clinic-helper` auth status OK; `playwright` transport OK; `cloudflare` `accounts_list` OK.
+
+### 11.6 Outstanding Item
+PR #11 is intentionally unmerged (archived repository, decommissioned service). If the owner wants the source-level `ssh_vm` containment on `main`, the smallest action is: unarchive `programinglive/infra-knowledge-mcp-server`, squash-merge PR #11, then re-archive. No production exposure exists either way.
+
+**Tracking PR:** https://github.com/programinglive/dev-workflow-mcp-server/pull/100 (docs-only; sanitizes the tailnet IPs and records this addendum).
+
+---
+
 ## 10. PR #99 Project Lock Ownership Protocol v2 (`LOCK_PROTOCOL_VERSION = 2`) & F1–F8 Remediation
 
 Under canonical DevWorkflow task `8feef683-f09a-4d2c-9cda-0b91da603a10` (Focus `#81`, Todo `#756`), `process-lock.js`, `workflow-state.js`, `tools/handler-modules/workflow-handlers.js`, and `index.js` implement **Project Lock Ownership Protocol v2** to remediate all 8 concurrency and security review findings (`F1`–`F8`):
@@ -222,5 +263,3 @@ Because Legacy v1 (`protocolVersion < 2`, lacking `leaseId`, `incarnationId`, `m
    - `verifyLegacyFleetQuiescence` and `detectIncompatibleLegacyWriters` fail closed on `EACCES`/unreadable directories or locks (`inspectionErrors`, `legacy_inspection_failed`).
    - `acquireMaintenanceAdmissionBarrier` publishes `<baseDir>/maintenance-admission.json` (`state: "DRAINING"`) to block new `stageProcessLockTransition` admissions during cutover until `releaseMaintenanceAdmissionBarrier` reopens admission.
    - **Deployment Safety Boundary:** Sequential rollout across `MMCH`, `HELLOWORLD`, and `Mac` is not globally atomic across machines, and un-upgraded legacy v1 binaries cannot read `maintenance-admission.json`. Therefore, cutover requires an explicit operator maintenance window across all 3 workstations (halting new sessions, running `managed/rollout.cjs` + `managed/restart-devices.cjs` on all 3 hosts, and verifying `fleet-status.cjs` + `verifyLegacyFleetQuiescence` = `quiescent: true`) before reopening client admission.
-
-
