@@ -159,7 +159,7 @@ test("Scenario A: Two clients launching from shared CWD target different project
 
     // Client B MUST succeed and NOT be blocked by client A's startup lock or task
     const textB = resB?.content?.[0]?.text || "";
-    assert.doesNotMatch(textB, /sesi lain sedang mengerjakan proyek ini/);
+    assert.doesNotMatch(textB, /another session is working on this project/);
     assert.match(textB, /Task Started/);
     assert.equal(stateB.state.taskDescription, "Work on repo B");
   });
@@ -207,7 +207,7 @@ test("Scenario B: Two independent processes targeting the same project are safel
       utils: testUtils,
     });
 
-    assert.match(res?.content?.[0]?.text || "", /sesi lain sedang mengerjakan proyek ini/);
+    assert.match(res?.content?.[0]?.text || "", /another session is working on this project/);
     assert.match(res?.content?.[0]?.text || "", /PID 20001/);
     assert.equal(state2.state.taskDescription, "");
   });
@@ -499,7 +499,7 @@ test("Scenario I: Separate OS child processes execute CLI start_task from shared
     assert.equal(child2.status, 0, `Child 2 error: ${child2.stderr}`);
     assert.match(child2.stdout, /Task Started/);
     assert.match(child2.stdout, /CLI task for repo 2/);
-    assert.doesNotMatch(child2.stdout, /sesi lain sedang mengerjakan proyek ini/);
+    assert.doesNotMatch(child2.stdout, /another session is working on this project/);
   });
 });
 
@@ -793,7 +793,7 @@ test("F4 Compatibility: Heartbeat expiry while alive never authorizes takeover, 
       git: {},
       utils: testUtils,
     });
-    assert.match(resDirectLegacy?.content?.[0]?.text || "", /legacy v1|sesi lain/i);
+    assert.match(resDirectLegacy?.content?.[0]?.text || "", /legacy|another session/i);
     assert.equal(stateV2.state.taskDescription, "");
     await rm(processLockPath({ dir: targetLockDir }), { force: true });
 
@@ -836,7 +836,7 @@ test("F4 Compatibility: Heartbeat expiry while alive never authorizes takeover, 
       git: {},
       utils: testUtils,
     });
-    assert.match(resRelocatedLegacy?.content?.[0]?.text || "", /legacy v1/i);
+    assert.match(resRelocatedLegacy?.content?.[0]?.text || "", /legacy/i);
     assert.match(resRelocatedLegacy?.content?.[0]?.text || "", /55552/);
     assert.equal(stateV2.state.taskDescription, "");
     await stateV2.close();
@@ -1043,7 +1043,7 @@ test("F7 Transactional Transition: Injected failure mid-transition rolls back st
 
     const failText = resFailedSwitch?.content?.[0]?.text || "";
     assert.match(failText, /SIMULATED_MID_TRANSITION_CRASH/);
-    assert.match(failText, /dikembalikan ke kondisi sebelum/);
+    assert.match(failText, /failed before the SQLite commit|restored to the state before/);
 
     // 1. In-memory workflowState must be restored to Repo A's task & DoD evidence
     assert.equal(ws.state.taskDescription, "Initial task on Repo A");
@@ -1251,7 +1251,7 @@ test("Real Git Worktree & Windows Junction Isolation: Independent worktrees oper
     );
     assert.match(
       res3?.content?.[0]?.text || "",
-      /sesi lain sedang mengerjakan proyek ini|task lain sedang berjalan/i,
+      /another session is working on this project|another task is running/i,
       "Accessing locked worktree through a junction alias must be mutually excluded",
     );
 
@@ -1846,7 +1846,7 @@ test("R2-5 Legacy Exclusion & Fleet Quiescence: Legacy v1 lock in unpinned bucke
     );
     assert.match(
       resMissingPtr?.content?.[0]?.text || "",
-      /penulis protokol lama \(legacy v1\)/i,
+      /legacy protocol writer \(v1\)/i,
       "V2 start_task must refuse when a live legacy v1 lock exists in the shared state root without a session pointer",
     );
 
@@ -1875,7 +1875,7 @@ test("R2-5 Legacy Exclusion & Fleet Quiescence: Legacy v1 lock in unpinned bucke
     );
     assert.match(
       resOutdatedPtr?.content?.[0]?.text || "",
-      /penulis protokol lama \(legacy v1\)/i,
+      /legacy protocol writer \(v1\)/i,
       "V2 start_task must refuse when a live legacy v1 lock exists with an outdated session pointer",
     );
 
@@ -2124,7 +2124,7 @@ test("R3-4 & R3-5 Journal Recovery Concurrency, Newer-Owner Non-Overwrite, Summa
         },
       },
     );
-    assert.match(commitFailRes?.content?.[0]?.text || "", /Dibatalkan/);
+    assert.match(commitFailRes?.content?.[0]?.text || "", /Refused/);
     assert.equal(ws.state.taskDescription, "Initial Repo A task");
 
     // 1b. Failure during journal creation (`beginTransitionJournal` with invalid path) must throw & fail closed

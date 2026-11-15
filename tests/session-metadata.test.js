@@ -127,7 +127,7 @@ test("dua sesi lewat handleToolCall tidak saling menimpa task", async () => {
       ...context(state),
     });
 
-    // Sesi B memulai task lain pada working tree terpisah, memakai PROSES MCP yang sama.
+    // Session B starts another task on a separate working tree using the same MCP process.
     await handleToolCall({
       request: requestWith(
         "start_task",

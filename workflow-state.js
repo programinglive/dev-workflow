@@ -45,7 +45,7 @@ import {
 
 export { ProjectOwnershipLostError };
 
-/** Konteks eksekusi asinkron untuk serialisasi per-instans WorkflowState (R2-3). */
+/** Async execution context for per-instance WorkflowState serialization (R2-3). */
 const serializedExecutionStorage = new AsyncLocalStorage();
 
 const __filename = fileURLToPath(import.meta.url);
@@ -747,7 +747,7 @@ function sessionStateFilename(env = process.env, explicitSessionId = null) {
   return `workflow-state.${resolveSessionKey(env, explicitSessionId)}.json`;
 }
 
-/** Nama berkas state dari kunci sesi yang sudah kanonik (tanpa re-hash). */
+/** State file name from a session key that is already canonical (no re-hash). */
 function sessionStateFilenameForKey(sessionKey) {
   return `workflow-state.${sessionKey}.json`;
 }
@@ -1257,6 +1257,12 @@ function sessionPointerPath(baseDir, sessionKey) {
 export function readSessionPointer(baseDir, sessionKey) {
   try {
     const ptr = JSON.parse(readFileSync(sessionPointerPath(baseDir, sessionKey), "utf-8"));
+    // A focus binding is a different record type. It has no owner key and
+    // carries a binding timestamp, so reading one as a session pointer would
+    // attach a session to a project it never worked on.
+    if (ptr && typeof ptr === "object" && !ptr.ownerKey && (ptr.boundAt !== undefined || ptr.repoKey !== undefined)) {
+      return null;
+    }
     if (ptr && ptr.ownerKey && ptr.ownerKey !== sessionKey) {
       return null;
     }
@@ -1573,8 +1579,8 @@ export function readSessionProject({ stateFile } = {}) {
 }
 
 /**
- * Catat proyek yang sedang dikerjakan sesi ini, dan kembalikan letak state
- * yang seharusnya.
+ * Records the project this session is currently working on, and returns the state
+ * location it should use.
  */
 export function pinSessionProject({
   stateFile,
@@ -1591,8 +1597,8 @@ export function pinSessionProject({
     return null;
   }
 
-  // Hanya untuk tata letak BER-PIN yang sudah berbentuk
-  // `<dasar>/projects/<proyek>/users/<user>/`.
+  // Only for PINNED layouts already shaped as
+  // `<base>/projects/<project>/users/<user>/`.
   if (!path.resolve(stateFile).split(path.sep).includes(PROJECTS_DIR)) {
     return null;
   }
@@ -1796,6 +1802,17 @@ export function pinSessionProject({
  * binding decides whether the requested focus belongs to that project.
  */
 function focusBindingPath(baseDir, focusId) {
+  return path.join(baseDir, SESSIONS_DIR, "focus-bindings", `focus-${focusId}.json`);
+}
+
+/**
+ * Legacy focus-binding location, before the `focus-bindings/` subdirectory.
+ *
+ * A session pointer is also named `focus-<id>.json` when a session key happens
+ * to look like a focus id, so a record read from this path is only accepted when
+ * it is genuinely a focus binding. `readFocusBindingRecord` enforces that.
+ */
+function legacyFocusBindingPath(baseDir, focusId) {
   return path.join(baseDir, SESSIONS_DIR, `focus-${focusId}.json`);
 }
 
@@ -2046,10 +2063,14 @@ export async function claimFocusBinding({
 
 function claimFocusBindingUnderLock({ baseDir, focusId, projectDir, repoKey }) {
   const target = focusBindingPath(baseDir, focusId);
+  // The binding lives in its own subdirectory so a session pointer named
+  // `focus-<id>.json` can never collide with it.
+  mkdirSync(path.dirname(target), { recursive: true });
   const requestedDir = path.resolve(String(projectDir || ""));
   const requestedKey = typeof repoKey === "string" ? repoKey.trim() : "";
 
-  const existing = readFocusBindingRecord(target);
+  const existing =
+    readFocusBindingRecord(target) || readFocusBindingRecord(legacyFocusBindingPath(baseDir, focusId));
   let replacingStale = false;
 
   if (existing) {
@@ -2130,7 +2151,9 @@ export async function retireFocusBinding({
     try {
       validateRetireCap();
       const target = focusBindingPath(baseDir, id);
-      const existing = readFocusBindingRecord(target);
+      const legacyTarget = legacyFocusBindingPath(baseDir, id);
+      const existing =
+        readFocusBindingRecord(target) || readFocusBindingRecord(legacyTarget);
       if (!existing) return { ok: true, retired: false, reason: "NOT_BOUND" };
 
       const requestedDir = projectDir ? path.resolve(String(projectDir)) : "";
@@ -2157,6 +2180,13 @@ export async function retireFocusBinding({
 
       try {
         unlinkSync(target);
+        // A legacy binding at the flat path is retired too, so a stale record
+        // cannot resurrect the claim after the new one is gone.
+        try {
+          unlinkSync(legacyTarget);
+        } catch {
+          // no legacy record
+        }
         return {
           ok: true,
           retired: true,
@@ -2179,7 +2209,10 @@ export function readFocusBinding({ stateFile, focusId } = {}) {
   const id = Number(focusId);
   if (!Number.isSafeInteger(id) || id <= 0) return null;
   const baseDir = resolveBaseDirFromState(stateFile);
-  return readFocusBindingRecord(focusBindingPath(baseDir, id));
+  return (
+    readFocusBindingRecord(focusBindingPath(baseDir, id)) ||
+    readFocusBindingRecord(legacyFocusBindingPath(baseDir, id))
+  );
 }
 
 export function captureFocusBindingSnapshot({ stateFile, focusId } = {}) {
@@ -2496,8 +2529,8 @@ async function restoreDbRowSnapshot(dbSnap, journal = null, role = "source") {
         );
     }
 
-    // R3-4: Jangan pernah menghapus atau menimpa `project_summary` agar
-    // ringkasan proyek dan riwayat task yang lebih baru tidak pernah terhapus.
+    // R3-4: Never delete or overwrite `project_summary`, so the
+    // project summary and newer task history are never lost.
     return { ok: true };
   } catch (error) {
     return { ok: false, error: error?.code || error?.message || "DB_RESTORE_FAILED" };
@@ -2505,8 +2538,8 @@ async function restoreDbRowSnapshot(dbSnap, journal = null, role = "source") {
 }
 
 /**
- * Memulai jurnal transisi tahan-banting (durable transition journal) sebelum
- * memutasi focus, penunjuk sesi, atau berkas state target (R2-4).
+ * Starts the durable transition journal before
+ * mutating the focus, the session pointer, or the target state file (R2-4).
  */
 export async function beginTransitionJournal({
   sourceStateFile,
@@ -2611,15 +2644,15 @@ export async function beginTransitionJournal({
     },
   };
 
-  // R3-5: Kegagalan menulis jurnal transisi WAJIB menggagalkan transisi (fail-closed).
+  // R3-5: A failed transition journal write MUST fail the transition (fail-closed).
   writeJournalFileAtomic(journalFile, journal);
 
   return journal;
 }
 
 /**
- * Titik Komit Otoritatif (Authoritative Commit Point) untuk transisi (R2-4 + R3-5).
- * Kegagalan menandai `COMMITTED` akan melempar galat agar rollback dijalankan.
+ * Authoritative Commit Point for a transition (R2-4 + R3-5).
+ * A failure while marking `COMMITTED` throws so rollback runs.
  */
 export function markTransitionJournalCommitted(journal) {
   if (!journal || !journal.journalFile) {
@@ -2803,8 +2836,8 @@ function extractVerifiedJournalWorktrees(journal) {
 }
 
 /**
- * Memutar balik seluruh perubahan transisi (baik target maupun asal) secara
- * idempoten ketika langkah transisi gagal sebelum `COMMITTED` (R2-4 + R3-4).
+ * Rolls back all transition changes (both target and source) idempotently
+ * when a transition step fails before `COMMITTED` (R2-4 + R3-4).
  */
 export async function rollbackTransitionJournal(
   journal,
@@ -2879,7 +2912,7 @@ export async function rollbackTransitionJournal(
         : { ok: true };
 
       if (!targetDbRes.ok || !sourceDbRes.ok) {
-        // R3-5: Pertahankan jurnal di disk sebagai bukti bila pemulihan DB gagal.
+        // R3-5: Keep the journal on disk as evidence when the DB restore fails.
         return false;
       }
 
@@ -2955,9 +2988,9 @@ function isJournalOwnerConfirmedDead(journal, { isAlive = currentIsAlive(), isHo
 }
 
 /**
- * Rekonsiliasi sinkron atas jurnal transisi yang ditinggalkan proses mati.
- * Dipanggil oleh `resolveStateFile` agar penunjuk sesi dan berkas JSON dipulihkan
- * segera sebelum pemanggil memilih berkas state sesi.
+ * Synchronous reconciliation of transition journals abandoned by a dead process.
+ * Called by `resolveStateFile` so the session pointer and the JSON file are restored
+ * immediately before the caller chooses a session state file.
  */
 export function reconcilePendingTransitionJournalsSync({
   baseDir = null,
@@ -3028,8 +3061,8 @@ export function reconcilePendingTransitionJournalsSync({
 }
 
 /**
- * Rekonsiliasi penuh (termasuk baris SQLite pada database target & asal) atas
- * jurnal transisi yang ditinggalkan proses yang mati mendadak (R2-4 + R3-4).
+ * Full reconciliation (including the SQLite rows in the target & source databases) of
+ * transition journals abandoned by a process that died abruptly (R2-4 + R3-4).
  */
 export async function reconcilePendingTransitionJournals({
   baseDir = null,
@@ -3189,6 +3222,12 @@ export async function reconcilePendingTransitionJournals({
 function readFocusBindingRecord(file) {
   try {
     const data = JSON.parse(readFileSync(file, "utf-8"));
+    // A session pointer is a different record type that can share the legacy
+    // `focus-<id>.json` name. Accepting it as a focus binding would let a
+    // session key masquerade as a focus claim.
+    if (data && typeof data === "object" && typeof data.ownerKey === "string" && data.ownerKey.trim()) {
+      return null;
+    }
     const boundRepoKey = typeof data?.repoKey === "string" ? data.repoKey.trim() : "";
     const boundProjectDir = typeof data?.projectDir === "string" ? data.projectDir.trim() : "";
     if (!boundRepoKey && !boundProjectDir) return null;
@@ -3461,13 +3500,13 @@ export class WorkflowState {
     // hanya mengirim entri baru, bukan meng-upsert seluruh riwayat setiap kali.
     this._syncedHistoryCount = 0;
 
-    // Lease kepemilikan proyek yang terikat ke instance WorkflowState ini (F5).
+    // Project ownership lease bound to this WorkflowState instance (F5).
     this.boundLockLease = options.boundLockLease || null;
     // Live OS-owned kernel mutex capability (Option B).
     this.boundKernelCapability = options.boundKernelCapability || null;
     this.requireKernelMutex = Boolean(options.requireKernelMutex || this.boundKernelCapability);
-    // Antrean serialisasi in-process supaya panggilan async berbarengan tidak
-    // mengacak-acak `this.state` / `this.stateFile` / `this.stateVersion`.
+    // In-process serialization queue so concurrent async calls do not
+    // scramble `this.state` / `this.stateFile` / `this.stateVersion`.
     this._opQueue = Promise.resolve();
     this._inSerializedOp = 0;
     this.state = {
@@ -3906,9 +3945,9 @@ export class WorkflowState {
         await this.mergeSharedHistory({ skipWrites });
         this.loadedTask = "";
         if (!skipWrites) {
-          // Ekspor awal supaya alat yang membaca JSON tidak menemui berkas hilang
-          // hanya karena sesinya belum pernah menyimpan. Jika saat load awal
-          // proyek sedang dipegang penulis asing, jangan menulis ekspor kosong.
+          // Initial export so tools that read the JSON do not find a missing file
+          // just because the session never saved. If during the initial load
+          // the project is held by a foreign writer, do not write an empty export.
           await this._exportJson({ allowSkipIfForeignLock: true });
           try {
             await this.updateProjectSummary({ allowSkipIfForeignLock: true });
@@ -4657,7 +4696,7 @@ export class WorkflowState {
       }
       if (hasil.status === "corrupt") {
         if (skipWrites) {
-          throw new Error(`Berkas state "${this.stateFile}" rusak dan tidak bisa dibaca.`);
+          throw new Error(`State file "${this.stateFile}" is corrupt and cannot be read.`);
         }
         const cadangan = await this._withOwnershipFence(
           "readDiskState.backupDamaged",
@@ -4857,8 +4896,8 @@ export class WorkflowState {
     if (hasil.status === "corrupt") {
       if (skipWrites) {
         throw new StateUnavailable(
-          `Berkas state "${this.stateFile}" rusak dan tidak bisa dibaca, ` +
-            `sehingga state sesi "${sessionKey}" tidak boleh dimulai dari kosong.`,
+          `State file "${this.stateFile}" is corrupt and cannot be read, ` +
+            `so the session state "${sessionKey}" must not start from empty.`,
         );
       }
       const cadangan = await this._withOwnershipFence(
@@ -5023,8 +5062,8 @@ export class WorkflowState {
       }
     }
 
-    // Ringkasan hanya perlu dihitung ulang bila ada yang berubah atau perbaikan sebelumnya tertunda
-    // untuk pasangan user+proyek ini (baik in-memory maupun persisten di state/pendingProjectionRepair).
+    // The summary only needs recomputation when something changed or a previous repair is pending
+    // for this user+project pair (both in-memory and persisted in state/pendingProjectionRepair).
     if (!(this._pendingHistorySummaryRepairKeys instanceof Set)) {
       this._pendingHistorySummaryRepairKeys = new Set();
     }
@@ -5067,7 +5106,7 @@ export class WorkflowState {
         }
         summaryFailed = true;
         summaryError = error?.message || String(error);
-        safeLog("warn", `Ringkasan proyek gagal diperbarui: ${summaryError}`);
+        safeLog("warn", `Failed to update the project summary: ${summaryError}`);
       }
     }
 

@@ -1,19 +1,19 @@
 /**
- * Satu penanda "proses MCP mana yang sedang hidup" per direktori state.
+ * One marker for "which MCP process is currently alive" per state directory.
  *
- * Protokol Kepemilikan v2 (Gate-Serialized & Capability-Fenced):
- *   1. Semua mutasi dan verifikasi kritis pada `mcp-process.lock` diserialisasi
- *      melalui gerbang eksklusif lintas-proses (`mcp-process.gate.lock`) yang
- *      diterbitkan secara atomik menggunakan `writeFileSync(tmp) + linkSync(tmp, gate)`.
- *   2. Berkas lock utama (`mcp-process.lock`) selalu ditulis lengkap ke berkas
- *      sementara lalu dipasang secara atomik, sehingga pembaca tidak pernah
- *      melihat berkas 0-byte atau setengah tertulis (partial initialization).
- *   3. Kepemilikan diikat ke kapabilitas `(pid, leaseId, incarnationId)` —
- *      kesamaan PID saja TIDAK PERNAH memberikan hak adopsi, penyegaran detak
- *      jantung, masuk ulang (re-entry), atau pelepasan lock.
- *   4. Detak jantung yang terlambat/kedaluwarsa TIDAK PERNAH mengizinkan
- *      pengambilalihan selama proses pemegang asli masih hidup.
- *   5. Kegagalan I/O atau izin (`EACCES`, `ENOSPC`, dsb.) selalu gagal tertutup
+ * Ownership Protocol v2 (Gate-Serialized & Capability-Fenced):
+ *   1. Every critical mutation and verification of `mcp-process.lock` is serialized
+ *      through a cross-process exclusive gate (`mcp-process.gate.lock`) that is
+ *      published atomically using `writeFileSync(tmp) + linkSync(tmp, gate)`.
+ *   2. The main lock file (`mcp-process.lock`) is always written in full to a
+ *      temporary file and then installed atomically, so a reader never
+ *      sees a 0-byte or half-written file (partial initialization).
+ *   3. Ownership is bound to the `(pid, leaseId, incarnationId)` capability —
+ *      a matching PID alone NEVER grants the right to adopt, to refresh the
+ *      heartbeat, to re-enter, or to release the lock.
+ *   4. A late or expired heartbeat NEVER permits takeover while the original
+ *      holder process is still alive.
+ *   5. I/O or permission failures (`EACCES`, `ENOSPC`, etc.) always fail closed
  *      (`acquired: false, wrote: false`).
  */
 
@@ -47,7 +47,7 @@ export const HEARTBEAT_MS = Math.floor(DEFAULT_LOCK_STALE_MS / 3);
 export const DEFAULT_GATE_TIMEOUT_MS = 5000;
 export const PARTIAL_INIT_GRACE_MS = 80;
 
-/** Waktu mulai proses OS ini (ms epoch) dan token inkarnasi unik proses ini. */
+/** Start time of this OS process (ms epoch) and the unique incarnation token of this process. */
 export const SELF_PROCESS_STARTED_AT_MS = Math.round(Date.now() - process.uptime() * 1000);
 export const PROCESS_INCARNATION_ID = `inc-${process.pid}-${SELF_PROCESS_STARTED_AT_MS.toString(36)}-${randomUUID().slice(0, 8)}`;
 
@@ -64,7 +64,7 @@ export class ProjectOwnershipLostError extends Error {
   }
 }
 
-/** Peta lease aktif yang dipegang proses ini per direktori lock kanonik. */
+/** Map of active leases held by this process per canonical lock directory. */
 const heldLeases = new Map();
 
 export const OPTION_B_LOCK_PROTOCOL_VERSION = 3;
@@ -744,22 +744,22 @@ export function releaseKernelMutex(capabilityOrDir) {
   return releaseWorktreeMutex(capabilityOrDir);
 }
 
-/** Peta entri gerbang aktif untuk proses ini (satu per direktori kanonik). */
+/** Map of active gate entries for this process (one per canonical directory). */
 const activeGateDepth = new Map();
 
-/** Penyimpanan konteks eksekusi asinkron untuk kepemilikan re-entrant gerbang (R2-2 & R2-3). */
+/** Async execution-context storage for re-entrant gate ownership (R2-2 & R2-3). */
 const gateExecutionStorage = new AsyncLocalStorage();
 
-/** Antrean asinkron dalam-proses per direktori agar permintaan paralel tidak melewati gerbang (R2-3). */
+/** In-process async queue per directory so parallel requests cannot bypass the gate (R2-3). */
 const inProcessGateQueues = new Map();
 
-/** Direktori lock dan lease aktif utama yang diingat proses ini. */
+/** Primary active lock directory and lease remembered by this process. */
 let rememberedLockDir = null;
 let rememberedLeaseId = null;
 let rememberedPid = null;
 let rememberedIncarnationId = null;
 
-/** Hanya untuk tes: mengganti pemeriksa "proses hidup" dan "proses pemegang". */
+/** For tests only: override the "is process alive" and "is holder process" checks. */
 let isAliveOverride = null;
 let isHolderOverride = null;
 
@@ -772,7 +772,7 @@ function sleepSync(ms) {
   } catch {
     const end = Date.now() + duration;
     while (Date.now() < end) {
-      // Fallback spin bila Atomics.wait tidak tersedia di lingkungan khusus.
+      // Fallback spin when Atomics.wait is unavailable in special environments.
     }
   }
 }
@@ -859,18 +859,18 @@ export function clearHeldLeasesForTests() {
   rememberedIncarnationId = null;
 }
 
-/** Lokasi berkas lock untuk satu direktori state. */
+/** Lock file location for one state directory. */
 export function processLockPath({ dir }) {
   return path.join(dir, LOCK_FILENAME);
 }
 
-/** Lokasi berkas gerbang eksklusif untuk satu direktori state. */
+/** Exclusive gate file location for one state directory. */
 export function processGatePath({ dir }) {
   return path.join(dir, GATE_FILENAME);
 }
 
 /**
- * Direktori `.state` milik PROYEK untuk sebuah berkas state.
+ * The PROJECT's `.state` directory for a state file.
  */
 export function projectLockDir(stateFilePath) {
   const resolved = path.resolve(stateFilePath);
@@ -909,11 +909,11 @@ export function projectLockDir(stateFilePath) {
 }
 
 /**
- * Membaca status berkas lock secara eksplisit:
- *   - missing: berkas tidak ada
- *   - ok: berkas valid dengan pid numerik
- *   - corrupt: berkas ada tetapi bukan JSON valid / pid tidak valid
- *   - unreadable: berkas ada tetapi gagal dibaca karena izin/IO
+ * Reads lock file status explicitly:
+ *   - missing: the file does not exist
+ *   - ok: a valid file with a numeric pid
+ *   - corrupt: the file exists but is not valid JSON / the pid is invalid
+ *   - unreadable: the file exists but could not be read due to permissions/IO
  */
 export function readProcessLockDetailed({ dir, waitForPartialInit = false }) {
   const file = processLockPath({ dir });
@@ -955,7 +955,7 @@ export function readProcessLockDetailed({ dir, waitForPartialInit = false }) {
 }
 
 /**
- * Membaca isi lock, atau null bila tidak ada / tidak terbaca.
+ * Reads the lock contents, or null when it is absent / unreadable.
  */
 export function readProcessLock({ dir }) {
   const res = readProcessLockDetailed({ dir });
@@ -976,8 +976,8 @@ function defaultIsAlive(pid) {
 function isKnownDevWorkflowCommandLine(commandLine) {
   const text = String(commandLine || "").trim();
   if (!text) return false;
-  // Tolak eksekusi `node -e` / `--eval` generik yang sering dipakai proses lain,
-  // kecuali secara eksplisit menjalankan modul dev-workflow / process-lock.
+  // Reject generic `node -e` / `--eval` executions that other processes often use,
+  // unless they explicitly run the dev-workflow / process-lock module.
   if (/\bnode(?:\.exe)?\b[^]*\s(?:-e|--eval)\b/i.test(text) || /\s(?:-e|--eval)\b/i.test(text)) {
     return /dev-workflow|ManagedMCP|process-lock|workflow-state|workflow-handlers/i.test(text);
   }
@@ -985,17 +985,17 @@ function isKnownDevWorkflowCommandLine(commandLine) {
 }
 
 /**
- * Apakah proses dengan PID itu benar-benar pemegang lock dev-workflow yang
- * menulis berkas lock tersebut?
+ * Is the process with that PID really the dev-workflow lock holder that
+ * wrote the lock file?
  *
- * Membedakan:
- *   1. Proses non-Node yang memakai ulang PID (mis. Calendar.app, notepad.exe).
- *   2. Proses Node.js LAIN yang memakai ulang PID (mis. `node -e ...` atau server
- *      lain, maupun proses baru yang lahir SETELAH `existingLock.startedAt`).
- *   3. Inkarnasi lama dari `process.pid` kita sendiri.
+ * It distinguishes:
+ *   1. A non-Node process that reused the PID (e.g. Calendar.app, notepad.exe).
+ *   2. ANOTHER Node.js process that reused the PID (e.g. `node -e ...` or another
+ *      server, or a new process born AFTER `existingLock.startedAt`).
+ *   3. An older incarnation of our own `process.pid`.
  *
- * Mengembalikan true/false bila bisa dipastikan, null bila tidak - dan null
- * selalu diperlakukan sebagai "masih hidup" (fail-closed).
+ * Returns true/false when it can be decided, null when it cannot - and null
+ * is always treated as "still alive" (fail-closed).
  */
 export function defaultIsHolderProcess(pid, existingLock = null) {
   if (!Number.isFinite(pid) || pid <= 0) return null;
@@ -1023,7 +1023,7 @@ export function defaultIsHolderProcess(pid, existingLock = null) {
       );
       const text = String(out || "").trim();
       if (!text || /^INFO:/i.test(text)) {
-        // PID tidak ditemukan di tabel proses OS (mis. PID sintetis pada unit test).
+        // PID not found in the OS process table (e.g. a synthetic PID in a unit test).
         return null;
       }
       const firstLine = text.split(/\r?\n/)[0] || "";
@@ -1034,8 +1034,8 @@ export function defaultIsHolderProcess(pid, existingLock = null) {
         return false;
       }
 
-      // Verifikasi baris perintah dan waktu lahir proses untuk mendeteksi PID
-      // reuse oleh proses Node.js lain di Windows.
+      // Verify the command line and the process creation time to detect PID
+      // reuse by another Node.js process on Windows.
       try {
         const psScript =
           `$p = Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}"; ` +
@@ -1054,7 +1054,7 @@ export function defaultIsHolderProcess(pid, existingLock = null) {
         if (cimText) {
           const info = JSON.parse(cimText);
           if (Number.isFinite(lockStartedAt) && Number.isFinite(info.start)) {
-            // Bila proses OS lahir > 2.5 detik SETELAH lock ditulis, PID telah dipakai ulang.
+            // If the OS process was born > 2.5 seconds AFTER the lock was written, the PID was reused.
             if (info.start > lockStartedAt + 2500) {
               return false;
             }
@@ -1064,7 +1064,7 @@ export function defaultIsHolderProcess(pid, existingLock = null) {
           }
         }
       } catch {
-        // Gagal menginspeksi CIM: fail-closed (kembalikan null agar tidak mencuri lock).
+        // Failed to inspect CIM: fail-closed (return null so the lock is not stolen).
         return null;
       }
       return true;
@@ -1073,7 +1073,7 @@ export function defaultIsHolderProcess(pid, existingLock = null) {
     }
   }
 
-  // Linux / POSIX: baca /proc/<pid>/cmdline bila tersedia, lalu ps.
+  // Linux / POSIX: read /proc/<pid>/cmdline when available, then fall back to ps.
   try {
     if (existsSync(`/proc/${pid}/cmdline`)) {
       const rawCmd = readFileSync(`/proc/${pid}/cmdline`, "utf8").replace(/\0+/g, " ").trim();
@@ -1083,7 +1083,7 @@ export function defaultIsHolderProcess(pid, existingLock = null) {
       }
     }
   } catch {
-    // Lanjutkan ke ps bila /proc tidak dapat dibaca.
+    // Continue with ps when /proc cannot be read.
   }
 
   try {
@@ -1137,9 +1137,9 @@ function sameLockIdentity(a, b) {
 }
 
 /**
- * Menerbitkan berkas JSON secara atomik tanpa jendela berkas 0-byte:
- * tulis isi lengkap ke berkas sementara, lalu pasang dengan `linkSync` (eksklusif)
- * atau ganti di bawah perlindungan gerbang (`replaceIfExists`).
+ * Publishes a JSON file atomically without a 0-byte file window:
+ * write the full contents to a temporary file, then install it with `linkSync` (exclusive)
+ * or replace it under the protection of the gate (`replaceIfExists`).
  */
 export function publishCompleteJsonFile(targetFile, payloadObj, { replaceIfExists = false, pid = process.pid } = {}) {
   const tmpFile = `${targetFile}.init.${pid}.${Date.now()}-${Math.random().toString(16).slice(2, 10)}.tmp`;
@@ -1154,8 +1154,8 @@ export function publishCompleteJsonFile(targetFile, payloadObj, { replaceIfExist
         if (!replaceIfExists) {
           throw linkError;
         }
-        // Di bawah gerbang eksklusif (`mcp-process.gate.lock`), kita berhak
-        // mengganti berkas target secara atomik.
+        // Under the exclusive gate (`mcp-process.gate.lock`) we are entitled
+        // to replace the target file atomically.
         renameSync(tmpFile, targetFile);
         return;
       }
@@ -1164,8 +1164,8 @@ export function publishCompleteJsonFile(targetFile, payloadObj, { replaceIfExist
         (linkError.code === "ENOSYS" || linkError.code === "EXDEV" || linkError.code === "EPERM")
       ) {
         if (!replaceIfExists) {
-          // R3-2: Jangan pernah jatuh ke `writeFileSync(..., { flag: "wx" })`
-          // pada target karena membuka jendela inisialisasi parsial 0-byte.
+          // R3-2: Never fall back to `writeFileSync(..., { flag: "wx" })`
+          // on the target, because that opens a partial 0-byte initialization window.
           const unsupportedErr = new Error(
             `Atomic linkSync publication unsupported for ${targetFile} (${linkError.code})`,
           );
@@ -1281,14 +1281,14 @@ function releaseGateEntry(resolvedDir, entry) {
 }
 
 /**
- * R3-1: Set kapabilitas pemulihan gerbang tepercaya yang tidak dapat dipalsukan
- * oleh pemanggil biasa atau handler permintaan MCP melalui flag boolean.
+ * R3-1: Set of trusted gate recovery capabilities that cannot be forged
+ * by an ordinary caller or by an MCP request handler through a boolean flag.
  */
 const TRUSTED_GATE_RECOVERY_AUTHORITIES = new WeakSet();
 
 /**
- * Mencetak kapabilitas otoritas pemulihan gerbang tepercaya hanya ketika proses
- * dijalankan dalam konteks pemeliharaan operator eksplisit (`DEVWF_OPERATOR_GATE_RECOVERY=1`).
+ * Mints the trusted gate recovery authority capability only when the process
+ * runs inside an explicit operator maintenance context (`DEVWF_OPERATOR_GATE_RECOVERY=1`).
  */
 export function mintTrustedGateRecoveryAuthority({
   operatorId = "",
@@ -1328,15 +1328,15 @@ export function isTrustedGateRecoveryAuthority(authority) {
 }
 
 /**
- * Pemulihan gerbang lock yang ditinggalkan proses mati secara terkendali dan
- * memerlukan kapabilitas tepercaya (`recoveryAuthority`) serta pencocokan token
- * (`expectedToken`) di bawah kunci pemulihan eksklusif (R2-1 / R3-1).
+ * Recovers a lock gate abandoned by a dead process in a controlled way and
+ * requires a trusted capability (`recoveryAuthority`) plus a token match
+ * (`expectedToken`) under the exclusive recovery lock (R2-1 / R3-1).
  *
- * ATURAN KEAMANAN (R2-1 / R3-1):
- *   - Flag boolean `authorizeAbandonedGateRecovery: true` TIDAK lagi diterima;
- *     pemulihan wajib menyertakan `recoveryAuthority` dari `mintTrustedGateRecoveryAuthority`.
- *   - Bila `mcp-process.gate.recover.lock` sendiri ditinggalkan proses mati, fungsi
- *     ini gagal tertutup (`recovery_lock_abandoned`) tanpa menambah lapisan lock baru.
+ * SECURITY RULES (R2-1 / R3-1):
+ *   - The boolean flag `authorizeAbandonedGateRecovery: true` is NO longer accepted;
+ *     recovery MUST supply `recoveryAuthority` from `mintTrustedGateRecoveryAuthority`.
+ *   - When `mcp-process.gate.recover.lock` itself is abandoned by a dead process, this
+ *     function fails closed (`recovery_lock_abandoned`) without adding a lock layer.
  */
 export function recoverAbandonedLockGate({
   dir,
@@ -1486,7 +1486,7 @@ export function recoverAbandonedLockGate({
       });
     }
 
-    // Verifikasi ulang di bawah `recoverLockFile` tepat sebelum unlink.
+    // Re-verify under `recoverLockFile` right before the unlink.
     const verify = readGateDetailed(gateFile, { waitForPartialInit: false });
     if (verify.status === "missing") {
       return {
@@ -1532,18 +1532,18 @@ export function recoverAbandonedLockGate({
 }
 
 /**
- * Mengambil gerbang eksklusif (`mcp-process.gate.lock`) untuk satu direktori lock.
+ * Acquires the exclusive gate (`mcp-process.gate.lock`) for one lock directory.
  *
- * ATURAN KEAMANAN (R2-1, R2-2, R2-3):
- *   1. Re-entrancy HANYA diizinkan di dalam konteks eksekusi asinkron yang sama
- *      (`gateExecutionStorage` / `AsyncLocalStorage`). Permintaan paralel di
- *      proses yang sama TIDAK PERNAH dianggap re-entrant.
- *   2. Penutupan gerbang (`releaseGateEntry`) dieksekusi saat pemegang valid
- *      terakhir (`entry.count === 0`) keluar, baik itu pemegang luar maupun
- *      pemegang bersarang (nested), sehingga gerbang tidak pernah tertinggal.
- *   3. Bila gerbang dipegang oleh proses yang sudah mati, akuisisi normal SELALU
- *      gagal tertutup (`LOCK_GATE_ABANDONED`) tanpa me-rename berkas gerbang,
- *      sehingga tidak pernah ada balapan pathname yang menghapus gerbang suksesor.
+ * SECURITY RULES (R2-1, R2-2, R2-3):
+ *   1. Re-entrancy is ONLY allowed inside the same asynchronous execution context
+ *      (`gateExecutionStorage` / `AsyncLocalStorage`). Parallel requests in the
+ *      same process are NEVER treated as re-entrant.
+ *   2. Gate closure (`releaseGateEntry`) runs when the last valid holder
+ *      (`entry.count === 0`) leaves, whether that is the outer or a nested
+ *      holder, so the gate is never left behind.
+ *   3. When the gate is held by a dead process, normal acquisition ALWAYS
+ *      fails closed (`LOCK_GATE_ABANDONED`) without renaming the gate file,
+ *      so there is never a pathname race that deletes the successor's gate.
  */
 export function acquireLockGate(
   dir,
@@ -1581,9 +1581,9 @@ export function acquireLockGate(
     };
   }
 
-  // R2-3: Bila konteks eksekusi LAIN di dalam proses yang sama sedang memegang
-  // gerbang untuk `resolvedDir`, jangan pernah menganggap panggilan ini re-entrant
-  // dan jangan memblokir event loop tunggal dengan spin sinkron.
+  // R2-3: When ANOTHER execution context inside the same process is holding
+  // the gate for `resolvedDir`, never treat this call as re-entrant
+  // and never block the single event loop with a synchronous spin.
   const otherInProcessHolder = activeGateDepth.get(resolvedDir);
   if (otherInProcessHolder && !otherInProcessHolder.cleanedUp) {
     return {
@@ -1618,8 +1618,8 @@ export function acquireLockGate(
   let contentionNotified = false;
 
   while (true) {
-    // Tunggu bila pemulihan gerbang berotorisasi sedang berlangsung pada direktori ini;
-    // gagal tertutup bila berkas pemulihan ternyata ditinggalkan proses mati.
+    // Wait while an authorized gate recovery is in progress on this directory;
+    // fail closed when the recovery file turns out to be abandoned by a dead process.
     if (existsSync(recoverLockFile)) {
       const recoverDetailed = readGateDetailed(recoverLockFile, { waitForPartialInit: false });
       if (
@@ -1662,8 +1662,8 @@ export function acquireLockGate(
     try {
       publishCompleteJsonFile(gateFile, gatePayload, { replaceIfExists: false, pid });
 
-      // Bila `recoverLockFile` muncul berbarengan tepat saat kita menerbitkan
-      // gerbang, mundur secara bersih agar pemulihan dan akuisisi tidak beririsan.
+      // If `recoverLockFile` appears at the same moment we publish the
+      // gate, back off cleanly so recovery and acquisition do not overlap.
       if (existsSync(recoverLockFile)) {
         try {
           const diskRaw = readFileSync(gateFile, "utf8");
@@ -1757,8 +1757,8 @@ export function acquireLockGate(
       };
     }
 
-    // R2-1: Bila pemegang gerbang sudah terbukti mati, JANGAN PERNAH me-rename
-    // atau menghapus `gateFile` secara otomatis (fail-closed).
+    // R2-1: When the gate holder is confirmed dead, NEVER rename
+    // or delete `gateFile` automatically (fail-closed).
     if (
       isGateStaleParsed(detailed.gate, {
         isAlive,
@@ -1831,15 +1831,15 @@ function executeInGateScope(resolvedDir, fn, options = {}, existingContextMap = 
 }
 
 /**
- * Menjalankan `fn` (sinkron atau asinkron) di dalam gerbang eksklusif `dir`
- * dengan isolasi konteks eksekusi `AsyncLocalStorage` (R2-2 & R2-3).
+ * Runs `fn` (synchronous or asynchronous) inside the exclusive gate of `dir`
+ * with `AsyncLocalStorage` execution-context isolation (R2-2 & R2-3).
  */
 export function withLockGate(dir, fn, options = {}) {
   const resolvedDir = path.resolve(dir);
   const currentStore = gateExecutionStorage.getStore();
   const contextEntry = currentStore ? currentStore.get(resolvedDir) : null;
 
-  // Panggilan bersarang (nested) di dalam konteks eksekusi yang sama:
+  // Nested calls inside the same execution context:
   if (
     contextEntry &&
     contextEntry.active === true &&
@@ -1850,10 +1850,10 @@ export function withLockGate(dir, fn, options = {}) {
     return executeInGateScope(resolvedDir, fn, options, currentStore);
   }
 
-  // R2-3: Bila ada operasi asinkron lain di proses yang sama yang sedang
-  // memegang gerbang `resolvedDir`, antrekan panggilan independen ini secara
-  // asinkron hingga pemegang sebelumnya (beserta seluruh panggilan bersarangnya)
-  // selesai melepas gerbang.
+  // R2-3: When another asynchronous operation in the same process is currently
+  // holding the gate for `resolvedDir`, queue this independent call
+  // asynchronously until the previous holder (and all of its nested calls)
+  // has finished releasing the gate.
   const activeOther = activeGateDepth.get(resolvedDir);
   const pendingQueue = inProcessGateQueues.get(resolvedDir);
   if ((activeOther && !activeOther.cleanedUp) || pendingQueue) {
@@ -1901,13 +1901,13 @@ function rememberLockLease({
 }
 
 /**
- * Evaluasi apakah sebuah berkas lock yang sedang ada di disk masih dimiliki
- * oleh proses yang hidup.
+ * Evaluates whether a lock file currently on disk is still owned
+ * by a live process.
  *
- * ATURAN KEAMANAN (F4 & F8):
- *   - Waktu detak jantung yang lewat (`age > staleMs`) TIDAK PERNAH membuat
- *     proses yang masih hidup dianggap mati.
- *   - Pemegang dianggap mati HANYA bila `!alive` atau `holderIsOurs === false`.
+ * SECURITY RULES (F4 & F8):
+ *   - An elapsed heartbeat time (`age > staleMs`) NEVER makes a
+ *     still-live process be considered dead.
+ *   - A holder is considered dead ONLY when `!alive` or `holderIsOurs === false`.
  */
 function evaluateLockHolderLiveness(existing, {
   pid = process.pid,
@@ -1928,12 +1928,12 @@ function evaluateLockHolderLiveness(existing, {
 
   if (sameHost) {
     if (existing.pid === process.pid && pid === process.pid) {
-      // Lock menunjuk PID OS kita sendiri. Bila ditulis oleh inkarnasi proses
-      // SEBELUMNYA (`existing.incarnationId !== PROCESS_INCARNATION_ID`) dan
-      // tidak tercatat di memori `heldLeases` proses ini, maka inkarnasi lama
-      // tersebut sudah mati sebelum OS memberikan PID ini kepada kita — KECUALI
-      // pemeriksa pemegang eksplisit (`isHolderProcess !== defaultIsHolderProcess`)
-      // menyatakan pemegang masih hidup.
+      // The lock points at our own OS PID. When it was written by a PREVIOUS
+      // process incarnation (`existing.incarnationId !== PROCESS_INCARNATION_ID`) and
+      // is not recorded in this process's `heldLeases` memory, then that old
+      // incarnation died before the OS handed this PID to us — UNLESS
+      // an explicit holder check (`isHolderProcess !== defaultIsHolderProcess`)
+      // states that the holder is still alive.
       const heldHere = heldLeases.get(path.resolve(existing._lockDir || ""));
       if (isHolderProcess !== defaultIsHolderProcess) {
         holderIsOurs = isHolderProcess(existing.pid, existing);
@@ -1973,10 +1973,10 @@ function evaluateLockHolderLiveness(existing, {
 }
 
 /**
- * Mencoba menjadi pemegang lock secara atomik di bawah gerbang eksklusif
- * dengan token kepemilikan (`leaseId`) dan identitas inkarnasi (`incarnationId`).
+ * Tries to become the lock holder atomically under the exclusive gate
+ * with an ownership token (`leaseId`) and an incarnation identity (`incarnationId`).
  *
- * Mengembalikan:
+ * Returns:
  *   { acquired: true, leaseId, incarnationId }
  *   { acquired: true, recovered: true, tookOverFrom: <pid>, leaseId, incarnationId }
  *   { acquired: false, holder: {...}, reason?: string }
@@ -2019,7 +2019,7 @@ export function acquireProcessLock({
     };
   }
 
-  // Jalur injeksi writer khusus untuk unit test kegagalan tulis (mis. EACCES).
+  // Writer injection path used only by unit tests for write failures (e.g. EACCES).
   if (!usingDefaultWriter) {
     const existing = readProcessLock({ dir: resolvedDir });
     if (existing) {
@@ -2070,8 +2070,8 @@ export function acquireProcessLock({
     }
   }
 
-  // Langkah 1: Observasi awal (dengan toleransi inisialisasi parsial) untuk
-  // mendukung hook deterministik sebelum masuk gerbang komit.
+  // Step 1: Initial observation (tolerating partial initialization) to
+  // support deterministic hooks before entering the commit gate.
   const preDetailed = readProcessLockDetailed({ dir: resolvedDir, waitForPartialInit: true });
   if (preDetailed.status === "unreadable") {
     return {
@@ -2092,7 +2092,7 @@ export function acquireProcessLock({
     }
   }
 
-  // Langkah 2: Masuk gerbang eksklusif (`mcp-process.gate.lock`).
+  // Step 2: Enter the exclusive gate (`mcp-process.gate.lock`).
   const gate = acquireLockGate(resolvedDir, { pid, isAlive, isHolderProcess, hooks });
   if (!gate.ok) {
     return {
@@ -2125,8 +2125,8 @@ export function acquireProcessLock({
       const heldForDir = getHeldLeaseForDir(resolvedDir, pid);
       const callerLeaseId = leaseId || heldForDir?.leaseId || null;
 
-      // Re-entry HANYA diizinkan bila pemanggil memegang kapabilitas `leaseId`
-      // yang cocok (atau berkas adalah lock v1 tanpa leaseId milik PID & inkarnasi ini).
+      // Re-entry is ONLY allowed when the caller holds a matching `leaseId`
+      // capability (or the file is a v1 lock without a leaseId owned by this PID & incarnation).
       const hasMatchingCapability = existing.leaseId
         ? existing.pid === pid && Boolean(callerLeaseId) && existing.leaseId === callerLeaseId
         : existing.pid === pid && (!existing.incarnationId || existing.incarnationId === effectiveIncarnationId);
@@ -2139,12 +2139,12 @@ export function acquireProcessLock({
           { pid, incarnationId: effectiveIncarnationId, now, staleMs, isAlive, isHolderProcess, host },
         );
 
-        // Bila proses pemegang masih hidup (`!liveness.isConfirmedDead`):
-        //   1. Lock legacy v1 yang masih hidup TIDAK BOLEH diambil alih bahkan dengan `force: true`.
-        //   2. Tanpa `force: true`, lock milik proses hidup TIDAK PERNAH diambil alih
-        //      (meskipun detak jantungnya sudah lama / `staleHeartbeat === true`).
-        //   3. Kesamaan PID tanpa `leaseId` yang cocok (`existing.pid === pid`)
-        //      tetap ditolak (`lease_mismatch`) bila inkarnasinya belum terbukti mati.
+        // When the holder process is still alive (`!liveness.isConfirmedDead`):
+        //   1. A live legacy v1 lock MUST NOT be taken over, even with `force: true`.
+        //   2. Without `force: true`, a lock owned by a live process is NEVER taken over
+        //      (even when its heartbeat is old / `staleHeartbeat === true`).
+        //   3. A matching PID without a matching `leaseId` (`existing.pid === pid`)
+        //      is still rejected (`lease_mismatch`) when its incarnation is not proven dead.
         if (!liveness.isConfirmedDead) {
           if (liveness.isLegacy) {
             return {
@@ -2223,7 +2223,7 @@ export function acquireProcessLock({
 }
 
 /**
- * Melepas lock hanya bila memang milik proses DAN kapabilitas lease kita (F3 & F8).
+ * Releases the lock only when it really belongs to our process AND to our lease capability (F3 & F8).
  */
 export function releaseProcessLock({
   dir = rememberedLockDir,
@@ -2241,7 +2241,7 @@ export function releaseProcessLock({
   const heldForDir = getHeldLeaseForDir(resolvedDir, pid);
   const expectedLeaseId = leaseId !== undefined ? leaseId : heldForDir?.leaseId || null;
 
-  // Bila lock di disk memiliki leaseId, pemanggil WAJIB menyajikan leaseId yang cocok.
+  // When the on-disk lock carries a leaseId, the caller MUST present a matching leaseId.
   if (existing.leaseId) {
     if (!expectedLeaseId || existing.leaseId !== expectedLeaseId) {
       return false;
@@ -2314,7 +2314,7 @@ export function releaseProcessLock({
 }
 
 /**
- * Melepas lock aktif yang sedang dipegang proses ini saat keluar (exit handler).
+ * Releases the active lock held by this process on exit (exit handler).
  */
 export function releaseActiveProcessLock({ pid = process.pid, fallbackDir = null } = {}) {
   let released = false;
@@ -2341,10 +2341,10 @@ export function releaseActiveProcessLock({ pid = process.pid, fallbackDir = null
 }
 
 /**
- * Mendeteksi keberadaan penulis legacy (v1 tanpa `leaseId` / `protocolVersion: 2`)
- * yang masih hidup pada direktori awal, direktori target, seluruh bucket proyek
- * di pohon state yang sama (bahkan bila penunjuk sesi hilang atau usang), atau
- * berkas state aktif milik proyek target (R2-5).
+ * Detects the presence of live legacy writers (v1 without `leaseId` / `protocolVersion: 2`)
+ * in the source directory, the target directory, every project bucket
+ * in the same state tree (even when the session pointer is missing or stale), or
+ * the active state file owned by the target project (R2-5).
  */
 export function detectIncompatibleLegacyWriters({
   fromDir = null,
@@ -2361,8 +2361,8 @@ export function detectIncompatibleLegacyWriters({
   if (toDir) dirsToCheck.add(path.resolve(toDir));
   if (fromDir) dirsToCheck.add(path.resolve(fromDir));
 
-  // R2-5 + R3-6: Pindai SELURUH bucket di `<base>/projects/*`; bila pembacaan
-  // direktori gagal (mis. EACCES/EPERM), gagal tertutup (`legacy_inspection_failed`).
+  // R2-5 + R3-6: Scan EVERY bucket in `<base>/projects/*`; when reading a
+  // directory fails (e.g. EACCES/EPERM), fail closed (`legacy_inspection_failed`).
   const candidateDirs = [toDir, fromDir].filter(Boolean).map((d) => path.resolve(d));
   for (const cand of candidateDirs) {
     if (path.basename(path.dirname(cand)) === "projects") {
@@ -2417,9 +2417,9 @@ export function detectIncompatibleLegacyWriters({
     }
   }
 
-  // Periksa juga apakah ada berkas state aktif pada `toDir` yang ditulis oleh
-  // proses hidup tanpa lease protokol v2 pada `toDir` (mis. penulis legacy yang
-  // berkas lock startup-nya berada di luar pohon `<base>/projects`).
+  // Also check whether an active state file in `toDir` was written by a
+  // live process without a v2 protocol lease in `toDir` (e.g. a legacy writer whose
+  // startup lock file lives outside the `<base>/projects` tree).
   const resolvedTo = toDir ? path.resolve(toDir) : null;
   if (resolvedTo && existsSync(resolvedTo)) {
     const targetLock = readProcessLock({ dir: resolvedTo });
@@ -2470,8 +2470,8 @@ export function detectIncompatibleLegacyWriters({
             : "";
         if (targetNorm && stateProjNorm && stateProjNorm !== targetNorm) continue;
 
-        // Bila pemilik state aktif ini memiliki lock v2 yang sah pada `resolvedTo`,
-        // maka ia bukan penulis legacy (ditangani oleh pemeriksaan `foreign_lock` biasa).
+        // When this active state owner holds a valid v2 lock in `resolvedTo`,
+        // then it is not a legacy writer (handled by the usual `foreign_lock` check).
         if (targetLock && targetLock.pid === ownerPid && !isLegacyLock(targetLock)) {
           continue;
         }
@@ -2503,10 +2503,10 @@ export function detectIncompatibleLegacyWriters({
 }
 
 /**
- * Memverifikasi keheningan armada (fleet quiescence) sebelum atau sesudah aktivasi
- * Protokol v2 (R2-5): memastikan tidak ada proses legacy v1 yang masih hidup,
- * tidak ada gerbang yang ditinggalkan (`LOCK_GATE_ABANDONED`), dan tidak ada
- * jurnal transisi yang menggantung pada `<baseDir>`.
+ * Verifies fleet quiescence before or after activation of
+ * Protocol v2 (R2-5): it ensures no live legacy v1 process exists, there is no
+ * abandoned gate (`LOCK_GATE_ABANDONED`), and no transition journal is
+ * pending on `<baseDir>`.
  */
 const ADMISSION_BARRIER_FILENAME = "maintenance-admission.json";
 
@@ -2515,9 +2515,9 @@ export function admissionBarrierPath(baseDir) {
 }
 
 /**
- * Menerbitkan penghalang admisi pemeliharaan (maintenance admission barrier)
- * pada `<baseDir>/maintenance-admission.json` untuk menahan peluncuran/aktivitas
- * baru selama transisi armada v1 -> v2 (R3-6).
+ * Publishes the maintenance admission barrier
+ * at `<baseDir>/maintenance-admission.json` to hold back new launches/activity
+ * during the v1 -> v2 fleet transition (R3-6).
  */
 export function acquireMaintenanceAdmissionBarrier({
   baseDir,
@@ -2597,10 +2597,10 @@ export function releaseMaintenanceAdmissionBarrier({ baseDir, maintenanceToken }
 }
 
 /**
- * Memverifikasi keheningan armada (fleet quiescence) secara fail-closed sebelum atau
- * sesudah aktivasi Protokol v2 (R2-5 + R3-6): memastikan tidak ada proses legacy v1
- * yang masih hidup, tidak ada gerbang/lock pemulihan yang ditinggalkan, tidak ada
- * jurnal transisi yang menggantung, dan TIDAK ada direktori/berkas yang gagal dibaca.
+ * Verifies fleet quiescence fail-closed before or after activation of
+ * Protocol v2 (R2-5 + R3-6): it ensures no live legacy v1 process exists, no
+ * abandoned gate/recovery lock exists, no transition journal is pending, and
+ * NO directory or file failed to be read.
  */
 export function verifyLegacyFleetQuiescence({
   baseDir = null,
@@ -2753,11 +2753,11 @@ export function verifyLegacyFleetQuiescence({
 }
 
 /**
- * Tahap 1 dari Transisi Lock Dua-Fase (F7):
- *   1. Tolak bila ada penulis legacy (v1) yang masih hidup pada jalur transisi.
- *   2. Ambil lock pada `toDir` secara atomik TANPA melepas `fromDir` terlebih dahulu.
- *   3. Kembalikan objek `staged` yang dapat di-`commitProcessLockTransition`
- *      setelah state tersimpan, atau di-`rollbackProcessLockTransition` bila gagal.
+ * Stage 1 of the Two-Phase Lock Transition (F7):
+ *   1. Refuse when a live legacy writer (v1) exists on the transition path.
+ *   2. Acquire the lock in `toDir` atomically WITHOUT releasing `fromDir` first.
+ *   3. Return a `staged` object that can be passed to `commitProcessLockTransition`
+ *      after the state is saved, or to `rollbackProcessLockTransition` on failure.
  */
 export function stageProcessLockTransition({
   fromDir = rememberedLockDir,
@@ -2779,7 +2779,7 @@ export function stageProcessLockTransition({
   const previousLease = getRememberedLockLease();
   const heldSourceLease = sourceDir ? getHeldLeaseForDir(sourceDir, pid) : null;
 
-  // R3-6: Hormati penghalang admisi pemeliharaan pada state root bila sedang aktif.
+  // R3-6: Respect the maintenance admission barrier on the state root when it is active.
   if (path.basename(path.dirname(targetDir)) === "projects") {
     const baseDir = path.dirname(path.dirname(targetDir));
     const barrierCheck = checkLegacyAdmissionBarrier({ baseDir });
@@ -2792,7 +2792,7 @@ export function stageProcessLockTransition({
     }
   }
 
-  // Periksa penulis legacy yang tidak kompatibel (F4).
+  // Check for incompatible legacy writers (F4).
   const legacyCheck = detectIncompatibleLegacyWriters({
     fromDir: sourceDir,
     toDir: targetDir,
@@ -2817,7 +2817,7 @@ export function stageProcessLockTransition({
     const existing = readProcessLock({ dir: targetDir });
     const heldTarget = getHeldLeaseForDir(targetDir, pid);
     if (existing && existing.pid === pid) {
-      // F8: Jangan pernah mengadopsi lease milik proses/inkarnasi lain hanya karena PID sama.
+      // F8: Never adopt another process/incarnation's lease just because the PID matches.
       if (existing.leaseId && (!heldTarget || heldTarget.leaseId !== existing.leaseId)) {
         return {
           ok: false,
@@ -2877,8 +2877,8 @@ export function stageProcessLockTransition({
     staleMs,
     allowStaleTakeover: false,
     force,
-    // Jangan jadikan primary sebelum commit berhasil, supaya kegagalan di tengah
-    // transisi tetap mempertahankan ikatan asal.
+    // Do not make it primary before the commit succeeds, so a failure in the middle
+    // of the transition keeps the original binding.
     remember: false,
     isAlive,
     isHolderProcess,
@@ -2914,9 +2914,9 @@ export function stageProcessLockTransition({
 }
 
 /**
- * Tahap 2 (Commit) dari Transisi Lock Dua-Fase (F7):
- * Mengikat detak jantung utama ke `staged.dir` dan melepas `staged.fromDir`
- * HANYA setelah seluruh perubahan state dan metadata proyek berhasil disimpan.
+ * Stage 2 (Commit) of the Two-Phase Lock Transition (F7):
+ * Binds the primary heartbeat to `staged.dir` and releases `staged.fromDir`
+ * ONLY after all state and project metadata changes were saved successfully.
  */
 export function commitProcessLockTransition(staged) {
   if (!staged || !staged.ok) {
@@ -2962,9 +2962,9 @@ export function commitProcessLockTransition(staged) {
 }
 
 /**
- * Tahap 2 Alternatif (Rollback) dari Transisi Lock Dua-Fase (F7):
- * Melepas lock `staged.dir` yang baru diambil dan memulihkan ikatan detak
- * jantung ke `staged.previousLease`.
+ * Alternative Stage 2 (Rollback) of the Two-Phase Lock Transition (F7):
+ * Releases the newly acquired `staged.dir` lock and restores the heartbeat
+ * binding to `staged.previousLease`.
  */
 export function rollbackProcessLockTransition(staged) {
   if (!staged || !staged.ok) return false;
@@ -2985,7 +2985,7 @@ export function rollbackProcessLockTransition(staged) {
 }
 
 /**
- * Pembungkus satu langkah untuk pemindahan lock langsung (kompatibilitas API).
+ * One-step wrapper for an immediate lock relocation (API compatibility).
  */
 export function relocateProcessLock(options = {}) {
   const staged = stageProcessLockTransition(options);
@@ -2996,8 +2996,8 @@ export function relocateProcessLock(options = {}) {
 }
 
 /**
- * Memverifikasi di bawah gerbang eksklusif bahwa proses ini masih memegang
- * kepemilikan sah atas proyek (`dir` atau `projectLockDir(stateFile)`).
+ * Verifies under the exclusive gate that this process still holds legitimate
+ * ownership of the project (`dir` or `projectLockDir(stateFile)`).
  */
 export function verifyProjectOwnership({
   dir = null,
@@ -3070,8 +3070,8 @@ export function verifyProjectOwnership({
     return { ok: true, lock: diskLock, lockDir };
   }
 
-  // Tidak ada `effectiveExpectedLease` yang dipegang proses ini untuk `lockDir`.
-  // Bila di disk ada lock:
+  // This process holds no `effectiveExpectedLease` for `lockDir`.
+  // When a lock exists on disk:
   if (diskLock.pid !== pid) {
     const liveness = evaluateLockHolderLiveness(
       { ...diskLock, _lockDir: lockDir },
@@ -3089,7 +3089,7 @@ export function verifyProjectOwnership({
     return { ok: true, unlocked: true, lockDir };
   }
 
-  // `diskLock.pid === pid`, tetapi proses/instans ini TIDAK memegang `diskLock.leaseId`!
+  // `diskLock.pid === pid`, but this process/instance does NOT hold `diskLock.leaseId`!
   if (diskLock.leaseId) {
     return {
       ok: false,
@@ -3152,16 +3152,16 @@ export function withProjectOwnershipFence(
 }
 
 /**
- * Pesan yang dicatat saat proses lain sudah memegang lock, atau null bila tidak
- * ada yang perlu dilaporkan.
+ * Message recorded when another process already holds the lock, or null when
+ * there is nothing to report.
  */
 export function lockWarning(result) {
   if (!result) return null;
 
   if (result.wrote === false) {
     return (
-      `Tidak bisa menulis penanda proses ke ${LOCK_FILENAME} (${result.error}). ` +
-      "Deteksi proses MCP ganda tidak akan bekerja sampai ini diperbaiki."
+      `Cannot write the process marker to ${LOCK_FILENAME} (${result.error}). ` +
+      "Duplicate MCP process detection will not work until this is fixed."
     );
   }
 
@@ -3169,20 +3169,20 @@ export function lockWarning(result) {
 
   const started = Number.isFinite(result.holder.startedAt)
     ? new Date(result.holder.startedAt).toISOString()
-    : "waktu tidak diketahui";
+    : "time unknown";
 
   return (
-    `Proses dev-workflow MCP lain (PID ${result.holder.pid}, hidup sejak ${started}) ` +
-    "masih berjalan dan memakai direktori state yang sama. " +
-    "Proses yang lebih tua memegang environment saat ia dijalankan, jadi kredensial Factory " +
-    "dan state workflow bisa berbeda antar proses. Tutup OpenCode lalu buka lagi untuk " +
-    "memastikan hanya satu proses yang hidup."
+    `Another dev-workflow MCP process (PID ${result.holder.pid}, alive since ${started}) ` +
+    "is still running and uses the same state directory. " +
+    "The older process holds the environment it was started with, so Factory credentials " +
+    "and workflow state can differ between processes. Close OpenCode and open it again to " +
+    "make sure only one process is alive."
   );
 }
 
 /**
- * Menyegarkan penanda milik kita sendiri di bawah gerbang eksklusif dengan
- * verifikasi kapabilitas `leaseId` (F1 & F8).
+ * Refreshes our own marker under the exclusive gate with
+ * `leaseId` capability verification (F1 & F8).
  */
 export function refreshProcessLock({
   dir = rememberedLockDir,
@@ -3256,16 +3256,16 @@ export function refreshProcessLock({
 }
 
 /**
- * Pemegang lock lain yang masih hidup, atau null.
+ * Another lock holder that is still alive, or null.
  *
- * ATURAN KEAMANAN (F4 & F8):
- *   - Bila proses pemegang masih hidup (`!liveness.isConfirmedDead`), fungsi ini
- *     SELALU mengembalikan pemegang tersebut (dengan `staleHeartbeat: true/false`
- *     dan `legacy: true/false`) — detak jantung yang lewat batas TIDAK membuat
- *     proses hidup diabaikan.
- *   - Bila `lock.pid === pid` tetapi `lock.leaseId` berbeda dari lease yang
- *     dipegang proses ini (dan inkarnasinya belum terbukti mati), lock tersebut
- *     juga dilaporkan sebagai lock asing (`leaseMismatch: true`).
+ * SECURITY RULES (F4 & F8):
+ *   - When the holder process is still alive (`!liveness.isConfirmedDead`), this function
+ *     ALWAYS returns that holder (with `staleHeartbeat: true/false`
+ *     and `legacy: true/false`) — an elapsed heartbeat NEVER makes a
+ *     live process be ignored.
+ *   - When `lock.pid === pid` but `lock.leaseId` differs from the lease held by
+ *     this process (and its incarnation is not proven dead), that lock is
+ *     also reported as a foreign lock (`leaseMismatch: true`).
  */
 export function activeForeignLock({
   dir = rememberedLockDir,
@@ -3328,7 +3328,7 @@ export function activeForeignLock({
   };
 }
 
-/** Mengingat direktori lock supaya detak jantung tidak perlu parameter. */
+/** Remembers the lock directory so the heartbeat needs no argument. */
 export function rememberLockDir(dir, leaseId = null, pid = process.pid) {
   rememberLockLease({ dir, pid, leaseId });
 }

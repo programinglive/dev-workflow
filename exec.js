@@ -217,10 +217,10 @@ function repoRootOrThrow(dir, message) {
  * `source` dan `conflict` dipakai tool untuk memberi tahu pengguna repo mana
  * yang dipakai - dan kapan ia kemungkinan salah.
  */
-function assertExistingDirectory(dir, label = "Direktori") {
+function assertExistingDirectory(dir, label = "Directory") {
   const trimmed = typeof dir === "string" ? dir.trim() : "";
   if (!trimmed || trimmed.includes("\0")) {
-    throw new Error(`${label} "${dir}" tidak valid.`);
+    throw new Error(`${label} "${dir}" is invalid.`);
   }
   const resolved = path.resolve(trimmed);
   let stat = null;
@@ -230,7 +230,7 @@ function assertExistingDirectory(dir, label = "Direktori") {
     stat = null;
   }
   if (!stat || !stat.isDirectory()) {
-    throw new Error(`${label} "${resolved}" tidak ada atau bukan direktori yang valid.`);
+    throw new Error(`${label} "${resolved}" does not exist or is not a valid directory.`);
   }
   return resolved;
 }
