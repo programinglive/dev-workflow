@@ -542,7 +542,7 @@ test("Adversarial 9: Actual CLI/stdio start_task across independent repositories
           },
         },
       });
-      assert.match(resCollision?.result?.content?.[0]?.text || "", /mutex kernel OS|Dibatalkan/i);
+      assert.match(resCollision?.result?.content?.[0]?.text || "", /mutex kernel OS|Dibatalkan|Refused/i);
     } finally {
       const waitExit = (p) =>
         p.exitCode !== null || p.signalCode !== null
@@ -679,7 +679,7 @@ test("Adversarial 12 (F2 / A7 / B7): Corrupt lock metadata and quiescence inspec
     try {
       const res = await handleStartTask(makeStartArgs(repo, "Task with corrupt target lock", 81), ws, null);
       const out = res?.content?.[0]?.text || "";
-      assert.match(out, /Dibatalkan|fail-closed|korup|tidak dapat diverifikasi/i, `Expected fail-closed refusal, got: ${out}`);
+      assert.match(out, /Refused|fail-closed|corrupt|cannot be verified/i, `Expected fail-closed refusal, got: ${out}`);
       assert.equal(ws.state.currentPhase, "idle");
 
       // Now remove target corrupt lock and put corrupt lock in a sibling bucket under state/projects
@@ -782,7 +782,7 @@ test("Adversarial 14 (F4 / A6 / B5): Post-SQLite-commit error preserves committe
         },
       );
       const out = res?.content?.[0]?.text || "";
-      assert.doesNotMatch(out, /dikembalikan ke kondisi sebelum/i, "Must NOT falsely claim pre-commit rollback after SQLite commit");
+      assert.doesNotMatch(out, /failed before the SQLite commit|restored to the state before/i, "Must NOT falsely claim pre-commit rollback after SQLite commit");
       assert.equal(ws.state.currentPhase, "coding", "In-memory task state must remain committed");
       assert.equal(ws.state.taskDescription, "Committed task surviving post-commit error");
       assert.equal(ws.state.pendingProjectionRepair, null, "Verified projection repair must clear pendingProjectionRepair");
@@ -2778,4 +2778,133 @@ test("Adversarial 36 (Cycle 19): CLI hashed sessionKey preserved, load({skipWrit
       await releaseWorktreeMutex(acq.capability);
     }
   });
+});
+
+// ---------------------------------------------------------------- Cycle 23
+//
+// Adversarial 37: focus/session record collision, legacy fleet quiescence, and
+// refusal before any kernel capability is bound.
+
+test("adversarial 37: a session pointer named focus-42 is not a focus binding", async () => {
+  const { readFocusBinding, readSessionPointer, resolveStateFile } = await import("../workflow-state.js");
+  const base = await mkdtemp(path.join(tmpdir(), "adv37-focus-"));
+  try {
+    const sessions = path.join(base, "sessions");
+    await mkdir(sessions, { recursive: true });
+
+    // A session whose key is literally "focus-42" writes its pointer to the
+    // legacy flat path. It must never be read as a claim on Focus 42.
+    await writeFile(
+      path.join(sessions, "focus-42.json"),
+      JSON.stringify({ ownerKey: "focus-42", projectDir: base, repoKey: "repo-x" }),
+      "utf8",
+    );
+
+    const stateFile = path.join(base, "projects", "p", "users", "u", "workflow-state.json");
+    assert.equal(readFocusBinding({ stateFile, focusId: 42 }), null, "a session pointer must not read as a focus binding");
+    assert.ok(readSessionPointer(base, "focus-42"), "the session pointer itself must still be readable");
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+test("adversarial 37: a focus binding is not a session pointer", async () => {
+  const { readSessionPointer } = await import("../workflow-state.js");
+  const base = await mkdtemp(path.join(tmpdir(), "adv37-ptr-"));
+  try {
+    const sessions = path.join(base, "sessions");
+    await mkdir(sessions, { recursive: true });
+    await writeFile(
+      path.join(sessions, "focus-42.json"),
+      JSON.stringify({ focusId: 42, projectDir: base, repoKey: "repo-x", boundAt: new Date().toISOString() }),
+      "utf8",
+    );
+    assert.equal(readSessionPointer(base, "focus-42"), null, "a focus binding must not read as a session pointer");
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+test("adversarial 37: focus bindings live in their own subdirectory", async () => {
+  const { claimFocusBinding, readFocusBinding } = await import("../workflow-state.js");
+  const base = await mkdtemp(path.join(tmpdir(), "adv37-dir-"));
+  const repo = await mkdtemp(path.join(tmpdir(), "adv37-repo-"));
+  try {
+    const stateFile = path.join(base, "projects", "p", "users", "u", "workflow-state.json");
+    await mkdir(path.dirname(stateFile), { recursive: true });
+    const claimed = await claimFocusBinding({ stateFile, focusId: 42, projectDir: repo, repoKey: "repo-x" });
+    assert.equal(claimed.ok, true);
+    assert.ok(
+      existsSync(path.join(base, "sessions", "focus-bindings", "focus-42.json")),
+      "the binding must be written under sessions/focus-bindings/",
+    );
+    assert.ok(readFocusBinding({ stateFile, focusId: 42 }), "the binding must be readable");
+  } finally {
+    await rm(base, { recursive: true, force: true });
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("adversarial 37: a live legacy writer blocks fleet quiescence", async () => {
+  const { verifyLegacyFleetQuiescence } = await import("../process-lock.js");
+  const dir = await mkdtemp(path.join(tmpdir(), "adv37-legacy-"));
+  try {
+    await writeFile(
+      path.join(dir, LOCK_FILENAME),
+      JSON.stringify({ pid: 999999, startedAt: new Date().toISOString(), protocolVersion: 1 }),
+      "utf8",
+    );
+    const result = verifyLegacyFleetQuiescence({ dirs: [dir], isAlive: () => true });
+    assert.equal(result.quiescent, false);
+    assert.equal(result.legacyWriters.length, 1);
+    assert.equal(result.legacyWriters[0].pid, 999999);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("adversarial 37: corrupt legacy metadata is an inspection error, not quiescence", async () => {
+  const { verifyLegacyFleetQuiescence } = await import("../process-lock.js");
+  const dir = await mkdtemp(path.join(tmpdir(), "adv37-corrupt-"));
+  try {
+    await writeFile(path.join(dir, LOCK_FILENAME), "{ not json", "utf8");
+    const result = verifyLegacyFleetQuiescence({ dirs: [dir], isAlive: () => true });
+    assert.equal(result.quiescent, false);
+    assert.ok(result.inspectionErrors.length >= 1, "corrupt metadata must be reported");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("adversarial 37: startup refuses before binding a kernel capability", async () => {
+  const { initStartupWorktreeMutex } = await import("../index.js");
+  const base = await mkdtemp(path.join(tmpdir(), "adv37-startup-"));
+  const repo = await mkdtemp(path.join(tmpdir(), "adv37-startup-repo-"));
+  try {
+    const stateFile = path.join(base, "projects", "p", "users", "u", "workflow-state.json");
+    await mkdir(path.dirname(stateFile), { recursive: true });
+
+    const lockDir = projectLockDir(stateFile);
+    await mkdir(lockDir, { recursive: true });
+    await writeFile(
+      path.join(lockDir, LOCK_FILENAME),
+      JSON.stringify({ pid: 999999, startedAt: new Date().toISOString(), protocolVersion: 1 }),
+      "utf8",
+    );
+
+    const bound = [];
+    const state = {
+      stateFile,
+      state: { projectDir: repo },
+      requireKernelMutex: false,
+      _hasExplicitStateFile: true,
+      bindKernelCapability: (capability) => bound.push(capability),
+    };
+
+    await initStartupWorktreeMutex(state, {});
+    assert.equal(bound.length, 0, "no kernel capability may be bound while the fleet is not quiescent");
+  } finally {
+    await rm(base, { recursive: true, force: true });
+    await rm(repo, { recursive: true, force: true });
+  }
 });

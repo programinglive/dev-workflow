@@ -68,7 +68,7 @@ test("start_task tanpa drawing memberi tahu bahwa flow belum terlihat", async ()
     );
 
     const text = response.content[0].text;
-    assert.match(text, /FLOW BELUM TERLIHAT DI MONITOR/i);
+    assert.match(text, /FLOW NOT YET VISIBLE IN THE MONITOR/i);
     assert.match(text, /create_feature_flow/i);
   });
 });

@@ -135,7 +135,7 @@ export class SqliteAdapter extends DbAdapter {
                     this.db = new Database(dbPath, { readonly: true, fileMustExist: true });
                 } catch (error) {
                     throw new StateUnavailable(
-                        `Penyimpanan state tidak bisa dibuka read-only di "${dbPath}": ${error.message}.`,
+                        `State storage cannot be opened read-only at "${dbPath}": ${error.message}.`,
                         { cause: error },
                     );
                 }

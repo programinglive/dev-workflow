@@ -22,19 +22,19 @@ import { normalizeRequestArgs } from "../utils.js";
 import { testUtils } from "./test-helpers.js";
 
 /**
- * "Satu penulis per repo" harus punya gigi.
+ * "One writer per repo" must have teeth.
  *
- * 31 Oktober 2026 dua sesi OpenCode menulis satu working tree. Satu sesi
- * kehilangan seluruh suntingannya di `tools/handler-modules/index.js` tanpa
- * pesan apa pun — berkasnya kembali ke versi HEAD di tengah pekerjaan. Penanda
- * proses sudah ada, tetapi hanya dicatat sebagai peringatan, jadi tidak ada yang
- * menghentikan tabrakan.
+ * On 31 October 2026 two OpenCode sessions wrote to one working tree. One session
+ * lost every edit in `tools/handler-modules/index.js` without
+ * any message — the file reverted to its HEAD version mid-work. A process
+ * marker already existed, but it was only recorded as a warning, so nothing
+ * stopped the collision.
  *
- * Yang diuji di sini:
- *   1. Penanda lain yang HIDUP menolak `start_task` (bahkan jika detaknya tua;
- *      pengambilalihan tanpa force hanya boleh saat pemegang terkonfirmasi mati).
- *   2. Penanda yang pemegangnya sudah MATI dipulihkan secara atomik.
- *   3. `force: true` tetap tersedia untuk pemilik mesin terhadap sesi v2.
+ * What is tested here:
+ *   1. Another LIVE marker refuses `start_task` (even when its heartbeat is old;
+ *      takeover without force is only allowed once the holder is confirmed dead).
+ *   2. A marker whose holder is already DEAD is recovered atomically.
+ *   3. `force: true` stays available to the machine owner against v2 sessions.
  */
 
 async function withTempDir(callback) {
@@ -69,7 +69,7 @@ test("activeForeignLock mengabaikan penanda milik proses ini sendiri saat lease 
   });
 });
 
-test("activeForeignLock mengabaikan proses yang sudah mati", async () => {
+test("activeForeignLock ignores a process that is already dead", async () => {
   await withTempDir(async (dir) => {
     await writeLock(dir, { pid: 999999, startedAt: Date.now(), heartbeatAt: Date.now() });
 
@@ -79,21 +79,21 @@ test("activeForeignLock mengabaikan proses yang sudah mati", async () => {
   });
 });
 
-test("activeForeignLock menemukan proses lain yang hidup dan baru bekerja", async () => {
+test("activeForeignLock finds another process that is alive and was working recently", async () => {
   await withTempDir(async (dir) => {
     const now = Date.now();
     await writeLock(dir, { pid: 4242, startedAt: now - 60_000, heartbeatAt: now - 30_000, host: "MMCH" });
 
     const holder = activeForeignLock({ dir, pid: process.pid, now, isAlive: () => true });
 
-    assert.ok(holder, "penanda segar milik proses lain harus terdeteksi");
+    assert.ok(holder, "a fresh marker owned by another process must be detected");
     assert.equal(holder.pid, 4242);
     assert.equal(holder.host, "MMCH");
     assert.ok(holder.ageMs >= 30_000);
   });
 });
 
-test("activeForeignLock tetap melindungi proses yang masih hidup walau detaknya sudah tua (F4 no heartbeat-only takeover)", async () => {
+test("activeForeignLock keeps protecting a live process even when its heartbeat is old (F4 no heartbeat-only takeover)", async () => {
   await withTempDir(async (dir) => {
     const now = Date.now();
     await writeLock(dir, {
@@ -103,15 +103,15 @@ test("activeForeignLock tetap melindungi proses yang masih hidup walau detaknya 
     });
 
     const holderAlive = activeForeignLock({ dir, pid: process.pid, now, isAlive: () => true });
-    assert.ok(holderAlive, "proses yang masih hidup tidak boleh diambil alih hanya karena detaknya tua");
+    assert.ok(holderAlive, "a live process must not be taken over just because its heartbeat is old");
     assert.equal(holderAlive.staleHeartbeat, true);
 
     const holderDead = activeForeignLock({ dir, pid: process.pid, now, isAlive: () => false });
-    assert.equal(holderDead, null, "penanda basi yang prosesnya sudah mati boleh diambil alih");
+    assert.equal(holderDead, null, "a stale marker whose process is dead may be taken over");
   });
 });
 
-test("refreshProcessLock hanya menyegarkan penanda milik sendiri", async () => {
+test("refreshProcessLock only refreshes its own marker", async () => {
   await withTempDir(async (dir) => {
     const acq = acquireProcessLock({ dir, pid: process.pid, now: 1 });
     assert.equal(acq.acquired, true);
@@ -121,14 +121,14 @@ test("refreshProcessLock hanya menyegarkan penanda milik sendiri", async () => {
 
     const stored = JSON.parse(await readFile(processLockPath({ dir }), "utf8"));
     assert.equal(stored.heartbeatAt, 55555);
-    assert.equal(stored.startedAt, 1, "startedAt tidak boleh ikut berubah");
+    assert.equal(stored.startedAt, 1, "startedAt must not change as well");
 
     const foreign = refreshProcessLock({ dir, pid: process.pid + 1, now: 66666 });
-    assert.equal(foreign, false, "penanda milik proses lain tidak boleh disentuh");
+    assert.equal(foreign, false, "another process's marker must not be touched");
   });
 });
 
-test("acquireProcessLock mencatat detak pertama saat mengambil alih", async () => {
+test("acquireProcessLock records the first heartbeat when it takes over", async () => {
   await withTempDir(async (dir) => {
     const result = acquireProcessLock({ dir, pid: process.pid, now: 123456 });
 
@@ -138,7 +138,7 @@ test("acquireProcessLock mencatat detak pertama saat mengambil alih", async () =
   });
 });
 
-test("start_task menolak saat proses MCP lain masih aktif di proyek yang sama", async () => {
+test("start_task refuses while another MCP process is still active on the same project", async () => {
   await withTempDir(async (dir) => {
     execFileSync("git", ["init", "-q", "-b", "main"], { cwd: dir, stdio: "ignore" });
     const stateFile = path.join(dir, "state.json");
@@ -165,8 +165,8 @@ test("start_task menolak saat proses MCP lain masih aktif di proyek yang sama", 
       const out = response?.content?.[0]?.text || "";
 
       assert.match(out, /PID 4242/);
-      assert.match(out, /legacy|Option B|sesi lain/i);
-      assert.equal(state.state.taskDescription, "", "task tidak boleh dimulai");
+      assert.match(out, /legacy|Option B|another session/i);
+      assert.equal(state.state.taskDescription, "", "the task must not start");
       assert.equal(state.state.currentPhase, "idle");
     } finally {
       await state.close();
@@ -174,7 +174,7 @@ test("start_task menolak saat proses MCP lain masih aktif di proyek yang sama", 
   });
 });
 
-test("start_task tetap boleh jalan saat pemegang penanda lain sudah mati", async () => {
+test("start_task may still run once the other marker holder is dead", async () => {
   await withTempDir(async (dir) => {
     execFileSync("git", ["init", "-q", "-b", "main"], { cwd: dir, stdio: "ignore" });
     const stateFile = path.join(dir, "state.json");
@@ -211,7 +211,7 @@ test("start_task tetap boleh jalan saat pemegang penanda lain sudah mati", async
   });
 });
 
-test("Option B menolak force true saat pemegang aktif masih hidup", async () => {
+test("Option B refuses force true while the active holder is still alive", async () => {
   await withTempDir(async (dir) => {
     execFileSync("git", ["init", "-q", "-b", "main"], { cwd: dir, stdio: "ignore" });
     const stateFile = path.join(dir, "state.json");
@@ -250,29 +250,29 @@ test("Option B menolak force true saat pemegang aktif masih hidup", async () => 
   });
 });
 
-test("detak jantung berjalan tanpa argumen setelah lock diambil", async () => {
-  // Regresi 31 Oktober 2026: `rememberLockDir` hanya dipanggil di cabang gagal,
-  // jadi pada jalur normal `refreshProcessLock()` tidak tahu direktori mana yang
-  // harus disegarkan. Penanda tidak pernah diperbarui, dianggap basi setelah 10
-  // menit, dan guard berhenti melindungi tanpa pesan apa pun.
+test("the heartbeat runs without arguments after the lock is acquired", async () => {
+  // Regression on 31 October 2026: `rememberLockDir` was only called on the failure
+  // branch, so on the normal path `refreshProcessLock()` did not know which directory
+  // had to be refreshed. The marker was never updated, it was considered stale after 10
+  // minutes, and the guard silently stopped protecting anything.
   await withTempDir(async (dir) => {
     acquireProcessLock({ dir, pid: process.pid, now: 1000 });
 
     const touched = refreshProcessLock({ now: 2000 });
-    assert.equal(touched, true, "detak harus jalan tanpa argumen setelah acquire");
+    assert.equal(touched, true, "the heartbeat must run without arguments after acquire");
 
     const stored = JSON.parse(await readFile(processLockPath({ dir }), "utf8"));
     assert.equal(stored.heartbeatAt, 2000);
   });
 });
 
-test("penanda yang berdetak tidak lagi dianggap basi", async () => {
+test("a marker that just sent a heartbeat is no longer considered stale", async () => {
   await withTempDir(async (dir) => {
     acquireProcessLock({ dir, pid: process.pid, now: 1000 });
     refreshProcessLock({ now: Date.now() });
 
     // Proses lain melihat penanda kita sebagai aktif, bukan basi.
     const holder = activeForeignLock({ dir, pid: 4242, now: Date.now(), isAlive: () => true });
-    assert.ok(holder, "penanda yang baru berdetak harus dianggap aktif");
+    assert.ok(holder, "a marker that just sent a heartbeat must be considered active");
   });
 });

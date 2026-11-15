@@ -14,11 +14,13 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { fileURLToPath } from "url";
 import path from "path";
+import { existsSync } from "node:fs";
 import {
   acquireWorktreeMutex,
   writeKernelLockMetadata,
   releaseAllWorktreeMutexesSync,
   findActiveLegacyWriter,
+  verifyLegacyFleetQuiescence,
   projectLockDir,
   HEARTBEAT_MS,
 } from "./process-lock.js";
@@ -101,8 +103,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           await workflowState.useSession(gate.sessionId);
         }
         await workflowState.load({ skipWrites: true });
-        // Repo proyek mengikuti sesi, bukan satu nilai global. Tanpa ini, sesi yang
-        // bekerja di repo lain tetap menjalankan git di WORKFLOW_PROJECT_DIR.
+        // Project repo follows the active session rather than a single global value.
+        // Without this, a session working in another repo would still run git in WORKFLOW_PROJECT_DIR.
         setActiveProjectDir(workflowState.state.projectDir || "");
       }
       return securityOutputFilter(await handleToolCall({
@@ -249,6 +251,28 @@ export async function initStartupWorktreeMutex(state, { heartbeat = false } = {}
     }
   }
   if (startupProjectDir) {
+    // Fail closed before any capability is bound. A live legacy writer, an
+    // abandoned gate, a pending transition journal, or an unreadable metadata
+    // directory means the fleet is not quiescent, and binding a kernel
+    // capability on top of that would create two owners of one worktree.
+    const stateBase = path.dirname(lockDir);
+    const quiescence = verifyLegacyFleetQuiescence({
+      baseDir: existsSync(stateBase) ? stateBase : null,
+      dirs: [lockDir],
+    });
+    if (!quiescence.quiescent) {
+      const legacyPids = (quiescence.legacyWriters || []).map((writer) => writer.pid).filter(Boolean);
+      safeLog(
+        'error',
+        `Refusing to bind the worktree mutex: legacy fleet is not quiescent ` +
+          `(legacyWriters=${legacyPids.length}, abandonedGates=${(quiescence.abandonedGates || []).length}, ` +
+          `pendingJournals=${(quiescence.pendingJournals || []).length}, ` +
+          `inspectionErrors=${(quiescence.inspectionErrors || []).length}).`,
+      );
+      process.once('exit', () => releaseAllWorktreeMutexesSync());
+      return;
+    }
+
     const legacy = findActiveLegacyWriter({ dir: lockDir });
     if (legacy) {
       safeLog('error', `Warning: active legacy (pre-Option-B) MCP process PID ${legacy.pid} detected in ${lockDir}.`);

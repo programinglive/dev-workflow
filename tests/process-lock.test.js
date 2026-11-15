@@ -225,9 +225,8 @@ test("state di luar tata letak .state memakai direktorinya sendiri", () => {
   assert.equal(projectLockDir(stateFile), path.dirname(path.resolve(stateFile)));
 });
 
-test("gagal menulis lock dilaporkan dan gagal tertutup (acquired: false)", () => {
-  // F6 remediation: kegagalan menulis berkas lock tidak boleh pernah
-  // melaporkan `acquired: true` (harus fail-closed).
+test("lock write failure is reported and fails closed (acquired: false)", () => {
+  // F6 remediation: failing to write the lock file must never report `acquired: true` (must fail closed).
   withTempDir((dir) => {
     const result = acquireProcessLock({
       dir,
