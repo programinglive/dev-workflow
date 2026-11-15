@@ -3442,8 +3442,13 @@ export class WorkflowState {
       !inferredSessionMatch[1].startsWith("proc-")
         ? inferredSessionMatch[1]
         : null;
-    this.sessionId = options.sessionId || inferredSessionKey;
-    this._canonicalSessionKey = !options.sessionId && inferredSessionKey ? inferredSessionKey : null;
+    const explicitCanonicalKey =
+      typeof options.canonicalSessionKey === "string" && options.canonicalSessionKey.trim() !== ""
+        ? options.canonicalSessionKey.trim()
+        : null;
+    this.sessionId = options.sessionId || explicitCanonicalKey || inferredSessionKey;
+    this._canonicalSessionKey =
+      explicitCanonicalKey || (!options.sessionId && inferredSessionKey ? inferredSessionKey : null);
 
     // Versi baris yang kita pegang. `null` berarti "belum pernah menyimpan".
     this.stateVersion = null;
@@ -3894,7 +3899,7 @@ export class WorkflowState {
         if (db) {
           await this._hydrateHistoryFromDatabase(db, userId, projectPath);
         }
-        await this.mergeSharedHistory();
+        await this.mergeSharedHistory({ skipWrites });
         this.loadedTask = "";
         if (!skipWrites) {
           // Ekspor awal supaya alat yang membaca JSON tidak menemui berkas hilang
@@ -3918,7 +3923,7 @@ export class WorkflowState {
         if (db) {
           await this._hydrateHistoryFromDatabase(db, userId, projectPath);
         }
-        await this.mergeSharedHistory();
+        await this.mergeSharedHistory({ skipWrites });
         this.loadedTask = this.state.taskDescription || "";
         return;
       }
@@ -3939,7 +3944,7 @@ export class WorkflowState {
         await roAdapter.close();
       }
     }
-    await this.mergeSharedHistory();
+    await this.mergeSharedHistory({ skipWrites });
     this.loadedTask = this.state.taskDescription || "";
       // A state written before checkpoints existed has no `checkpoint` field.
       // Normalise it here rather than in every reader, so callers can assume the
@@ -4037,7 +4042,7 @@ export class WorkflowState {
    * terlihat dari sesi lain, dan entri yang sama tidak boleh berganda walau
    * berkali-kali disimpan.
    */
-  async mergeSharedHistory() {
+  async mergeSharedHistory({ skipWrites = false } = {}) {
     if (this.historyFile === this.stateFile) {
       return 0;
     }
@@ -4051,7 +4056,7 @@ export class WorkflowState {
     }
     const shared = hasil.status === "ok" ? hasil.data : null;
     const merged = this.mergeDiskHistory(shared);
-    if (merged > 0) {
+    if (merged > 0 && !skipWrites) {
       await this.writeHistoryFile();
     }
     return merged;
@@ -5474,6 +5479,18 @@ export class WorkflowState {
       focus: null,
       activeBuild: null,
       buildHistory: [],
+      ...(previous.pendingProjectionRepair && typeof previous.pendingProjectionRepair === "object"
+        ? { pendingProjectionRepair: previous.pendingProjectionRepair }
+        : {}),
+      ...(previous.pendingFocusCleanup && typeof previous.pendingFocusCleanup === "object"
+        ? { pendingFocusCleanup: previous.pendingFocusCleanup }
+        : {}),
+      ...(previous.pendingHistorySummaryRepairKeys &&
+      typeof previous.pendingHistorySummaryRepairKeys === "object" &&
+      !Array.isArray(previous.pendingHistorySummaryRepairKeys) &&
+      Object.keys(previous.pendingHistorySummaryRepairKeys).length > 0
+        ? { pendingHistorySummaryRepairKeys: previous.pendingHistorySummaryRepairKeys }
+        : {}),
     };
 
     return { archivedTask };

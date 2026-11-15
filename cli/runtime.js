@@ -49,7 +49,7 @@ export async function openSessionState(found) {
   const match = /^workflow-state\.(.+)\.json$/.exec(base);
   const discoveredSessionId = match ? match[1] : null;
   const workflowState = new WorkflowState(found.file, {
-    sessionId: discoveredSessionId,
+    ...(discoveredSessionId ? { canonicalSessionKey: discoveredSessionId } : {}),
     requireKernelMutex: true,
   });
   await workflowState.load({ skipWrites: true });
