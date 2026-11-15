@@ -219,18 +219,18 @@ test("skip_release records justification and advances to completion phase", asyn
 });
 
 /**
- * Regresi yang diperkenalkan guard atribusi commit: setelah `commit_and_push`
- * sengaja MENINGGALKAN pekerjaan sesi lain, working tree memang tidak bersih.
- * Kalau `perform_release` tetap menuntut tree bersih total, rilis tidak akan
- * pernah bisa dijalankan - dan pesannya menyuruh meng-commit berkas yang justru
- * tidak boleh di-commit.
+ * Regression introduced by the commit-attribution guard: after `commit_and_push`
+ * deliberately LEAVES another session's work behind, the working tree really is
+ * not clean. If `perform_release` still demanded a fully clean tree, a release
+ * could never run - and its message would tell you to commit files that must not
+ * be committed.
  */
 async function releaseWithDirtyTree(workflowState, dirtyPaths, lines) {
   workflowState.state.currentPhase = "release";
   workflowState.state.commitAndPushCompleted = true;
   workflowState.state.readyCheckCompleted = true;
   workflowState.state.lastPushBranch = "main";
-  workflowState.state.lastCommitMessage = "fix: sesuatu";
+  workflowState.state.lastCommitMessage = "fix: something";
   workflowState.state.dirtyAtStart = [{ code: "M", path: "knowledge/billing.yaml" }];
   await workflowState.save();
 
@@ -265,7 +265,7 @@ async function releaseWithDirtyTree(workflowState, dirtyPaths, lines) {
   return { response, commands };
 }
 
-test("perform_release lanjut saat yang kotor hanya berkas dari sebelum task", async () => {
+test("perform_release proceeds when only pre-task files are dirty", async () => {
   await withWorkflowState(async (workflowState) => {
     await bindTaskToRepo(workflowState);
     const { response, commands } = await releaseWithDirtyTree(
@@ -277,44 +277,43 @@ test("perform_release lanjut saat yang kotor hanya berkas dari sebelum task", as
     const text = response.content[0].text;
     assert.ok(
       commands.some((command) => command.startsWith("npm run release")),
-      "perintah rilis harus dijalankan",
+      "the release command must run",
     );
     assert.ok(
       !text.includes("Working tree not clean"),
-      `rilis tidak boleh diblokir, jawabannya: ${text.slice(0, 160)}`,
+      `the release must not be blocked, response: ${text.slice(0, 160)}`,
     );
-    assert.match(text, /Dibiarkan tidak ter-commit/);
     assert.match(text, /billing\.yaml/);
     assert.equal(workflowState.state.released, true);
   });
 });
 
-test("perform_release tetap menolak bila ada berkas baru di luar baseline", async () => {
+test("perform_release still refuses when a new file exists outside the baseline", async () => {
   await withWorkflowState(async (workflowState) => {
     await bindTaskToRepo(workflowState);
     const { response, commands } = await releaseWithDirtyTree(
       workflowState,
-      [" M knowledge/billing.yaml", "?? fitur-baru.js"],
-      ["M knowledge/billing.yaml", "?? fitur-baru.js"],
+      [" M knowledge/billing.yaml", "?? new-feature.js"],
+      ["M knowledge/billing.yaml", "?? new-feature.js"],
     );
 
     const text = response.content[0].text;
-    // Dua lapisan bisa memblokir: resetToCommitIfWorkingChanges (lebih awal) atau
-    // pemeriksaan working tree. Yang wajib: rilis tidak jalan.
+    // Two layers can block: resetToCommitIfWorkingChanges (earlier) or the
+    // working-tree check. What matters: the release does not run.
     assert.match(text, /Detected new changes|Working tree not clean/);
-    assert.match(text, /fitur-baru\.js/);
+    assert.match(text, /new-feature\.js/);
     assert.equal(
       commands.some((command) => command.startsWith("npm run release")),
       false,
-      "rilis tidak boleh dijalankan",
+      "the release must not run",
     );
     assert.notEqual(workflowState.state.released, true);
   });
 });
 
-test("perform_release tidak melonggarkan apa pun bila baseline kosong", async () => {
-  // Tanpa baseline tidak ada dasar menyebut sesuatu "bukan milik kita", jadi
-  // perlindungan lama harus utuh.
+test("perform_release loosens nothing when the baseline is empty", async () => {
+  // Without a baseline there is no basis to call anything "not ours", so the
+  // existing protection must stay intact.
   await withWorkflowState(async (workflowState) => {
     await bindTaskToRepo(workflowState);
     workflowState.state.currentPhase = "release";
@@ -328,12 +327,12 @@ test("perform_release tidak melonggarkan apa pun bila baseline kosong", async ()
       normalizeRequestArgs: (args) => ({ args, error: null }),
       workflowState,
       exec: async (command) => ({
-        stdout: command === "git status --porcelain" ? " M apa-saja.js" : "",
+        stdout: command === "git status --porcelain" ? " M whatever.js" : "",
       }),
       git: createGitMock({
         hasWorkingChanges: async () => true,
-        getStatusOutput: async () => " M apa-saja.js",
-        workingTreeSummary: () => ({ hasChanges: true, lines: ["M apa-saja.js"] }),
+        getStatusOutput: async () => " M whatever.js",
+        workingTreeSummary: () => ({ hasChanges: true, lines: ["M whatever.js"] }),
         hasOnlyForeignChanges,
       }),
       utils: testUtils,

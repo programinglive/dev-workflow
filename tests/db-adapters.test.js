@@ -11,19 +11,19 @@ import { MysqlAdapter } from "../db/adapters/mysql.js";
 import { PostgresAdapter } from "../db/adapters/postgres.js";
 
 /**
- * Apakah server database di URL ini benar-benar bisa dihubungi?
+ * Is the database server at this URL actually reachable?
  *
- * MENGAPA ADA
- * -----------
- * Tes ini dulu hanya memeriksa apakah variabel lingkungan berisi URL. Di mesin
- * yang punya `DEV_WORKFLOW_DB_URL=mysql://...` di `.env` tapi MySQL-nya tidak
- * jalan, tes langsung gagal dengan `ECONNREFUSED 127.0.0.1:3306` - dan `npm test`
- * jadi merah karena satu service lokal mati, bukan karena kode rusak. Angka
- * merah yang salah itu berbahaya: ia melatih orang mengabaikan hasil tes.
+ * WHY THIS EXISTS
+ * ---------------
+ * This test used to check only whether the environment variable held a URL. On
+ * a machine where `.env` has `DEV_WORKFLOW_DB_URL=mysql://...` but MySQL is not
+ * running, the test failed with `ECONNREFUSED 127.0.0.1:3306` - and `npm test`
+ * turned red because one local service was down, not because the code was
+ * broken. A false red is dangerous: it trains people to ignore test results.
  *
- * Yang dilakukan sekarang: coba sambung ke host:port dengan timeout pendek.
- * Tidak bisa? Tes DILEWATI dengan alasan yang tercetak, bukan dinyatakan lulus.
- * Kalau service-nya hidup, tesnya tetap berjalan dan tetap bisa gagal.
+ * What it does now: attempt to connect to host:port with a short timeout.
+ * Cannot connect? The test is SKIPPED with a printed reason, not reported as a
+ * pass. If the service is up, the test still runs and can still fail.
  */
 async function canConnect(connectionUrl, timeoutMs = 1500) {
     if (!connectionUrl) return false;
@@ -56,16 +56,16 @@ async function canConnect(connectionUrl, timeoutMs = 1500) {
 
 async function probe(connectionUrl, label) {
     if (!connectionUrl) {
-        return { reachable: false, reason: `${label} dilewati: URL koneksi tidak diatur` };
+        return { reachable: false, reason: `${label} skipped: connection URL is not configured` };
     }
 
-    let target = "host tidak terbaca";
+    let target = "unreadable host";
     try {
         const parsed = new URL(connectionUrl);
         const port = Number(parsed.port) || (parsed.protocol.startsWith("postgres") ? 5432 : 3306);
         target = `${parsed.hostname || "127.0.0.1"}:${port}`;
     } catch {
-        // URL rusak: biarkan tes berjalan supaya kegagalannya jujur dan terbaca.
+        // Broken URL: let the test run so the failure is honest and readable.
         return { reachable: true, reason: "" };
     }
 
@@ -74,7 +74,7 @@ async function probe(connectionUrl, label) {
         reachable,
         reason: reachable
             ? ""
-            : `${label} dilewati: tidak ada server di ${target}. Jalankan service-nya untuk menguji adapter ini.`,
+            : `${label} skipped: no server at ${target}. Start the service to test this adapter.`,
     };
 }
 
@@ -126,10 +126,11 @@ test("Database Adapters", async (t) => {
         const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "sqlite-test-"));
         const dbPath = path.join(tmpDir, "test.db");
 
-        // `dbPath`, bukan `connectionUrl`: SqliteAdapter hanya membaca
-        // `config.dbPath`. Versi lama mengirim connectionUrl yang diabaikan,
-        // sehingga tes ini diam-diam menulis ke `.state/dev-workflow.db` milik
-        // repo - dan gagal di clone bersih yang belum punya folder itu.
+        // `dbPath`, not `connectionUrl`: SqliteAdapter only reads
+        // `config.dbPath`. The old version passed connectionUrl, which was
+        // ignored, so this test silently wrote to the repo's
+        // `.state/dev-workflow.db` - and failed in a clean clone that did not
+        // have that folder yet.
         const adapter = new SqliteAdapter({ dbPath });
 
         try {
@@ -177,28 +178,28 @@ test("Database Adapters", async (t) => {
 });
 
 /**
- * SQLite selalu diuji, jadi ia tidak boleh bergantung pada keadaan mesin.
+ * SQLite is always tested, so it must not depend on the state of the machine.
  *
- * Dua cacat nyata yang ditemukan 31 Okt 2026 saat menjalankan `npm test` di
- * clone bersih (worktree tanpa folder `.state`):
+ * Two real defects found on 31 Oct 2026 while running `npm test` in a clean
+ * clone (a worktree without a `.state` folder):
  *
- *   1. `connect()` membuka DB di `<projectRoot>/.state/` tanpa membuat
- *      direktorinya lebih dulu. Di repo utama ini lolos hanya karena `.state/`
- *      kebetulan sudah ada - jadi hijau di mesin penulis, merah di clone baru.
- *   2. Tes lama mengirim `connectionUrl`, padahal `SqliteAdapter` hanya membaca
- *      `config.dbPath`. Artinya tes itu menulis ke DB `.state` repo yang
- *      sebenarnya, bukan ke direktori sementara yang ia siapkan.
+ *   1. `connect()` opened the DB at `<projectRoot>/.state/` without creating
+ *      the directory first. In the main repo this passed only because `.state/`
+ *      happened to exist - green on the author's machine, red in a new clone.
+ *   2. The old test passed `connectionUrl`, while `SqliteAdapter` only reads
+ *      `config.dbPath`. That meant the test wrote to the repo's real `.state`
+ *      DB, not to the temporary directory it had prepared.
  */
-test("SqliteAdapter membuat direktori induk DB bila belum ada", async () => {
+test("SqliteAdapter creates the DB parent directory when it is missing", async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "sqlite-mkdir-"));
-    const nested = path.join(tmpDir, "belum", "ada", "sama-sekali");
+    const nested = path.join(tmpDir, "not", "yet", "created");
     const adapter = new SqliteAdapter({ dbPath: path.join(nested, "test.db") });
 
     try {
         await adapter.connect();
         assert.ok(
             (await fs.stat(path.join(nested, "test.db"))).isFile(),
-            "berkas DB harus terbentuk di direktori yang tadinya tidak ada",
+            "the DB file must be created in a directory that did not exist before",
         );
     } finally {
         if (adapter.db) adapter.db.close();
@@ -206,16 +207,16 @@ test("SqliteAdapter membuat direktori induk DB bila belum ada", async () => {
     }
 });
 
-test("SqliteAdapter memakai dbPath dari konfigurasi, bukan .state repo", async () => {
+test("SqliteAdapter uses the configured dbPath, not the repo .state", async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "sqlite-path-"));
-    const wanted = path.join(tmpDir, "pilihan-tes.db");
+    const wanted = path.join(tmpDir, "test-choice.db");
     const adapter = new SqliteAdapter({ dbPath: wanted });
 
     try {
         assert.equal(adapter.getDbPath(), wanted);
         assert.ok(
             !adapter.getDbPath().includes(`${path.sep}.state${path.sep}`),
-            "tes tidak boleh menyentuh .state milik repo",
+            "the test must not touch the repo's .state",
         );
     } finally {
         await fs.rm(tmpDir, { recursive: true, force: true });
