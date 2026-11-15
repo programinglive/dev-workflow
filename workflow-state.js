@@ -3374,10 +3374,16 @@ function readFocusBindingRecordDetailed(file) {
   if (data && typeof data === "object" && typeof data.ownerKey === "string" && data.ownerKey.trim()) {
     return { status: "ok", record: null, error: null };
   }
+  // Anything that is not an object cannot be a binding. A parseable but
+  // structurally invalid payload is damage, not absence: treating it as
+  // "unbound" would let a claim overwrite the only record of who owned it.
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    return { status: "unreadable", record: null, error: "FOCUS_BINDING_INVALID" };
+  }
   const boundRepoKey = typeof data?.repoKey === "string" ? data.repoKey.trim() : "";
   const boundProjectDir = typeof data?.projectDir === "string" ? data.projectDir.trim() : "";
   if (!boundRepoKey && !boundProjectDir) {
-    return { status: "ok", record: null, error: null };
+    return { status: "unreadable", record: null, error: "FOCUS_BINDING_INVALID" };
   }
   return {
     status: "ok",
