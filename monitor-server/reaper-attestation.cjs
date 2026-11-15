@@ -232,11 +232,16 @@ function buildLeaseReleaseQuery(attestation) {
  * lease are therefore a single UPDATE with conditional column expressions, not
  * two data-modifying CTEs.
  *
- * WHY THE ARCHIVE READS `fresh`
- * -----------------------------
+ * WHY THE ARCHIVE READS `fresh` AND CHECKS `updated_at`
+ * ----------------------------------------------------
  * The archive is gated on the attestation still being unconsumed and still
- * fresh. A consumed attestation cannot archive a session that was reopened
- * afterwards, and a query delayed past the TTL cannot commit an archive.
+ * fresh, and on the session not having been touched since that attestation was
+ * produced (`updated_at <= verified_at`). A session re-registered after the
+ * evidence was gathered is live again, so the old evidence must not archive it.
+ *
+ * Freshness uses `clock_timestamp()`, not `now()`: `now()` is fixed at
+ * transaction start, so a statement that waits on a row lock past the TTL would
+ * still see the attestation as fresh.
  *
  * WHY THE WHOLE SESSION IS ARCHIVED, SCOPED BY PROCESS IDENTITY
  * --------------------------------------------------------------
@@ -266,6 +271,7 @@ function buildReconcileQuery(attestation) {
     attestation.leaseFencingToken,
     attestation.nonce,
     ATTESTATION_TTL_MS,
+    attestation.verifiedAt,
   ];
 
   return {
@@ -275,8 +281,8 @@ function buildReconcileQuery(attestation) {
               WHERE machine = $2
                 AND nonce = $10
                 AND consumed_at IS NULL
-                AND verified_at > now() - ($11::bigint * interval '1 millisecond')
-                AND verified_at <= now() + interval '60 seconds'
+                AND verified_at > clock_timestamp() - ($11::bigint * interval '1 millisecond')
+                AND verified_at <= clock_timestamp() + interval '60 seconds'
            ),
            stale AS (
              SELECT 1
@@ -284,13 +290,13 @@ function buildReconcileQuery(attestation) {
               WHERE machine = $2
                 AND nonce = $10
                 AND consumed_at IS NULL
-                AND (verified_at <= now() - ($11::bigint * interval '1 millisecond')
-                     OR verified_at > now() + interval '60 seconds')
+                AND (verified_at <= clock_timestamp() - ($11::bigint * interval '1 millisecond')
+                     OR verified_at > clock_timestamp() + interval '60 seconds')
            ),
            archived AS (
              UPDATE sessions
                 SET phase = 'closed',
-                    updated_at = now(),
+                    updated_at = clock_timestamp(),
                     lease_owner = CASE WHEN $7 <> '' THEN '' ELSE lease_owner END,
                     lease_generation = CASE WHEN $7 <> '' THEN lease_generation + 1 ELSE lease_generation END,
                     lease_fencing_token = CASE WHEN $7 <> '' THEN '' ELSE lease_fencing_token END
@@ -304,12 +310,13 @@ function buildReconcileQuery(attestation) {
                 AND lease_generation = $8
                 AND lease_fencing_token = $9
                 AND phase NOT IN ('closed', 'done', 'cancelled', 'handed-off')
+                AND updated_at <= $12::timestamptz
                 AND EXISTS (SELECT 1 FROM fresh)
               RETURNING session_key
            ),
            consumed AS (
              UPDATE reaper_attestations
-                SET consumed_at = now(),
+                SET consumed_at = clock_timestamp(),
                     outcome = CASE
                       WHEN (SELECT count(*) FROM archived) > 0 AND $7 = '' THEN 'archived_no_lease'
                       WHEN (SELECT count(*) FROM archived) > 0 THEN 'archived_and_released'
