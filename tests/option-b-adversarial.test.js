@@ -1480,3 +1480,109 @@ test("Adversarial 25 (R1/R3/R4): CLI non-start_task acquires mutex, stale _lastL
     }
   });
 });
+
+test("Adversarial 26 (C8-1..C8-4): readDiskState & constructor skip pre-mutex writes, pointer restore binds destination worktree/session, and summary failure records pendingProjectionRepair", async () => {
+  await withTempWorkspace(async (base) => {
+    const repoA = await createRepo(base, "adv26-a");
+    const repoB = await createRepo(base, "adv26-b");
+    const stateBase = path.join(base, "state", ".state");
+    const legacyFile = path.join(stateBase, "workflow-state.json");
+    const { mkdir, writeFile, readdir } = await import("node:fs/promises");
+    const { existsSync } = await import("node:fs");
+    await mkdir(stateBase, { recursive: true });
+    await writeFile(
+      legacyFile,
+      JSON.stringify({ currentPhase: "idle", taskDescription: "", projectDir: repoA }),
+      "utf8",
+    );
+
+    const prevStateFile = process.env.DEV_WORKFLOW_STATE_FILE;
+    const prevSess = process.env.OPENCODE_SESSION_ID;
+    process.env.DEV_WORKFLOW_STATE_FILE = legacyFile;
+    process.env.OPENCODE_SESSION_ID = "s26";
+    try {
+      // C8-2: new WorkflowState() must not migrate/write before mutex acquisition
+      const preMutexWs = new WorkflowState(undefined, { requireKernelMutex: true });
+      assert.equal(existsSync(preMutexWs.stateFile), false, "constructor must not write migrated session file");
+
+      // C8-1: readDiskState() on corrupt state without capability fails closed without backup rename
+      await mkdir(path.dirname(preMutexWs.stateFile), { recursive: true });
+      await writeFile(preMutexWs.stateFile, "{corrupt-json", "utf8");
+      await assert.rejects(
+        () => preMutexWs.readDiskState(),
+        (err) => err instanceof ProjectOwnershipLostError || err?.code === "PROJECT_OWNERSHIP_LOST",
+      );
+      const siblings = await readdir(path.dirname(preMutexWs.stateFile));
+      assert.equal(
+        siblings.some((f) => f.includes(".corrupt-")),
+        false,
+        "readDiskState without live capability must not rename corrupt file",
+      );
+    } finally {
+      if (prevStateFile === undefined) delete process.env.DEV_WORKFLOW_STATE_FILE;
+      else process.env.DEV_WORKFLOW_STATE_FILE = prevStateFile;
+      if (prevSess === undefined) delete process.env.OPENCODE_SESSION_ID;
+      else process.env.OPENCODE_SESSION_ID = prevSess;
+    }
+
+    // C8-3: restoreSessionPointerSnapshot rejects foreign worktree and foreign session capability
+    const ptrFile = path.join(stateBase, "sessions", "s26.json");
+    const acqB = await acquireWorktreeMutex({ projectDir: repoB, ownerKey: "s26" });
+    assert.equal(acqB.ok, true);
+    try {
+      assert.throws(
+        () =>
+          restoreSessionPointerSnapshot(
+            { applicable: true, file: ptrFile, raw: null },
+            { sourceProjectDir: repoA, sessionKey: "s26", startedAtMs: Date.now() },
+            { kernelCapability: acqB.capability },
+          ),
+        (err) => err instanceof ProjectOwnershipLostError || err?.code === "PROJECT_OWNERSHIP_LOST",
+      );
+    } finally {
+      await releaseWorktreeMutex(acqB.capability);
+    }
+    const acqForeignSess = await acquireWorktreeMutex({ projectDir: repoA, ownerKey: "other-session" });
+    assert.equal(acqForeignSess.ok, true);
+    try {
+      assert.throws(
+        () =>
+          restoreSessionPointerSnapshot(
+            { applicable: true, file: ptrFile, raw: null },
+            { sourceProjectDir: repoA, sessionKey: "s26", startedAtMs: Date.now() },
+            { kernelCapability: acqForeignSess.capability },
+          ),
+        (err) => err instanceof ProjectOwnershipLostError || err?.code === "PROJECT_OWNERSHIP_LOST",
+      );
+    } finally {
+      await releaseWorktreeMutex(acqForeignSess.capability);
+    }
+
+    // C8-4: summary projection failure after SQLite commit records pendingProjectionRepair
+    const prevState2 = process.env.DEV_WORKFLOW_STATE_FILE;
+    process.env.DEV_WORKFLOW_STATE_FILE = legacyFile;
+    const acqC8 = await acquireWorktreeMutex({ projectDir: repoA, ownerKey: "ses_c8_4" });
+    try {
+      const ws = new WorkflowState(path.join(stateBase, "users", "ses_c8_4", "workflow-state.ses_c8_4.json"), {
+        sessionId: "ses_c8_4",
+        requireKernelMutex: true,
+        kernelCapability: acqC8.capability,
+      });
+      await ws.load();
+      const origUpdateSummary = ws.updateProjectSummary.bind(ws);
+      ws.updateProjectSummary = async () => {
+        throw new Error("DISK_FULL_SUMMARY");
+      };
+      await handleStartTask(makeStartArgs(repoA, "C8-4 summary failure task"), ws);
+      assert.ok(ws.state.pendingProjectionRepair, "summary failure must record pendingProjectionRepair");
+      assert.ok(
+        ws.state.pendingProjectionRepair.repairErrors.some((e) => e.includes("summaryOrHistory:DISK_FULL_SUMMARY")),
+      );
+      ws.updateProjectSummary = origUpdateSummary;
+    } finally {
+      await releaseWorktreeMutex(acqC8.capability);
+      if (prevState2 === undefined) delete process.env.DEV_WORKFLOW_STATE_FILE;
+      else process.env.DEV_WORKFLOW_STATE_FILE = prevState2;
+    }
+  });
+});

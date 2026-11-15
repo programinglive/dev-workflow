@@ -744,8 +744,10 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
         }
 
         // Post-commit reconstructible projections & pointers (fenced by live OS mutex).
-        const postCommitProjectionErrors = [];
-        if (workflowState._lastExportJsonOk === false) {
+        const postCommitProjectionErrors = Array.isArray(workflowState._lastPostCommitProjectionErrors)
+          ? [...workflowState._lastPostCommitProjectionErrors]
+          : [];
+        if (workflowState._lastExportJsonOk === false && !postCommitProjectionErrors.includes("exportJson:EXPORT_RETURNED_FALSE")) {
           postCommitProjectionErrors.push("exportJson:EXPORT_RETURNED_FALSE");
         }
         if (workflowState.state.projectDir) {
@@ -874,6 +876,13 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
                 }
               } catch (err) {
                 repairErrors.push(`exportJson:${err?.message || String(err)}`);
+              }
+            }
+            if (typeof workflowState.updateProjectSummary === "function") {
+              try {
+                await workflowState.updateProjectSummary();
+              } catch (err) {
+                repairErrors.push(`summaryOrHistory:${err?.message || String(err)}`);
               }
             }
           },
