@@ -49,7 +49,8 @@ const HASHED_SESSION_KEY_RE = /-h[0-9a-f]{32}$/;
 
 export function canonicalSessionKey(value) {
   const raw = String(value);
-  if (/^[A-Za-z0-9_-]{1,64}$/.test(raw) && !HASHED_SESSION_KEY_RE.test(raw)) {
+  // Restrict unhashed keys to lowercase `[a-z0-9_-]` so case-distinct IDs never alias on case-insensitive filesystems (Windows/macOS).
+  if (/^[a-z0-9_-]{1,64}$/.test(raw) && !HASHED_SESSION_KEY_RE.test(raw)) {
     return raw;
   }
   const cleaned = raw.replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
