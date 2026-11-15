@@ -1,0 +1,109 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { mkdtemp, mkdir, writeFile, rm, chmod } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
+import { claimFocusBinding, readFocusBinding } from "../workflow-state.js";
+
+/**
+ * A damaged focus binding must never read as "unbound".
+ *
+ * `readFocusBindingRecord` used to swallow every error. A record that exists but
+ * cannot be parsed, or cannot be read at all, was therefore indistinguishable
+ * from a missing one, and `claimFocusBindingUnderLock` would happily overwrite
+ * it with another project's claim. That is silent ownership loss.
+ *
+ * The correct tri-state is:
+ *   - ENOENT            -> absent, a claim may proceed
+ *   - malformed / EACCES -> unreadable, the claim must be refused
+ */
+
+async function stateBase() {
+  const base = await mkdtemp(path.join(tmpdir(), "focus-e-"));
+  const stateFile = path.join(base, "projects", "p", "users", "u", "workflow-state.json");
+  await mkdir(path.dirname(stateFile), { recursive: true });
+  return { base, stateFile };
+}
+
+test("a missing binding is absent, so a claim succeeds", async () => {
+  const { base, stateFile } = await stateBase();
+  const repo = await mkdtemp(path.join(tmpdir(), "focus-e-repo-"));
+  try {
+    const claimed = await claimFocusBinding({ stateFile, focusId: 501, projectDir: repo, repoKey: "repo-a" });
+    assert.equal(claimed.ok, true);
+    assert.ok(readFocusBinding({ stateFile, focusId: 501 }));
+  } finally {
+    await rm(base, { recursive: true, force: true });
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("a malformed binding is unreadable, so a claim is refused", async () => {
+  const { base, stateFile } = await stateBase();
+  const repo = await mkdtemp(path.join(tmpdir(), "focus-e-repo-"));
+  try {
+    const bindings = path.join(base, "sessions", "focus-bindings");
+    await mkdir(bindings, { recursive: true });
+    await writeFile(path.join(bindings, "focus-502.json"), "{ this is not json", "utf8");
+
+    const claimed = await claimFocusBinding({ stateFile, focusId: 502, projectDir: repo, repoKey: "repo-b" });
+    assert.equal(claimed.ok, false, "a corrupted binding must not be overwritten");
+    assert.equal(claimed.reason, "FOCUS_BINDING_UNREADABLE");
+  } finally {
+    await rm(base, { recursive: true, force: true });
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("a readable binding still blocks another project", async () => {
+  const { base, stateFile } = await stateBase();
+  const repoA = await mkdtemp(path.join(tmpdir(), "focus-e-a-"));
+  const repoB = await mkdtemp(path.join(tmpdir(), "focus-e-b-"));
+  try {
+    assert.equal((await claimFocusBinding({ stateFile, focusId: 503, projectDir: repoA, repoKey: "repo-a" })).ok, true);
+    const second = await claimFocusBinding({ stateFile, focusId: 503, projectDir: repoB, repoKey: "repo-b" });
+    assert.equal(second.ok, false);
+    assert.equal(second.reason, "FOCUS_BOUND_TO_ANOTHER_PROJECT");
+  } finally {
+    await rm(base, { recursive: true, force: true });
+    await rm(repoA, { recursive: true, force: true });
+    await rm(repoB, { recursive: true, force: true });
+  }
+});
+
+test("an unreadable binding is refused rather than treated as absent", async () => {
+  const { base, stateFile } = await stateBase();
+  const repo = await mkdtemp(path.join(tmpdir(), "focus-e-repo-"));
+  try {
+    const bindings = path.join(base, "sessions", "focus-bindings");
+    await mkdir(bindings, { recursive: true });
+    const file = path.join(bindings, "focus-504.json");
+    await writeFile(file, JSON.stringify({ focusId: 504, projectDir: repo, repoKey: "repo-x" }), "utf8");
+
+    // Deny read access. On Windows a chmod 000 does not block the owner, so the
+    // test asserts the tri-state contract only where the OS can express it.
+    await chmod(file, 0o000);
+    let readable = true;
+    try {
+      const { readFileSync } = await import("node:fs");
+      readFileSync(file, "utf8");
+    } catch {
+      readable = false;
+    }
+
+    if (!readable) {
+      const claimed = await claimFocusBinding({ stateFile, focusId: 504, projectDir: repo, repoKey: "repo-x" });
+      assert.equal(claimed.ok, false, "an unreadable binding must never be overwritten");
+      assert.equal(claimed.reason, "FOCUS_BINDING_UNREADABLE");
+    } else {
+      // The platform cannot express the condition; the malformed-JSON test
+      // above covers the same code path.
+      assert.ok(true);
+    }
+    await chmod(file, 0o644).catch(() => {});
+  } finally {
+    await rm(base, { recursive: true, force: true });
+    await rm(repo, { recursive: true, force: true });
+  }
+});
