@@ -28,3 +28,14 @@ async function walk(dir) {
 await walk(process.cwd());
 safeLog('info',`Checked ${checked} JavaScript source files. Dashboard semantic lint runs separately with npm run lint --prefix web.`);
 if(jsx.length)safeLog('info',`Skipped ${jsx.length} JSX source file(s); node --check cannot parse JSX (mobile React Native target).`);
+
+// English-only engineering policy. This is the authoritative gate: the same
+// command runs in CI (lint-command), in the pre-commit hook, and locally. It is
+// deterministic, so it does not depend on an AI remembering the prompt.
+const english = spawnSync(process.execPath,['scripts/check-english.mjs'],{encoding:'utf8'});
+if(english.status!==0){
+  safeLog('error','English-only policy check failed',String(english.stderr||english.stdout||'').trim());
+  process.exitCode=1;
+}else{
+  safeLog('info',String(english.stdout||'').trim());
+}

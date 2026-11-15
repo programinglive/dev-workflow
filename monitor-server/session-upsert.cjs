@@ -140,8 +140,9 @@ function buildSessionUpsert(body = {}) {
                                repo_path, repo_remote,
                                release_version, release_revision, toolchain_json,
                                task_id, parent_task_id, parent_task_title,
-                               refinement_json, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb,$20::jsonb,$21,$22,$23,$24,$25::jsonb,$26,$27,$28,$29::jsonb,now())
+                               refinement_json, owner_started_at, owner_executable,
+                               lease_owner, lease_generation, lease_fencing_token, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb,$20::jsonb,$21,$22,$23,$24,$25::jsonb,$26,$27,$28,$29::jsonb,$30,$31,$32,$33,$34,now())
          ON CONFLICT (session_key, task_id) DO UPDATE SET
            machine=EXCLUDED.machine,
            -- Identitas tidak boleh dihapus oleh kiriman kosong. Ini bug yang
@@ -217,6 +218,11 @@ function buildSessionUpsert(body = {}) {
            -- payload always wins. A report that carries none (every tool except
            -- refine_with_ai) must not erase what is already there.
            refinement_json=COALESCE(EXCLUDED.refinement_json, sessions.refinement_json),
+            owner_started_at=COALESCE(NULLIF(EXCLUDED.owner_started_at, ''), sessions.owner_started_at),
+            owner_executable=COALESCE(NULLIF(EXCLUDED.owner_executable, ''), sessions.owner_executable),
+            lease_owner=COALESCE(NULLIF(EXCLUDED.lease_owner, ''), sessions.lease_owner),
+            lease_generation=GREATEST(EXCLUDED.lease_generation, sessions.lease_generation),
+            lease_fencing_token=COALESCE(NULLIF(EXCLUDED.lease_fencing_token, ''), sessions.lease_fencing_token),
            updated_at=now()`,
     params: [
       key,
@@ -250,6 +256,11 @@ function buildSessionUpsert(body = {}) {
       parent ? parent.taskId : null,
       parent ? parent.title : null,
       refinementParam(b.refinement),
+      str(b.ownerStartedAt, 80),
+      str(b.ownerExecutable, 300),
+      str(b.leaseOwner, 200),
+      int(b.leaseGeneration),
+      str(b.leaseFencingToken, 200),
     ],
   };
 }
