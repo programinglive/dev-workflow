@@ -591,6 +591,7 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
     }
     workflowState.requireKernelMutex = true;
     workflowState._lastSaveCommittedSqlite = false;
+    workflowState._lastLoadCommittedSqlite = false;
 
     const committed = await useWorktreeCapability(
       targetMutex.capability,
@@ -824,9 +825,7 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
     }
   } catch (transitionError) {
     const committedToSqlite =
-      sqliteCommitted ||
-      Boolean(workflowState._lastSaveCommittedSqlite) ||
-      Boolean(workflowState._lastLoadCommittedSqlite);
+      sqliteCommitted || Boolean(workflowState._lastSaveCommittedSqlite);
     if (committedToSqlite) {
       // Authoritative SQLite commit already succeeded under the live OS mutex.
       // Never roll back committed SQLite state or release the target capability;
