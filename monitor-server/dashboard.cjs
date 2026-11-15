@@ -11,6 +11,7 @@
 const http = require('node:http');
 const pg = require('pg');
 const { buildSessionsQuery } = require('./sessions-query.cjs');
+const { buildReaperSessionsQuery, verifyReaperRequest } = require('./reaper-query.cjs');
 const { visibleTaskSessions } = require('./visible-task-sessions.cjs');
 const {
   buildPruneEventsQuery,
@@ -2638,6 +2639,26 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(500, { 'content-type': 'application/json' });
         return res.end(JSON.stringify({ ok: false, error: 'failed to fetch drawing: ' + err.message }));
       }
+    }
+    if (url.pathname === '/api/reaper/sessions' && req.method === 'POST') {
+      // Privileged endpoint: process ownership and lease metadata never reach
+      // the public /api/sessions payload. The request is HMAC-signed and the
+      // payload carries a timestamp inside a bounded replay window.
+      const body = bacaJson(await readBody(req), res);
+      if (body === null) return undefined;
+      const check = verifyReaperRequest({
+        payload: body,
+        signature: req.headers['x-devwf-reaper-signature'],
+        secret: process.env.DEVWF_REAPER_SECRET || '',
+      });
+      if (!check.ok) {
+        res.writeHead(401, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: check.reason }));
+      }
+      const { sql, params } = buildReaperSessionsQuery({ limit: body.limit });
+      const rows = await query(sql, params);
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      return res.end(JSON.stringify({ ok: true, sessions: rows.rows }));
     }
     if (url.pathname === '/api/sessions') {
       const limit = Math.min(50, Number(url.searchParams.get('limit') || 20));

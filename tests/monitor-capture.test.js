@@ -90,7 +90,7 @@ test('the upsert writes refinement_json and keeps the previous value when absent
     projectName: 'demo',
     task: 'Fix checkout',
   });
-  assert.equal(withoutRefinement.params[withoutRefinement.params.length - 1], null);
+  assert.equal(withoutRefinement.params[28], null);
 });
 
 test('the dashboard renders a flow button from the stored drawing relation', () => {
