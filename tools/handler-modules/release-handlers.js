@@ -749,6 +749,12 @@ export async function handlePerformRelease(args, context) {
     );
   }
 
+  const runFenced = (op, fn) =>
+    typeof workflowState._withOwnershipFence === "function"
+      ? workflowState._withOwnershipFence(op, fn)
+      : fn();
+
+  return await runFenced("perform_release", async () => {
   // Catat keadaan SEBELUM rilis supaya, kalau push gagal, kita bisa menyebut
   // persis apa yang tertinggal di mesin.
   const headBefore = await safeExecStdout(exec, "git rev-parse HEAD");
@@ -818,4 +824,5 @@ export async function handlePerformRelease(args, context) {
   }
 
   return textResponse(`${message}${leftOverNote}`);
+  });
 }

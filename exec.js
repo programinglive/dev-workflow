@@ -1,5 +1,5 @@
 import { exec as execCallback, execFile as execFileCallback } from "child_process";
-import { existsSync, statSync, readFileSync, readdirSync } from "fs";
+import { existsSync, lstatSync, statSync, readFileSync, readdirSync } from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { sanitize } from './security/sanitizer.js';
@@ -116,7 +116,17 @@ function findRepoRoot(startDir) {
   const { root } = path.parse(current);
 
   while (true) {
-    if (existsSync(path.join(current, ".git"))) {
+    const markerPath = path.join(current, ".git");
+    let markerPresent = false;
+    try {
+      lstatSync(markerPath);
+      markerPresent = true;
+    } catch (err) {
+      if (err?.code !== "ENOENT" && err?.code !== "ENOTDIR") {
+        markerPresent = true;
+      }
+    }
+    if (markerPresent) {
       return isValidGitMarker(current) ? current : null;
     }
 

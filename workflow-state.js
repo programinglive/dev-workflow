@@ -10,6 +10,7 @@ import { sanitize } from './security/sanitizer.js';
 import { normalizeItems as normalizeDodItems, mergeDefinitionOfDone as mergeDodItems } from './tools/handler-modules/dod.js';
 import { resolveSessionKeyWithSource, sanitizeSessionKey, normalizeProjectPath } from './db/session-key.js';
 import { StateUnavailable, StateConflict } from './db/errors.js';
+import { resolveDbPath } from './db/adapters/sqlite.js';
 import {buildTaskProvenance} from './task-provenance.js';
 import { recordAiSession, currentSessionContext } from './ai-sessions.js';
 import { captureRepository } from './repository.js';
@@ -1287,9 +1288,19 @@ function withSessionPointerDb(baseDir, fn) {
         project_dir_path TEXT NOT NULL,
         focus_id INTEGER,
         updated_at_ms INTEGER NOT NULL,
-        updated_at TEXT NOT NULL
+        updated_at TEXT NOT NULL,
+        acquire_seq INTEGER NOT NULL DEFAULT 0,
+        generation INTEGER NOT NULL DEFAULT 1
       )
     `);
+    const cols = ptrDb.prepare("PRAGMA table_info(session_pointers)").all();
+    const colNames = new Set(cols.map((c) => c.name));
+    if (!colNames.has("acquire_seq")) {
+      ptrDb.exec("ALTER TABLE session_pointers ADD COLUMN acquire_seq INTEGER NOT NULL DEFAULT 0");
+    }
+    if (!colNames.has("generation")) {
+      ptrDb.exec("ALTER TABLE session_pointers ADD COLUMN generation INTEGER NOT NULL DEFAULT 1");
+    }
     let outcome;
     const tx = ptrDb.transaction(() => {
       outcome = fn(ptrDb);
@@ -1551,7 +1562,7 @@ export function pinSessionProject({
   try {
     withSessionPointerDb(baseDir, (ptrDb) => {
       const dbRow = ptrDb
-        .prepare("SELECT owner_key, lease_id, updated_at_ms FROM session_pointers WHERE session_key = ?")
+        .prepare("SELECT owner_key, lease_id, updated_at_ms, acquire_seq, generation FROM session_pointers WHERE session_key = ?")
         .get(sessionKey);
 
       let filePtr = null;
@@ -1570,6 +1581,8 @@ export function pinSessionProject({
           ownerKey: dbRow.owner_key,
           leaseId: dbRow.lease_id,
           updatedAtMs: Number(dbRow.updated_at_ms || 0),
+          acquireSeq: Number(dbRow.acquire_seq || 0),
+          generation: Number(dbRow.generation || 1),
         });
       }
       if (filePtr) {
@@ -1577,9 +1590,13 @@ export function pinSessionProject({
           ownerKey: filePtr.ownerKey,
           leaseId: filePtr.leaseId,
           updatedAtMs: Number(filePtr.updatedAtMs || (filePtr.updatedAt ? Date.parse(filePtr.updatedAt) : 0) || 0),
+          acquireSeq: Number(filePtr.acquireSeq || 0),
+          generation: Number(filePtr.generation || 1),
         });
       }
 
+      const capUpdatedMs = Number(cap.acquiredAt || 0);
+      const capAcquireSeq = Number(cap.acquireSeq || 0);
       for (const existingPtr of candidates) {
         if (existingPtr.ownerKey && existingPtr.ownerKey !== sessionKey) {
           refusal = {
@@ -1590,10 +1607,15 @@ export function pinSessionProject({
           };
           return;
         }
+        const isSupersededByWallClock = existingPtr.updatedAtMs > capUpdatedMs;
+        const isSameMsOlderOrEqualSeq =
+          existingPtr.updatedAtMs === capUpdatedMs &&
+          capAcquireSeq > 0 &&
+          existingPtr.acquireSeq >= capAcquireSeq;
         if (
           existingPtr.leaseId &&
           existingPtr.leaseId !== cap.token &&
-          existingPtr.updatedAtMs > Number(cap.acquiredAt || 0)
+          (isSupersededByWallClock || isSameMsOlderOrEqualSeq)
         ) {
           refusal = {
             ok: false,
@@ -1605,11 +1627,12 @@ export function pinSessionProject({
         }
       }
 
+      const nextGeneration = Number(dbRow?.generation || 0) + 1;
       ptrDb
         .prepare(
           `INSERT INTO session_pointers (
-             session_key, owner_key, lease_id, project_dir, project_dir_path, focus_id, updated_at_ms, updated_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             session_key, owner_key, lease_id, project_dir, project_dir_path, focus_id, updated_at_ms, updated_at, acquire_seq, generation
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(session_key) DO UPDATE SET
              owner_key = excluded.owner_key,
              lease_id = excluded.lease_id,
@@ -1617,7 +1640,9 @@ export function pinSessionProject({
              project_dir_path = excluded.project_dir_path,
              focus_id = excluded.focus_id,
              updated_at_ms = excluded.updated_at_ms,
-             updated_at = excluded.updated_at`,
+             updated_at = excluded.updated_at,
+             acquire_seq = excluded.acquire_seq,
+             generation = excluded.generation`,
         )
         .run(
           sessionKey,
@@ -1628,6 +1653,8 @@ export function pinSessionProject({
           payload.focusId,
           payload.updatedAtMs,
           payload.updatedAt,
+          capAcquireSeq,
+          nextGeneration,
         );
 
       const tmpFile = `${ptrFile}.tmp.${process.pid}.${nowMs}`;
@@ -3575,28 +3602,45 @@ export class WorkflowState {
   async load(options = {}) {
     this._lastLoadCommittedSqlite = false;
     const explicitSkipWrites = options?.skipWrites === true;
+    let hasLiveCap = false;
+    if (this.requireKernelMutex || this.boundKernelCapability) {
+      try {
+        hasLiveCap = Boolean(this._assertKernelOwnership("load", { allowDrainingInFlight: true }));
+      } catch {
+        hasLiveCap = false;
+      }
+    }
     const hasEnforcedLockWithoutCap =
-      (this.requireKernelMutex || this.boundKernelCapability) && !this._resolveKernelCapability();
+      (this.requireKernelMutex || this.boundKernelCapability) && !hasLiveCap;
     const skipWrites = explicitSkipWrites || hasEnforcedLockWithoutCap;
 
     // Berkas bernama lama (`.workflow-state.json`) dipindahkan ke nama sekarang
     // SEBELUM apa pun dibaca. Tanpa ini, pengguna yang memutakhirkan dari versi
     // pra-1.16 akan tampak kehilangan seluruh state-nya.
     if (!skipWrites) {
-      await migrateLegacyStateFile(this.stateFile);
+      await this._withOwnershipFence("load.migrateLegacyStateFile", async () => {
+        await migrateLegacyStateFile(this.stateFile);
+      });
     }
 
-    const db = await this._db();
     const { key: sessionKey } = this._sessionKey();
     const userId = getCurrentUserId(this.stateFile);
     const projectPath = this._projectPath();
 
+    // True read-only path: when skipWrites is true and no injected dbAdapter or existing SQLite DB exists on disk,
+    // avoid creating a new SQLite file or running schema migrations before ownership is acquired.
+    const dbMissingOnDisk =
+      !this.dbAdapter && !existsSync(resolveDbPath({ stateFile: this.stateFile }));
+    const db = skipWrites && dbMissingOnDisk ? null : await this._db();
+
     // Migrasi berkas JSON lama dijalankan SEKALI per database, bukan tiap load.
-    if (!skipWrites) {
-      await this._ensureMigrated(db, projectPath);
+    if (!skipWrites && db) {
+      await this._withOwnershipFence("load.ensureMigrated", async () => {
+        await this._ensureMigrated(db, projectPath);
+      });
     }
 
-    const row = await db.loadStateVersioned({ userId, projectPath, sessionKey });
+    const row = db ? await db.loadStateVersioned({ userId, projectPath, sessionKey }) : null;
     this.stateVersion = row?.version ?? null;
 
     if (!row) {
@@ -3608,7 +3652,9 @@ export class WorkflowState {
       if (!adopted) {
         // Benar-benar sesi baru: state default dari constructor sudah tepat.
         // History proyek tetap dibaca supaya rekomendasi tidak buta.
-        await this._hydrateHistoryFromDatabase(db, userId, projectPath);
+        if (db) {
+          await this._hydrateHistoryFromDatabase(db, userId, projectPath);
+        }
         await this.mergeSharedHistory();
         this.loadedTask = "";
         if (!skipWrites) {
@@ -3630,7 +3676,9 @@ export class WorkflowState {
           ...this.state,
           ...parsedAdopted,
         };
-        await this._hydrateHistoryFromDatabase(db, userId, projectPath);
+        if (db) {
+          await this._hydrateHistoryFromDatabase(db, userId, projectPath);
+        }
         await this.mergeSharedHistory();
         this.loadedTask = this.state.taskDescription || "";
         return;
@@ -4648,13 +4696,15 @@ export class WorkflowState {
       }
     }
 
-    // Ringkasan hanya perlu dihitung ulang bila ada yang berubah.
+    // Ringkasan hanya perlu dihitung ulang bila ada yang berubah atau perbaikan sebelumnya tertunda.
     let summaryFailed = false;
     let summaryError = null;
-    if (sent > 0) {
+    if (sent > 0 || this._pendingHistorySummaryRepair === true) {
       try {
         await resolvedDb.updateSummaryForUser(resolvedUserId, resolvedProjectPath);
+        this._pendingHistorySummaryRepair = false;
       } catch (error) {
+        this._pendingHistorySummaryRepair = true;
         summaryFailed = true;
         summaryError = error?.message || String(error);
         safeLog("warn", `Ringkasan proyek gagal diperbarui: ${summaryError}`);
