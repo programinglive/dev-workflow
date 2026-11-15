@@ -53,6 +53,19 @@ The migration is `ADD COLUMN IF NOT EXISTS` with defaults, so it is idempotent
 and safe to re-run. It adds `owner_started_at`, `owner_executable`,
 `lease_owner`, `lease_generation`, `lease_fencing_token`.
 
+## 2b. Migration 006 (attestations)
+
+```bash
+sudo -n sh -c 'set -a; while IFS= read -r line; do
+  case "$line" in \#*|"") continue;; esac
+  key=${line%%=*}; val=${line#*=}; export "$key=$val"; done < /etc/devwf-monitor.env
+  psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f /opt/devwf-monitor/migrations/006-reaper-attestation.sql'
+```
+
+Creates `reaper_attestations` with a unique `(machine, nonce)` index. Without it
+the scheduler still runs, but it has no verified orphan evidence and archives
+nothing.
+
 ## 3. Deploy the backend
 
 ```bash
@@ -64,11 +77,21 @@ sudo -n install -m 644 monitor-server/sessions-query.cjs   /opt/devwf-monitor/se
 sudo -n install -m 644 monitor-server/reaper-query.cjs     /opt/devwf-monitor/reaper-query.cjs
 sudo -n install -m 644 monitor-server/reaper-scheduler.cjs /opt/devwf-monitor/reaper-scheduler.cjs
 sudo -n install -m 644 monitor-server/reaper-actions.cjs   /opt/devwf-monitor/reaper-actions.cjs
+sudo -n install -m 644 monitor-server/reaper-attestation.cjs /opt/devwf-monitor/reaper-attestation.cjs
+sudo -n install -m 644 monitor-server/session-reaper.js    /opt/devwf-monitor/session-reaper.js
 sudo -n install -m 644 monitor-server/migrations/005-reaper-owner.sql /opt/devwf-monitor/migrations/005-reaper-owner.sql
+sudo -n install -m 644 monitor-server/migrations/006-reaper-attestation.sql /opt/devwf-monitor/migrations/006-reaper-attestation.sql
 ```
 
+`session-reaper.js` lives inside `monitor-server/` and is imported as
+`./session-reaper.js`, so it is installed next to the entrypoint. It used to sit
+at the repository root and be imported as `../session-reaper.js`, which resolved
+to `/opt/session-reaper.js` — outside the deploy directory. That is why the first
+deployment classified every session `UNKNOWN` until the file was copied by hand.
+
 `scripts/verify-monitor-deployment.mjs` derives the full dependency closure from
-`monitor.cjs`, so a missing module is reported instead of discovered at runtime.
+`monitor.cjs`, following both `require('./x')` and `import('./x')`, so a missing
+module is reported before the service restarts.
 
 ## 4. Credentials (per machine)
 
@@ -114,10 +137,41 @@ Install on each machine with that machine's own secret:
 | HELLOWORLD | Windows | `HELLOWORLD` |
 | Mac | macOS | `Mac` |
 
+The controller is `scripts/reaper-controller.mjs`. It fetches the privileged
+session list, re-verifies each session's process identity locally, and sends a
+signed attestation for every session whose process is confirmed absent:
+
+```bash
+node scripts/reaper-controller.mjs --config ~/devwf-controller/config.json --dry-run
+node scripts/reaper-controller.mjs --config ~/devwf-controller/config.json
+```
+
+The config file is JSON with `machine`, `secret` and `monitor`, mode 600.
+
 The controller verifies PID + creation time + executable locally, refuses a
 session from another machine (`REMOTE_SESSION_REFUSED`), and refuses a PID shared
 by more than one session (`SHARED_PROCESS_REFUSED`). It never escalates to a
-force kill.
+force kill and never releases a lease.
+
+### Attestation contract
+
+`POST /api/reaper/attest` accepts a signed attestation and stores it in
+`reaper_attestations`. The monitor revalidates every bound field against its own
+row before the scheduler may act:
+
+- machine, project binding, PID, process creation time, executable;
+- lease owner, generation and fencing token;
+- `verifiedAt` inside a 15-minute window, and a single-use `nonce`.
+
+A mismatch is a distinct rejection (`PID_CHANGED`, `LEASE_GENERATION_CHANGED`,
+`MACHINE_MISMATCH`, `ATTESTATION_REPLAYED`, …) and the session is held as
+`RECOVERY_REQUIRED`. The endpoint never accepts a client-supplied state label.
+
+### Cross-project sessions
+
+One AI client process can host several project bindings. Each binding is a
+separate session row and gets its own attestation. Retiring a binding never
+touches the process, and a live process produces no attestation at all.
 
 ## 7. Canary (read-only)
 
@@ -137,9 +191,14 @@ sudo -n sh -c 'printf "\nDEVWF_REAPER_DRY_RUN=0\n" >> /etc/devwf-monitor.env'
 sudo -n systemctl restart devwf-monitor
 ```
 
-Only a confirmed `ORPHANED` row is archived, and archiving is a `phase` update,
-never a delete. Lease release stays with the machine controller and its
-compare-and-swap on owner + generation + fencing token.
+Only a session with a valid controller attestation is archived, and archiving is
+a `phase` update, never a delete. The archive statement repeats every identity
+check, so a row that changed since the attestation is not archived.
+
+Lease release is a separate compare-and-swap on owner + generation + fencing
+token. When it loses the race the session is still archived but the lease is
+reported unresolved (`LEASE_OWNERSHIP_CHANGED`) and the attestation outcome is
+`archived_lease_unresolved` — the task is not presented as fully cleaned.
 
 ## 9. Rollback
 

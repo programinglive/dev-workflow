@@ -33,7 +33,9 @@ test("dry-run reconciliation plans without mutating", async () => {
   assert.equal(calls.filter((c) => /UPDATE sessions/.test(c.sql)).length, 0);
 });
 
-test("non-dry-run archives only confirmed orphans", async () => {
+test("non-dry-run archives nothing without a controller attestation", async () => {
+  // The monitor cannot see another host's process table, so a plan alone is not
+  // evidence. Without an attestation the cycle must not archive.
   const { query, calls } = makeQuery([
     { session_key: "ses_orphan", machine: "MMCH", project_name: "demo", phase: "coding", updated_at: new Date().toISOString() },
     { session_key: "ses_live", machine: "MMCH", project_name: "demo", phase: "coding", updated_at: new Date().toISOString() },
@@ -41,9 +43,9 @@ test("non-dry-run archives only confirmed orphans", async () => {
   const scheduler = createReaperScheduler({ query, reaper, dryRun: false });
   const result = await scheduler.runOnce();
   assert.equal(result.actionable, 1);
-  const updates = calls.filter((c) => /UPDATE sessions/.test(c.sql));
-  assert.equal(updates.length, 1);
-  assert.deepEqual(updates[0].params, ["ses_orphan"]);
+  assert.equal(result.attested, 0);
+  assert.equal(calls.filter((c) => /UPDATE sessions/.test(c.sql)).length, 0);
+  assert.deepEqual(result.applied, []);
 });
 
 test("a second concurrent run is refused", async () => {
