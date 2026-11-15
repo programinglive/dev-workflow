@@ -3,8 +3,20 @@ import { runtimeSecretSpans,prepareRuntimeSecretScan } from './runtime-secrets.j
 
 export const REDACTED = '[REDACTED]';
 const sensitiveName = /(?:^|[_\-.])(?:password|passwd|pwd|secret|token|api[_-]?key|authorization|cookie|session|credential|private[_-]?key|connection[_-]?string)(?:$|[_\-.])/i;
+/**
+ * A workload's session identifier is a routing key, not a credential.
+ *
+ * `checkpoint.handover.sessionKey` records which MCP session is being handed
+ * off. Knowing it grants nothing without the state directory and the process,
+ * so refusing to persist the checkpoint loses the handoff for no safety gain.
+ * Only the exact identifier names are exempt: `sessionToken` and `sessionSecret`
+ * stay subject to the normal rules.
+ */
+const sessionIdentifierName=/^(?:sessionKey|session_key|sessionId|session_id)$/i;
+
 export function isSensitiveKey(key) {
   if(/^(?:secret_type|secret_provider|provider|token_count)$/i.test(key)) return false;
+  if(sessionIdentifierName.test(String(key))) return false;
   const normalized=String(key).replace(/([a-z])([A-Z])/g,'$1_$2');
   return sensitiveName.test(normalized) || /^(?:AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|DATABASE_URL|DEV_WORKFLOW_DB_URL|accessToken|refreshToken|clientSecret|passwordHash|set-cookie)$/i.test(key);
 }
