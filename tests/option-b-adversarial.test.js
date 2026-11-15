@@ -1586,3 +1586,120 @@ test("Adversarial 26 (C8-1..C8-4): readDiskState & constructor skip pre-mutex wr
     }
   });
 });
+
+test("Adversarial 27 (C9-1..C9-4): cli/runtime enforces OS mutex, useSession skips migration writes, pointer restore rejects file/journal mismatch, and history failures record pendingProjectionRepair", async () => {
+  await withTempWorkspace(async (base) => {
+    const repo = await createRepo(base, "adv27-repo");
+    const stateBase = path.join(base, "state", ".state");
+    const legacyFile = path.join(stateBase, "workflow-state.json");
+    const { mkdir, writeFile } = await import("node:fs/promises");
+    const { existsSync } = await import("node:fs");
+    await mkdir(stateBase, { recursive: true });
+    await writeFile(
+      legacyFile,
+      JSON.stringify({ currentPhase: "idle", taskDescription: "", projectDir: repo }),
+      "utf8",
+    );
+
+    // C9-1: cli/runtime openSessionState & drop fail closed when worktree mutex is held
+    const { createHandlers } = await import("../cli/runtime.js");
+    const acqOwner = await acquireWorktreeMutex({ projectDir: repo, ownerKey: "ses_c9_owner" });
+    assert.equal(acqOwner.ok, true);
+    const prevStateFile = process.env.DEV_WORKFLOW_STATE_FILE;
+    process.env.DEV_WORKFLOW_STATE_FILE = legacyFile;
+    let savedSessionFile = "";
+    try {
+      const wsOwner = new WorkflowState(
+        path.join(stateBase, "users", "ses_c9_owner", "workflow-state.ses_c9_owner.json"),
+        { sessionId: "ses_c9_owner", requireKernelMutex: true, kernelCapability: acqOwner.capability },
+      );
+      await wsOwner.load();
+      await handleStartTask(makeStartArgs(repo, "C9-1 protected task"), wsOwner);
+      savedSessionFile = wsOwner.stateFile;
+    } finally {
+      await releaseWorktreeMutex(acqOwner.capability);
+      if (prevStateFile === undefined) delete process.env.DEV_WORKFLOW_STATE_FILE;
+      else process.env.DEV_WORKFLOW_STATE_FILE = prevStateFile;
+    }
+
+    const acqContender = await acquireWorktreeMutex({ projectDir: repo, ownerKey: "ses_c9_other_session" });
+    assert.equal(acqContender.ok, true);
+    try {
+      const handlers = createHandlers({ out: () => {} });
+      await assert.rejects(
+        () => handlers.drop({ file: savedSessionFile, reason: "unauthorized" }),
+        (err) => err instanceof ProjectOwnershipLostError || err?.code === "PROJECT_OWNERSHIP_LOST",
+      );
+    } finally {
+      await releaseWorktreeMutex(acqContender.capability);
+    }
+
+    // C9-2: useSession("B") skips migration writes even when session A holds CWD mutex
+    const acqCwdA = await acquireWorktreeMutex({ projectDir: repo, ownerKey: "ses_A" });
+    const prevCwd = process.cwd();
+    const prevStateC9 = process.env.DEV_WORKFLOW_STATE_FILE;
+    process.chdir(repo);
+    process.env.DEV_WORKFLOW_STATE_FILE = legacyFile;
+    try {
+      const wsA = new WorkflowState(undefined, {
+        sessionId: "ses_A",
+        requireKernelMutex: true,
+        kernelCapability: acqCwdA.capability,
+      });
+      await wsA.useSession("ses_B");
+      assert.equal(existsSync(wsA.stateFile), false, "useSession(ses_B) must not migrate/write files before capability binding");
+    } finally {
+      process.chdir(prevCwd);
+      if (prevStateC9 === undefined) delete process.env.DEV_WORKFLOW_STATE_FILE;
+      else process.env.DEV_WORKFLOW_STATE_FILE = prevStateC9;
+      await releaseWorktreeMutex(acqCwdA.capability);
+    }
+
+    // C9-3: restoreSessionPointerSnapshot rejects snapshot.file (B.json) vs journal.sessionKey (A) mismatch
+    const acqCapA = await acquireWorktreeMutex({ projectDir: repo, ownerKey: "A" });
+    try {
+      assert.throws(
+        () =>
+          restoreSessionPointerSnapshot(
+            { applicable: true, file: path.join(stateBase, "sessions", "B.json"), raw: null },
+            { sourceProjectDir: repo, sessionKey: "A", startedAtMs: Date.now() },
+            { kernelCapability: acqCapA.capability },
+          ),
+        (err) => err instanceof ProjectOwnershipLostError || err?.code === "PROJECT_OWNERSHIP_LOST",
+      );
+    } finally {
+      await releaseWorktreeMutex(acqCapA.capability);
+    }
+
+    // C9-4: writeHistoryFile / _syncHistoryToDatabase failures record pendingProjectionRepair and are not cleared
+    const prevState4 = process.env.DEV_WORKFLOW_STATE_FILE;
+    process.env.DEV_WORKFLOW_STATE_FILE = legacyFile;
+    const acqC9_4 = await acquireWorktreeMutex({ projectDir: repo, ownerKey: "ses_c9_4" });
+    try {
+      const ws4 = new WorkflowState(path.join(stateBase, "users", "ses_c9_4", "workflow-state.ses_c9_4.json"), {
+        sessionId: "ses_c9_4",
+        requireKernelMutex: true,
+        kernelCapability: acqC9_4.capability,
+      });
+      await ws4.load();
+      ws4.writeHistoryFile = async () => {
+        throw new Error("HISTORY_FILE_EIO");
+      };
+      ws4._syncHistoryToDatabase = async () => ({ skipped: 1, sent: 0, summaryFailed: true, summaryError: "HIST_SUM_ERR" });
+      await handleStartTask(makeStartArgs(repo, "C9-4 history failure task"), ws4);
+      assert.ok(ws4.state.pendingProjectionRepair, "history failure must record pendingProjectionRepair");
+      assert.ok(
+        ws4.state.pendingProjectionRepair.repairErrors.some((e) => e.includes("HISTORY_FILE_EIO")),
+        "repairErrors must preserve writeHistoryFile error",
+      );
+      assert.ok(
+        ws4.state.pendingProjectionRepair.repairErrors.some((e) => e.includes("syncHistoryDb:SKIPPED_1")),
+        "repairErrors must preserve _syncHistoryToDatabase skipped count",
+      );
+    } finally {
+      await releaseWorktreeMutex(acqC9_4.capability);
+      if (prevState4 === undefined) delete process.env.DEV_WORKFLOW_STATE_FILE;
+      else process.env.DEV_WORKFLOW_STATE_FILE = prevState4;
+    }
+  });
+});

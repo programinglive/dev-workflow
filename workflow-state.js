@@ -1323,20 +1323,30 @@ export function restoreSessionPointerSnapshot(snapshot, journal = null, { kernel
     snapObj?.projectDir || journal?.sourceProjectDir || journal?.targetProjectDir || "";
   const cap = kernelCapability || (capProjectDir ? getHeldWorktreeCapability(capProjectDir) : null);
 
-  const sessionKey =
-    journal?.sessionKey ||
-    path.basename(snapshot.file).replace(/^pointer-/, "").replace(/\.json$/, "");
-
-  if (!capProjectDir || !sessionKey) {
+  const fileSessionKey = path.basename(snapshot.file).replace(/^pointer-/, "").replace(/\.json$/, "");
+  if (!capProjectDir || !fileSessionKey) {
     throw new ProjectOwnershipLostError(
       `Ownership mismatch during restoreSessionPointerSnapshot: missing destination projectDir or sessionKey`,
       {
         reason: !capProjectDir ? "invalid_target_worktree" : "missing_session_key",
         projectDir: capProjectDir,
-        sessionKey,
+        sessionKey: fileSessionKey,
       },
     );
   }
+  if ((journal?.sessionKey && journal.sessionKey !== fileSessionKey) || (snapObj?.ownerKey && snapObj.ownerKey !== fileSessionKey)) {
+    throw new ProjectOwnershipLostError(
+      `Ownership mismatch during restoreSessionPointerSnapshot: pointer file session (${fileSessionKey}) disagrees with journal/snapshot session`,
+      {
+        reason: "pointer_session_mismatch",
+        projectDir: capProjectDir,
+        fileSessionKey,
+        journalSessionKey: journal?.sessionKey || null,
+        snapshotOwnerKey: snapObj?.ownerKey || null,
+      },
+    );
+  }
+  const sessionKey = fileSessionKey;
 
   const isAuthorizedRecovery =
     String(cap?.ownerKey || "").startsWith(`recovery:${sessionKey}:`) &&
@@ -3470,10 +3480,9 @@ export class WorkflowState {
       // jatuh ke environment - dan satu variabel environment membuat semua sesi
       // di proses ini berbagi satu baris.
       const explicit = typeof sessionId === "string" ? sessionId.trim() : "";
-      const hasLiveCwdCap = Boolean(getHeldWorktreeCapability(process.cwd()));
       const target = resolveStateFile({
         sessionId,
-        skipMigrationWrites: Boolean(this.requireKernelMutex || this.boundKernelCapability) && !hasLiveCwdCap,
+        skipMigrationWrites: Boolean(this.requireKernelMutex || this.boundKernelCapability),
       });
       if (target === this.stateFile && explicit === this.sessionId) return false;
 
@@ -4155,7 +4164,13 @@ export class WorkflowState {
 
     // History milik PROYEK, jadi masuk tabel bersama - bukan hanya berkas.
     try {
-      await this._syncHistoryToDatabase(db, userId, projectPath);
+      const histRes = await this._syncHistoryToDatabase(db, userId, projectPath);
+      if (histRes?.skipped > 0) {
+        postCommitProjectionErrors.push(`syncHistoryDb:SKIPPED_${histRes.skipped}`);
+      }
+      if (histRes?.summaryFailed) {
+        postCommitProjectionErrors.push(`syncHistorySummary:${histRes.summaryError || "FAILED"}`);
+      }
     } catch (error) {
       postCommitProjectionErrors.push(`syncHistoryDb:${error.message}`);
       safeLog("warn", `Sinkronisasi history ke database gagal: ${error.message}`);
@@ -4611,8 +4626,11 @@ export class WorkflowState {
    * tidak menghentikan sisanya - dulu kegagalan pertama membatalkan seluruh
    * fungsi sehingga riwayat berhenti tersimpan tanpa ada yang tahu.
    */
-  async _syncHistoryToDatabase(db, userId, projectPath) {
-    if (typeof db.insertHistoryEntry !== "function") return { skipped: 0, sent: 0 };
+  async _syncHistoryToDatabase(db = null, userId = null, projectPath = null) {
+    const resolvedDb = db || (await this._db());
+    const resolvedUserId = userId || getCurrentUserId(this.stateFile);
+    const resolvedProjectPath = projectPath || this._projectPath();
+    if (typeof resolvedDb.insertHistoryEntry !== "function") return { skipped: 0, sent: 0, summaryFailed: false, summaryError: null };
 
     const history = Array.isArray(this.state.history) ? this.state.history : [];
     const from = Math.min(this._syncedHistoryCount || 0, history.length);
@@ -4621,7 +4639,7 @@ export class WorkflowState {
 
     for (const entry of history.slice(from)) {
       try {
-        await db.insertHistoryEntry(userId, projectPath, entry);
+        await resolvedDb.insertHistoryEntry(resolvedUserId, resolvedProjectPath, entry);
         sent += 1;
         this._syncedHistoryCount = from + sent;
       } catch (error) {
@@ -4631,15 +4649,19 @@ export class WorkflowState {
     }
 
     // Ringkasan hanya perlu dihitung ulang bila ada yang berubah.
+    let summaryFailed = false;
+    let summaryError = null;
     if (sent > 0) {
       try {
-        await db.updateSummaryForUser(userId, projectPath);
+        await resolvedDb.updateSummaryForUser(resolvedUserId, resolvedProjectPath);
       } catch (error) {
-        safeLog("warn", `Ringkasan proyek gagal diperbarui: ${error.message}`);
+        summaryFailed = true;
+        summaryError = error?.message || String(error);
+        safeLog("warn", `Ringkasan proyek gagal diperbarui: ${summaryError}`);
       }
     }
 
-    return { skipped, sent };
+    return { skipped, sent, summaryFailed, summaryError };
   }
 
   /**
