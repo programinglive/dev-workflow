@@ -2636,23 +2636,121 @@ test("Adversarial 35 (Cycle 18): canonical hashed keys never re-hashed or collid
     assert.equal(blindRetire.reason, "FOCUS_BOUND_TO_ANOTHER_PROJECT");
     assert.ok(readFocusBinding({ stateFile: sf, focusId: 93501 }), "binding must remain intact after blind retire");
 
-    // 5. Stale focus lock recovery + fresh lock acquisition is atomic via SQLite BEGIN IMMEDIATE
-    const lockDir = path.join(stateBase, "sessions", "focus-locks");
-    await mkdir(lockDir, { recursive: true });
-    const staleLockFile = path.join(lockDir, "focus-93502.lock");
+    // 5. Stale focus lock recovery + fresh lock acquisition across independent child processes
+    //    using production focusLockPath (`sessions/focus-93502.lock`), local hostname, and confirmed-dead PID
+    const sessionsDir = path.join(stateBase, "sessions");
+    await mkdir(sessionsDir, { recursive: true });
+    const staleLockFile = path.join(sessionsDir, "focus-93502.lock");
+    const os = await import("node:os");
+    const { spawn, spawnSync } = await import("node:child_process");
+    const deadProc = spawnSync(process.execPath, ["-e", "process.exit(0)"]);
+    assert.equal(deadProc.status, 0);
     await writeFile(
       staleLockFile,
-      JSON.stringify({ pid: 99999999, host: "dead-host", startedAt: Date.now() - 60000, token: "dead-tok" }),
+      JSON.stringify({ pid: deadProc.pid, host: os.hostname(), startedAt: Date.now() - 60000, token: "dead-tok" }),
       "utf8",
     );
-    const { spawnSync } = await import("node:child_process");
-    // Verify two concurrent claimFocusBinding calls against the same stale lock yield exactly one winner
     const repoB = await createRepo(base, "adv35-b");
+    const runChildClaim = (targetRepo, targetKey) =>
+      new Promise((resolve, reject) => {
+        const script = `
+          import { claimFocusBinding } from ${JSON.stringify(pathToFileURL(path.join(process.cwd(), "workflow-state.js")).href)};
+          const res = await claimFocusBinding({
+            stateFile: ${JSON.stringify(sf)},
+            focusId: 93502,
+            projectDir: ${JSON.stringify(targetRepo)},
+            repoKey: ${JSON.stringify(targetKey)},
+          });
+          process.stdout.write(JSON.stringify(res));
+        `;
+        const child = spawn(process.execPath, ["--input-type=module", "-e", script], { stdio: ["ignore", "pipe", "pipe"] });
+        let out = "";
+        let err = "";
+        child.stdout.on("data", (d) => { out += d; });
+        child.stderr.on("data", (d) => { err += d; });
+        child.on("close", (code) => {
+          if (code !== 0) return reject(new Error(`child exited ${code}: ${err}`));
+          resolve(JSON.parse(out));
+        });
+      });
     const [r1, r2] = await Promise.all([
-      claimFocusBinding({ stateFile: sf, focusId: 93502, projectDir: repoA, repoKey: "repo-adv35-a" }),
-      claimFocusBinding({ stateFile: sf, focusId: 93502, projectDir: repoB, repoKey: "repo-adv35-b" }),
+      runChildClaim(repoA, "repo-adv35-a"),
+      runChildClaim(repoB, "repo-adv35-b"),
     ]);
-    assert.equal([r1.ok, r2.ok].filter(Boolean).length, 1, "exactly one contender must win stale focus lock recovery");
-    assert.ok(spawnSync);
+    assert.equal([r1.ok, r2.ok].filter(Boolean).length, 1, "exactly one child process must win stale focus lock recovery");
+    // Verify a live focus lock cannot be evicted by a contender
+    const liveLockFile = path.join(sessionsDir, "focus-93503.lock");
+    await writeFile(
+      liveLockFile,
+      JSON.stringify({ pid: process.pid, host: os.hostname(), startedAt: Date.now() - 60000, token: "live-tok" }),
+      "utf8",
+    );
+    const blocked = await claimFocusBinding({
+      stateFile: sf,
+      focusId: 93503,
+      projectDir: repoA,
+      repoKey: "repo-adv35-a",
+      timeoutMs: 250,
+    });
+    assert.equal(blocked.ok, false, "live focus lock must not be evicted");
+    assert.equal(blocked.reason, "FOCUS_CLAIM_TIMEOUT");
+  });
+});
+
+test("Adversarial 36 (Cycle 19): CLI hashed sessionKey preserved, load({skipWrites:true}) avoids shared history write, and reset() preserves unresolved repair markers", async () => {
+  await withTempWorkspace(async (base) => {
+    const stateBase = path.join(base, "state-c19");
+    const repoA = await createRepo(base, "adv36-a");
+    const { openSessionState } = await import("../cli/runtime.js");
+    const { resolveStateFile } = await import("../workflow-state.js");
+    const { mkdir, writeFile, readFile } = await import("node:fs/promises");
+
+    // 1. CLI openSessionState preserves canonical hashed key without re-hashing
+    const rawId = "org/repo:cli#19";
+    const resolved = resolveStateFile({ sessionId: rawId, stateDir: path.join(stateBase, "projects", "p1", "users", "u1") });
+    const hashedFile = path.basename(resolved);
+    const hashedKey = /^workflow-state\.(.+)\.json$/.exec(hashedFile)?.[1];
+    assert.ok(hashedKey && /-h[0-9a-f]{10}$/.test(hashedKey));
+    const discoveredFile = path.join(stateBase, "projects", "adv36", "users", "u1", hashedFile);
+    await mkdir(path.dirname(discoveredFile), { recursive: true });
+    await writeFile(discoveredFile, JSON.stringify({ currentPhase: "idle", projectDir: repoA, history: [] }), "utf8");
+    const acq = await acquireWorktreeMutex({ projectDir: repoA, ownerKey: hashedKey });
+    try {
+      const opened = await openSessionState({ file: discoveredFile });
+      const ws = opened.workflowState;
+      assert.equal(ws._sessionKey().key, hashedKey, "CLI openSessionState must preserve canonical hashed session key");
+      ws.bindKernelCapability(acq.capability);
+      await ws.load();
+      await ws.save();
+
+      // 2. load({ skipWrites: true }) merges shared history in memory without writing historyFile (both pre-mutex and with cap)
+      const sharedHist = ws.historyFile;
+      await writeFile(
+        sharedHist,
+        JSON.stringify({ history: [{ taskDescription: "shared-entry-c19", timestamp: new Date().toISOString() }] }, null, 2),
+        "utf8",
+      );
+      const beforeHistRaw = await readFile(sharedHist, "utf8");
+      ws.state.history.push({ taskDescription: "session-only-c19", timestamp: new Date().toISOString() });
+      const roNoCap = new WorkflowState(discoveredFile, { canonicalSessionKey: hashedKey, requireKernelMutex: true });
+      await roNoCap.load({ skipWrites: true });
+      assert.ok(
+        roNoCap.state.history.some((e) => e.taskDescription === "shared-entry-c19"),
+        "pre-mutex load({skipWrites:true}) must merge shared history in memory without throwing",
+      );
+      await ws.load({ skipWrites: true });
+      assert.equal(await readFile(sharedHist, "utf8"), beforeHistRaw, "load({skipWrites:true}) must not write shared history file");
+
+      // 3. reset() preserves pendingProjectionRepair, pendingFocusCleanup, and pendingHistorySummaryRepairKeys
+      ws.state.pendingProjectionRepair = { failedAt: new Date().toISOString(), repairErrors: ["C19_ERR"] };
+      ws.state.pendingFocusCleanup = { focusId: 99, projectDir: repoA };
+      ws.state.pendingHistorySummaryRepairKeys = { "u1::p1": true };
+      ws.reset();
+      assert.deepEqual(ws.state.pendingProjectionRepair?.repairErrors, ["C19_ERR"]);
+      assert.equal(ws.state.pendingFocusCleanup?.focusId, 99);
+      assert.equal(ws.state.pendingHistorySummaryRepairKeys?.["u1::p1"], true);
+    } finally {
+      await releaseWorktreeMutex(acq.capability);
+    }
   });
 });
