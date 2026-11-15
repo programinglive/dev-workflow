@@ -2179,13 +2179,24 @@ export async function retireFocusBinding({
       }
 
       try {
-        unlinkSync(target);
-        // A legacy binding at the flat path is retired too, so a stale record
-        // cannot resurrect the claim after the new one is gone.
+        // The nested file exists only when this focus was claimed after the
+        // layout change. Unlinking it unconditionally would throw for a
+        // legacy-only binding and make it impossible to retire.
         try {
-          unlinkSync(legacyTarget);
+          unlinkSync(target);
         } catch {
-          // no legacy record
+          // no nested record
+        }
+        // A legacy binding at the flat path is retired too, so a stale record
+        // cannot resurrect the claim after the new one is gone. Only unlink it
+        // when it really is a focus binding: the same filename can hold a
+        // session pointer, which must survive.
+        if (readFocusBindingRecord(legacyTarget)) {
+          try {
+            unlinkSync(legacyTarget);
+          } catch {
+            // already gone
+          }
         }
         return {
           ok: true,

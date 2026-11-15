@@ -236,6 +236,24 @@ Use 'check_ready_to_commit' to verify workflow completion.
 });
 
 // Start server
+/**
+ * The shared state root that contains `projects/` and `sessions/`.
+ *
+ * `projectLockDir()` returns `<state>/projects/<projectKey>`. A caller that
+ * passed the bucket's parent instead would scan only one project and miss every
+ * sibling lock plus the shared transition journals.
+ */
+function sharedStateRoot(lockDir) {
+  let probe = path.resolve(lockDir);
+  const { root } = path.parse(probe);
+  while (true) {
+    if (path.basename(probe) === "projects") return path.dirname(probe);
+    const parent = path.dirname(probe);
+    if (parent === probe || probe === root) return null;
+    probe = parent;
+  }
+}
+
 export async function initStartupWorktreeMutex(state, { heartbeat = false } = {}) {
   state.requireKernelMutex = true;
   const lockDir = projectLockDir(state.stateFile);
@@ -255,9 +273,12 @@ export async function initStartupWorktreeMutex(state, { heartbeat = false } = {}
     // abandoned gate, a pending transition journal, or an unreadable metadata
     // directory means the fleet is not quiescent, and binding a kernel
     // capability on top of that would create two owners of one worktree.
-    const stateBase = path.dirname(lockDir);
+    // `projectLockDir()` returns `<state>/projects/<projectKey>`, so the
+    // shared state root is two levels up. Passing a bucket's parent would make
+    // the scan miss sibling project locks and the shared `sessions/` directory.
+    const stateBase = sharedStateRoot(lockDir);
     const quiescence = verifyLegacyFleetQuiescence({
-      baseDir: existsSync(stateBase) ? stateBase : null,
+      baseDir: stateBase && existsSync(stateBase) ? stateBase : null,
       dirs: [lockDir],
     });
     if (!quiescence.quiescent) {
