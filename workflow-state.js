@@ -1775,22 +1775,35 @@ export function pinSessionProject({
           throw new Error("FOCUS_BINDING_MIGRATION_FAILED");
         }
         const nested = focusBindingPath(baseDir, strandedBinding.focusId);
-        const alreadyNested = readFocusBindingRecord(nested);
-        if (alreadyNested) {
-          // Both locations hold a binding. Overwriting either one would let one
-          // project silently take the other's claim, so refuse.
+        mkdirSync(path.dirname(nested), { recursive: true });
+
+        // link(2) is an exclusive create: it fails with EEXIST instead of
+        // replacing a binding a concurrent claim may have written between the
+        // read above and this write. rename(2) would silently overwrite it.
+        let linked = false;
+        try {
+          linkSync(ptrFile, nested);
+          linked = true;
+        } catch (error) {
+          if (error?.code !== "EEXIST") throw new Error("FOCUS_BINDING_MIGRATION_FAILED");
+        }
+
+        if (!linked) {
+          const alreadyNested = readFocusBindingRecord(nested);
           const strandedKey = strandedBinding.repoKey || normalizeRepoPathForBinding(strandedBinding.projectDir);
-          const nestedKey = alreadyNested.repoKey || normalizeRepoPathForBinding(alreadyNested.projectDir);
-          if (strandedKey !== nestedKey) {
+          const nestedKey = alreadyNested
+            ? alreadyNested.repoKey || normalizeRepoPathForBinding(alreadyNested.projectDir)
+            : "";
+          if (!alreadyNested || strandedKey !== nestedKey) {
             throw new Error("FOCUS_BINDING_CONFLICT");
           }
-        } else {
-          mkdirSync(path.dirname(nested), { recursive: true });
-          try {
-            renameSync(ptrFile, nested);
-          } catch {
-            throw new Error("FOCUS_BINDING_MIGRATION_FAILED");
-          }
+        }
+
+        // The nested record now exists; the flat name is free for the pointer.
+        try {
+          unlinkSync(ptrFile);
+        } catch {
+          throw new Error("FOCUS_BINDING_MIGRATION_FAILED");
         }
       }
 
@@ -2128,7 +2141,12 @@ function claimFocusBindingUnderLock({ baseDir, focusId, projectDir, repoKey }) {
   };
 
   try {
-    writeFileSync(target, JSON.stringify(record, null, 2), "utf8");
+    // Atomic write: a crash mid-write must not leave truncated JSON, because a
+  // truncated record reads as "unbound" and would free the focus for another
+  // project.
+  const claimTmp = `${target}.tmp.${process.pid}.${Date.now()}`;
+  writeFileSync(claimTmp, JSON.stringify(record, null, 2), "utf8");
+  renameSync(claimTmp, target);
     return { ok: true, existing: record, reason: replacingStale ? "REBOUND_STALE" : "BOUND" };
   } catch {
     return { ok: false, reason: "FOCUS_BINDING_UNWRITABLE" };

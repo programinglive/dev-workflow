@@ -52,8 +52,8 @@ export const SELF_PROCESS_STARTED_AT_MS = Math.round(Date.now() - process.uptime
 export const PROCESS_INCARNATION_ID = `inc-${process.pid}-${SELF_PROCESS_STARTED_AT_MS.toString(36)}-${randomUUID().slice(0, 8)}`;
 
 /**
- * Error khusus saat proses kehilangan kepemilikan lock proyek di tengah operasi
- * penyimpanan (persistence fencing).
+ * Raised when the process loses project lock ownership in the middle of a
+ * persistence operation (persistence fencing).
  */
 export class ProjectOwnershipLostError extends Error {
   constructor(message, details = {}) {
