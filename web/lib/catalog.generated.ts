@@ -8,13 +8,37 @@ export const GENERATED_CATALOG = {
   "repositoryUrl": "https://github.com/programinglive/dev-workflow-mcp-server",
   "repositoryVisibility": "PRIVATE",
   "npmPubliclyPublished": false,
-  "mcpToolCount": 57,
+  "mcpToolCount": 58,
   "mcpTools": [
     {
       "name": "acknowledge_handover",
       "description": "Explicitly take a handed-off task back on this machine. Only works when a handover marker is recorded; the acknowledgement is appended to the checkpoint summary first (so the fact of returning is itself recorded), then the marker is cleared and the write is confirmed. Never called implicitly: a silent return would let two machines believe they own the task.",
       "required": [],
       "params": []
+    },
+    {
+      "name": "acknowledge_instructions",
+      "description": "Acknowledge the repository instructions recorded by start_task. Pass the README fingerprint and the task scope; the server validates both against the current preflight record. Required before commit_and_push when a preflight exists.",
+      "required": [
+        "fingerprint",
+        "scope"
+      ],
+      "params": [
+        {
+          "name": "fingerprint",
+          "type": "string",
+          "description": "The README fingerprint from the start_task preflight summary.",
+          "required": true,
+          "enumValues": []
+        },
+        {
+          "name": "scope",
+          "type": "string",
+          "description": "The project root the task is scoped to.",
+          "required": true,
+          "enumValues": []
+        }
+      ]
     },
     {
       "name": "acquire_release_lock",

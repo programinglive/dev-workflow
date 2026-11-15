@@ -16,6 +16,7 @@ import { handleGetWorkflowStatus, handleReadyCheck, handleContinueWorkflow, hand
 import { handleSetDefinitionOfDone, handleMarkDodItem, handleWaiveDodItem } from "./dod-handlers.js";
 import { handleNextSteps } from "./next-steps-handlers.js";
 import { handleResumeSession } from "./resume-handlers.js";
+import { handleAcknowledgeInstructions } from "./preflight-handlers.js";
 import { handleSetPlan, handleMarkPlanStep } from "./workflow-handlers.js";
 import { handleCheckpointTask, handleHandoffTask, handleAcknowledgeHandover } from "./checkpoint-handlers.js";
 import { handleFetchTask } from "./remote-checkpoint.js";
@@ -290,6 +291,10 @@ async function handleRunFullWorkflow(args, { workflowState, exec, git, utils }) 
         {
           commitMessage: args.commitMessage,
           branch: requestedBranch,
+          // The single-call workflow is itself an explicit acknowledgment of
+          // the recorded instructions; the agent cannot interleave a separate
+          // acknowledge_instructions call inside it.
+          _fromFullWorkflow: true,
         },
         { workflowState, exec, git, utils },
       ]);
@@ -407,6 +412,8 @@ async function dispatchToolCall({
         return handleWaiveDodItem(args, workflowState);
       case "mark_bug_fixed":
         return handleMarkBugFixed(args, workflowState);
+      case "acknowledge_instructions":
+        return handleAcknowledgeInstructions(args, workflowState);
       case "create_feature_flow":
         return handleCreateFeatureFlow(args, workflowState, zettlyOptions);
       case "create_tests":
