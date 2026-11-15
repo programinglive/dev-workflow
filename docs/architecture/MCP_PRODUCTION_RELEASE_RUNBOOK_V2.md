@@ -173,3 +173,5 @@ All three clients register exactly: `central-gateway`, `dev-workflow`, `zettly`,
 
 ### 10.6 Outstanding Item
 PR #11 is intentionally unmerged (archived repository, decommissioned service). If the owner wants the source-level `ssh_vm` containment on `main`, the smallest action is: unarchive `programinglive/infra-knowledge-mcp-server`, squash-merge PR #11, then re-archive. No production exposure exists either way.
+
+**Tracking PR:** https://github.com/programinglive/dev-workflow-mcp-server/pull/100 (docs-only; sanitizes the tailnet IPs and records this addendum).
