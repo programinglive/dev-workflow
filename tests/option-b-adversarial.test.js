@@ -222,7 +222,7 @@ test("Adversarial 4: Former owner attempts save, SQLite sync, session pin, and f
       "owner-a",
       "workflow-state.json",
     );
-    const acq = await acquireWorktreeMutex({ projectDir: repo });
+    const acq = await acquireWorktreeMutex({ projectDir: repo, ownerKey: stateFile });
     assert.equal(acq.ok, true);
 
     const ws = new WorkflowState(stateFile);
@@ -328,7 +328,7 @@ test("Adversarial 6: Stale writer pauses, newer owner commits to SQLite, stale w
       "workflow-state.json",
     );
 
-    const acq1 = await acquireWorktreeMutex({ projectDir: repo });
+    const acq1 = await acquireWorktreeMutex({ projectDir: repo, ownerKey: stateFile });
     const ws1 = new WorkflowState(stateFile);
     ws1.bindKernelCapability(acq1.capability);
     await ws1.load();
@@ -345,7 +345,7 @@ test("Adversarial 6: Stale writer pauses, newer owner commits to SQLite, stale w
     await releaseWorktreeMutex(acq1.capability);
 
     // Newer owner acquires OS mutex and commits newer task
-    const acq2 = await acquireWorktreeMutex({ projectDir: repo });
+    const acq2 = await acquireWorktreeMutex({ projectDir: repo, ownerKey: stateFile });
     const ws2 = new WorkflowState(stateFile);
     ws2.bindKernelCapability(acq2.capability);
     await ws2.load();
@@ -357,7 +357,7 @@ test("Adversarial 6: Stale writer pauses, newer owner commits to SQLite, stale w
     await releaseWorktreeMutex(acq2.capability);
 
     // Stale writer acquires mutex later and tries to overwrite with stale stateVersion
-    const acq3 = await acquireWorktreeMutex({ projectDir: repo });
+    const acq3 = await acquireWorktreeMutex({ projectDir: repo, ownerKey: stateFile });
     staleWs.bindKernelCapability(acq3.capability);
     const staleResult = await staleWs.save();
     assert.equal(staleResult.verified, false, "Stale write must not overwrite newer committed state");
@@ -850,5 +850,231 @@ test("Adversarial 15 (F3 / B2 / B4 / B6): Manual journal recovery requires verif
     assert.equal(freeRes.length, 1);
     assert.equal(freeRes[0].action, "rolled_back");
     assert.equal(existsSync(journalFile), false);
+  });
+});
+
+test("Adversarial 16 (F1): pinSessionProject, writeKernelLockMetadata, and WorkflowState reject mismatched/ownerless capabilities and invalid worktrees", async () => {
+  await withTempWorkspace(async (base) => {
+    const repoA = await createRepo(base, "repo-a");
+    const repoB = await createRepo(base, "repo-b");
+    const nonGit = path.join(base, "not-a-repo");
+    await mkdir(nonGit, { recursive: true });
+
+    const { resolveSessionKey } = await import("../workflow-state.js");
+    const { writeKernelLockMetadata } = await import("../process-lock.js");
+
+    const stateBase = path.join(base, "state");
+    process.env.DEV_WORKFLOW_STATE_FILE = path.join(stateBase, "workflow-state.json");
+    const makeStateFile = (r, sid) =>
+      path.join(stateBase, "projects", projectKey(canonicalProjectPath(r)), "users", sid, `workflow-state-${sid}.json`);
+    const stateFileA = makeStateFile(repoA, "ses_A");
+    const stateFileB = makeStateFile(repoA, "ses_B");
+    const keyA = resolveSessionKey(process.env, "ses_A");
+    const keyB = resolveSessionKey(process.env, "ses_B");
+
+    const acqA = await acquireWorktreeMutex({ projectDir: repoA, ownerKey: keyA });
+    assert.equal(acqA.ok, true);
+    try {
+      // 1. Session B cannot use Session A's capability to overwrite B's pointer
+      assert.throws(
+        () =>
+          pinSessionProject({
+            stateFile: stateFileB,
+            projectDir: repoA,
+            kernelCapability: acqA.capability,
+            requireKernelMutex: true,
+          }),
+        (err) => err instanceof ProjectOwnershipLostError || err?.code === "PROJECT_OWNERSHIP_LOST",
+      );
+
+      // 2. Session A cannot use repoA's capability to pin repoB
+      assert.throws(
+        () =>
+          pinSessionProject({
+            stateFile: stateFileA,
+            projectDir: repoB,
+            kernelCapability: acqA.capability,
+            requireKernelMutex: true,
+          }),
+        (err) => err instanceof ProjectOwnershipLostError || err?.code === "PROJECT_OWNERSHIP_LOST",
+      );
+
+      // 3. pinSessionProject refuses calls without a live capability (no unsafe fallback)
+      assert.throws(
+        () =>
+          pinSessionProject({
+            stateFile: stateFileB,
+            projectDir: repoB,
+          }),
+        (err) => err instanceof ProjectOwnershipLostError || err?.code === "PROJECT_OWNERSHIP_LOST",
+      );
+
+      // 4. writeKernelLockMetadata rejects mismatched ownerKey or mismatched projectDir
+      assert.throws(
+        () =>
+          writeKernelLockMetadata({
+            dir: projectLockDir(stateFileA),
+            capability: acqA.capability,
+            projectDir: repoB,
+          }),
+        (err) => err instanceof ProjectOwnershipLostError || err?.code === "PROJECT_OWNERSHIP_LOST",
+      );
+      assert.throws(
+        () =>
+          writeKernelLockMetadata({
+            dir: projectLockDir(stateFileA),
+            capability: acqA.capability,
+            projectDir: repoA,
+            expectedOwnerKey: keyB,
+          }),
+        (err) => err instanceof ProjectOwnershipLostError || err?.code === "PROJECT_OWNERSHIP_LOST",
+      );
+
+      // 5. WorkflowState rejects ownerless capability and non-git projectDir fail-closed
+      const ws = new WorkflowState(stateFileA, { sessionId: "ses_A" });
+      await ws.load();
+      ws.requireKernelMutex = true;
+      const savedOwner = acqA.capability.ownerKey;
+      acqA.capability.ownerKey = null;
+      ws.bindKernelCapability(acqA.capability);
+      ws.state.projectDir = repoA;
+      await assert.rejects(
+        () => ws.save({ allowReplaceRunningTask: true }),
+        (err) => err instanceof ProjectOwnershipLostError || err?.code === "PROJECT_OWNERSHIP_LOST",
+      );
+      acqA.capability.ownerKey = savedOwner;
+
+      ws.state.projectDir = nonGit;
+      await assert.rejects(
+        () => ws.save({ allowReplaceRunningTask: true }),
+        (err) => err instanceof ProjectOwnershipLostError || err?.code === "PROJECT_OWNERSHIP_LOST",
+      );
+      await ws.close();
+    } finally {
+      await releaseWorktreeMutex(acqA.capability);
+    }
+  });
+});
+
+test("Adversarial 17 (F2): overlapping rollbackTransitionJournal calls cannot share or prematurely release a live recovery mutex", async () => {
+  await withTempWorkspace(async (base) => {
+    const repo = await createRepo(base, "repo-overlap");
+    const stateBase = path.join(base, "state");
+    process.env.DEV_WORKFLOW_STATE_FILE = path.join(stateBase, "workflow-state.json");
+    const {
+      resolveSessionKey,
+      beginTransitionJournal,
+      rollbackTransitionJournal,
+    } = await import("../workflow-state.js");
+
+    const stateFile = path.join(
+      stateBase,
+      "projects",
+      projectKey(canonicalProjectPath(repo)),
+      "users",
+      "ses_rec_overlap",
+      "workflow-state-ses_rec_overlap.json",
+    );
+    const ws = new WorkflowState(stateFile, { sessionId: "ses_rec_overlap" });
+    await ws.load();
+
+    const journal = await beginTransitionJournal({
+      sessionKey: resolveSessionKey(process.env, "ses_rec_overlap"),
+      sourceStateFile: stateFile,
+      targetStateFile: stateFile,
+      sourceHistoryFile: ws.historyFile,
+      targetHistoryFile: ws.historyFile,
+      sourceProjectDir: repo,
+      targetProjectDir: repo,
+      priorInMemory: { state: structuredClone(ws.state), stateVersion: ws.stateVersion, loadedTask: ws.loadedTask },
+      workflowState: ws,
+    });
+    await ws.close();
+
+    let enteredFirst = null;
+    const firstEntered = new Promise((resolve) => { enteredFirst = resolve; });
+    let releaseFirst = null;
+    const firstGate = new Promise((resolve) => { releaseFirst = resolve; });
+
+    let capObservedInFirst = null;
+    const firstCall = rollbackTransitionJournal(journal, {
+      hooks: {
+        onBeforeRestore: async ({ capabilities }) => {
+          capObservedInFirst = capabilities[0];
+          enteredFirst();
+          await firstGate;
+        },
+      },
+    });
+
+    await firstEntered;
+    assert.ok(capObservedInFirst && capObservedInFirst.inFlightCount >= 1, "recovery must register inFlightCount via useWorktreeCapability");
+
+    // Overlapping second call must fail closed instead of sharing the capability via re-entry
+    const secondResult = await rollbackTransitionJournal(journal);
+    assert.equal(secondResult, false, "overlapping recovery call must fail closed while first recovery holds mutex");
+    assert.equal(capObservedInFirst.active, true, "first recovery capability must stay active");
+
+    releaseFirst();
+    const firstResult = await firstCall;
+    assert.equal(firstResult, true, "first recovery call must complete cleanly");
+    assert.equal(capObservedInFirst.active, false, "capability must be released after drain completes");
+  });
+});
+
+test("Adversarial 18 (F3): post-commit _exportJson() === false is accounted as failed projection with pendingProjectionRepair and safe retry", async () => {
+  await withTempWorkspace(async (base) => {
+    const repo = await createRepo(base, "repo-proj");
+    const stateBase = path.join(base, "state");
+    process.env.DEV_WORKFLOW_STATE_FILE = path.join(stateBase, "workflow-state.json");
+    const stateFile = path.join(
+      stateBase,
+      "projects",
+      projectKey(canonicalProjectPath(repo)),
+      "users",
+      "ses_proj_fail",
+      "workflow-state-ses_proj_fail.json",
+    );
+    const ws = new WorkflowState(stateFile, { sessionId: "ses_proj_fail" });
+    await ws.load();
+
+    // Force _exportJson() to return false (non-throwing I/O failure)
+    const origExportJson = ws._exportJson.bind(ws);
+    let failExport = true;
+    ws._exportJson = async () => {
+      if (failExport) return false;
+      return await origExportJson();
+    };
+
+    const res1 = await handleStartTask(
+      makeStartArgs(repo, "Test post-commit exportJson false accounting", 81),
+      ws,
+      null,
+    );
+
+    const text1 = res1?.content?.[0]?.text || "";
+    assert.match(text1, /PENDING|reconcil/i, "Response must warn that post-commit projection repair is pending");
+    assert.ok(ws.state.pendingProjectionRepair, "pendingProjectionRepair must be recorded on state");
+    assert.ok(
+      ws.state.pendingProjectionRepair.repairErrors.some((e) => e.includes("exportJson:EXPORT_RETURNED_FALSE")),
+      "repairErrors must record exportJson:EXPORT_RETURNED_FALSE",
+    );
+
+    // Safe retry: restore _exportJson and start next/updated task or reconcile; pendingProjectionRepair clears
+    failExport = false;
+    const res2 = await handleStartTask(
+      {
+        ...makeStartArgs(repo, "Retry after exportJson recovers", 81),
+        allowReplaceRunningTask: true,
+      },
+      ws,
+      null,
+    );
+    const text2 = res2?.content?.[0]?.text || "";
+    assert.doesNotMatch(text2, /projection repair is PENDING/i);
+    assert.equal(ws.state.pendingProjectionRepair, null);
+
+    await releaseWorktreeMutex(ws.boundKernelCapability);
+    await ws.close();
   });
 });

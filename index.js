@@ -267,13 +267,22 @@ export async function main() {
       if (legacy) {
         safeLog('error', `Warning: active legacy (pre-Option-B) MCP process PID ${legacy.pid} detected in ${lockDir}.`);
       } else {
-        const acquired = await acquireWorktreeMutex({ projectDir: startupProjectDir });
+        const startupOwnerKey =
+          (typeof workflowState._sessionKey === "function" ? workflowState._sessionKey()?.key : "") ||
+          workflowState.sessionId ||
+          workflowState.stateFile ||
+          String(process.pid);
+        const acquired = await acquireWorktreeMutex({
+          projectDir: startupProjectDir,
+          ownerKey: startupOwnerKey,
+        });
         if (acquired.ok) {
           workflowState.bindKernelCapability(acquired.capability);
           writeKernelLockMetadata({
             dir: lockDir,
             capability: acquired.capability,
             projectDir: acquired.worktreeRoot,
+            expectedOwnerKey: startupOwnerKey,
           });
         } else if (acquired.reason === "unsupported_platform") {
           safeLog('error', acquired.message || `Unsupported kernel mutex platform: ${process.platform}`);

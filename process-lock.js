@@ -333,6 +333,49 @@ export function assertWorktreeCapabilityLive(
   return true;
 }
 
+export function assertWorktreeCapabilityMatches({
+  capability,
+  operation = "protected_write",
+  ownerKey = null,
+  projectDir = null,
+  allowDrainingInFlight = false,
+} = {}) {
+  assertWorktreeCapabilityLive(capability, { operation, allowDrainingInFlight });
+  if (typeof capability.ownerKey !== "string" || capability.ownerKey.trim() === "") {
+    throw new ProjectOwnershipLostError(
+      `Project ownership lost before ${operation}: worktree capability is missing ownerKey.`,
+      { operation, reason: "missing_capability_owner" },
+    );
+  }
+  const expectedOwner = typeof ownerKey === "string" ? ownerKey.trim() : "";
+  if (expectedOwner && capability.ownerKey !== expectedOwner) {
+    throw new ProjectOwnershipLostError(
+      `Worktree capability owner mismatch before ${operation}: capability belongs to "${capability.ownerKey}", not "${expectedOwner}".`,
+      {
+        operation,
+        capabilityOwnerKey: capability.ownerKey,
+        expectedOwnerKey: expectedOwner,
+        reason: "capability_owner_mismatch",
+      },
+    );
+  }
+  if (projectDir) {
+    const wt = resolveCanonicalWorktreeRoot(projectDir);
+    if (!wt.ok || wt.canonicalKey !== capability.canonicalKey) {
+      throw new ProjectOwnershipLostError(
+        `Project ownership mismatch before ${operation}: capability is for "${capability.worktreeRoot}", not "${wt.ok ? wt.worktreeRoot : projectDir}".`,
+        {
+          operation,
+          capabilityWorktree: capability.worktreeRoot,
+          targetProjectDir: projectDir,
+          reason: wt.ok ? "capability_worktree_mismatch" : "invalid_target_worktree",
+        },
+      );
+    }
+  }
+  return true;
+}
+
 export async function useWorktreeCapability(
   capability,
   asyncFn,
@@ -358,7 +401,7 @@ export async function acquireWorktreeMutex({
   ownerKey = null,
 } = {}) {
   const normalizedOwnerKey =
-    typeof ownerKey === "string" && ownerKey.trim() !== "" ? ownerKey.trim() : null;
+    typeof ownerKey === "string" && ownerKey.trim() !== "" ? ownerKey.trim() : String(pid);
   const wt = resolveCanonicalWorktreeRoot(projectDir, platform);
   if (!wt.ok) {
     return {
@@ -394,11 +437,7 @@ export async function acquireWorktreeMutex({
         endpoint: endpoint.path,
       };
     }
-    if (
-      existing.ownerKey &&
-      normalizedOwnerKey &&
-      existing.ownerKey !== normalizedOwnerKey
-    ) {
+    if (existing.ownerKey !== normalizedOwnerKey) {
       return {
         ok: false,
         supported: true,
@@ -409,9 +448,6 @@ export async function acquireWorktreeMutex({
         canonicalKey: wt.canonicalKey,
         endpoint: endpoint.path,
       };
-    }
-    if (!existing.ownerKey && normalizedOwnerKey) {
-      existing.ownerKey = normalizedOwnerKey;
     }
     return {
       ok: true,
@@ -532,14 +568,50 @@ export function releaseAllWorktreeMutexesSync() {
  * Record informational lock metadata under an already-held OS kernel mutex.
  * Used only for diagnostics (e.g. displaying holder PID) and legacy overlap detection.
  */
-export function writeKernelLockMetadata({ dir, capability, projectDir = "" } = {}) {
-  if (!dir || !capability) return { wrote: false, error: "missing_args" };
-  assertWorktreeCapabilityLive(capability, {
+export function writeKernelLockMetadata({
+  dir,
+  capability,
+  projectDir = "",
+  expectedOwnerKey = null,
+} = {}) {
+  if (!dir || !capability) return { ok: false, wrote: false, error: "missing_args" };
+  assertWorktreeCapabilityMatches({
+    capability,
     operation: "writeKernelLockMetadata",
+    ownerKey: expectedOwnerKey,
+    projectDir: projectDir || capability.worktreeRoot,
     allowDrainingInFlight: true,
   });
   const lockDir = path.resolve(dir);
   const lockFile = path.join(lockDir, LOCK_FILENAME);
+  if (existsSync(lockFile)) {
+    try {
+      const existing = JSON.parse(readFileSync(lockFile, "utf8"));
+      if (existing && typeof existing === "object") {
+        if (
+          existing.canonicalKey &&
+          normalizeWorktreeString(existing.canonicalKey) !== capability.canonicalKey
+        ) {
+          return { ok: false, wrote: false, error: "worktree_mismatch" };
+        }
+        const existingTs = Number(existing.updatedAt || existing.startedAt || 0);
+        const capTs = Number(capability.acquiredAt || 0);
+        if (
+          existing.protocolVersion === OPTION_B_LOCK_PROTOCOL_VERSION &&
+          existing.leaseId &&
+          existing.leaseId !== capability.token &&
+          existingTs > capTs &&
+          Number(existing.pid) > 0 &&
+          Number(existing.pid) !== process.pid &&
+          isPidAlive(Number(existing.pid))
+        ) {
+          return { ok: false, wrote: false, error: "superseded_by_newer_owner" };
+        }
+      }
+    } catch {
+      // Unreadable or corrupt existing advisory metadata will be replaced under the live mutex.
+    }
+  }
   const payload = {
     protocolVersion: OPTION_B_LOCK_PROTOCOL_VERSION,
     kernelMutex: true,
