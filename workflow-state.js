@@ -428,8 +428,8 @@ function selectProjectRoot(candidates, moduleRoot) {
   return prioritized.length > 0 ? prioritized[0].resolved : null;
 }
 
-function getUserScopedDir(baseDir) {
-  const userId = resolveUserId(baseDir);
+function getUserScopedDir(baseDir, { skipWrites = false } = {}) {
+  const userId = resolveUserId(baseDir, { skipWrites });
   return path.join(baseDir, "users", userId);
 }
 
@@ -892,7 +892,7 @@ export function resolveStateFile({ sessionId = null, skipMigrationWrites = false
 
     const projectDir = pointedProjectDir || path.join(baseDir, PROJECTS_DIR, projectKey(identityRoot));
 
-    const userDir = getUserScopedDir(projectDir);
+    const userDir = getUserScopedDir(projectDir, { skipWrites: Boolean(skipMigrationWrites) });
     const target = path.join(userDir, sessionStateFilename(process.env, sessionId));
 
     // Dua sumber lama, keduanya hanya menyalin state menganggur:
@@ -927,7 +927,7 @@ export function resolveStateFile({ sessionId = null, skipMigrationWrites = false
   }
 
   const stateDir = path.join(projectRoot, STATE_DIR);
-  const userDir = getUserScopedDir(stateDir);
+  const userDir = getUserScopedDir(stateDir, { skipWrites: Boolean(skipMigrationWrites) });
   return path.join(userDir, sessionStateFilename(process.env, sessionId));
 }
 
@@ -1025,7 +1025,7 @@ export function resolveCanonicalProjectIdentity(projectDir, { mustExist = false 
  * in the same working directory (e.g. C:\Users\mahardhika) and then call
  * start_task with an explicit target projectDir.
  */
-export function resolveTargetProjectState({ stateFile, projectDir } = {}) {
+export function resolveTargetProjectState({ stateFile, projectDir, skipWrites = false } = {}) {
   let rawState = String(stateFile || "");
   if (process.platform !== "win32" && rawState.includes("\\")) {
     rawState = rawState.replace(/\\/g, "/");
@@ -1040,7 +1040,7 @@ export function resolveTargetProjectState({ stateFile, projectDir } = {}) {
     const bucketKey = projectKey(canonicalTarget);
     const projectDirPath = path.join(baseDir, PROJECTS_DIR, bucketKey);
     const targetStateFile = path.join(
-      getUserScopedDir(projectDirPath),
+      getUserScopedDir(projectDirPath, { skipWrites }),
       sessionStateFilename(process.env, sessionKey),
     );
     return {
@@ -1976,9 +1976,29 @@ export function writeFocusBinding(options = {}) {
  * Takes the same lock as a claim, so a retirement cannot interleave with a
  * concurrent claim and erase a binding that was just written.
  */
-export async function retireFocusBinding({ stateFile, focusId, reason = "" } = {}) {
+export async function retireFocusBinding({
+  stateFile,
+  focusId,
+  projectDir,
+  repoKey,
+  reason = "",
+  kernelCapability = null,
+  requireKernelMutex = false,
+  expectedOwnerKey = null,
+} = {}) {
   const id = Number(focusId);
   if (!Number.isSafeInteger(id) || id <= 0) return { ok: false, reason: "INVALID_FOCUS" };
+
+  if (kernelCapability || requireKernelMutex) {
+    const cap = kernelCapability || (projectDir ? getHeldWorktreeCapability(projectDir) : null);
+    assertWorktreeCapabilityMatches({
+      capability: cap,
+      operation: "retireFocusBinding",
+      ownerKey: expectedOwnerKey || (stateFile ? sessionKeyFromStateFile(stateFile) : null),
+      projectDir: projectDir || null,
+      allowDrainingInFlight: true,
+    });
+  }
 
   const baseDir = resolveBaseDirFromState(stateFile);
   const lock = await acquireFocusLock({ baseDir, focusId: id });
@@ -1988,6 +2008,20 @@ export async function retireFocusBinding({ stateFile, focusId, reason = "" } = {
     const target = focusBindingPath(baseDir, id);
     const existing = readFocusBindingRecord(target);
     if (!existing) return { ok: true, retired: false, reason: "NOT_BOUND" };
+
+    const requestedDir = projectDir ? path.resolve(String(projectDir)) : "";
+    const requestedKey = typeof repoKey === "string" ? repoKey.trim() : "";
+    if (requestedDir || requestedKey) {
+      const sameKey = Boolean(existing.repoKey) && Boolean(requestedKey) && existing.repoKey === requestedKey;
+      const sameDir =
+        Boolean(existing.projectDir) &&
+        Boolean(requestedDir) &&
+        normalizeRepoPathForBinding(existing.projectDir) === normalizeRepoPathForBinding(requestedDir);
+      if (!sameKey && !sameDir) {
+        return { ok: false, existing, reason: "FOCUS_BOUND_TO_ANOTHER_PROJECT" };
+      }
+    }
+
     try {
       unlinkSync(target);
       return {
@@ -3233,14 +3267,16 @@ export async function reportToMonitorSafe({ state, stateFile, createdAt }) {
 }
 
 export class WorkflowState {
-  constructor(stateFilePath = resolveStateFile({ skipMigrationWrites: true }), options = {}) {
-    this.stateFile = stateFilePath;
+  constructor(stateFilePath = undefined, options = {}) {
+    this._hasExplicitStateFile = Boolean(stateFilePath);
+    const resolvedInitialStateFile = stateFilePath || resolveStateFile({ skipMigrationWrites: true });
+    this.stateFile = resolvedInitialStateFile;
     // Dipakai tes untuk menyuntikkan kegagalan baca yang nyata (EBUSY/EACCES)
     // tanpa harus benar-benar mengunci berkas di sistem operasi.
     this.fs = options.fs || fs;
     // History milik proyek, state milik sesi. Dalam tata letak nyata keduanya
     // berkas berbeda; untuk path eksplisit keduanya menunjuk berkas yang sama.
-    this.historyFile = resolveHistoryFile(stateFilePath);
+    this.historyFile = resolveHistoryFile(resolvedInitialStateFile);
     // Task yang terakhir kita baca dari / tulis ke disk. Dipakai untuk
     // membedakan "task ini milik kita" dari "task ini ditulis proses lain
     // sesudah kita memuat" - tanpa ini penulis basi menang tanpa perlawanan.
@@ -3269,8 +3305,8 @@ export class WorkflowState {
 
     // Identitas sesi untuk kunci baris. Diisi dispatcher lewat `useSession`, atau
     // lewat `options.sessionId` pada pemanggil seperti tes dan CLI.
-    const inferredSessionMatch = stateFilePath
-      ? /^workflow-state\.(.+)\.json$/.exec(path.basename(String(stateFilePath)))
+    const inferredSessionMatch = resolvedInitialStateFile
+      ? /^workflow-state\.(.+)\.json$/.exec(path.basename(String(resolvedInitialStateFile)))
       : null;
     this.sessionId =
       options.sessionId ||
@@ -3958,6 +3994,16 @@ export class WorkflowState {
   async ensurePrimaryFile() {
     return await this._withOwnershipFence("ensurePrimaryFile", async () => {
       assertSafeKnowledge(this.state);
+      if (!this._hasExplicitStateFile) {
+        const materialized = resolveStateFile({
+          sessionId: this.sessionId,
+          skipMigrationWrites: false,
+        });
+        if (materialized && materialized !== this.stateFile) {
+          this.stateFile = materialized;
+          this.historyFile = resolveHistoryFile(materialized);
+        }
+      }
       let created = false;
       try {
         await fs.access(this.stateFile);
