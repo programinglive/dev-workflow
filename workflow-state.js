@@ -734,7 +734,10 @@ async function ensureCompatibilityLinks(primaryPath) {
 export const SESSION_META_KEYS = {
   opencode: ["ai.opencode/sessionID"],
   codex: ["sessionId", "threadId"],
-  antigravity: ["antigravity.google/conversation_id", "antigravity.google/root_conversation_id"],
+  // Only the conversation id. `root_conversation_id` is deliberately NOT
+  // accepted: child conversations share a root, so falling back to it would let
+  // two different conversations select the same state.
+  antigravity: ["antigravity.google/conversation_id"],
 };
 
 // A session key becomes a file name and a database key, so it is restricted to
@@ -742,11 +745,19 @@ export const SESSION_META_KEYS = {
 // value that needs cleaning is not a value we should trust.
 const SESSION_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
 
+// Windows reserves these device names, with or without an extension, so
+// `sessions/con.json` is not a usable file name.
+const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+
 function normalizeSessionKey(value) {
   if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  if (!SESSION_KEY_PATTERN.test(trimmed)) return null;
-  return trimmed;
+  // No trimming: a padded value is a different value, and silently accepting
+  // " victim " as "victim" would let a caller choose an identity it did not
+  // actually present.
+  if (value !== value.trim()) return null;
+  if (!SESSION_KEY_PATTERN.test(value)) return null;
+  if (WINDOWS_RESERVED.test(value)) return null;
+  return value;
 }
 
 /**
@@ -755,7 +766,9 @@ function normalizeSessionKey(value) {
  * `agent` scopes which keys are accepted. `device-entry.cjs` sets DEVWF_AGENT
  * for each client, so a Codex server does not accept an Antigravity
  * conversation id even if one is present. An unknown agent accepts any known
- * key, which keeps a directly launched server working.
+ * key, which keeps a directly launched server working, but every known key that
+ * is present must agree: a request cannot present two identities and let the
+ * first one win.
  */
 export function sessionKeyFromRequest(request, { agent = process.env.DEVWF_AGENT } = {}) {
   const meta = request?.params?._meta;
@@ -766,11 +779,19 @@ export function sessionKeyFromRequest(request, { agent = process.env.DEVWF_AGENT
     ...SESSION_META_KEYS.antigravity,
     ...SESSION_META_KEYS.codex,
   ];
+
+  let resolved = null;
   for (const key of keys) {
-    const normalized = normalizeSessionKey(meta[key]);
-    if (normalized) return normalized;
+    const raw = meta[key];
+    if (raw === undefined || raw === null) continue;
+    const normalized = normalizeSessionKey(raw);
+    // A present but invalid identity is a refusal, not a reason to try the next
+    // key: the caller presented something it should not have.
+    if (!normalized) return null;
+    if (resolved !== null && resolved !== normalized) return null;
+    resolved = normalized;
   }
-  return null;
+  return resolved;
 }
 
 /**

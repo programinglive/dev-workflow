@@ -54,6 +54,36 @@ test("Antigravity conversation id is accepted", () => {
   assert.equal(resolveRequestSession(request).ok, true);
 });
 
+test("Antigravity root conversation id alone is refused", () => {
+  // Child conversations share a root, so falling back to it would let two
+  // different conversations select the same state.
+  const request = call({ "antigravity.google/root_conversation_id": ANTIGRAVITY });
+  assert.equal(sessionKeyFromRequest(request), null);
+  assert.equal(resolveRequestSession(request).ok, false);
+});
+
+test("conflicting identities in one request are refused", () => {
+  const request = call({ sessionId: CODEX, threadId: "ffffffff-0000-0000-0000-000000000000" });
+  assert.equal(sessionKeyFromRequest(request, { agent: "codex" }), null);
+  assert.equal(resolveRequestSession(request).ok, false);
+});
+
+test("conflicting identities are refused even for an unknown agent", () => {
+  const request = call({ "ai.opencode/sessionID": OPENCODE, sessionId: CODEX });
+  assert.equal(sessionKeyFromRequest(request, { agent: "unknown" }), null);
+});
+
+test("a padded identity is refused rather than trimmed", () => {
+  assert.equal(sessionKeyFromRequest(call({ "ai.opencode/sessionID": ` ${OPENCODE} ` })), null);
+  assert.equal(sessionKeyFromRequest(call({ sessionId: `${CODEX}\n` })), null);
+});
+
+test("a Windows reserved device name is refused", () => {
+  for (const name of ["con", "CON", "prn", "aux", "nul", "com1", "lpt9"]) {
+    assert.equal(sessionKeyFromRequest(call({ sessionId: name })), null, `must refuse ${name}`);
+  }
+});
+
 test("a request with no known identity is refused for a session-scoped tool", () => {
   const request = call({ progressToken: 1 });
   assert.equal(sessionKeyFromRequest(request), null);
