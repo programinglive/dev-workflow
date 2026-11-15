@@ -1719,7 +1719,7 @@ test("Adversarial 28 (C10-1..C10-6): commit/release fenced, proc-* CLI session p
       { sessionId: "ses_c10_skip", requireKernelMutex: true },
     );
     await wsSkip.load({ skipWrites: true });
-    assert.equal(existsSync(path.join(stateBase, "workflow-state.db")), false, "skipWrites must not create SQLite DB");
+    assert.equal(existsSync(path.join(stateBase, "dev-workflow.db")), false, "skipWrites must not create SQLite DB");
 
     // C10-1: handleCommitAndPush fails closed before git add/commit when capability is missing
     const { handleCommitAndPush } = await import("../tools/handler-modules/commit-handlers.js");
@@ -1836,5 +1836,133 @@ test("Adversarial 28 (C10-1..C10-6): commit/release fenced, proc-* CLI session p
     } catch (err) {
       if (err?.code !== "EPERM" && err?.code !== "ENOTSUP") throw err;
     }
+  });
+});
+
+test("Adversarial 29 (Cycle 11): early push/release-lock fencing, read-only existing SQLite, cross-process stamp, startup placeholder release, CLI corrupt lock refusal & scoped summary repair", async () => {
+  await withTempWorkspace(async (base) => {
+    const repoA = await createRepo(base, "adv29-a");
+    const repoB = await createRepo(base, "adv29-b");
+    const stateBase = path.join(base, "state", ".state");
+    const { mkdir, writeFile } = await import("node:fs/promises");
+    const { existsSync } = await import("node:fs");
+    await mkdir(stateBase, { recursive: true });
+
+    // 1. Early no-working-changes push branch in handleCommitAndPush & acquire_release_lock / release_release_lock fail closed without capability
+    const wsNoCap = new WorkflowState(
+      path.join(stateBase, "users", "ses_c11_1", "workflow-state.ses_c11_1.json"),
+      { sessionId: "ses_c11_1", requireKernelMutex: true },
+    );
+    wsNoCap.state.projectDir = repoA;
+    wsNoCap.state.currentPhase = "commit";
+    wsNoCap.state.readyToCommit = true;
+    wsNoCap.state.readyCheckCompleted = true;
+    wsNoCap.state.taskDescription = "C11-1 task";
+    wsNoCap.state.definitionOfDone = [{ id: 1, text: "done", status: "done", evidence: "ok", revision: 1 }];
+    wsNoCap.state.dodRevision = 1;
+    let pushedEarly = false;
+    const { handleCommitAndPush } = await import("../tools/handler-modules/commit-handlers.js");
+    await assert.rejects(
+      () =>
+        handleCommitAndPush(
+          { commitMessage: "no changes", projectDir: repoA },
+          {
+            workflowState: wsNoCap,
+            exec: async () => {
+              pushedEarly = true;
+              return { stdout: "", stderr: "" };
+            },
+            git: {
+              getPrimaryBranch: async () => "main",
+              getCurrentBranch: async () => "main",
+              hasWorkingChanges: async () => false,
+              getLastCommitMessage: async () => "feat: prev",
+              getHeadSha: async () => "abc1234",
+              isCommitOnRemoteBranch: async () => false,
+              getToplevel: async () => repoA,
+            },
+            utils: {
+              createCommitMessageParts: () => ({ summary: "msg", body: "" }),
+              shellEscape: (s) => s,
+            },
+          },
+        ),
+      (err) => err instanceof ProjectOwnershipLostError || err?.code === "PROJECT_OWNERSHIP_LOST",
+    );
+    assert.equal(pushedEarly, false, "no-working-changes branch must not push without ownership");
+
+    const { handleAcquireReleaseLock, handleReleaseReleaseLock } = await import("../tools/handler-modules/release-handlers.js");
+    await assert.rejects(
+      () => handleAcquireReleaseLock({ projectDir: repoA }, { workflowState: wsNoCap }),
+      (err) => err instanceof ProjectOwnershipLostError || err?.code === "PROJECT_OWNERSHIP_LOST",
+    );
+    await assert.rejects(
+      () => handleReleaseReleaseLock({ projectDir: repoA, force: true }, { workflowState: wsNoCap }),
+      (err) => err instanceof ProjectOwnershipLostError || err?.code === "PROJECT_OWNERSHIP_LOST",
+    );
+
+    // 2. Existing dev-workflow.db with no tables is opened strictly read-only on load({ skipWrites: true }) without WAL or schema migration
+    const { default: Database } = await import("better-sqlite3");
+    const preExistingDbPath = path.join(stateBase, "dev-workflow.db");
+    const rawDb = new Database(preExistingDbPath);
+    rawDb.exec("CREATE TABLE legacy_marker (id INTEGER PRIMARY KEY);");
+    rawDb.close();
+    await wsNoCap.load({ skipWrites: true });
+    assert.equal(existsSync(`${preExistingDbPath}-wal`), false, "skipWrites must not switch existing DB to WAL");
+    const checkDb = new Database(preExistingDbPath, { readonly: true });
+    const tables = checkDb.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((r) => r.name);
+    checkDb.close();
+    assert.deepEqual(tables, ["legacy_marker"], "skipWrites must not run schema migrations on existing DB");
+
+    // 3. Startup placeholder capability is released by useSession when metadata-selected session arrives
+    const wsStartup = new WorkflowState(
+      path.join(stateBase, "users", "proc-startup", "workflow-state.proc-startup.json"),
+      { sessionId: "proc-startup", requireKernelMutex: true },
+    );
+    const startupAcq = await acquireWorktreeMutex({ projectDir: repoA, ownerKey: "proc-startup" });
+    assert.equal(startupAcq.ok, true);
+    startupAcq.capability._isStartupPlaceholder = true;
+    wsStartup.bindKernelCapability(startupAcq.capability);
+    await wsStartup.useSession("ses_first_real");
+    const realAcq = await acquireWorktreeMutex({ projectDir: repoA, ownerKey: "ses_first_real" });
+    assert.equal(realAcq.ok, true, "first metadata-selected session must not be stranded by startup placeholder");
+    await releaseWorktreeMutex(realAcq.capability);
+
+    // 4. CLI openSessionState refuses corrupt mcp-process.lock fail-closed
+    const { openSessionState } = await import("../cli/runtime.js");
+    const badStateFile = path.join(stateBase, "users", "u_corrupt", "workflow-state.ses_corrupt.json");
+    await mkdir(path.dirname(badStateFile), { recursive: true });
+    await writeFile(badStateFile, JSON.stringify({ currentPhase: "coding", projectDir: repoA }), "utf8");
+    await writeFile(path.join(stateBase, "mcp-process.lock"), "{corrupt-json", "utf8");
+    await assert.rejects(
+      () => openSessionState({ file: badStateFile }),
+      (err) => err instanceof ProjectOwnershipLostError,
+    );
+
+    // 5. _syncHistoryToDatabase scopes summary repair per project and honors persisted pendingProjectionRepair
+    const wsScoped = new WorkflowState(
+      path.join(stateBase, "users", "u1", "workflow-state.ses_scoped.json"),
+      { sessionId: "ses_scoped" },
+    );
+    wsScoped.state.history = [{ timestamp: new Date().toISOString(), taskDescription: "tA" }];
+    let failProjA = true;
+    const retriedProjects = [];
+    const scopedDb = {
+      insertHistoryEntry: async () => {},
+      updateSummaryForUser: async (_u, proj) => {
+        retriedProjects.push(proj);
+        if (proj === repoA && failProjA) throw new Error("PROJ_A_SUMMARY_ERR");
+      },
+    };
+    const rA1 = await wsScoped._syncHistoryToDatabase(scopedDb, "u1", repoA);
+    assert.equal(rA1.summaryFailed, true);
+    const rB = await wsScoped._syncHistoryToDatabase(scopedDb, "u1", repoB);
+    assert.equal(rB.summaryFailed, false);
+    const rA2 = await wsScoped._syncHistoryToDatabase(scopedDb, "u1", repoA);
+    assert.equal(rA2.sent, 0);
+    assert.equal(rA2.summaryFailed, true, "project B success must not clear project A pending repair");
+    failProjA = false;
+    const rA3 = await wsScoped._syncHistoryToDatabase(scopedDb, "u1", repoA);
+    assert.equal(rA3.summaryFailed, false, "project A repair succeeds once unblocked");
   });
 });

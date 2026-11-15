@@ -238,6 +238,7 @@ export async function initStartupWorktreeMutex(state, { heartbeat = false } = {}
         ownerKey: startupOwnerKey,
       });
       if (acquired.ok) {
+        acquired.capability._isStartupPlaceholder = true;
         state.bindKernelCapability(acquired.capability);
         resolveStateFile({ sessionId: state.sessionId, skipMigrationWrites: false });
         writeKernelLockMetadata({

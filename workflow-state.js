@@ -10,7 +10,7 @@ import { sanitize } from './security/sanitizer.js';
 import { normalizeItems as normalizeDodItems, mergeDefinitionOfDone as mergeDodItems } from './tools/handler-modules/dod.js';
 import { resolveSessionKeyWithSource, sanitizeSessionKey, normalizeProjectPath } from './db/session-key.js';
 import { StateUnavailable, StateConflict } from './db/errors.js';
-import { resolveDbPath } from './db/adapters/sqlite.js';
+import { resolveDbPath, SqliteAdapter } from './db/adapters/sqlite.js';
 import {buildTaskProvenance} from './task-provenance.js';
 import { recordAiSession, currentSessionContext } from './ai-sessions.js';
 import { captureRepository } from './repository.js';
@@ -1627,35 +1627,63 @@ export function pinSessionProject({
         }
       }
 
-      const nextGeneration = Number(dbRow?.generation || 0) + 1;
-      ptrDb
-        .prepare(
-          `INSERT INTO session_pointers (
-             session_key, owner_key, lease_id, project_dir, project_dir_path, focus_id, updated_at_ms, updated_at, acquire_seq, generation
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(session_key) DO UPDATE SET
-             owner_key = excluded.owner_key,
-             lease_id = excluded.lease_id,
-             project_dir = excluded.project_dir,
-             project_dir_path = excluded.project_dir_path,
-             focus_id = excluded.focus_id,
-             updated_at_ms = excluded.updated_at_ms,
-             updated_at = excluded.updated_at,
-             acquire_seq = excluded.acquire_seq,
-             generation = excluded.generation`,
-        )
-        .run(
-          sessionKey,
-          payload.ownerKey,
-          payload.leaseId,
-          payload.projectDir,
-          payload.projectDirPath,
-          payload.focusId,
-          payload.updatedAtMs,
-          payload.updatedAt,
-          capAcquireSeq,
-          nextGeneration,
-        );
+      const expectedGeneration = Number(dbRow?.generation ?? 0);
+      const nextGeneration = dbRow ? expectedGeneration + 1 : 1;
+      const writeRes = dbRow
+        ? ptrDb
+            .prepare(
+              `UPDATE session_pointers SET
+                 owner_key = ?,
+                 lease_id = ?,
+                 project_dir = ?,
+                 project_dir_path = ?,
+                 focus_id = ?,
+                 updated_at_ms = ?,
+                 updated_at = ?,
+                 acquire_seq = ?,
+                 generation = ?
+               WHERE session_key = ? AND generation = ?`,
+            )
+            .run(
+              payload.ownerKey,
+              payload.leaseId,
+              payload.projectDir,
+              payload.projectDirPath,
+              payload.focusId,
+              payload.updatedAtMs,
+              payload.updatedAt,
+              capAcquireSeq,
+              nextGeneration,
+              sessionKey,
+              expectedGeneration,
+            )
+        : ptrDb
+            .prepare(
+              `INSERT INTO session_pointers (
+                 session_key, owner_key, lease_id, project_dir, project_dir_path, focus_id, updated_at_ms, updated_at, acquire_seq, generation
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            )
+            .run(
+              sessionKey,
+              payload.ownerKey,
+              payload.leaseId,
+              payload.projectDir,
+              payload.projectDirPath,
+              payload.focusId,
+              payload.updatedAtMs,
+              payload.updatedAt,
+              capAcquireSeq,
+              nextGeneration,
+            );
+      if (writeRes.changes !== 1) {
+        refusal = {
+          ok: false,
+          error: "superseded_by_newer_pointer",
+          projectDirPath,
+          stateFile: path.join(getUserScopedDir(projectDirPath), sessionStateFilename(process.env, sessionKey)),
+        };
+        return;
+      }
 
       const tmpFile = `${ptrFile}.tmp.${process.pid}.${nowMs}`;
       writeFileSync(tmpFile, JSON.stringify(payload, null, 2), "utf8");
@@ -3513,11 +3541,19 @@ export class WorkflowState {
       });
       if (target === this.stateFile && explicit === this.sessionId) return false;
 
+      const prevCap = this.boundKernelCapability;
       this.sessionId = explicit || null;
       this.stateFile = target;
       this.historyFile = resolveHistoryFile(target);
       this.stateVersion = null;
       this.boundKernelCapability = null;
+      if (prevCap && prevCap._isStartupPlaceholder === true && this.state.currentPhase === "idle") {
+        try {
+          await releaseWorktreeMutex(prevCap);
+        } catch {
+          // Best-effort release of unused startup placeholder capability
+        }
+      }
       // Mulai dari state bersih, lalu muat milik sesi itu. Menyalin state sesi
       // sebelumnya akan membuat sesi baru mewarisi gerbang kualitas sesi lain.
       this.state = {
@@ -3627,12 +3663,22 @@ export class WorkflowState {
     const userId = getCurrentUserId(this.stateFile);
     const projectPath = this._projectPath();
 
-    // True read-only path: when skipWrites is true and no injected dbAdapter or existing SQLite DB exists on disk,
-    // avoid creating a new SQLite file or running schema migrations before ownership is acquired.
-    const dbMissingOnDisk =
-      !this.dbAdapter && !existsSync(resolveDbPath({ stateFile: this.stateFile }));
-    const db = skipWrites && dbMissingOnDisk ? null : await this._db();
+    // True read-only path: when skipWrites is true and no injected dbAdapter is present,
+    // open any existing SQLite DB strictly read-only (no WAL pragma, no schema migration)
+    // and never create a missing SQLite DB file before ownership is acquired.
+    let roAdapter = null;
+    let db = null;
+    if (skipWrites && !this.dbAdapter) {
+      if (existsSync(resolveDbPath({ stateFile: this.stateFile }))) {
+        roAdapter = new SqliteAdapter({ stateFile: this.stateFile, readOnly: true });
+        const roConn = await roAdapter.connect();
+        db = roConn ? roAdapter : null;
+      }
+    } else {
+      db = await this._db();
+    }
 
+    try {
     // Migrasi berkas JSON lama dijalankan SEKALI per database, bukan tiap load.
     if (!skipWrites && db) {
       await this._withOwnershipFence("load.ensureMigrated", async () => {
@@ -3640,7 +3686,16 @@ export class WorkflowState {
       });
     }
 
-    const row = db ? await db.loadStateVersioned({ userId, projectPath, sessionKey }) : null;
+    let row = null;
+    if (db) {
+      try {
+        row = await db.loadStateVersioned({ userId, projectPath, sessionKey });
+      } catch (err) {
+        if (!(skipWrites && /no such table/i.test(String(err?.message || "")))) {
+          throw err;
+        }
+      }
+    }
     this.stateVersion = row?.version ?? null;
 
     if (!row) {
@@ -3695,6 +3750,11 @@ export class WorkflowState {
     };
     // Riwayat dipulihkan dari TABEL, karena ia tidak lagi ikut di `state_json`.
     await this._hydrateHistoryFromDatabase(db, userId, projectPath);
+    } finally {
+      if (roAdapter) {
+        await roAdapter.close();
+      }
+    }
     await this.mergeSharedHistory();
     this.loadedTask = this.state.taskDescription || "";
       // A state written before checkpoints existed has no `checkpoint` field.
@@ -4696,15 +4756,26 @@ export class WorkflowState {
       }
     }
 
-    // Ringkasan hanya perlu dihitung ulang bila ada yang berubah atau perbaikan sebelumnya tertunda.
+    // Ringkasan hanya perlu dihitung ulang bila ada yang berubah atau perbaikan sebelumnya tertunda
+    // untuk pasangan user+proyek ini (baik in-memory maupun persisten di pendingProjectionRepair).
+    if (!(this._pendingHistorySummaryRepairKeys instanceof Set)) {
+      this._pendingHistorySummaryRepairKeys = new Set();
+    }
+    const repairKey = `${resolvedUserId || ""}::${resolvedProjectPath || ""}`;
+    const persistedRepairReasons = Array.isArray(this.state?.pendingProjectionRepair?.reasons)
+      ? this.state.pendingProjectionRepair.reasons
+      : [];
+    const hasPendingSummaryRepair =
+      this._pendingHistorySummaryRepairKeys.has(repairKey) ||
+      persistedRepairReasons.includes("history_summary_sync_failed");
     let summaryFailed = false;
     let summaryError = null;
-    if (sent > 0 || this._pendingHistorySummaryRepair === true) {
+    if (sent > 0 || hasPendingSummaryRepair) {
       try {
         await resolvedDb.updateSummaryForUser(resolvedUserId, resolvedProjectPath);
-        this._pendingHistorySummaryRepair = false;
+        this._pendingHistorySummaryRepairKeys.delete(repairKey);
       } catch (error) {
-        this._pendingHistorySummaryRepair = true;
+        this._pendingHistorySummaryRepairKeys.add(repairKey);
         summaryFailed = true;
         summaryError = error?.message || String(error);
         safeLog("warn", `Ringkasan proyek gagal diperbarui: ${summaryError}`);

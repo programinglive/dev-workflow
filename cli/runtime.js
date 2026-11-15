@@ -6,7 +6,14 @@
  */
 import path from "node:path";
 import { WorkflowState, resolveProjectRootForState, ProjectOwnershipLostError } from "../workflow-state.js";
-import { acquireWorktreeMutex, releaseWorktreeMutex } from "../process-lock.js";
+import {
+  acquireWorktreeMutex,
+  releaseWorktreeMutex,
+  projectLockDir,
+  findActiveLegacyWriter,
+  readProcessLockDetailed,
+  verifyLegacyFleetQuiescence,
+} from "../process-lock.js";
 import { handleDropTask, handleCompleteTask } from "../tools/handler-modules/commit-handlers.js";
 import { findSession, listSessions } from "./sessions.js";
 
@@ -46,6 +53,39 @@ export async function openSessionState(found) {
     requireKernelMutex: true,
   });
   await workflowState.load({ skipWrites: true });
+  const lockDir = projectLockDir(found.file);
+  const lockInspection = readProcessLockDetailed({ dir: lockDir });
+  if (lockInspection.status === "corrupt" || lockInspection.status === "unreadable") {
+    throw new ProjectOwnershipLostError(
+      `Refusing CLI session mutation: lock metadata in "${lockDir}" is ${lockInspection.status}`,
+      { reason: `lock_metadata_${lockInspection.status}`, lockDir },
+    );
+  }
+  const legacyWriter = findActiveLegacyWriter({ dir: lockDir });
+  if (legacyWriter) {
+    throw new ProjectOwnershipLostError(
+      `Refusing CLI session mutation: active legacy v1 writer (PID ${legacyWriter.pid || "unknown"}) in "${lockDir}"`,
+      { reason: "legacy_writer_active", lockDir, pid: legacyWriter.pid || null },
+    );
+  }
+  const projectsParent = path.dirname(lockDir);
+  if (path.basename(projectsParent) === "projects") {
+    const quiescence = verifyLegacyFleetQuiescence({ baseDir: path.dirname(projectsParent) });
+    if (quiescence.inspectionErrors && quiescence.inspectionErrors.length > 0) {
+      const errItem = quiescence.inspectionErrors[0];
+      throw new ProjectOwnershipLostError(
+        `Refusing CLI session mutation: quiescence inspection failed (${errItem.reason || errItem.error || "QUIESCENCE_INSPECTION_FAILED"})`,
+        { reason: errItem.reason || "quiescence_inspection_failed", lockDir },
+      );
+    }
+    if (quiescence.legacyWriters && quiescence.legacyWriters.length > 0) {
+      const w = quiescence.legacyWriters[0];
+      throw new ProjectOwnershipLostError(
+        `Refusing CLI session mutation: active legacy v1 writer (PID ${w.pid || "unknown"})`,
+        { reason: "legacy_writer_active", lockDir, pid: w.pid || null },
+      );
+    }
+  }
   const targetProjectDir = workflowState.state?.projectDir || resolveProjectRootForState(found.file);
   const ownerKey =
     discoveredSessionId ||

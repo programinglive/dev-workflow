@@ -127,6 +127,22 @@ export class SqliteAdapter extends DbAdapter {
                 );
             }
 
+            if (this.config.readOnly === true) {
+                if (!existsSync(dbPath)) {
+                    return null;
+                }
+                try {
+                    this.db = new Database(dbPath, { readonly: true, fileMustExist: true });
+                } catch (error) {
+                    throw new StateUnavailable(
+                        `Penyimpanan state tidak bisa dibuka read-only di "${dbPath}": ${error.message}.`,
+                        { cause: error },
+                    );
+                }
+                this.db.pragma("busy_timeout = 5000");
+                return this.db;
+            }
+
             try {
                 // Direktori induk belum tentu ada: pada clone bersih, `.state/`
                 // belum pernah dibuat. Tanpa ini SQLite melempar
