@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { WorkflowState, resolveStateFile, sessionKeyFromRequest } from "../workflow-state.js";
+import { resolveRequestSession } from "../session-scope.js";
 import { handleToolCall } from "../tools/handlers.js";
 import { normalizeRequestArgs } from "../utils.js";
 import { createGitFacade } from "../git-facade.js";
@@ -147,20 +148,16 @@ test("dua sesi lewat handleToolCall tidak saling menimpa task", async () => {
   });
 });
 
-test("tanpa metadata sesi, perilaku lama dipertahankan (satu berkas)", async () => {
-  await withProject(async () => {
-    const state = new WorkflowState();
-    await state.load();
-    const firstFile = state.stateFile;
+test("tanpa metadata sesi, tool session-scoped ditolak oleh gate MCP", () => {
+  const gate = resolveRequestSession(requestWith("start_task", { description: "Task tanpa metadata" }));
+  assert.equal(gate.ok, false, "start_task tanpa session id harus ditolak");
+  assert.match(gate.error, /SESSION_IDENTITY_REQUIRED/);
+});
 
-    await handleToolCall({
-      request: requestWith("start_task", { description: "Task tanpa metadata", type: "other", definitionOfDone: ["tercatat"] }),
-      ...context(state),
-    });
-
-    assert.equal(state.stateFile, firstFile, "tanpa session id, berkas state tidak boleh berpindah");
-    assert.match(state.state.taskDescription, /Task tanpa metadata/);
-  });
+test("tanpa metadata sesi, tool non-session tetap diizinkan", () => {
+  const gate = resolveRequestSession(requestWith("get_current_focus", {}));
+  assert.equal(gate.ok, true, "get_current_focus tidak boleh butuh session id");
+  assert.equal(gate.sessionId, null);
 });
 
 test("berpindah sesi memuat state sesi itu, bukan menyalin yang lama", async () => {
