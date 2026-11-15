@@ -1901,30 +1901,39 @@ export async function claimFocusBinding({
   const id = Number(focusId);
   if (!Number.isSafeInteger(id) || id <= 0) return { ok: false, reason: "INVALID_FOCUS" };
 
-  if (kernelCapability || requireKernelMutex) {
-    const cap = kernelCapability || (projectDir ? getHeldWorktreeCapability(projectDir) : null);
-    assertWorktreeCapabilityMatches({
-      capability: cap,
-      operation: "claimFocusBinding",
-      ownerKey: expectedOwnerKey || (stateFile ? sessionKeyFromStateFile(stateFile) : null),
-      projectDir: projectDir || null,
-      allowDrainingInFlight: true,
-    });
-  }
-
-  const baseDir = resolveBaseDirFromState(stateFile);
-  const lock = await acquireFocusLock({ baseDir, focusId: id, timeoutMs });
-  if (!lock.ok) return { ok: false, reason: lock.code };
-
-  try {
-    return claimFocusBindingUnderLock({ baseDir, focusId: id, projectDir, repoKey });
-  } finally {
-    try {
-      unlinkSync(lock.file);
-    } catch {
-      // Releasing is best-effort; a leftover lock is broken as stale later.
+  const cap = kernelCapability || (projectDir ? getHeldWorktreeCapability(projectDir) : null);
+  const effectiveOwnerKey = expectedOwnerKey || (stateFile ? sessionKeyFromStateFile(stateFile) : null);
+  const validateFocusCap = () => {
+    if (kernelCapability || requireKernelMutex) {
+      assertWorktreeCapabilityMatches({
+        capability: cap,
+        operation: "claimFocusBinding",
+        ownerKey: effectiveOwnerKey,
+        projectDir: projectDir || null,
+        allowDrainingInFlight: true,
+      });
     }
-  }
+  };
+  validateFocusCap();
+
+  const runClaim = async () => {
+    const baseDir = resolveBaseDirFromState(stateFile);
+    const lock = await acquireFocusLock({ baseDir, focusId: id, timeoutMs });
+    if (!lock.ok) return { ok: false, reason: lock.code };
+
+    try {
+      validateFocusCap();
+      return claimFocusBindingUnderLock({ baseDir, focusId: id, projectDir, repoKey });
+    } finally {
+      try {
+        unlinkSync(lock.file);
+      } catch {
+        // Releasing is best-effort; a leftover lock is broken as stale later.
+      }
+    }
+  };
+
+  return cap ? await useWorktreeCapability(cap, runClaim) : await runClaim();
 }
 
 function claimFocusBindingUnderLock({ baseDir, focusId, projectDir, repoKey }) {
@@ -1989,57 +1998,69 @@ export async function retireFocusBinding({
   const id = Number(focusId);
   if (!Number.isSafeInteger(id) || id <= 0) return { ok: false, reason: "INVALID_FOCUS" };
 
-  if (kernelCapability || requireKernelMutex) {
-    const cap = kernelCapability || (projectDir ? getHeldWorktreeCapability(projectDir) : null);
-    assertWorktreeCapabilityMatches({
-      capability: cap,
-      operation: "retireFocusBinding",
-      ownerKey: expectedOwnerKey || (stateFile ? sessionKeyFromStateFile(stateFile) : null),
-      projectDir: projectDir || null,
-      allowDrainingInFlight: true,
-    });
-  }
+  const cap = kernelCapability || (projectDir ? getHeldWorktreeCapability(projectDir) : null);
+  const effectiveOwnerKey = expectedOwnerKey || (stateFile ? sessionKeyFromStateFile(stateFile) : null);
+  const validateRetireCap = () => {
+    if (kernelCapability || requireKernelMutex) {
+      assertWorktreeCapabilityMatches({
+        capability: cap,
+        operation: "retireFocusBinding",
+        ownerKey: effectiveOwnerKey,
+        projectDir: projectDir || null,
+        allowDrainingInFlight: true,
+      });
+    }
+  };
+  validateRetireCap();
 
-  const baseDir = resolveBaseDirFromState(stateFile);
-  const lock = await acquireFocusLock({ baseDir, focusId: id });
-  if (!lock.ok) return { ok: false, reason: lock.code };
+  const runRetire = async () => {
+    const baseDir = resolveBaseDirFromState(stateFile);
+    const lock = await acquireFocusLock({ baseDir, focusId: id });
+    if (!lock.ok) return { ok: false, reason: lock.code };
 
-  try {
-    const target = focusBindingPath(baseDir, id);
-    const existing = readFocusBindingRecord(target);
-    if (!existing) return { ok: true, retired: false, reason: "NOT_BOUND" };
+    try {
+      validateRetireCap();
+      const target = focusBindingPath(baseDir, id);
+      const existing = readFocusBindingRecord(target);
+      if (!existing) return { ok: true, retired: false, reason: "NOT_BOUND" };
 
-    const requestedDir = projectDir ? path.resolve(String(projectDir)) : "";
-    const requestedKey = typeof repoKey === "string" ? repoKey.trim() : "";
-    if (requestedDir || requestedKey) {
-      const sameKey = Boolean(existing.repoKey) && Boolean(requestedKey) && existing.repoKey === requestedKey;
-      const sameDir =
-        Boolean(existing.projectDir) &&
-        Boolean(requestedDir) &&
-        normalizeRepoPathForBinding(existing.projectDir) === normalizeRepoPathForBinding(requestedDir);
-      if (!sameKey && !sameDir) {
-        return { ok: false, existing, reason: "FOCUS_BOUND_TO_ANOTHER_PROJECT" };
+      const requestedDir = projectDir ? path.resolve(String(projectDir)) : "";
+      const requestedKey = typeof repoKey === "string" ? repoKey.trim() : "";
+      if (requestedDir || requestedKey) {
+        if (existing.projectDir) {
+          if (
+            !requestedDir ||
+            normalizeRepoPathForBinding(existing.projectDir) !== normalizeRepoPathForBinding(requestedDir)
+          ) {
+            return { ok: false, existing, reason: "FOCUS_BOUND_TO_ANOTHER_PROJECT" };
+          }
+        }
+        if (existing.repoKey && requestedKey && existing.repoKey !== requestedKey) {
+          return { ok: false, existing, reason: "FOCUS_BOUND_TO_ANOTHER_PROJECT" };
+        }
+      }
+
+      try {
+        unlinkSync(target);
+        return {
+          ok: true,
+          retired: true,
+          previous: existing,
+          reason: typeof reason === "string" ? reason.trim() : "",
+        };
+      } catch {
+        return { ok: false, reason: "RETIRE_FAILED" };
+      }
+    } finally {
+      try {
+        unlinkSync(lock.file);
+      } catch {
+        // Best-effort release.
       }
     }
+  };
 
-    try {
-      unlinkSync(target);
-      return {
-        ok: true,
-        retired: true,
-        previous: existing,
-        reason: typeof reason === "string" ? reason.trim() : "",
-      };
-    } catch {
-      return { ok: false, reason: "RETIRE_FAILED" };
-    }
-  } finally {
-    try {
-      unlinkSync(lock.file);
-    } catch {
-      // Best-effort release.
-    }
-  }
+  return cap ? await useWorktreeCapability(cap, runRetire) : await runRetire();
 }
 
 /** The repository a focus is already bound to, or null. */
@@ -4317,6 +4338,10 @@ export class WorkflowState {
     // Tidak satu pun boleh menggagalkan penyimpanan yang sudah berhasil - itu
     // kelas bug yang membuat dokumentasi hilang karena hal lain gagal.
     const postCommitProjectionErrors = [];
+    const prevRepairMarkersJson = JSON.stringify({
+      pendingProjectionRepair: this.state?.pendingProjectionRepair || null,
+      pendingHistorySummaryRepairKeys: this.state?.pendingHistorySummaryRepairKeys || null,
+    });
     const exportOk = await this._exportJson();
     this._lastExportJsonOk = exportOk !== false;
     if (exportOk === false) {
@@ -4336,7 +4361,6 @@ export class WorkflowState {
 
     // History milik PROYEK, jadi masuk tabel bersama - bukan hanya berkas.
     try {
-      const prevRepairJson = JSON.stringify(this.state?.pendingHistorySummaryRepairKeys || null);
       const histRes = await this._syncHistoryToDatabase(db, userId, projectPath);
       if (histRes?.skipped > 0) {
         postCommitProjectionErrors.push(`syncHistoryDb:SKIPPED_${histRes.skipped}`);
@@ -4344,30 +4368,43 @@ export class WorkflowState {
       if (histRes?.summaryFailed) {
         postCommitProjectionErrors.push(`syncHistorySummary:${histRes.summaryError || "FAILED"}`);
       }
-      const nextRepairJson = JSON.stringify(this.state?.pendingHistorySummaryRepairKeys || null);
-      if (nextRepairJson !== prevRepairJson && typeof db.saveStateVersioned === "function") {
-        try {
-          this._assertKernelOwnership("save_repair_marker", { allowDrainingInFlight: true });
-          const { history: _omitHistory2, ...persistedRepairState } = this.state;
-          const repairWritten = await db.saveStateVersioned({
-            userId,
-            projectPath,
-            sessionKey,
-            state: persistedRepairState,
-            expectedVersion: this.stateVersion,
-          });
-          if (repairWritten && Number.isFinite(Number(repairWritten.version))) {
-            this.stateVersion = repairWritten.version;
-          }
-        } catch (repairPersistErr) {
-          postCommitProjectionErrors.push(`persistSummaryRepairMarker:${repairPersistErr.message}`);
-        }
-      }
     } catch (error) {
       postCommitProjectionErrors.push(`syncHistoryDb:${error.message}`);
       safeLog("warn", `Sinkronisasi history ke database gagal: ${error.message}`);
     }
     this._lastPostCommitProjectionErrors = postCommitProjectionErrors;
+
+    if (postCommitProjectionErrors.length > 0) {
+      this.state.pendingProjectionRepair = {
+        errors: [...postCommitProjectionErrors],
+        failedAt: new Date().toISOString(),
+      };
+    } else if (this.state?.pendingProjectionRepair) {
+      delete this.state.pendingProjectionRepair;
+    }
+
+    const nextRepairMarkersJson = JSON.stringify({
+      pendingProjectionRepair: this.state?.pendingProjectionRepair || null,
+      pendingHistorySummaryRepairKeys: this.state?.pendingHistorySummaryRepairKeys || null,
+    });
+    if (nextRepairMarkersJson !== prevRepairMarkersJson && typeof db.saveStateVersioned === "function") {
+      try {
+        this._assertKernelOwnership("save_repair_marker", { allowDrainingInFlight: true });
+        const { history: _omitHistory2, ...persistedRepairState } = this.state;
+        const repairWritten = await db.saveStateVersioned({
+          userId,
+          projectPath,
+          sessionKey,
+          state: persistedRepairState,
+          expectedVersion: this.stateVersion,
+        });
+        if (repairWritten && Number.isFinite(Number(repairWritten.version))) {
+          this.stateVersion = repairWritten.version;
+        }
+      } catch (repairPersistErr) {
+        postCommitProjectionErrors.push(`persistRepairMarker:${repairPersistErr.message}`);
+      }
+    }
 
     // Sambungkan antrean replika: laporan yang gagal terkirim ke dashboard
     // ditampung di sini, bukan ditelan. Kegagalannya tidak pernah menggagalkan
