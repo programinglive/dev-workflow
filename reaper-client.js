@@ -53,6 +53,60 @@ export async function fetchReaperSessions({ baseUrl, secret, machine, fetchImpl 
 }
 
 /**
+ * Report a locally verified orphan to the monitor.
+ *
+ * The controller is the only party that can inspect a process on its own host.
+ * This sends the evidence — machine, session, PID, creation time, executable,
+ * lease binding, verification time and a single-use nonce — signed with this
+ * machine's credential. The monitor revalidates every field against its own row
+ * before it archives anything.
+ *
+ * @param {object} options
+ * @param {string} options.baseUrl monitor base URL
+ * @param {string} options.secret this machine's HMAC secret
+ * @param {string} options.machine this machine's name
+ * @param {object} options.attestation the verified orphan evidence
+ * @param {Function} [options.fetchImpl]
+ * @returns {Promise<{ok: boolean, status: number, error?: string}>}
+ */
+export async function attestOrphan({ baseUrl, secret, machine, attestation, fetchImpl = fetch } = {}) {
+  if (!baseUrl) throw new Error("baseUrl is required");
+  if (!secret) throw new Error("secret is required");
+  if (!machine) throw new Error("machine is required");
+  if (!attestation) throw new Error("attestation is required");
+
+  const payload = {
+    action: "attest",
+    at: new Date().toISOString(),
+    machine: String(machine),
+    sessionKey: String(attestation.sessionKey),
+    projectName: String(attestation.projectName),
+    pid: Number(attestation.pid),
+    startedAt: String(attestation.startedAt),
+    executable: String(attestation.executable),
+    leaseOwner: String(attestation.leaseOwner || ""),
+    leaseGeneration: Number(attestation.leaseGeneration) || 0,
+    leaseFencingToken: String(attestation.leaseFencingToken || ""),
+    verifiedAt: String(attestation.verifiedAt || new Date().toISOString()),
+    nonce: String(attestation.nonce),
+  };
+
+  const signature = signControllerRequest(payload, secret);
+  const response = await fetchImpl(`${String(baseUrl).replace(/\/$/, "")}/api/reaper/attest`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      [REAPER_SIGNATURE_HEADER]: signature,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (response.ok) return { ok: true, status: response.status };
+  const data = await response.json().catch(() => ({}));
+  return { ok: false, status: response.status, error: String(data?.error || `HTTP ${response.status}`) };
+}
+
+/**
  * Map a privileged reaper row to the shape `session-reaper.js` expects.
  */
 export function toReaperSession(row) {

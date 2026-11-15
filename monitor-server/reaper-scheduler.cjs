@@ -11,9 +11,52 @@
  */
 
 const { buildReaperSessionsQuery } = require('./reaper-query.cjs');
+const {
+  buildArchiveQuery,
+  buildLeaseReleaseQuery,
+  revalidateAttestation,
+} = require('./reaper-attestation.cjs');
 
 const DEFAULT_INTERVAL_MS = 5 * 60 * 1000;
 const MAX_RETRIES = 3;
+
+/**
+ * Newest unconsumed attestation per session.
+ *
+ * Only attestations the endpoint already accepted are stored, so this query
+ * does not re-verify the signature. It does re-verify the binding, because the
+ * row may have changed since the attestation arrived.
+ */
+function buildAttestationQuery({ limit = 500 } = {}) {
+  const bounded = Math.min(1000, Math.max(1, Number(limit) || 500));
+  return {
+    sql: `SELECT DISTINCT ON (session_key)
+                 session_key, machine, project_name, pid, process_started_at,
+                 process_executable, lease_owner, lease_generation,
+                 lease_fencing_token, verified_at, nonce
+            FROM reaper_attestations
+           WHERE consumed_at IS NULL
+           ORDER BY session_key, received_at DESC
+           LIMIT $1`,
+    params: [bounded],
+  };
+}
+
+function attestationFromRow(row) {
+  return {
+    machine: String(row.machine || ''),
+    sessionKey: String(row.session_key || ''),
+    projectName: String(row.project_name || ''),
+    pid: Number(row.pid),
+    startedAt: String(row.process_started_at || ''),
+    executable: String(row.process_executable || ''),
+    leaseOwner: String(row.lease_owner || ''),
+    leaseGeneration: Number(row.lease_generation) || 0,
+    leaseFencingToken: String(row.lease_fencing_token || ''),
+    verifiedAt: row.verified_at,
+    nonce: String(row.nonce || ''),
+  };
+}
 
 function toReaperSession(row) {
   return {
@@ -56,7 +99,7 @@ function createReaperScheduler({
 
   async function loadReaper() {
     if (reaper) return reaper;
-    return import('../session-reaper.js');
+    return import('./session-reaper.js');
   }
 
   /**
@@ -98,18 +141,98 @@ function createReaperScheduler({
       }
 
       const rows = loaded.value;
-      const plans = rows.rows.map((row) => planCleanup(toReaperSession(row), { now: now(), machineOnline: true }));
+
+      // Attestations are optional: a monitor without migration 006 still runs,
+      // it simply has no verified orphan evidence and archives nothing.
+      let attestations = new Map();
+      try {
+        const aq = buildAttestationQuery({ limit: 500 });
+        const ar = await query(aq.sql, aq.params);
+        for (const row of ar.rows) attestations.set(row.session_key, attestationFromRow(row));
+      } catch (error) {
+        log.warn?.('reaper attestation query unavailable', String(error && error.message || error));
+      }
+
+      const plans = rows.rows.map((row) => {
+        const attestation = attestations.get(row.session_key);
+        if (attestation) {
+          const verdict = revalidateAttestation(attestation, row);
+          if (verdict.ok) {
+            // Verified by the machine that owns the process. This is the only
+            // path that can produce ORPHANED, because the monitor cannot see
+            // another host's process table.
+            return {
+              sessionKey: row.session_key,
+              machine: row.machine,
+              project: row.project_name,
+              state: 'ORPHANED',
+              reason: `attested by ${attestation.machine} at ${attestation.verifiedAt}`,
+              action: 'recover_orphan',
+              kill: false,
+              releaseLease: Boolean(attestation.leaseOwner),
+              archive: true,
+              requiresAuthorization: false,
+              attestation,
+            };
+          }
+          return {
+            sessionKey: row.session_key,
+            machine: row.machine,
+            project: row.project_name,
+            state: 'RECOVERY_REQUIRED',
+            reason: `attestation rejected: ${verdict.reason}`,
+            action: 'hold',
+            kill: false,
+            releaseLease: false,
+            archive: false,
+            requiresAuthorization: true,
+            attestation,
+          };
+        }
+        return planCleanup(toReaperSession(row), { now: now(), machineOnline: true });
+      });
+
       const actionable = plans.filter((plan) => plan.action === 'recover_orphan');
 
+      const applied = [];
       if (!dryRun) {
         for (const plan of actionable) {
-          // Archive only. Lease release and process termination belong to the
-          // machine-local controller, which verifies the process on its host.
+          const attestation = plan.attestation;
+          if (!attestation) continue;
+
+          // Archive first, conditionally. Zero rows means the row changed since
+          // the read, so nothing is archived and nothing is released.
+          const archive = buildArchiveQuery(attestation);
+          const archived = await query(archive.sql, archive.params);
+          if (!archived || archived.rowCount === 0) {
+            applied.push({ sessionKey: plan.sessionKey, archived: false, reason: 'IDENTITY_CHANGED' });
+            continue;
+          }
+
+          // Lease release is a separate compare-and-swap. It only runs when the
+          // session actually holds a lease, and it only succeeds when owner,
+          // generation and fencing token still match.
+          let leaseReleased = false;
+          let leaseReason = 'NO_LEASE';
+          const release = buildLeaseReleaseQuery(attestation);
+          if (release) {
+            const released = await query(release.sql, release.params);
+            leaseReleased = Boolean(released && released.rowCount > 0);
+            leaseReason = leaseReleased ? 'RELEASED' : 'LEASE_OWNERSHIP_CHANGED';
+          }
+
           await query(
-            `UPDATE sessions SET phase = 'closed', updated_at = now()
-              WHERE session_key = $1 AND phase NOT IN ('closed', 'done', 'cancelled')`,
-            [plan.sessionKey],
+            `UPDATE reaper_attestations SET consumed_at = now(), outcome = $2
+              WHERE machine = $1 AND nonce = $3`,
+            [attestation.machine, leaseReleased ? 'archived_and_released' : 'archived_lease_unresolved', attestation.nonce],
           );
+
+          applied.push({
+            sessionKey: plan.sessionKey,
+            archived: true,
+            leaseReleased,
+            leaseReason,
+          });
         }
       }
 
@@ -118,6 +241,8 @@ function createReaperScheduler({
         dryRun,
         total: plans.length,
         actionable: actionable.length,
+        attested: plans.filter((plan) => plan.attestation).length,
+        applied,
         attempts: loaded.attempts,
         plans,
       };
@@ -152,4 +277,11 @@ function createReaperScheduler({
   return { runOnce, start, stop, audit, isRunning: () => running };
 }
 
-module.exports = { createReaperScheduler, toReaperSession, DEFAULT_INTERVAL_MS, MAX_RETRIES };
+module.exports = {
+  buildAttestationQuery,
+  attestationFromRow,
+  createReaperScheduler,
+  toReaperSession,
+  DEFAULT_INTERVAL_MS,
+  MAX_RETRIES,
+};
