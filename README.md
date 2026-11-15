@@ -1546,6 +1546,25 @@ plus SSH across three machines (MMCH, HELLOWORLD, Mac).
 
 ---
 
+## Session lifecycle and stale-session reaper
+
+`session-reaper.js` replaces the single "possibly_stuck" label with a verified
+state machine: `ACTIVE`, `IDLE`, `SUSPECTED_STALE`, `UNREACHABLE`,
+`TERMINATED`, `ORPHANED`, `RECOVERY_REQUIRED`, `ARCHIVED`.
+
+- A PID alone is not proof of ownership. The reaper compares process creation
+  time and executable identity; a mismatch is `RECOVERY_REQUIRED`.
+- A disconnected machine is `UNREACHABLE`, never `TERMINATED`.
+- A release lock, an active child, or uncommitted work keeps a session `ACTIVE`
+  even when its heartbeat is old.
+- `planCleanup()` never mutates. `applyCleanup()` releases a lease only through
+  a compare-and-swap on owner + generation + fencing token, and aborts if
+  ownership changes during cleanup.
+- Confirmed orphans are archived after the lease is released; idle sessions are
+  stopped gracefully only when explicitly designated auto-disposable.
+- Every action is recorded in an audit trail. Canonical checkpoints and history
+  are never deleted.
+
 ## License
 
 MIT

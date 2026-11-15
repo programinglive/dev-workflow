@@ -60,3 +60,16 @@ Before taking any action or answering user requests regarding code changes, chec
 - Use `get_workflow_status` at any time to check what step is next.
 
 **Do not bypass these steps. The MCP server will block commits and releases if any required step is skipped.**
+
+### Stale-session reaper (server-enforced)
+
+`session-reaper.js` classifies sessions as `ACTIVE`, `IDLE`, `SUSPECTED_STALE`,
+`UNREACHABLE`, `TERMINATED`, `ORPHANED`, `RECOVERY_REQUIRED` or `ARCHIVED`.
+A PID is not proof of ownership: process creation time and executable identity
+are compared, and a mismatch is `RECOVERY_REQUIRED`. A disconnected machine is
+`UNREACHABLE`, never `TERMINATED`. A release lock, an active child, or
+uncommitted work keeps a session `ACTIVE`. Lease release is compare-and-swap on
+owner + generation + fencing token; if ownership changes during cleanup the
+plan aborts. Confirmed orphans are archived after the lease is released; idle
+sessions are stopped gracefully only when explicitly auto-disposable. Every
+action is audited and canonical checkpoints are never deleted.
