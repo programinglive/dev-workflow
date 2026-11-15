@@ -4,7 +4,8 @@ import { mkdtemp, mkdir, writeFile, rm, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { claimFocusBinding, readFocusBinding } from "../workflow-state.js";
+import { claimFocusBinding, readFocusBinding, captureFocusBindingSnapshot, restoreFocusBindingSnapshot } from "../workflow-state.js";
+import { readFileSync } from "node:fs";
 
 /**
  * A damaged focus binding must never read as "unbound".
@@ -127,6 +128,26 @@ test("a session pointer is still not a binding and does not block a claim", asyn
   } finally {
     await rm(base, { recursive: true, force: true });
     await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("a damaged binding is not deleted by a snapshot rollback", async () => {
+  const { base, stateFile } = await stateBase();
+  try {
+    const bindings = path.join(base, "sessions", "focus-bindings");
+    await mkdir(bindings, { recursive: true });
+    const file = path.join(bindings, "focus-509.json");
+    await writeFile(file, "{ corrupted", "utf8");
+
+    const snapshot = captureFocusBindingSnapshot({ stateFile, focusId: 509 });
+    // A file that cannot be parsed is not "absent", so the snapshot must not
+    // claim it can be restored by deleting it.
+    const restored = await restoreFocusBindingSnapshot(snapshot);
+    assert.equal(restored.ok, false);
+    assert.equal(restored.error, "FOCUS_BINDING_UNREADABLE");
+    assert.equal(readFileSync(file, "utf8"), "{ corrupted", "the damaged file must survive");
+  } finally {
+    await rm(base, { recursive: true, force: true });
   }
 });
 

@@ -226,23 +226,32 @@ test("the archive is gated on the attestation being unconsumed", () => {
   assert.match(sql, /consumed_at IS NULL/);
 });
 
-test("the write itself refuses an expired attestation", () => {
+test("the write uses the statement clock, not the transaction clock", () => {
   const parsed = parseAttestation(payload(), { now: NOW });
   const { sql } = buildReconcileQuery(parsed.value);
 
-  // Freshness is checked when the report arrives AND when it is consumed. A
-  // delayed query or lock wait must not commit after the TTL.
-  assert.match(sql, /verified_at > now\(\) - \(\$11::bigint \* interval '1 millisecond'\)/);
-  assert.match(sql, /verified_at <= now\(\) \+ interval '60 seconds'/);
-  // And the reason is reported honestly rather than as an identity change.
-  assert.match(sql, /THEN 'attestation_expired'/);
+  // `now()` is fixed at transaction start, so a row lock wait past the TTL
+  // would still see a fresh attestation. `clock_timestamp()` advances.
+  assert.equal(/now\(\)/.test(sql.replace(/clock_timestamp\(\)/g, "")), false,
+    "freshness must not rely on the transaction-start clock");
+  assert.match(sql, /clock_timestamp\(\)/);
+});
+
+test("the archive refuses a session touched after the attestation", () => {
+  const parsed = parseAttestation(payload(), { now: NOW });
+  const { sql, params } = buildReconcileQuery(parsed.value);
+
+  // A session re-registered after the attestation was produced is live again;
+  // the old evidence must not archive it.
+  assert.match(sql, /updated_at <= \$12::timestamptz/);
+  assert.equal(params[11], parsed.value.verifiedAt);
 });
 
 test("the attestation is always consumed, even when nothing was archived", () => {
   const parsed = parseAttestation(payload(), { now: NOW });
   const { sql } = buildReconcileQuery(parsed.value);
   assert.match(sql, /ELSE 'identity_changed'/);
-  assert.match(sql, /consumed_at = now\(\)/);
+  assert.match(sql, /consumed_at = clock_timestamp\(\)/);
 });
 
 test("a session with no lease releases nothing", () => {

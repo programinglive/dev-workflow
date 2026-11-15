@@ -2324,6 +2324,14 @@ export function readFocusBinding({ stateFile, focusId } = {}) {
   );
 }
 
+/**
+ * Capture the current focus binding so a failed transition can be rolled back.
+ *
+ * `raw` is the file content, `raw: null` means "there was no binding". A file
+ * that exists but cannot be read is NOT the same as an absent one: recording it
+ * as `raw: null` would make the restore path delete a damaged but real record.
+ * That case is reported as unreadable and the caller must not roll back over it.
+ */
 export function captureFocusBindingSnapshot({ stateFile, focusId } = {}) {
   const id = Number(focusId);
   if (!Number.isSafeInteger(id) || id <= 0) {
@@ -2333,15 +2341,35 @@ export function captureFocusBindingSnapshot({ stateFile, focusId } = {}) {
   const file = focusBindingPath(baseDir, id);
   try {
     const raw = readFileSync(file, "utf8");
-    return { applicable: true, file, raw, focusId: id, baseDir };
-  } catch {
-    return { applicable: true, file, raw: null, focusId: id, baseDir };
+    try {
+      JSON.parse(raw);
+    } catch {
+      return { applicable: true, file, raw: null, focusId: id, baseDir, unreadable: "FOCUS_BINDING_MALFORMED" };
+    }
+    return { applicable: true, file, raw, focusId: id, baseDir, unreadable: null };
+  } catch (error) {
+    if (error && error.code === "ENOENT") {
+      return { applicable: true, file, raw: null, focusId: id, baseDir, unreadable: null };
+    }
+    return {
+      applicable: true,
+      file,
+      raw: null,
+      focusId: id,
+      baseDir,
+      unreadable: error?.code || "FOCUS_BINDING_UNREADABLE",
+    };
   }
 }
 
 export async function restoreFocusBindingSnapshot(snapshot, journal = null) {
   if (!snapshot || !snapshot.applicable || !snapshot.file || !snapshot.baseDir || !snapshot.focusId) {
     return { ok: true, notApplicable: true };
+  }
+  // A snapshot of a damaged record cannot be restored by deleting it: that
+  // would destroy the only evidence of who owned the focus.
+  if (snapshot.unreadable) {
+    return { ok: false, error: "FOCUS_BINDING_UNREADABLE", reason: snapshot.unreadable };
   }
   const lock = await acquireFocusLock({ baseDir: snapshot.baseDir, focusId: snapshot.focusId });
   if (!lock || !lock.ok) {
@@ -2473,6 +2501,9 @@ function restoreFileSnapshot(snap, journal = null, role = "source") {
 function restoreFocusBindingSnapshotSync(snapshot, journal = null) {
   if (!snapshot || !snapshot.applicable || !snapshot.file) {
     return { ok: true, notApplicable: true };
+  }
+  if (snapshot.unreadable) {
+    return { ok: false, error: "FOCUS_BINDING_UNREADABLE", reason: snapshot.unreadable };
   }
   let lockFile = null;
   if (snapshot.baseDir && snapshot.focusId) {
