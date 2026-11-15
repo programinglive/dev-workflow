@@ -747,6 +747,11 @@ function sessionStateFilename(env = process.env, explicitSessionId = null) {
   return `workflow-state.${resolveSessionKey(env, explicitSessionId)}.json`;
 }
 
+/** Nama berkas state dari kunci sesi yang sudah kanonik (tanpa re-hash). */
+function sessionStateFilenameForKey(sessionKey) {
+  return `workflow-state.${sessionKey}.json`;
+}
+
 /**
  * Berkas tempat `history` bersama disimpan.
  *
@@ -1042,7 +1047,7 @@ export function resolveTargetProjectState({ stateFile, projectDir, skipWrites = 
     const projectDirPath = path.join(baseDir, PROJECTS_DIR, bucketKey);
     const targetStateFile = path.join(
       getUserScopedDir(projectDirPath, { skipWrites }),
-      sessionStateFilename(process.env, sessionKey),
+      sessionStateFilenameForKey(sessionKey),
     );
     return {
       isPinnedLayout: true,
@@ -1668,7 +1673,7 @@ export function pinSessionProject({
             ok: false,
             error: "pointer_owned_by_other_session",
             projectDirPath,
-            stateFile: path.join(getUserScopedDir(projectDirPath), sessionStateFilename(process.env, sessionKey)),
+            stateFile: path.join(getUserScopedDir(projectDirPath), sessionStateFilenameForKey(sessionKey)),
           };
           return;
         }
@@ -1686,7 +1691,7 @@ export function pinSessionProject({
             ok: false,
             error: "superseded_by_newer_pointer",
             projectDirPath,
-            stateFile: path.join(getUserScopedDir(projectDirPath), sessionStateFilename(process.env, sessionKey)),
+            stateFile: path.join(getUserScopedDir(projectDirPath), sessionStateFilenameForKey(sessionKey)),
           };
           return;
         }
@@ -1745,7 +1750,7 @@ export function pinSessionProject({
           ok: false,
           error: "superseded_by_newer_pointer",
           projectDirPath,
-          stateFile: path.join(getUserScopedDir(projectDirPath), sessionStateFilename(process.env, sessionKey)),
+          stateFile: path.join(getUserScopedDir(projectDirPath), sessionStateFilenameForKey(sessionKey)),
         };
         return;
       }
@@ -1766,7 +1771,7 @@ export function pinSessionProject({
     ok: !pointerWriteError,
     error: pointerWriteError,
     projectDirPath,
-    stateFile: path.join(getUserScopedDir(projectDirPath), sessionStateFilename(process.env, sessionKey)),
+    stateFile: path.join(getUserScopedDir(projectDirPath), sessionStateFilenameForKey(sessionKey)),
   };
 }
 
@@ -1865,63 +1870,47 @@ function focusLockIsStale(file, { isAlive = defaultPidIsAlive, hostname = os.hos
  * succeeds for exactly one of them, so only that process proceeds to create a
  * new lock. The loser retries the atomic create and finds the winner's lock.
  */
-function tryRecoverStaleLock(file) {
-  const recoveryGate = `${file}.recover.lock`;
-  const gateTmp = `${recoveryGate}.${process.pid}.${Date.now()}.tmp`;
-  const acquireGate = () => {
-    writeFileSync(gateTmp, JSON.stringify({ pid: process.pid, startedAt: Date.now() }));
-    try {
-      linkSync(gateTmp, recoveryGate);
-      return true;
-    } finally {
-      try {
-        unlinkSync(gateTmp);
-      } catch {}
-    }
-  };
-  let acquired = false;
+/**
+ * Recover a stale focus lock and atomically acquire a fresh lock under
+ * SQLite `BEGIN IMMEDIATE` serialization (`withSessionPointerDb`), so two
+ * delayed observers cannot race on a recovery lock file or evict a newly
+ * created successor lock.
+ */
+function tryRecoverAndAcquireFocusLock(baseDir, file, lockToken) {
   try {
-    acquired = acquireGate();
-  } catch {
-    if (focusLockIsStale(recoveryGate)) {
-      const staleGateTombstone = `${recoveryGate}.stale.${process.pid}.${Date.now()}`;
-      try {
-        renameSync(recoveryGate, staleGateTombstone);
-        try {
-          unlinkSync(staleGateTombstone);
-        } catch {}
-        acquired = acquireGate();
-      } catch {
-        acquired = false;
+    return withSessionPointerDb(baseDir, () => {
+      if (!focusLockIsStale(file)) {
+        return false;
       }
-    }
-  }
-  if (!acquired) {
-    // Another process is actively recovering or creating a fresh lock; do not touch `file`.
+      const tombstone = `${file}.stale.${process.pid}.${Date.now()}`;
+      try {
+        renameSync(file, tombstone);
+      } catch {
+        return false;
+      }
+      try {
+        unlinkSync(tombstone);
+      } catch {
+        // The tombstone is harmless; the lock itself is already gone.
+      }
+      const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
+      writeFileSync(
+        temporary,
+        JSON.stringify({ pid: process.pid, host: os.hostname(), startedAt: Date.now(), token: lockToken }),
+      );
+      try {
+        linkSync(temporary, file);
+      } finally {
+        try {
+          unlinkSync(temporary);
+        } catch {
+          // Best-effort cleanup of the temp name.
+        }
+      }
+      return true;
+    });
+  } catch {
     return false;
-  }
-  try {
-    // Re-check staleness inside the serialized recovery gate so a delayed observer
-    // cannot evict a fresh lock created by the previous recovery winner.
-    if (!focusLockIsStale(file)) {
-      return false;
-    }
-    const tombstone = `${file}.stale.${process.pid}.${Date.now()}`;
-    try {
-      renameSync(file, tombstone);
-    } catch {
-      return false;
-    }
-    try {
-      unlinkSync(tombstone);
-    } catch {
-      // The tombstone is harmless; the lock itself is already gone.
-    }
-    return true;
-  } finally {
-    try {
-      unlinkSync(recoveryGate);
-    } catch {}
   }
 }
 
@@ -1979,9 +1968,10 @@ async function acquireFocusLock({ baseDir, focusId, timeoutMs = FOCUS_LOCK_TIMEO
       if (error.code !== "EEXIST") return { ok: false, code: "FOCUS_LOCK_UNWRITABLE" };
 
       if (focusLockIsStale(file)) {
-        // Only the process that wins the serialized recovery gate may recover it.
-        if (tryRecoverStaleLock(file)) {
-          continue;
+        // Serialize stale-check + tombstone + fresh lock creation inside SQLite BEGIN IMMEDIATE.
+        const recoveredToken = randomUUID();
+        if (tryRecoverAndAcquireFocusLock(baseDir, file, recoveredToken)) {
+          return { ok: true, file, token: recoveredToken };
         }
       }
 
@@ -2141,26 +2131,24 @@ export async function retireFocusBinding({
 
       const requestedDir = projectDir ? path.resolve(String(projectDir)) : "";
       const requestedKey = typeof repoKey === "string" ? repoKey.trim() : "";
-      if (enforceRetireCap || requestedDir || requestedKey) {
-        if (existing.projectDir) {
-          if (
-            !requestedDir ||
-            normalizeRepoPathForBinding(existing.projectDir) !== normalizeRepoPathForBinding(requestedDir)
-          ) {
-            return { ok: false, existing, reason: "FOCUS_BOUND_TO_ANOTHER_PROJECT" };
-          }
-        }
-        if (existing.repoKey) {
-          if (requestedKey && existing.repoKey !== requestedKey) {
-            return { ok: false, existing, reason: "FOCUS_BOUND_TO_ANOTHER_PROJECT" };
-          }
-          if (!existing.projectDir && !requestedKey) {
-            return { ok: false, existing, reason: "FOCUS_BOUND_TO_ANOTHER_PROJECT" };
-          }
-        }
-        if (enforceRetireCap && !requestedDir && !requestedKey) {
+      if (existing.projectDir) {
+        if (
+          !requestedDir ||
+          normalizeRepoPathForBinding(existing.projectDir) !== normalizeRepoPathForBinding(requestedDir)
+        ) {
           return { ok: false, existing, reason: "FOCUS_BOUND_TO_ANOTHER_PROJECT" };
         }
+      }
+      if (existing.repoKey) {
+        if (requestedKey && existing.repoKey !== requestedKey) {
+          return { ok: false, existing, reason: "FOCUS_BOUND_TO_ANOTHER_PROJECT" };
+        }
+        if (!existing.projectDir && !requestedKey) {
+          return { ok: false, existing, reason: "FOCUS_BOUND_TO_ANOTHER_PROJECT" };
+        }
+      }
+      if (enforceRetireCap && !requestedDir && !requestedKey) {
+        return { ok: false, existing, reason: "FOCUS_BOUND_TO_ANOTHER_PROJECT" };
       }
 
       try {
@@ -3448,13 +3436,14 @@ export class WorkflowState {
     const inferredSessionMatch = resolvedInitialStateFile
       ? /^workflow-state\.(.+)\.json$/.exec(path.basename(String(resolvedInitialStateFile)))
       : null;
-    this.sessionId =
-      options.sessionId ||
-      (inferredSessionMatch &&
+    const inferredSessionKey =
+      inferredSessionMatch &&
       !inferredSessionMatch[1].startsWith("user-") &&
       !inferredSessionMatch[1].startsWith("proc-")
         ? inferredSessionMatch[1]
-        : null);
+        : null;
+    this.sessionId = options.sessionId || inferredSessionKey;
+    this._canonicalSessionKey = !options.sessionId && inferredSessionKey ? inferredSessionKey : null;
 
     // Versi baris yang kita pegang. `null` berarti "belum pernah menyimpan".
     this.stateVersion = null;
@@ -3733,6 +3722,7 @@ export class WorkflowState {
 
       const prevCap = this.boundKernelCapability;
       this.sessionId = explicit || null;
+      this._canonicalSessionKey = null;
       this.stateFile = target;
       this.historyFile = resolveHistoryFile(target);
       this.stateVersion = null;
@@ -4903,6 +4893,9 @@ export class WorkflowState {
 
   /** Kunci sesi untuk baris state, beserta asalnya untuk dicatat. */
   _sessionKey() {
+    if (this._canonicalSessionKey) {
+      return { key: this._canonicalSessionKey, source: "state-file" };
+    }
     return resolveSessionKeyWithSource(process.env, this.sessionId);
   }
 

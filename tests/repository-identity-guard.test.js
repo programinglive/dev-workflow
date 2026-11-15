@@ -576,7 +576,13 @@ test("focus binding survives session restoration and retires explicitly", async 
     const read = readFocusBinding({ stateFile: restored.stateFile, focusId: 73 });
     assert.equal(read.repoKey, "github.com/example/alpha");
 
-    const retired = await retireFocusBinding({ stateFile: restored.stateFile, focusId: 73, reason: "focus completed" });
+    const retired = await retireFocusBinding({
+      stateFile: restored.stateFile,
+      focusId: 73,
+      projectDir: alpha,
+      repoKey: "github.com/example/alpha",
+      reason: "focus completed",
+    });
     assert.equal(retired.retired, true);
     assert.equal(readFocusBinding({ stateFile: restored.stateFile, focusId: 73 }), null);
   });

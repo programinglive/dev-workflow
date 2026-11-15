@@ -2560,3 +2560,99 @@ test("Adversarial 34 (Cycle 16): sessionKey collision-free, multi-line HEAD reje
     }
   });
 });
+
+test("Adversarial 35 (Cycle 18): canonical hashed keys never re-hashed or colliding, unconditional retireFocusBinding target check, and SQLite-serialized stale focus lock recovery", async () => {
+  await withTempWorkspace(async (base) => {
+    const stateBase = path.join(base, "state-c18");
+    const repoA = await createRepo(base, "adv35-a");
+    const { mkdir, writeFile } = await import("node:fs/promises");
+    const { resolveStateFile, resolveTargetProjectState, pinSessionProject, claimFocusBinding, retireFocusBinding, readFocusBinding } =
+      await import("../workflow-state.js");
+    const rawSlashId = "org/repo:ses#1";
+    const resolvedInitial = resolveStateFile({ sessionId: rawSlashId, stateDir: stateBase });
+    const hashedFile = path.basename(resolvedInitial);
+    const hashedKey = /^workflow-state\.(.+)\.json$/.exec(hashedFile)?.[1];
+    assert.ok(hashedKey && /-h[0-9a-f]{10}$/.test(hashedKey), `expected hashed key, got ${hashedKey}`);
+
+    // 1. Literal hashed-looking raw ID must not collide with routed hashed key
+    const literalCollisionCandidate = resolveStateFile({ sessionId: hashedKey, stateDir: stateBase });
+    assert.notEqual(
+      path.basename(literalCollisionCandidate),
+      hashedFile,
+      "literal -h<10hex> raw session ID must not collide with hashed raw session ID",
+    );
+
+    // 2. WorkflowState constructed from routed stateFile must NOT re-hash canonical key
+    const ws = new WorkflowState(resolvedInitial);
+    assert.equal(ws._sessionKey().key, hashedKey, "WorkflowState._sessionKey() must preserve canonical hashed key without re-hashing");
+
+    // 3. resolveTargetProjectState and pinSessionProject must NOT re-hash canonical key
+    const acq = await acquireWorktreeMutex({ projectDir: repoA, ownerKey: hashedKey });
+    try {
+      const routed = resolveTargetProjectState({
+        stateFile: path.join(stateBase, "projects", "dummy", "users", "u1", hashedFile),
+        projectDir: repoA,
+        skipWrites: true,
+      });
+      assert.equal(
+        path.basename(routed.stateFile),
+        hashedFile,
+        "resolveTargetProjectState must preserve canonical hashed filename",
+      );
+      const pinned = await pinSessionProject({
+        stateFile: routed.stateFile,
+        projectDir: repoA,
+        projectDirPath: routed.projectDirPath,
+        kernelCapability: acq.capability,
+        requireKernelMutex: true,
+        expectedOwnerKey: hashedKey,
+      });
+      assert.equal(pinned.ok, true);
+      assert.equal(
+        path.basename(pinned.stateFile),
+        hashedFile,
+        "pinSessionProject must preserve canonical hashed filename",
+      );
+    } finally {
+      await releaseWorktreeMutex(acq.capability);
+    }
+
+    // 4. retireFocusBinding without requireKernelMutex/kernelCapability must still reject missing/wrong target
+    const sf = path.join(stateBase, "projects", "adv35", "users", "u1", "workflow-state.ses_c18.json");
+    await mkdir(path.dirname(sf), { recursive: true });
+    const claimed = await claimFocusBinding({
+      stateFile: sf,
+      focusId: 93501,
+      projectDir: repoA,
+      repoKey: "repo-adv35-a",
+    });
+    assert.equal(claimed.ok, true);
+    const blindRetire = await retireFocusBinding({
+      stateFile: sf,
+      focusId: 93501,
+      reason: "blind bypass attempt",
+    });
+    assert.equal(blindRetire.ok, false, "retireFocusBinding without target must be rejected even without requireKernelMutex");
+    assert.equal(blindRetire.reason, "FOCUS_BOUND_TO_ANOTHER_PROJECT");
+    assert.ok(readFocusBinding({ stateFile: sf, focusId: 93501 }), "binding must remain intact after blind retire");
+
+    // 5. Stale focus lock recovery + fresh lock acquisition is atomic via SQLite BEGIN IMMEDIATE
+    const lockDir = path.join(stateBase, "sessions", "focus-locks");
+    await mkdir(lockDir, { recursive: true });
+    const staleLockFile = path.join(lockDir, "focus-93502.lock");
+    await writeFile(
+      staleLockFile,
+      JSON.stringify({ pid: 99999999, host: "dead-host", startedAt: Date.now() - 60000, token: "dead-tok" }),
+      "utf8",
+    );
+    const { spawnSync } = await import("node:child_process");
+    // Verify two concurrent claimFocusBinding calls against the same stale lock yield exactly one winner
+    const repoB = await createRepo(base, "adv35-b");
+    const [r1, r2] = await Promise.all([
+      claimFocusBinding({ stateFile: sf, focusId: 93502, projectDir: repoA, repoKey: "repo-adv35-a" }),
+      claimFocusBinding({ stateFile: sf, focusId: 93502, projectDir: repoB, repoKey: "repo-adv35-b" }),
+    ]);
+    assert.equal([r1.ok, r2.ok].filter(Boolean).length, 1, "exactly one contender must win stale focus lock recovery");
+    assert.ok(spawnSync);
+  });
+});
