@@ -134,6 +134,27 @@ PID + creation time + executable locally, and refuses to stop a PID shared by
 more than one session (`SHARED_PROCESS_REFUSED`). A failed graceful request is
 reported as `PROCESS_DID_NOT_EXIT`; the reaper never escalates to a force kill.
 
+## 7b. Orphan attestation — `monitor-server/reaper-attestation.cjs`
+
+The monitor cannot inspect another host's process table, so the only path to
+`ORPHANED` is a signed attestation from the machine that owns the process.
+
+`POST /api/reaper/attest` verifies the per-machine HMAC, the replay window, the
+machine/credential match, and then revalidates every bound field against the
+stored row: machine, project binding, PID, process creation time, executable,
+lease owner, lease generation and fencing token. The nonce is unique per machine
+in `reaper_attestations`, so a captured request cannot be replayed. An
+attestation expires after 15 minutes.
+
+The scheduler reads only unconsumed attestations, revalidates them again, and
+archives with a conditional statement that repeats the identity check. Lease
+release is a separate compare-and-swap that bumps the generation; when it loses
+the race the session is archived but the lease is reported unresolved.
+
+Cross-project sessions: one process can host several project bindings. Each
+binding is a separate session row and gets its own attestation, so retiring a
+binding never touches the process.
+
 ## 8. Tests
 
 - `tests/monitor-reaper-api.test.js` — query columns, bounded limit, valid /

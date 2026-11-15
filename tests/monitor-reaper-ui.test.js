@@ -40,6 +40,13 @@ test("the card shows the verified state and reason", () => {
 });
 
 test("the privileged fields never reach the browser", () => {
+  // The server needs these column names for its SQL. The browser bundle is the
+  // PAGE template literal, so only that content must stay clean.
+  const start = dash.indexOf("const PAGE = `");
+  assert.ok(start > -1, "the page template must exist");
+  const end = dash.indexOf("`;", start);
+  assert.ok(end > start, "the page template must be terminated");
+  const page = dash.slice(start, end);
   for (const field of [
     "owner_pid",
     "owner_started_at",
@@ -47,14 +54,16 @@ test("the privileged fields never reach the browser", () => {
     "lease_owner",
     "lease_generation",
     "lease_fencing_token",
+    "reaper_attestations",
   ]) {
-    assert.equal(dash.includes(field), false, `${field} must not appear in the browser bundle`);
+    assert.equal(page.includes(field), false, `${field} must not appear in the browser bundle`);
   }
 });
 
 test("the reaper secret is read from the environment only", () => {
+  // Two privileged endpoints read it: the session list and the attestation.
   const hits = dash.match(/DEVWF_REAPER_SECRET\b/g) || [];
-  assert.equal(hits.length, 1, "the single-machine secret must be read once, server-side");
+  assert.equal(hits.length, 2, "the single-machine secret is read server-side by both privileged endpoints");
   assert.match(dash, /secret: process\.env\.DEVWF_REAPER_SECRET \|\| ''/);
   assert.match(dash, /secrets: parseReaperSecrets\(process\.env\.DEVWF_REAPER_SECRETS\)/);
   assert.equal(/DEVWF_REAPER_SECRET[^\n]*\+/.test(dash), false, "the secret must not be concatenated into HTML");
