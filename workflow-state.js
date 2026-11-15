@@ -3338,9 +3338,18 @@ function readFocusBindingState(baseDir, focusId) {
 
   let conflict = false;
   if (nested && legacy) {
-    const nestedKey = nested.repoKey || normalizeRepoPathForBinding(nested.projectDir);
-    const legacyKey = legacy.repoKey || normalizeRepoPathForBinding(legacy.projectDir);
-    conflict = nestedKey !== legacyKey;
+    // The same acceptance rule the claim path and the pointer migration use:
+    // the same repository key OR the same project directory is the same claim.
+    // Keying only on the remote would report a conflict for one checkout whose
+    // remote identity changed across versions.
+    const nestedKey = nested.repoKey || "";
+    const legacyKey = legacy.repoKey || "";
+    const sameKey = Boolean(nestedKey) && Boolean(legacyKey) && nestedKey === legacyKey;
+    const sameDir =
+      Boolean(nested.projectDir) &&
+      Boolean(legacy.projectDir) &&
+      normalizeRepoPathForBinding(nested.projectDir) === normalizeRepoPathForBinding(legacy.projectDir);
+    conflict = !sameKey && !sameDir;
   }
 
   return { record: nested || legacy, nested, legacy, conflict };
