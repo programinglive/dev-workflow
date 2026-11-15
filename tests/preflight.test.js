@@ -200,11 +200,11 @@ test("acknowledgment accepts a matching fingerprint and scope", async () => {
     const record = runPreflight({ projectDir: root });
     const state = { state: { preflight: record, instructionAcknowledgment: null }, save: async () => {} };
     const response = await handleAcknowledgeInstructions(
-      { fingerprint: record.readme.fingerprint, scope: record.projectRoot },
+      { fingerprint: record.preflightFingerprint, scope: record.projectRoot },
       state
     );
     assert.match(response.content[0].text, /acknowledged/i);
-    assert.equal(state.state.instructionAcknowledgment.fingerprint, record.readme.fingerprint);
+    assert.equal(state.state.instructionAcknowledgment.fingerprint, record.preflightFingerprint);
   });
 });
 

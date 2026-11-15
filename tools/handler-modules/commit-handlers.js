@@ -302,9 +302,12 @@ export async function handleCommitAndPush(args, context) {
   // Instruction acknowledgment: when a preflight exists, the agent must have
   // acknowledged the README fingerprint and task scope. This is an observable
   // operation constraint, not proof of comprehension.
-  if (workflowState.state.preflight?.ok === true && args._fromFullWorkflow !== true) {
+  if (workflowState.state.preflight?.ok === true) {
     const ack = workflowState.state.instructionAcknowledgment;
-    const expectedFingerprint = workflowState.state.preflight.readme?.fingerprint || "";
+    const expectedFingerprint =
+      workflowState.state.preflight.preflightFingerprint ||
+      workflowState.state.preflight.readme?.fingerprint ||
+      "";
     const expectedScope = workflowState.state.preflight.projectRoot || "";
     if (!ack || ack.fingerprint !== expectedFingerprint || ack.scope !== expectedScope) {
       return textResponse(
