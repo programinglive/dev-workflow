@@ -11,7 +11,7 @@
 const http = require('node:http');
 const pg = require('pg');
 const { buildSessionsQuery } = require('./sessions-query.cjs');
-const { buildReaperSessionsQuery, verifyReaperRequest } = require('./reaper-query.cjs');
+const { buildReaperSessionsQuery, parseReaperSecrets, verifyReaperRequest } = require('./reaper-query.cjs');
 const { createReaperScheduler, toReaperSession } = require('./reaper-scheduler.cjs');
 const { authorizedActions, planReaperAction } = require('./reaper-actions.cjs');
 const { visibleTaskSessions } = require('./visible-task-sessions.cjs');
@@ -2733,11 +2733,16 @@ const server = http.createServer(async (req, res) => {
         payload: body,
         signature: req.headers['x-devwf-reaper-signature'],
         secret: process.env.DEVWF_REAPER_SECRET || '',
+        secrets: parseReaperSecrets(process.env.DEVWF_REAPER_SECRETS),
       });
       if (!check.ok) {
+        // The machine is logged, never the credential: an audit trail that
+        // records which host asked is useful, one that records the key is not.
+        console.warn(`[reaper] privileged request refused: ${check.reason} machine=${String(body.machine || '-')}`);
         res.writeHead(401, { 'content-type': 'application/json' });
         return res.end(JSON.stringify({ ok: false, error: check.reason }));
       }
+      console.log(`[reaper] privileged request accepted: machine=${check.machine || '-'} action=${String(body.action || '-')}`);
       const { sql, params } = buildReaperSessionsQuery({ limit: body.limit });
       const rows = await query(sql, params);
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });

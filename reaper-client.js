@@ -15,17 +15,24 @@ export const REAPER_SIGNATURE_HEADER = "x-devwf-reaper-signature";
 /**
  * Fetch the privileged session list.
  *
+ * `machine` identifies the caller. When the monitor is configured with
+ * per-machine secrets (`DEVWF_REAPER_SECRETS`), the request must name its
+ * machine and is verified with that machine's secret only, so one host's
+ * credential cannot speak for another.
+ *
  * @param {object} options
  * @param {string} options.baseUrl monitor base URL
- * @param {string} options.secret shared HMAC secret
+ * @param {string} options.secret this machine's HMAC secret
+ * @param {string} [options.machine] this machine's name
  * @param {Function} [options.fetchImpl]
  * @returns {Promise<Array<object>>}
  */
-export async function fetchReaperSessions({ baseUrl, secret, fetchImpl = fetch } = {}) {
+export async function fetchReaperSessions({ baseUrl, secret, machine, fetchImpl = fetch } = {}) {
   if (!baseUrl) throw new Error("baseUrl is required");
   if (!secret) throw new Error("secret is required");
 
   const payload = { action: "list", at: new Date().toISOString() };
+  if (machine) payload.machine = String(machine);
   const signature = signControllerRequest(payload, secret);
 
   const response = await fetchImpl(`${String(baseUrl).replace(/\/$/, "")}/api/reaper/sessions`, {

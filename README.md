@@ -1603,7 +1603,11 @@ process ownership:
 - `reaper-query.cjs` is the only query that selects owner and lease columns. It
   is reachable only through `POST /api/reaper/sessions`, which requires an
   HMAC-SHA256 signature over the canonical JSON payload and a timestamp inside a
-  60-second replay window. The secret is `DEVWF_REAPER_SECRET`, server-side only.
+  60-second replay window. Credentials are per machine: `DEVWF_REAPER_SECRETS` is
+  a JSON map of machine name to secret, so one host's key cannot speak for
+  another and a single key can be rotated or revoked on its own.
+  `DEVWF_REAPER_SECRET` remains a single-machine fallback. The secret is
+  server-side only.
 - The public `/api/sessions` payload never contains the owner PID, creation time,
   executable or fencing token. It carries only `reaper_state`, `reaper_reason`
   and `reaper_actions`.
@@ -1638,8 +1642,18 @@ reported as `PROCESS_DID_NOT_EXIT`; the reaper never escalates to a force kill.
 
 `DEVWF_REAPER_DRY_RUN=0` is the only switch that lets the scheduler archive a
 confirmed orphan. Leave it unset until the controllers are deployed and verified
-on every machine. `DEVWF_REAPER_SECRET` must be provisioned on the monitor host
+on every machine. `DEVWF_REAPER_SECRETS` must be provisioned on the monitor host
 before the privileged endpoint answers anything but `401`.
+
+### Deployment
+
+CI verifies the code and never deploys it. Production deployment is a separate,
+independently authorized action documented in
+[Monitor deployment and Session Reaper rollout](docs/operations/monitor-deployment.md):
+backup, migration 005, backend copy (the unit runs `monitor.cjs`, so
+`dashboard.cjs` is installed under both names), per-machine credentials, one
+service restart, a read-only canary, and rollback. `scripts/verify-monitor-deployment.mjs`
+is the read-only verifier for that procedure.
 
 ## README-first preflight
 

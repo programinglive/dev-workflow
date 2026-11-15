@@ -53,9 +53,10 @@ test("the privileged fields never reach the browser", () => {
 });
 
 test("the reaper secret is read from the environment only", () => {
-  const hits = dash.match(/DEVWF_REAPER_SECRET/g) || [];
-  assert.equal(hits.length, 1, "the secret must be read once, server-side");
+  const hits = dash.match(/DEVWF_REAPER_SECRET\b/g) || [];
+  assert.equal(hits.length, 1, "the single-machine secret must be read once, server-side");
   assert.match(dash, /secret: process\.env\.DEVWF_REAPER_SECRET \|\| ''/);
+  assert.match(dash, /secrets: parseReaperSecrets\(process\.env\.DEVWF_REAPER_SECRETS\)/);
   assert.equal(/DEVWF_REAPER_SECRET[^\n]*\+/.test(dash), false, "the secret must not be concatenated into HTML");
 });
 
