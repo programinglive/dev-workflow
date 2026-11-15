@@ -62,9 +62,9 @@ export function isSessionScopedTool(name) {
  * @returns {{ok: true, sessionId: string|null, toolName: string} |
  *           {ok: false, error: string, toolName: string}}
  */
-export function resolveRequestSession(request) {
+export function resolveRequestSession(request, options = {}) {
   const toolName = String(request?.params?.name || "");
-  const sessionId = sessionKeyFromRequest(request);
+  const sessionId = sessionKeyFromRequest(request, options);
 
   if (!sessionId && isSessionScopedTool(toolName)) {
     return { ok: false, error: SESSION_IDENTITY_REQUIRED_MESSAGE, toolName };
