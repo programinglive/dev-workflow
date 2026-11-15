@@ -36,13 +36,13 @@ test("OpenCode session identity is accepted", () => {
 
 test("Codex sessionId is accepted", () => {
   const request = call({ sessionId: CODEX, threadId: CODEX });
-  assert.equal(sessionKeyFromRequest(request), CODEX);
-  assert.equal(resolveRequestSession(request).ok, true);
+  assert.equal(sessionKeyFromRequest(request, { agent: "codex" }), CODEX);
+  assert.equal(resolveRequestSession(request, { agent: "codex" }).ok, true);
 });
 
 test("Codex threadId is accepted when sessionId is absent", () => {
   const request = call({ threadId: CODEX });
-  assert.equal(sessionKeyFromRequest(request), CODEX);
+  assert.equal(sessionKeyFromRequest(request, { agent: "codex" }), CODEX);
 });
 
 test("Antigravity conversation id is accepted", () => {
@@ -50,15 +50,15 @@ test("Antigravity conversation id is accepted", () => {
     "antigravity.google/conversation_id": ANTIGRAVITY,
     "antigravity.google/root_conversation_id": ANTIGRAVITY,
   });
-  assert.equal(sessionKeyFromRequest(request), ANTIGRAVITY);
-  assert.equal(resolveRequestSession(request).ok, true);
+  assert.equal(sessionKeyFromRequest(request, { agent: "antigravity" }), ANTIGRAVITY);
+  assert.equal(resolveRequestSession(request, { agent: "antigravity" }).ok, true);
 });
 
 test("Antigravity root conversation id alone is refused", () => {
   // Child conversations share a root, so falling back to it would let two
   // different conversations select the same state.
   const request = call({ "antigravity.google/root_conversation_id": ANTIGRAVITY });
-  assert.equal(sessionKeyFromRequest(request), null);
+  assert.equal(sessionKeyFromRequest(request, { agent: "antigravity" }), null);
   assert.equal(resolveRequestSession(request).ok, false);
 });
 
@@ -68,9 +68,9 @@ test("conflicting identities in one request are refused", () => {
   assert.equal(resolveRequestSession(request).ok, false);
 });
 
-test("conflicting identities are refused even for an unknown agent", () => {
+test("an unknown agent ignores another client's key rather than substituting it", () => {
   const request = call({ "ai.opencode/sessionID": OPENCODE, sessionId: CODEX });
-  assert.equal(sessionKeyFromRequest(request, { agent: "unknown" }), null);
+  assert.equal(sessionKeyFromRequest(request, { agent: "unknown" }), OPENCODE);
 });
 
 test("a padded identity is refused rather than trimmed", () => {
@@ -127,11 +127,14 @@ test("an agent-scoped server only accepts that client's key", () => {
   assert.equal(sessionKeyFromRequest(opencodeRequest, { agent: "opencode" }), OPENCODE);
 });
 
-test("an unknown agent falls back to accepting any known key", () => {
-  assert.equal(sessionKeyFromRequest(call({ sessionId: CODEX }), { agent: "unknown" }), CODEX);
+test("an unknown agent accepts only the OpenCode key, never another client's", () => {
+  // The pre-change server accepted only the OpenCode key. An unknown agent must
+  // not widen that: a request cannot present another client's identity.
+  assert.equal(sessionKeyFromRequest(call({ "ai.opencode/sessionID": OPENCODE }), { agent: "unknown" }), OPENCODE);
+  assert.equal(sessionKeyFromRequest(call({ sessionId: CODEX }), { agent: "unknown" }), null);
   assert.equal(
     sessionKeyFromRequest(call({ "antigravity.google/conversation_id": ANTIGRAVITY }), { agent: "" }),
-    ANTIGRAVITY,
+    null,
   );
 });
 

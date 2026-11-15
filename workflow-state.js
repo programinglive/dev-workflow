@@ -765,20 +765,19 @@ function normalizeSessionKey(value) {
  *
  * `agent` scopes which keys are accepted. `device-entry.cjs` sets DEVWF_AGENT
  * for each client, so a Codex server does not accept an Antigravity
- * conversation id even if one is present. An unknown agent accepts any known
- * key, which keeps a directly launched server working, but every known key that
- * is present must agree: a request cannot present two identities and let the
- * first one win.
+ * conversation id even if one is present.
+ *
+ * When the agent is unknown the resolver accepts ONLY the OpenCode key, which
+ * is exactly what the server accepted before the other clients were added. It
+ * deliberately does not fall back to "any known key": that would let a request
+ * present another client's identity, and a directly launched server can set
+ * DEVWF_AGENT if it needs a different client.
  */
 export function sessionKeyFromRequest(request, { agent = process.env.DEVWF_AGENT } = {}) {
   const meta = request?.params?._meta;
   if (!meta || typeof meta !== "object") return null;
-  const scoped = SESSION_META_KEYS[String(agent || "").toLowerCase()];
-  const keys = scoped || [
-    ...SESSION_META_KEYS.opencode,
-    ...SESSION_META_KEYS.antigravity,
-    ...SESSION_META_KEYS.codex,
-  ];
+  const scoped = SESSION_META_KEYS[String(agent || "").toLowerCase()] || SESSION_META_KEYS.opencode;
+  const keys = scoped;
 
   let resolved = null;
   for (const key of keys) {
