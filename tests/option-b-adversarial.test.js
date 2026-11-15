@@ -2572,7 +2572,15 @@ test("Adversarial 35 (Cycle 18): canonical hashed keys never re-hashed or collid
     const resolvedInitial = resolveStateFile({ sessionId: rawSlashId, stateDir: stateBase });
     const hashedFile = path.basename(resolvedInitial);
     const hashedKey = /^workflow-state\.(.+)\.json$/.exec(hashedFile)?.[1];
-    assert.ok(hashedKey && /-h[0-9a-f]{10}$/.test(hashedKey), `expected hashed key, got ${hashedKey}`);
+    assert.ok(hashedKey && /-h[0-9a-f]{32}$/.test(hashedKey), `expected 128-bit hashed key, got ${hashedKey}`);
+
+    // 1b. Former 40-bit prefix collision pair must remain distinct under 128-bit digest
+    const { canonicalSessionKey } = await import("../db/session-key.js");
+    assert.notEqual(
+      canonicalSessionKey("x".repeat(51) + "/9790"),
+      canonicalSessionKey("x".repeat(51) + "/215170"),
+      "distinct raw session IDs must not collide on 128-bit canonicalSessionKey",
+    );
 
     // 1. Literal hashed-looking raw ID must not collide with routed hashed key
     const literalCollisionCandidate = resolveStateFile({ sessionId: hashedKey, stateDir: stateBase });
@@ -2710,7 +2718,7 @@ test("Adversarial 36 (Cycle 19): CLI hashed sessionKey preserved, load({skipWrit
     const resolved = resolveStateFile({ sessionId: rawId, stateDir: path.join(stateBase, "projects", "p1", "users", "u1") });
     const hashedFile = path.basename(resolved);
     const hashedKey = /^workflow-state\.(.+)\.json$/.exec(hashedFile)?.[1];
-    assert.ok(hashedKey && /-h[0-9a-f]{10}$/.test(hashedKey));
+    assert.ok(hashedKey && /-h[0-9a-f]{32}$/.test(hashedKey));
     const discoveredFile = path.join(stateBase, "projects", "adv36", "users", "u1", hashedFile);
     await mkdir(path.dirname(discoveredFile), { recursive: true });
     await writeFile(discoveredFile, JSON.stringify({ currentPhase: "idle", projectDir: repoA, history: [] }), "utf8");
