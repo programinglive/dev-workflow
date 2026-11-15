@@ -404,6 +404,25 @@ export function getToolList() {
       },
     },
     {
+      name: "acknowledge_instructions",
+      description:
+        "Acknowledge the repository instructions recorded by start_task. Pass the README fingerprint and the task scope; the server validates both against the current preflight record. Required before commit_and_push when a preflight exists.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          fingerprint: {
+            type: "string",
+            description: "The README fingerprint from the start_task preflight summary.",
+          },
+          scope: {
+            type: "string",
+            description: "The project root the task is scoped to.",
+          },
+        },
+        required: ["fingerprint", "scope"],
+      },
+    },
+    {
       name: "create_feature_flow",
       description:
         "Record the feature flow using Mermaid syntax. This helps visualize the implementation plan.",

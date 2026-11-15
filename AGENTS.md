@@ -66,9 +66,16 @@ Before taking any action or answering user requests regarding code changes, chec
 `start_task` records a bounded preflight automatically: the project root,
 `README.md`, root and nested `AGENTS.md`, and documented CLI entrypoints. The
 record contains paths and SHA-256 fingerprints, never document bodies or secret
-values. `resume_session` revalidates the fingerprints and reports
-`README_CHANGED` / `AGENTS_CHANGED`. `commit_and_push` refuses a governed write
-when the task's preflight root does not match the target checkout
-(`SCOPE_MISMATCH`). Legacy tasks without a preflight remain governed by the
-repository identity contract. Discovered CLI references are advisory
-(`verified: false`) and are never executed automatically.
+values. `start_task` also returns a bounded instruction summary: purpose, rules,
+build/test/release commands, prohibited operations, task scope and documentation
+paths. `resume_session` revalidates the fingerprints and reports
+`README_CHANGED` / `AGENTS_CHANGED`.
+
+`acknowledge_instructions` records the README fingerprint and task scope; the
+server validates both against the current preflight. `commit_and_push` requires
+that acknowledgment when a preflight exists. The same scope check applies to
+`perform_release` and `record_deployment`: a governed write must target the
+checkout the task preflight recorded (`SCOPE_MISMATCH`). Legacy tasks without a
+preflight remain governed by the repository identity contract. Discovered CLI
+references are advisory (`verified: false`) and are never executed
+automatically.

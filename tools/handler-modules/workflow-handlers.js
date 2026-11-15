@@ -497,6 +497,7 @@ export async function handleStartTask(args, workflowState, git, zettlyOptions = 
   const preflight = runPreflight({
     projectDir: workflowState.state.projectDir,
     taskId: workflowState.state.workflowTaskId || "",
+    taskDescription: args.description,
   });
   if (!preflight.ok) {
     return textResponse(
@@ -693,7 +694,10 @@ export async function handleStartTask(args, workflowState, git, zettlyOptions = 
     const cli = record.cli.length > 0
       ? `CLI: ${record.cli.slice(0, 5).map((c) => c.invocation).join(", ")}${record.cli.length > 5 ? ` (+${record.cli.length - 5} more)` : ""}`
       : "CLI: none documented";
-    return `\n\n📖 Preflight (bounded, read-only):\n   ${readme}\n   ${agents}\n   ${cli}\n   Evidence: ${record.preflightAt} · ${record.verification}`;
+    const summary = record.instructionSummary?.text
+      ? `\n\n   ${record.instructionSummary.text.split("\n").join("\n   ")}`
+      : "";
+    return `\n\n📖 Preflight (bounded, read-only):\n   ${readme}\n   ${agents}\n   ${cli}${summary}\n   Evidence: ${record.preflightAt} · ${record.verification}`;
   })();
 
   return textResponse(

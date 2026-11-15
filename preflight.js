@@ -160,13 +160,97 @@ export function discoverCli(projectDir) {
   return refs.slice(0, MAX_CLI_REFERENCES);
 }
 
+const MAX_SUMMARY_CHARS = 2400;
+
+function looksSensitive(line) {
+  return (
+    /(?:TOKEN|SECRET|PASSWORD|PASSWD|API[_-]?KEY|PRIVATE[_-]?KEY|CREDENTIAL)\s*[:=]/i.test(line) ||
+    /^[A-Z0-9_]+\s*=\s*\S+/.test(line)
+  );
+}
+
+function meaningfulLines(text, maxLines) {
+  return String(text || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("```") && !looksSensitive(line))
+    .slice(0, maxLines);
+}
+
+function extractRules(text) {
+  const rules = [];
+  for (const line of String(text || "").split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (looksSensitive(trimmed)) continue;
+    if (/^(?:[-*]\s*)?(?:MUST|NEVER|ALWAYS|DO NOT|DON'T|FORBIDDEN|PROHIBITED)\b/i.test(trimmed)) {
+      rules.push(trimmed.replace(/^[-*]\s*/, "").slice(0, 200));
+    }
+    if (rules.length >= 8) break;
+  }
+  return rules;
+}
+
+/**
+ * Build a bounded, task-relevant instruction summary from README and AGENTS.md.
+ * The summary is stored instead of the full document bodies.
+ */
+export function summarizeInstructions({ projectDir, taskDescription = "" } = {}) {
+  const root = path.resolve(String(projectDir || ""));
+  const readmePath = findReadme(root);
+  const readmeDoc = readmePath ? readBounded(readmePath) : null;
+
+  const agents = [];
+  const rootAgents = path.join(root, "AGENTS.md");
+  if (existsSync(rootAgents)) {
+    const doc = readBounded(rootAgents);
+    if (doc) agents.push({ path: rootAgents, text: doc.text });
+  }
+  for (const file of findNestedAgents(root)) {
+    if (file === rootAgents) continue;
+    const doc = readBounded(file);
+    if (doc) agents.push({ path: file, text: doc.text });
+  }
+
+  const readmeLines = readmeDoc ? meaningfulLines(readmeDoc.text, 8) : [];
+  const purpose = readmeLines.find((line) => !line.startsWith("#")) || readmeLines[0] || "";
+  const rules = agents.flatMap((agent) => extractRules(agent.text)).slice(0, 8);
+  const cli = discoverCli(root);
+  const buildTestRelease = cli
+    .filter((ref) => /test|build|release|lint|check|verify/i.test(ref.name))
+    .slice(0, 8);
+  const prohibited = rules
+    .filter((rule) => /never|do not|don't|forbidden|prohibited/i.test(rule))
+    .slice(0, 6);
+  const documentation = [readmePath, ...agents.map((agent) => agent.path)].filter(Boolean);
+
+  const lines = [];
+  if (purpose) lines.push(`Purpose: ${purpose.slice(0, 200)}`);
+  if (rules.length) lines.push(`Rules: ${rules.join(" | ")}`);
+  if (buildTestRelease.length) lines.push(`Build/test/release: ${buildTestRelease.map((ref) => ref.invocation).join(", ")}`);
+  if (prohibited.length) lines.push(`Prohibited: ${prohibited.join(" | ")}`);
+  if (taskDescription) lines.push(`Task scope: ${String(taskDescription).slice(0, 200)}`);
+  if (documentation.length) lines.push(`Docs: ${documentation.join(", ")}`);
+
+  return {
+    purpose: purpose.slice(0, 200),
+    rules,
+    cli: cli.slice(0, 12),
+    buildTestRelease,
+    prohibited,
+    taskScope: String(taskDescription || "").slice(0, 200),
+    documentation,
+    text: lines.join("\n").slice(0, MAX_SUMMARY_CHARS),
+  };
+}
+
 /**
  * Run the bounded preflight for a project.
  *
  * @returns {object} a persisted-safe record. It contains no document bodies and
- *   no secret values, only paths, fingerprints and CLI references.
+ *   no secret values, only paths, fingerprints, CLI references and a bounded
+ *   instruction summary.
  */
-export function runPreflight({ projectDir, taskId = "" } = {}) {
+export function runPreflight({ projectDir, taskId = "", taskDescription = "" } = {}) {
   const root = path.resolve(String(projectDir || ""));
   if (!projectDir || !existsSync(root) || !statSync(root).isDirectory()) {
     return {
@@ -208,6 +292,7 @@ export function runPreflight({ projectDir, taskId = "" } = {}) {
     agents,
     agentGuidanceMissing: agents.length === 0,
     cli: discoverCli(root),
+    instructionSummary: summarizeInstructions({ projectDir: root, taskDescription }),
     preflightAt: new Date().toISOString(),
     verification: "PREFLIGHT_RECORDED",
   };

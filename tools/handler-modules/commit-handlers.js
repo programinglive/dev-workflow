@@ -299,6 +299,20 @@ export async function handleCommitAndPush(args, context) {
     }
   }
 
+  // Instruction acknowledgment: when a preflight exists, the agent must have
+  // acknowledged the README fingerprint and task scope. This is an observable
+  // operation constraint, not proof of comprehension.
+  if (workflowState.state.preflight?.ok === true && args._fromFullWorkflow !== true) {
+    const ack = workflowState.state.instructionAcknowledgment;
+    const expectedFingerprint = workflowState.state.preflight.readme?.fingerprint || "";
+    const expectedScope = workflowState.state.preflight.projectRoot || "";
+    if (!ack || ack.fingerprint !== expectedFingerprint || ack.scope !== expectedScope) {
+      return textResponse(
+        `⚠️ Dibatalkan: INSTRUCTION_ACK_REQUIRED. Call 'acknowledge_instructions' with the README fingerprint and the task scope before committing.`
+      );
+    }
+  }
+
   // Guard DoD yang eksplisit. `handleReadyCheck` di bawah sudah menutupi ini
   // secara transitif, tetapi pesannya generik ("NOT READY"); di sini kita bisa
   // menyebut item mana yang menghalangi, sebelum satu perintah git pun jalan.
