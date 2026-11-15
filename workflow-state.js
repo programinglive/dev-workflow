@@ -1868,16 +1868,35 @@ function focusLockIsStale(file, { isAlive = defaultPidIsAlive, hostname = os.hos
 function tryRecoverStaleLock(file) {
   const recoveryGate = `${file}.recover.lock`;
   const gateTmp = `${recoveryGate}.${process.pid}.${Date.now()}.tmp`;
-  try {
+  const acquireGate = () => {
     writeFileSync(gateTmp, JSON.stringify({ pid: process.pid, startedAt: Date.now() }));
     try {
       linkSync(gateTmp, recoveryGate);
+      return true;
     } finally {
       try {
         unlinkSync(gateTmp);
       } catch {}
     }
+  };
+  let acquired = false;
+  try {
+    acquired = acquireGate();
   } catch {
+    if (focusLockIsStale(recoveryGate)) {
+      const staleGateTombstone = `${recoveryGate}.stale.${process.pid}.${Date.now()}`;
+      try {
+        renameSync(recoveryGate, staleGateTombstone);
+        try {
+          unlinkSync(staleGateTombstone);
+        } catch {}
+        acquired = acquireGate();
+      } catch {
+        acquired = false;
+      }
+    }
+  }
+  if (!acquired) {
     // Another process is actively recovering or creating a fresh lock; do not touch `file`.
     return false;
   }
@@ -1961,8 +1980,9 @@ async function acquireFocusLock({ baseDir, focusId, timeoutMs = FOCUS_LOCK_TIMEO
 
       if (focusLockIsStale(file)) {
         // Only the process that wins the serialized recovery gate may recover it.
-        tryRecoverStaleLock(file);
-        continue;
+        if (tryRecoverStaleLock(file)) {
+          continue;
+        }
       }
 
       if (Date.now() >= deadline) return { ok: false, code: "FOCUS_CLAIM_TIMEOUT" };
@@ -2130,8 +2150,13 @@ export async function retireFocusBinding({
             return { ok: false, existing, reason: "FOCUS_BOUND_TO_ANOTHER_PROJECT" };
           }
         }
-        if (existing.repoKey && requestedKey && existing.repoKey !== requestedKey) {
-          return { ok: false, existing, reason: "FOCUS_BOUND_TO_ANOTHER_PROJECT" };
+        if (existing.repoKey) {
+          if (requestedKey && existing.repoKey !== requestedKey) {
+            return { ok: false, existing, reason: "FOCUS_BOUND_TO_ANOTHER_PROJECT" };
+          }
+          if (!existing.projectDir && !requestedKey) {
+            return { ok: false, existing, reason: "FOCUS_BOUND_TO_ANOTHER_PROJECT" };
+          }
         }
         if (enforceRetireCap && !requestedDir && !requestedKey) {
           return { ok: false, existing, reason: "FOCUS_BOUND_TO_ANOTHER_PROJECT" };
