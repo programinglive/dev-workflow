@@ -1325,7 +1325,9 @@ export function restoreSessionPointerSnapshot(snapshot, journal = null, { kernel
     allowDrainingInFlight: true,
   });
 
-  const baseDir = resolveBaseDirFromState(snapshot.file);
+  const ptrParent = path.dirname(snapshot.file);
+  const baseDir =
+    path.basename(ptrParent) === "sessions" ? path.dirname(ptrParent) : resolveBaseDirFromState(snapshot.file);
   const sessionKey =
     journal?.sessionKey ||
     path.basename(snapshot.file).replace(/^pointer-/, "").replace(/\.json$/, "");
@@ -4425,17 +4427,17 @@ export class WorkflowState {
 
     if (hasil.status === "missing") return null;
 
-    const hasEnforcedLockWithoutCap =
-      Boolean(this.requireKernelMutex || this.boundKernelCapability) && !this._resolveKernelCapability();
-
     if (hasil.status === "corrupt") {
-      if (skipWrites || hasEnforcedLockWithoutCap) {
+      if (skipWrites) {
         throw new StateUnavailable(
           `Berkas state "${this.stateFile}" rusak dan tidak bisa dibaca, ` +
             `sehingga state sesi "${sessionKey}" tidak boleh dimulai dari kosong.`,
         );
       }
-      const cadangan = await backupDamagedFile(this.stateFile, this.fs);
+      const cadangan = await this._withOwnershipFence(
+        "_adoptLegacyJsonIfPresent.backupDamaged",
+        async () => backupDamagedFile(this.stateFile, this.fs),
+      );
       throw new StateUnavailable(
         `Berkas state "${this.stateFile}" rusak dan tidak bisa dibaca, ` +
           `sehingga state sesi "${sessionKey}" tidak boleh dimulai dari kosong. ` +

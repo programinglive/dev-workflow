@@ -1443,6 +1443,38 @@ test("Adversarial 25 (R1/R3/R4): CLI non-start_task acquires mutex, stale _lastL
       );
       assert.equal(restoreRes.ok, true);
       assert.equal(restoreRes.skippedNewerOwner, true, "stale journal must not delete newer pointer");
+
+      // C7-2 regression: valid newer journal removes both JSON pointer and authoritative SQLite row,
+      // and never creates sessions/sessions/session-pointers.sqlite
+      const freshJournal = {
+        sessionKey: ptr.ownerKey,
+        sourceProjectDir: repo,
+        startedAtMs: Date.now() + 60000,
+      };
+      const appliedRes = restoreSessionPointerSnapshot(
+        { applicable: true, file: ptrFile, raw: null },
+        freshJournal,
+        { kernelCapability: acq.capability },
+      );
+      assert.equal(appliedRes.ok, true);
+      assert.equal(appliedRes.skippedNewerOwner, false);
+      const { existsSync } = await import("node:fs");
+      assert.equal(existsSync(ptrFile), false, "JSON pointer must be deleted on restore");
+      assert.equal(
+        existsSync(path.join(sessionsDir, "sessions", "session-pointers.sqlite")),
+        false,
+        "must never create nested sessions/sessions/session-pointers.sqlite",
+      );
+      const Database = (await import("better-sqlite3")).default;
+      const ptrDb = new Database(path.join(sessionsDir, "session-pointers.sqlite"), { readonly: true });
+      try {
+        const row = ptrDb
+          .prepare("SELECT session_key FROM session_pointers WHERE session_key = ?")
+          .get(ptr.ownerKey);
+        assert.equal(row, undefined, "authoritative SQLite session_pointers row must be deleted on restore");
+      } finally {
+        ptrDb.close();
+      }
     } finally {
       await releaseWorktreeMutex(acq.capability);
     }
