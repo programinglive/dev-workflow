@@ -10,6 +10,7 @@ import path from "path";
 import fs from "fs";
 import { updateTaskStatus, isConfigured, readFactoryConfig } from "../../factory-client.js";
 import { cleanupWorkBranches } from "../../branch-cleanup.js";
+import { assertPreflightScope } from "../../preflight.js";
 
 /**
  * Tutup task Factory yang di-claim saat workflow berakhir, supaya board tidak
@@ -269,14 +270,52 @@ export async function handleCommitAndPush(args, context) {
   // in. A `projectDir` override that points at another checkout must not commit
   // there, even when the remote matches.
   {
+    const hasExplicitProjectDir = typeof args.projectDir === "string" && args.projectDir.trim() !== "";
     const repoGuard = await assertMutationRepository({
       workflowState,
-      dir: workflowState.state.projectDir,
+      dir: hasExplicitProjectDir
+        ? getActiveProjectDir() || args.projectDir.trim()
+        : workflowState.state.projectDir || getActiveProjectDir() || "",
       operation: "commit_and_push",
       taskProjectDir,
     });
     if (!repoGuard.ok) {
       return textResponse(repoGuard.message);
+    }
+  }
+
+  // README-first scope guard: the task's preflight record names the project
+  // root it was started in. A governed commit must not target a different root.
+  // An idle state has no task to scope, so it falls through to the existing
+  // "no active task" message instead of a misleading preflight error.
+  if (workflowState.state.currentPhase !== "idle" && workflowState.state.taskDescription) {
+    const scope = assertPreflightScope(workflowState.state.preflight, {
+      projectDir: workflowState.state.projectDir,
+      operation: "commit_and_push",
+    });
+    if (!scope.ok) {
+      return textResponse(
+        `⚠️ Dibatalkan: ${scope.code}. ${scope.reason}\n\n` +
+          `The task's preflight record does not authorize this operation. ` +
+          `Re-run 'start_task' in the correct project, or resume the task that owns this checkout.`
+      );
+    }
+  }
+
+  // Instruction acknowledgment: when a preflight exists, the agent must have
+  // acknowledged the README fingerprint and task scope. This is an observable
+  // operation constraint, not proof of comprehension.
+  if (workflowState.state.preflight?.ok === true) {
+    const ack = workflowState.state.instructionAcknowledgment;
+    const expectedFingerprint =
+      workflowState.state.preflight.preflightFingerprint ||
+      workflowState.state.preflight.readme?.fingerprint ||
+      "";
+    const expectedScope = workflowState.state.preflight.projectRoot || "";
+    if (!ack || ack.fingerprint !== expectedFingerprint || ack.scope !== expectedScope) {
+      return textResponse(
+        `⚠️ Dibatalkan: INSTRUCTION_ACK_REQUIRED. Call 'acknowledge_instructions' with the README fingerprint and the task scope before committing.`
+      );
     }
   }
 
@@ -355,9 +394,15 @@ export async function handleCommitAndPush(args, context) {
   // Label laporan memakai repo yang benar-benar dipakai git bila diketahui.
   const repoName = gitToplevel || repoLabel();
 
+  const runFenced = (op, fn) =>
+    typeof workflowState._withOwnershipFence === "function"
+      ? workflowState._withOwnershipFence(op, fn)
+      : fn();
+
   const branchForPush = pickPushBranch({ requestedBranch, currentBranch, primaryBranch });
 
   if (!hasWorkingChanges) {
+    return await runFenced("commit_and_push_no_changes", async () => {
     const lastCommitMessage = await git.getLastCommitMessage();
     const effectiveCommitMessage = lastCommitMessage || providedCommitMessage;
 
@@ -413,6 +458,7 @@ export async function handleCommitAndPush(args, context) {
       `oleh panggilan sebelumnya, atau berada di repo/branch lain.\n\n` +
       `Next: Run 'perform_release' to handle the release and push tags.`
     );
+    });
   }
 
   const statusOutput = await git.getStatusOutput();
@@ -453,6 +499,7 @@ export async function handleCommitAndPush(args, context) {
     );
   }
 
+  return await runFenced("commit_and_push", async () => {
   try {
     if (explicitPaths.length > 0) {
       await exec("git add", { executable: "git", arguments: ["add", "--", ...explicitPaths] });
@@ -557,6 +604,7 @@ export async function handleCommitAndPush(args, context) {
   return textResponse(
     `✅ Commit and push completed!\nRepo: ${repoName}\n\nCommit message: ${generatedSummary}\nPushed to: ${branchForPush} (verified at ${pushed.head.slice(0, 8)})${foreignNote}${waiverNote}\n\nNext: Run 'perform_release' to handle the release and push tags.`
   );
+  });
 }
 
 /**

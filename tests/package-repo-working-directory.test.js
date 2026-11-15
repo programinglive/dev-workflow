@@ -23,6 +23,7 @@ import { resolveWorkingDirectory, PACKAGE_DIR } from "../exec.js";
 async function makeRepo() {
   const dir = await mkdtemp(path.join(tmpdir(), "repo-resolve-"));
   await mkdir(path.join(dir, ".git"), { recursive: true });
+  await writeFile(path.join(dir, ".git", "HEAD"), "ref: refs/heads/main\n", "utf8");
   return dir;
 }
 

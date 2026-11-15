@@ -113,7 +113,7 @@ Read-only verification of `bw-tools` HTTP health endpoints at `2026-11-14T14:20:
    - Stopped and disabled `infra-knowledge-mcp.service`, `infra-knowledge-refresh.service`, and `infra-knowledge-refresh.timer`.
    - Removed unit files and `/etc/sudoers.d/infra-knowledge-refresh`, ran `systemctl daemon-reload`, and deleted `/opt/infra-knowledge-mcp-server`.
    - Verified port `3300` is closed and only port `3200` is listening.
-3. **`bw-app` (`100.x.x.21`) — Factory Quarantine & PocketBase Backend Preservation:**
+3. **`bw-app` (`100.x.x.86`) — Factory Quarantine & PocketBase Backend Preservation:**
    - Confirmed `factory.service` is inactive/disabled and quarantined any `/root/.factory` directory without rotating the shared PocketBase admin account.
    - Confirmed `pocketbase.service` remains `active` on `bw-app:8090`.
 
@@ -137,12 +137,12 @@ Read-only verification of `bw-tools` HTTP health endpoints at `2026-11-14T14:20:
 
 ---
 
-## 10. Independent Final Verification Addendum (2026-11-15)
+## 11. Independent Final Verification Addendum (2026-11-15)
 
 **Verified by:** Principal Autonomous Release Engineer (OpenCode, HELLOWORLD)
 **Canonical Task:** `63821490-bbb3-4c75-981d-39cfc48b6b08` · Focus `#81` · Todo `#741`
 
-### 10.1 Live Production State (read-only)
+### 11.1 Live Production State (read-only)
 - `bw-tools` `/opt/central-mcp-gateway` `HEAD = 20f5ace182be18cbc7d62c81ae7f5d44bd068728`, matching the PR #2 squash merge commit.
 - `central-mcp-gateway.service` is `active`; `/health` = `status: healthy`, `toolsCount: 30`, `activeLegacySessions: 1`.
 - Registered tool set recomputed from the deployed source (`createUnifiedMcpServer()`) equals exactly the 30 names reported by `/health` (8 PocketBase, 18 infra/CI-CD, 4 notify).
@@ -150,16 +150,16 @@ Read-only verification of `bw-tools` HTTP health endpoints at `2026-11-14T14:20:
 - PocketBase is reachable through the gateway: `pb_health` → `200` (`https://pocketbase.programinglive.com`); `pb_list_collections` returns the `users` collection schema.
 - Schema mutation remains controlled: no `pb_create_collection` tool is registered.
 
-### 10.2 Security Remediation
+### 11.2 Security Remediation
 - `bw-app` read-only checks: `NO_FACTORY_SERVICE_ACTIVE`, `NO_FACTORY_VHOST_CONFIGURED`, `NO_FACTORY_TOKEN_IN_ENV`; the shared PocketBase admin account was not touched.
 - `infra-knowledge-mcp-server` PR #11 (`29dc97b`) `tests/handlers.test.js` = 26/26 PASS, including `SECURITY: ssh_vm tool is strictly not registered in getToolList()` and `SECURITY: handleToolCall rejects ssh_vm invocation`.
 - `programinglive/infra-knowledge-mcp-server` is `archived: true`; PR #11 remains `OPEN` / `MERGEABLE` but `BLOCKED` because GitHub forbids merges into archived repositories. Its runtime service on `bw-tools:3300` was already decommissioned and deleted (Section 9), so no `ssh_vm` exposure remains.
 
-### 10.3 Regression Tests
+### 11.3 Regression Tests
 - `central-mcp-gateway` @ `20f5ace`: `npm ci && npm test` → 14/14 PASS.
 - `dev-workflow-mcp-server` @ `7fa2a5f0f`: `npm run test:security` initially FAILED because this runbook contained real Tailscale IPs (`100.77.x.x`); sanitized here to `100.x.x.14` / `100.x.x.21`. CI run `43573976468` on `7fa2a5f0f` was `failure` for the same reason.
 
-### 10.4 Fleet MCP Registrations (verified read-only)
+### 11.4 Fleet MCP Registrations (verified read-only)
 | Device | OpenCode | Antigravity | Codex | Retired registrations present |
 |---|---|---|---|---|
 | HELLOWORLD | 6 | 6 | 6 | none |
@@ -168,10 +168,98 @@ Read-only verification of `bw-tools` HTTP health endpoints at `2026-11-14T14:20:
 
 All three clients register exactly: `central-gateway`, `dev-workflow`, `zettly`, `clinic-helper`, `playwright`, `cloudflare`.
 
-### 10.5 Six-Server Reachability (this client, HELLOWORLD)
+### 11.5 Six-Server Reachability (this client, HELLOWORLD)
 `central-gateway` `pb_health` OK; `dev-workflow` focus/session reads OK; `zettly` note search OK; `clinic-helper` auth status OK; `playwright` transport OK; `cloudflare` `accounts_list` OK.
 
-### 10.6 Outstanding Item
+### 11.6 Outstanding Item
 PR #11 is intentionally unmerged (archived repository, decommissioned service). If the owner wants the source-level `ssh_vm` containment on `main`, the smallest action is: unarchive `programinglive/infra-knowledge-mcp-server`, squash-merge PR #11, then re-archive. No production exposure exists either way.
 
 **Tracking PR:** https://github.com/programinglive/dev-workflow-mcp-server/pull/100 (docs-only; sanitizes the tailnet IPs and records this addendum).
+
+---
+
+## 10. PR #99 Project Lock Ownership Protocol v2 (`LOCK_PROTOCOL_VERSION = 2`) & F1–F8 Remediation
+
+Under canonical DevWorkflow task `8feef683-f09a-4d2c-9cda-0b91da603a10` (Focus `#81`, Todo `#756`), `process-lock.js`, `workflow-state.js`, `tools/handler-modules/workflow-handlers.js`, and `index.js` implement **Project Lock Ownership Protocol v2** to remediate all 8 concurrency and security review findings (`F1`–`F8`):
+
+1. **Cross-Process Exclusive Gate (`mcp-process.gate.lock`):**
+   - Every critical read-verify-commit operation on `mcp-process.lock` (`acquireProcessLock`, `refreshProcessLock`, `releaseProcessLock`, `withProjectOwnershipFence`) is serialized under an atomic hard-link gate (`publishCompleteJsonFile` via `writeFileSync(tmp, ..., { flag: "wx" })` + `linkSync(tmp, targetFile)`), eliminating 0-byte partial initialization windows (`F2`) and TOCTOU overwrite/unlink races (`F1`, `F3`).
+2. **Capability-Fenced Ownership (`pid`, `leaseId`, `incarnationId`):**
+   - Ownership is bound to the 3-tuple `(pid, leaseId, incarnationId)` tracked in `heldLeases`. PID equality alone never authorizes lock re-entry, adoption, heartbeat refresh, or lock release (`F8`).
+   - `defaultIsHolderProcess` inspects OS process creation time and command line (`Win32_Process` on Windows, `/proc/<pid>/cmdline` and `ps -o etimes=,command=` on Linux) to detect PID reuse even when reused by another `node` process (`F8`).
+3. **No Heartbeat-Only Takeover & Fail-Closed Legacy Detection (`F4`):**
+   - A timed-out heartbeat (`age > staleMs`) never authorizes takeover while the holder process is still alive (`!isConfirmedDead`).
+   - Legacy v1 locks (missing `leaseId` or `protocolVersion < 2`) are detected both in `targetLockDir` and via `<base>/sessions/*.json` pointers from `fromDir`, failing closed (`legacy_writer_active`) even when `force: true`.
+4. **Protected State Persistence Fencing & In-Process Serialization (`F5`):**
+   - `WorkflowState.save()`, `_exportJson()`, `writeHistoryFile()`, `updateProjectSummary()`, and `pinSessionProject()` execute inside `withProjectOwnershipFence`, throwing `ProjectOwnershipLostError` if the process's bound `leaseId` no longer matches `mcp-process.lock`.
+   - `parseOwnerTimestamp` parses both ISO 8601 strings and epoch milliseconds, ensuring `findActiveForeignTaskInProject` and `handleStartTask` never evaluate `owner.updatedAt` as `NaN`.
+   - Concurrent in-process async calls on `WorkflowState` are serialized via `runSerialized`.
+5. **Fail-Closed Write Errors & Two-Phase Transactional Relocation (`F6`, `F7`):**
+   - `acquireProcessLock` returns `{ acquired: false, wrote: false, error }` on any filesystem error (`EACCES`, `EPERM`, `ENOSPC`, `EROFS`).
+   - `handleStartTask` stages lock acquisition (`stageProcessLockTransition`) before mutating focus bindings, session pointers, or state, and commits (`commitProcessLockTransition`) only after `workflowState.save()` succeeds; any error triggers full rollback (`rollbackProcessLockTransition`, `restoreSessionPointerSnapshot`, `restoreFocusBindingSnapshot`).
+
+---
+
+## 11. Round 2 Hardening (`R2-1`–`R2-5`) & Protocol v1 $\rightarrow$ v2 Release Prerequisite Contract
+
+### 11.1 Summary of Round 2 Security Remediations (`R2-1` to `R2-5`)
+1. **R2-1 (P0) — Fail-Closed Abandoned Gate & Controlled Operator Recovery:**
+   - Removed automatic pathname-based `tryRecoverStaleGate` from `acquireLockGate`. When `mcp-process.gate.lock` is held by a confirmed-dead process, `acquireLockGate` fails closed with `error: "LOCK_GATE_ABANDONED"`.
+   - Added `recoverAbandonedLockGate({ dir, expectedToken, authorizeAbandonedGateRecovery: true })`, which requires explicit authorization and `expectedToken`, and serializes recovery via `mcp-process.gate.recover.lock` so a delayed recovery can never rename or remove a successor's gate.
+2. **R2-2 (P1) & R2-3 (P0) — `AsyncLocalStorage` Execution-Context Ownership & Last-Holder Release:**
+   - Replaced process-wide and instance-wide re-entrancy counters with `AsyncLocalStorage` (`gateExecutionStorage` in `process-lock.js` and `serializedExecutionStorage` in `workflow-state.js`) plus per-directory async queues (`inProcessGateQueues`).
+   - Unified outer and re-entrant release paths into `releaseGateEntry(resolvedDir, entry)` so `mcp-process.gate.lock` is unlinked when and only when the last valid holder (`entry.count === 0`) exits.
+3. **R2-4 (P1) — Durable Transition Journal & Crash Reconciliation:**
+   - Added `<base>/sessions/transition-<sessionKey>.journal.json` (`beginTransitionJournal`, `markTransitionJournalCommitted`, `completeTransitionJournal`, `rollbackTransitionJournal`, `reconcilePendingTransitionJournalsSync`, and `reconcilePendingTransitionJournals`), capturing both source and target SQLite/JSON snapshots before mutation and automatically reconciling orphaned `status: "pending"` journals on restart.
+4. **R2-5 (P0) — Full Shared-Root Legacy Writer Exclusion & Fleet Quiescence Gate:**
+   - `detectIncompatibleLegacyWriters` unconditionally scans all `<base>/projects/*/mcp-process.lock` files in a `.state/projects/*` layout so live legacy v1 writers are detected even when `<base>/sessions/*.json` pointers are missing or outdated.
+   - Added `verifyLegacyFleetQuiescence({ baseDir, dirs })` to verify zero active legacy v1 locks, zero abandoned gates, and zero pending transition journals.
+
+### 11.2 Protocol v1 $\rightarrow$ v2 Release Prerequisite & Migration Contract
+
+Because Legacy v1 (`protocolVersion < 2`, lacking `leaseId`, `incarnationId`, `mcp-process.gate.lock`, and `withProjectOwnershipFence`) does not inspect target project buckets before startup lock acquisition, **mixed-version concurrent writing is prohibited** and enforced fail-closed by V2 (`legacy_writer_active`).
+
+#### 1. Ordering & Coexistence Matrix
+- **Legacy-first, V2-second (Active Legacy v1 Process Running When V2 Starts):**
+  - V2's `detectIncompatibleLegacyWriters` scans `toDir`, `fromDir`, `<base>/sessions/*.json`, and **every** `<base>/projects/*/mcp-process.lock` under the shared state root.
+  - Even if the Legacy v1 process has no session pointer (`<base>/sessions/*.json` missing) or an outdated session pointer pointing to a previous repo, V2 detects the live v1 lock (`!lock.leaseId || lock.protocolVersion < 2`) and fails closed (`legacy_writer_active`), refusing to start a new task until the legacy v1 process exits.
+- **V2-first, Legacy-second (V2 Running When a Legacy v1 Process Starts):**
+  - If an un-upgraded client binary were allowed to launch a Legacy v1 process after V2 is active, the Legacy v1 process would write to its startup CWD lock without checking `mcp-process.gate.lock` or target project buckets.
+  - Therefore, **preventing future Legacy v1 process starts is a mandatory release prerequisite** enforced by atomic symlink promotion (`node managed/rollout.cjs`) followed immediately by fleet-wide process reload (`node managed/restart-devices.cjs`) during a quiescent maintenance window.
+
+#### 2. Step-by-Step Controlled Cutover Procedure (When Authorized)
+1. **Pre-Cutover Quiescence Verification:**
+   - Check the central monitor (`http://100.x.x.14:3100`) and run `verifyLegacyFleetQuiescence({ baseDir })` on each workstation (`MMCH`, `HELLOWORLD`, `Mac`) to confirm zero active mutations are in flight.
+   - Active tasks in SQLite (`workflow.db`) and JSON (`workflow-state.<session>.json`) remain durable on disk across MCP process restarts; no active task is lost or reset when a quiescent MCP server process restarts.
+2. **Atomic Bootstrap Promotion (Prevents Future Legacy Starts):**
+   - Run `node managed/rollout.cjs` to promote the V2 release across `bw-tools`, `MMCH`, `HELLOWORLD`, and `Mac`. Because all 3 AI CLIs (`Antigravity`, `Codex`, `OpenCode`) launch `dev-workflow` through the managed bootstrap symlink, promoting the release guarantees that **any subsequent MCP process spawn on any device launches V2**, making a "V2-first, Legacy-second" start impossible on upgraded hosts.
+3. **Coordinated Fleet Process Reload (Eliminates Running Legacy Processes):**
+   - Immediately execute `node managed/restart-devices.cjs`, which terminates all running Legacy v1 `ManagedMCP` processes across `MMCH`, `HELLOWORLD`, and `Mac`, restarts `opencode service`, runs `node managed/mcp-reconnect.cjs`, and prints the `node managed/fleet-status.cjs` verification table.
+   - Restart any open Codex or Antigravity windows reported by `restart-devices.cjs` before starting new tasks.
+4. **Post-Cutover Verification:**
+   - Confirm `node managed/fleet-status.cjs` reports all devices (`MMCH`, `HELLOWORLD`, `Mac`) and all clients on the new V2 revision.
+   - Run `verifyLegacyFleetQuiescence({ baseDir })` to confirm `quiescent: true` (`legacyWriters: []`, `abandonedGates: []`, `pendingJournals: []`).
+
+#### 3. Handling Partially Upgraded Fleets
+- Because `.state/projects/*` is local to each workstation (`MMCH`, `HELLOWORLD`, `Mac`), lock files are not shared over network filesystems between machines.
+- Within a single workstation, if one client window (e.g. OpenCode) is upgraded to V2 while another window (e.g. an un-restarted Codex or Antigravity session) is still running Legacy v1 in memory, V2's full-root scan (`<base>/projects/*/mcp-process.lock`) detects the live Legacy v1 PID and refuses `start_task` with a clear diagnostic instructing the operator to reload/close the legacy client window (`node managed/restart-devices.cjs`).
+
+#### 4. Rollback Contract After V2 Activation
+1. Verify no transition is mid-flight (`verifyLegacyFleetQuiescence` shows `pendingJournals: []` and `abandonedGates: []`).
+2. Repoint the managed release symlink to the prior known-good revision and run `node managed/restart-devices.cjs` across `MMCH`, `HELLOWORLD`, and `Mac`.
+3. V2's `mcp-process.lock` JSON remains backward-readable by V1 (`pid`, `startedAt`, `heartbeatAt`, `host` fields are preserved), and all `workflow.db` SQLite tables and `workflow-state.json` schemas are 100% compatible with V1, preserving all active tasks and Definitions of Done across rollback.
+
+---
+
+## 12. Round 3 Protocol Stabilization (`R3-1`–`R3-6`) & Deployment Safety Boundary
+
+1. **R3-1 (Trusted Recovery Authority):** `recoverAbandonedLockGate` rejects plain caller boolean flags (`authorizeAbandonedGateRecovery: true` $\rightarrow$ `trusted_recovery_authority_required`) and requires an unforgeable `WeakSet`-verified capability from `mintTrustedGateRecoveryAuthority` (permitted only when `DEVWF_OPERATOR_GATE_RECOVERY=1`). An abandoned `mcp-process.gate.recover.lock` fails closed (`recovery_lock_abandoned` / `LOCK_GATE_RECOVERY_ABANDONED`) without adding a recursive lock layer.
+2. **R3-2 (Atomic Link Enforcement):** `publishCompleteJsonFile(..., { replaceIfExists: false })` removes the `writeFileSync(..., { flag: "wx" })` fallback on `ENOSYS`/`EXDEV`/`EPERM` and fails closed with `UNSUPPORTED_ATOMIC_LINK`.
+3. **R3-3 (Bounded Async Ownership Lifetime):** `WorkflowState.runSerialized` and `withLockGate` bind `AsyncLocalStorage` entries to an explicit capability invalidated on operation completion (`capability.active = false` / `entry.active = false`). Detached child tasks scheduled by a completed parent cannot bypass a subsequent serialized owner.
+4. **R3-4 & R3-5 (Exclusive, Fenced, Fail-Closed Journal Recovery):**
+   - `beginTransitionJournal` and `markTransitionJournalCommitted` throw on write failure (aborting or rolling back fail-closed).
+   - `reconcilePendingTransitionJournals` acquires `${journalFile}.recover.lock` via `publishCompleteJsonFile`, preserves journal evidence if recovery fails or `recover.lock` is abandoned, and fences DB/file restoration with `transitionJournalId` / `isStateSupersededByNewerOwner` while excluding `history.json` and `project_summary` from rollback.
+5. **R3-6 (Code Safety vs. Deployment Safety & Admission Barrier):**
+   - `verifyLegacyFleetQuiescence` and `detectIncompatibleLegacyWriters` fail closed on `EACCES`/unreadable directories or locks (`inspectionErrors`, `legacy_inspection_failed`).
+   - `acquireMaintenanceAdmissionBarrier` publishes `<baseDir>/maintenance-admission.json` (`state: "DRAINING"`) to block new `stageProcessLockTransition` admissions during cutover until `releaseMaintenanceAdmissionBarrier` reopens admission.
+   - **Deployment Safety Boundary:** Sequential rollout across `MMCH`, `HELLOWORLD`, and `Mac` is not globally atomic across machines, and un-upgraded legacy v1 binaries cannot read `maintenance-admission.json`. Therefore, cutover requires an explicit operator maintenance window across all 3 workstations (halting new sessions, running `managed/rollout.cjs` + `managed/restart-devices.cjs` on all 3 hosts, and verifying `fleet-status.cjs` + `verifyLegacyFleetQuiescence` = `quiescent: true`) before reopening client admission.

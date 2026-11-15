@@ -1,5 +1,5 @@
 import { exec as execCallback, execFile as execFileCallback } from "child_process";
-import { existsSync } from "fs";
+import { existsSync, lstatSync, statSync, readFileSync, readdirSync } from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { sanitize } from './security/sanitizer.js';
@@ -70,6 +70,61 @@ function runChildWithPipeCleanup(launcher) {
  */
 export const PACKAGE_DIR = path.dirname(fileURLToPath(import.meta.url));
 
+export function isValidGitHeadContent(headContent) {
+  const trimmed = String(headContent || "").trim();
+  if (/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(trimmed)) return true;
+  const refMatch = /^ref:[ \t]*([^\s\r\n]+)$/.exec(trimmed);
+  if (!refMatch) return false;
+  const ref = refMatch[1];
+  if (!ref.startsWith("refs/")) return false;
+  if (ref.includes("..") || ref.includes("//") || ref.includes("@{") || ref.endsWith("/") || ref.endsWith(".")) {
+    return false;
+  }
+  if (/[ ~^:?*[\\]/.test(ref)) return false;
+  for (let i = 0; i < ref.length; i += 1) {
+    const code = ref.charCodeAt(i);
+    if (code <= 0x1f || code === 0x7f) return false;
+  }
+  const parts = ref.split("/");
+  return parts.length >= 2 && parts.every((part) => part.length > 0 && !part.startsWith(".") && !part.endsWith(".lock"));
+}
+
+function isValidGitHead(headPath) {
+  try {
+    if (!existsSync(headPath)) return false;
+    if (!statSync(headPath).isFile()) return false;
+    return isValidGitHeadContent(readFileSync(headPath, "utf8"));
+  } catch {
+    return false;
+  }
+}
+
+function isValidGitMarker(dir) {
+  const gitPath = path.join(dir, ".git");
+  let gitStat = null;
+  try {
+    gitStat = statSync(gitPath);
+  } catch {
+    return false;
+  }
+  if (gitStat.isFile()) {
+    try {
+      const content = readFileSync(gitPath, "utf8");
+      const match = /^gitdir:\s*(.+)$/m.exec(content);
+      if (!match || !match[1]) return false;
+      const targetGitDir = path.resolve(dir, match[1].trim());
+      if (!statSync(targetGitDir).isDirectory()) return false;
+      return isValidGitHead(path.join(targetGitDir, "HEAD"));
+    } catch {
+      return false;
+    }
+  }
+  if (gitStat.isDirectory()) {
+    return isValidGitHead(path.join(gitPath, "HEAD"));
+  }
+  return false;
+}
+
 function findRepoRoot(startDir) {
   if (!startDir) {
     return null;
@@ -79,8 +134,18 @@ function findRepoRoot(startDir) {
   const { root } = path.parse(current);
 
   while (true) {
-    if (existsSync(path.join(current, ".git"))) {
-      return current;
+    const markerPath = path.join(current, ".git");
+    let markerPresent = false;
+    try {
+      lstatSync(markerPath);
+      markerPresent = true;
+    } catch (err) {
+      if (err?.code !== "ENOENT" && err?.code !== "ENOTDIR") {
+        markerPresent = true;
+      }
+    }
+    if (markerPresent) {
+      return isValidGitMarker(current) ? current : null;
     }
 
     if (current === root) {
@@ -152,19 +217,39 @@ function repoRootOrThrow(dir, message) {
  * `source` dan `conflict` dipakai tool untuk memberi tahu pengguna repo mana
  * yang dipakai - dan kapan ia kemungkinan salah.
  */
+function assertExistingDirectory(dir, label = "Directory") {
+  const trimmed = typeof dir === "string" ? dir.trim() : "";
+  if (!trimmed || trimmed.includes("\0")) {
+    throw new Error(`${label} "${dir}" is invalid.`);
+  }
+  const resolved = path.resolve(trimmed);
+  let stat = null;
+  try {
+    stat = statSync(resolved);
+  } catch {
+    stat = null;
+  }
+  if (!stat || !stat.isDirectory()) {
+    throw new Error(`${label} "${resolved}" does not exist or is not a valid directory.`);
+  }
+  return resolved;
+}
+
 export function resolveProjectDir({ explicit = "", pinned = "", env = process.env, candidates = [] } = {}) {
   if (explicit) {
+    const resolvedExplicit = assertExistingDirectory(explicit, "projectDir");
     return {
-      dir: repoRootOrThrow(explicit, `Direktori "${explicit}" bukan repo git (tidak ada .git).`),
+      dir: repoRootOrThrow(resolvedExplicit, `Direktori "${explicit}" bukan repo git (tidak ada .git).`),
       source: "explicit",
       conflict: null,
     };
   }
 
   if (pinned) {
+    const resolvedPinned = assertExistingDirectory(pinned, "projectDir sesi");
     return {
       dir: repoRootOrThrow(
-        pinned,
+        resolvedPinned,
         `projectDir sesi "${pinned}" bukan repo git (tidak ada .git). ` +
         "Perbaiki dengan memanggil 'start_task' lagi dengan projectDir yang benar.",
       ),

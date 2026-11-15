@@ -298,7 +298,7 @@ test("start_task memberi peringatan dan menyelamatkan task proses lain", async (
 
     const text = responseText(response);
     assert.match(text, /Task Started: Task baru saya/);
-    assert.match(text, /proses agen lain/i, "harus ada peringatan");
+    assert.match(text, /another agent process/i, "harus ada peringatan");
     assert.match(text, /Pekerjaan penting sesi lain/, "task asing harus disebut namanya");
     assert.match(text, /interrupted/);
 
@@ -335,7 +335,7 @@ test("start_task tanpa task sebelumnya tidak menampilkan peringatan", async () =
     const response = await callTool("start_task", { description: "Task pertama", type: "feature", definitionOfDone: ["task tercatat"] }, state);
 
     const text = responseText(response);
-    assert.doesNotMatch(text, /proses agen lain/i);
+    assert.doesNotMatch(text, /another agent process/i);
     assert.doesNotMatch(text, /interrupted/);
     assert.equal(state.state.history.length, 0);
   });

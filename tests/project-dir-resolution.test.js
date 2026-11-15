@@ -242,7 +242,7 @@ test("start_task melaporkan KONFLIK bila env dan repo sesi berbeda", async () =>
       });
 
       const text = response.content[0].text;
-      assert.match(text, /KONFLIK/, "harus menyebut konflik, bukan diam");
+      assert.match(text, /CONFLICT/, "harus menyebut konflik, bukan diam");
       assert.ok(text.includes(path.resolve(globalRepo)), "harus menyebut repo yang dipakai");
       assert.ok(text.includes(path.resolve(sessionRepo)), "harus menyebut repo sesi");
       assert.match(text, /projectDir/, "harus memberi cara memperbaiki");
@@ -285,7 +285,7 @@ test("start_task dengan projectDir mengalahkan env dan tidak melaporkan konflik"
       const text = response.content[0].text;
       assert.strictEqual(workflowState.state.projectDir, path.resolve(sessionRepo));
       assert.match(text, /dari argumen projectDir/);
-      assert.doesNotMatch(text, /KONFLIK/);
+      assert.doesNotMatch(text, /CONFLICT/);
     });
   } finally {
     process.chdir(previousCwd);

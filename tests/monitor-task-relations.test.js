@@ -35,6 +35,8 @@ test('sparse completion preserves provenance while a new workflow ID or task tit
     release_version TEXT DEFAULT '', release_revision TEXT DEFAULT '',
     toolchain_json TEXT DEFAULT '{}',
     refinement_json TEXT,
+    owner_started_at TEXT DEFAULT '', owner_executable TEXT DEFAULT '',
+    lease_owner TEXT DEFAULT '', lease_generation INTEGER DEFAULT 0, lease_fencing_token TEXT DEFAULT '',
     parent_task_id TEXT, parent_task_title TEXT,
     PRIMARY KEY (session_key, task_id)
   )`);

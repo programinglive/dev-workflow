@@ -1,11 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { WorkflowState, resolveStateFile, sessionKeyFromRequest } from "../workflow-state.js";
+import { resolveRequestSession } from "../session-scope.js";
 import { handleToolCall } from "../tools/handlers.js";
 import { normalizeRequestArgs } from "../utils.js";
 import { createGitFacade } from "../git-facade.js";
@@ -113,7 +114,10 @@ test("resolveStateFile memakai session id yang diberikan", async () => {
 });
 
 test("dua sesi lewat handleToolCall tidak saling menimpa task", async () => {
-  await withProject(async () => {
+  await withProject(async (projectRoot) => {
+    const repoB = path.join(projectRoot, "worktree-b");
+    await mkdir(repoB, { recursive: true });
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repoB });
     const state = new WorkflowState();
     await state.load();
 
@@ -123,9 +127,20 @@ test("dua sesi lewat handleToolCall tidak saling menimpa task", async () => {
       ...context(state),
     });
 
-    // Sesi B memulai task lain, memakai PROSES MCP yang sama.
+    // Session B starts another task on a separate working tree using the same MCP process.
     await handleToolCall({
-      request: requestWith("start_task", { description: "Task milik sesi B", type: "bugfix", definitionOfDone: ["sesi B tercatat"] }, "ses_BBB"),
+      request: requestWith(
+        "start_task",
+        {
+          description: "Task milik sesi B",
+          type: "bugfix",
+          projectDir: repoB,
+          allowProjectSwitch: true,
+          projectSwitchReason: "Testing session B isolation on separate worktree",
+          definitionOfDone: ["sesi B tercatat"],
+        },
+        "ses_BBB",
+      ),
       ...context(state),
     });
 
@@ -147,24 +162,23 @@ test("dua sesi lewat handleToolCall tidak saling menimpa task", async () => {
   });
 });
 
-test("tanpa metadata sesi, perilaku lama dipertahankan (satu berkas)", async () => {
-  await withProject(async () => {
-    const state = new WorkflowState();
-    await state.load();
-    const firstFile = state.stateFile;
+test("tanpa metadata sesi, tool session-scoped ditolak oleh gate MCP", () => {
+  const gate = resolveRequestSession(requestWith("start_task", { description: "Task tanpa metadata" }));
+  assert.equal(gate.ok, false, "start_task tanpa session id harus ditolak");
+  assert.match(gate.error, /SESSION_IDENTITY_REQUIRED/);
+});
 
-    await handleToolCall({
-      request: requestWith("start_task", { description: "Task tanpa metadata", type: "other", definitionOfDone: ["tercatat"] }),
-      ...context(state),
-    });
-
-    assert.equal(state.stateFile, firstFile, "tanpa session id, berkas state tidak boleh berpindah");
-    assert.match(state.state.taskDescription, /Task tanpa metadata/);
-  });
+test("tanpa metadata sesi, tool non-session tetap diizinkan", () => {
+  const gate = resolveRequestSession(requestWith("get_current_focus", {}));
+  assert.equal(gate.ok, true, "get_current_focus tidak boleh butuh session id");
+  assert.equal(gate.sessionId, null);
 });
 
 test("berpindah sesi memuat state sesi itu, bukan menyalin yang lama", async () => {
-  await withProject(async () => {
+  await withProject(async (projectRoot) => {
+    const repoY = path.join(projectRoot, "worktree-y");
+    await mkdir(repoY, { recursive: true });
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repoY });
     const state = new WorkflowState();
     await state.load();
 
@@ -175,7 +189,18 @@ test("berpindah sesi memuat state sesi itu, bukan menyalin yang lama", async () 
     const fileX = state.stateFile;
 
     await handleToolCall({
-      request: requestWith("start_task", { description: "Task sesi Y", type: "feature", definitionOfDone: ["sesi Y tercatat"] }, "ses_YYY"),
+      request: requestWith(
+        "start_task",
+        {
+          description: "Task sesi Y",
+          type: "feature",
+          projectDir: repoY,
+          allowProjectSwitch: true,
+          projectSwitchReason: "Testing session Y isolation on separate worktree",
+          definitionOfDone: ["sesi Y tercatat"],
+        },
+        "ses_YYY",
+      ),
       ...context(state),
     });
     assert.notEqual(state.stateFile, fileX, "sesi Y harus memakai berkas berbeda");

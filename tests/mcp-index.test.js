@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -18,7 +19,7 @@ import { hapusSementara } from "./helpers/hapus-sementara.js";
 
 async function withTempState(fn) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "mcp-index-test-"));
-  await fs.mkdir(path.join(dir, ".git"), { recursive: true });
+  execFileSync("git", ["init", "-q", "-b", "main"], { cwd: dir, stdio: "ignore" });
   const state = new WorkflowState(path.join(dir, "state.json"));
   await state.load();
   try {

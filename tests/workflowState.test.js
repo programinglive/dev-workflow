@@ -125,6 +125,7 @@ test("resolveStateFile prefers current working directory when multiple project m
 
   const sourceModulePath = fileURLToPath(new URL("../workflow-state.js", import.meta.url));
   await copyFile(sourceModulePath, path.join(moduleDir, "workflow-state.js"));
+  await cp(new URL("../process-lock.js", import.meta.url), path.join(moduleDir, "process-lock.js"));
   await cp(new URL("../ai-sessions.js", import.meta.url), path.join(moduleDir, "ai-sessions.js"));
   await cp(new URL("../repository.js", import.meta.url), path.join(moduleDir, "repository.js"));
   await cp(new URL("../task-provenance.js", import.meta.url), path.join(moduleDir, "task-provenance.js"));
@@ -140,6 +141,8 @@ test("resolveStateFile prefers current working directory when multiple project m
   await cp(new URL("../db/errors.js", import.meta.url), path.join(moduleDir, "db", "errors.js"));
   await cp(new URL("../db/migrate-legacy.js", import.meta.url), path.join(moduleDir, "db", "migrate-legacy.js"));
   await writeFile(path.join(moduleDir, "db", "index.js"), 'export function getDbAdapter() { return { connect: async () => {}, saveState: async () => {}, getState: async () => null }; } export async function insertHistoryEntry() {} export async function updateSummaryForUser() {} export async function saveState() {} export async function getState() {} export async function getSummaryForUser() { return { totalTasks: 0, taskTypes: {} }; } export async function getHistoryForUser() { return { entries: [], total: 0 }; }');
+  await mkdir(path.join(moduleDir, "db", "adapters"), { recursive: true });
+  await writeFile(path.join(moduleDir, "db", "adapters", "sqlite.js"), 'import path from "node:path"; export function resolveDbPath({ stateFile } = {}) { return stateFile ? path.join(path.dirname(stateFile), "dev-workflow.db") : "dev-workflow.db"; } export class SqliteAdapter { async connect() { return null; } async close() {} }');
   await writeFile(path.join(projectA, "package.json"), JSON.stringify({ name: "project-a" }));
   await writeFile(path.join(projectB, "package.json"), JSON.stringify({ name: "project-b" }));
 
@@ -192,6 +195,7 @@ test("WorkflowState mirrors state file to compatibility locations", async () => 
   await mkdir(path.join(tempRoot, "dist"), { recursive: true });
   await mkdir(stateDir, { recursive: true });
   await copyFile(sourceModulePath, path.join(moduleDir, "workflow-state.js"));
+  await cp(new URL("../process-lock.js", import.meta.url), path.join(moduleDir, "process-lock.js"));
   await cp(new URL("../ai-sessions.js", import.meta.url), path.join(moduleDir, "ai-sessions.js"));
   await cp(new URL("../repository.js", import.meta.url), path.join(moduleDir, "repository.js"));
   await cp(new URL("../task-provenance.js", import.meta.url), path.join(moduleDir, "task-provenance.js"));
@@ -206,6 +210,8 @@ test("WorkflowState mirrors state file to compatibility locations", async () => 
   await cp(new URL("../db/errors.js", import.meta.url), path.join(moduleDir, "db", "errors.js"));
   await cp(new URL("../db/migrate-legacy.js", import.meta.url), path.join(moduleDir, "db", "migrate-legacy.js"));
   await writeFile(path.join(moduleDir, "db", "index.js"), 'export function getDbAdapter() { return { connect: async () => {}, saveState: async () => {}, getState: async () => null }; } export async function insertHistoryEntry() {} export async function updateSummaryForUser() {} export async function saveState() {} export async function getState() {} export async function getSummaryForUser() { return { totalTasks: 0, taskTypes: {} }; } export async function getHistoryForUser() { return { entries: [], total: 0 }; }');
+  await mkdir(path.join(moduleDir, "db", "adapters"), { recursive: true });
+  await writeFile(path.join(moduleDir, "db", "adapters", "sqlite.js"), 'import path from "node:path"; export function resolveDbPath({ stateFile } = {}) { return stateFile ? path.join(path.dirname(stateFile), "dev-workflow.db") : "dev-workflow.db"; } export class SqliteAdapter { async connect() { return null; } async close() {} }');
   await writeFile(path.join(projectRoot, "package.json"), JSON.stringify({ name: "temp" }));
 
   const stateFile = path.join(stateDir, "workflow-state.json");
@@ -239,6 +245,7 @@ test("WorkflowState avoids filesystem root when no project markers found", async
 
   const sourceModulePath = fileURLToPath(new URL("../workflow-state.js", import.meta.url));
   await copyFile(sourceModulePath, path.join(moduleDir, "workflow-state.js"));
+  await cp(new URL("../process-lock.js", import.meta.url), path.join(moduleDir, "process-lock.js"));
   await cp(new URL("../ai-sessions.js", import.meta.url), path.join(moduleDir, "ai-sessions.js"));
   await cp(new URL("../repository.js", import.meta.url), path.join(moduleDir, "repository.js"));
   await cp(new URL("../task-provenance.js", import.meta.url), path.join(moduleDir, "task-provenance.js"));
@@ -253,6 +260,8 @@ test("WorkflowState avoids filesystem root when no project markers found", async
   await cp(new URL("../db/errors.js", import.meta.url), path.join(moduleDir, "db", "errors.js"));
   await cp(new URL("../db/migrate-legacy.js", import.meta.url), path.join(moduleDir, "db", "migrate-legacy.js"));
   await writeFile(path.join(moduleDir, "db", "index.js"), 'export function getDbAdapter() { return { connect: async () => {}, saveState: async () => {}, getState: async () => null }; } export async function insertHistoryEntry() {} export async function updateSummaryForUser() {} export async function saveState() {} export async function getState() {} export async function getSummaryForUser() { return { totalTasks: 0, taskTypes: {} }; } export async function getHistoryForUser() { return { entries: [], total: 0 }; }');
+  await mkdir(path.join(moduleDir, "db", "adapters"), { recursive: true });
+  await writeFile(path.join(moduleDir, "db", "adapters", "sqlite.js"), 'import path from "node:path"; export function resolveDbPath({ stateFile } = {}) { return stateFile ? path.join(path.dirname(stateFile), "dev-workflow.db") : "dev-workflow.db"; } export class SqliteAdapter { async connect() { return null; } async close() {} }');
 
   const moduleUrl = pathToFileURL(path.join(moduleDir, "workflow-state.js"));
   const { WorkflowState: TempWorkflowState } = await import(moduleUrl.href);
