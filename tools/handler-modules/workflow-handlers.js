@@ -1,4 +1,6 @@
+import { existsSync } from "node:fs";
 import { classify } from '../../security/policy.js';
+import { sanitize } from '../../security/sanitizer.js';
 import { textResponse, isReleaseSatisfied, isErrorResponse, ensurePrdExists, loadDocGateInputs } from "./shared.js";
 import { validateItemTexts } from "./dod.js";
 import {
@@ -17,10 +19,33 @@ import {
   MIN_WAIVER_REASON,
   MAX_WAIVER_REASON,
 } from "./docs.js";
-import { activeForeignLock, projectLockDir, currentIsAlive, DEFAULT_LOCK_STALE_MS } from "../../process-lock.js";
+import {
+  acquireWorktreeMutex,
+  releaseWorktreeMutex,
+  useWorktreeCapability,
+  writeKernelLockMetadata,
+  findActiveLegacyWriter,
+  isLegacyLock,
+  verifyLegacyFleetQuiescence,
+  projectLockDir,
+  currentIsAlive,
+  currentIsHolderProcess,
+  DEFAULT_LOCK_STALE_MS,
+} from "../../process-lock.js";
 import { reportEventSafe, updateSessionTitle, buildSnapshot, reportSnapshot } from "../../monitor.js";
 import { exec, resolveProjectDir, setActiveProjectDir } from "../../exec.js";
-import { pinSessionProject, resolveHistoryFile, readSessionProject, readFocusBinding, claimFocusBinding } from "../../workflow-state.js";
+import {
+  pinSessionProject,
+  resolveHistoryFile,
+  readSessionProject,
+  readFocusBinding,
+  claimFocusBinding,
+  retireFocusBinding,
+  resolveTargetProjectState,
+  findActiveForeignTaskInProject,
+  parseOwnerTimestamp,
+  ProjectOwnershipLostError,
+} from "../../workflow-state.js";
 import {
   captureRepositoryIdentity,
   evaluateProjectSwitch,
@@ -92,22 +117,22 @@ export function generateDefaultFlow(description, planItems = []) {
 }
 
 /**
- * Catat repo proyek untuk sesi ini.
+ * Record the project repository for this session.
  *
- * Tanpa ini, satu-satunya penentu adalah WORKFLOW_PROJECT_DIR yang global.
- * Di mesin ini nilainya `D:\code\clinic`, jadi task yang sebenarnya bekerja di
- * repo lain tetap menjalankan git di clinic dan `commit_and_push` menjawab
- * "No changes detected" seolah sudah selesai (30 Oktober 2026).
+ * Without this, the only authority is the global WORKFLOW_PROJECT_DIR.
+ * On this machine its value is `D:\code\clinic`, so a task that actually works in
+ * another repo still runs git in clinic and `commit_and_push` answers
+ * "No changes detected" as if it were already done (30 October 2026).
  *
- * Best-effort: kalau repo belum bisa ditentukan, task tetap boleh mulai, tapi
- * pengguna diberi tahu supaya tidak terkejut saat commit.
+ * Best-effort: when the repo cannot be determined, the task may still start, but
+ * the user is told so they are not surprised at commit time.
  */
 /**
  * Resolve and validate the project directory before touching workflow state.
  *
  * Owner rule (10 November 2026): a task without a project is not allowed. Every
  * task MUST belong to a real Git repository so the monitor never displays or
- * recaps "(tanpa proyek)".
+ * recaps "(without a project)".
  */
 function resolveTaskProject(args) {
   const requested = typeof args.projectDir === "string" ? args.projectDir.trim() : "";
@@ -129,45 +154,45 @@ function resolveTaskProject(args) {
       ok: false,
       dir: "",
       message:
-        `⚠️ Dibatalkan: repo proyek belum ditentukan (${error ? error.message : "projectDir kosong"}).\n` +
-        `   Task tanpa proyek tidak diizinkan oleh Dev Workflow MCP.\n` +
-        `   Sebutkan 'projectDir' yang menunjuk ke repository Git (mis. "D:\\\\code\\\\clinic") pada 'start_task'.\n\n` +
-        `Task BELUM dimulai; workflow sebelumnya tidak diubah.`,
+        `⚠️ Refused: the project repo is not determined yet (${error ? error.message : "empty projectDir"}).\n` +
+        `   Dev Workflow MCP does not allow a task without a project.\n` +
+        `   Pass 'projectDir' pointing to a Git repository (e.g. "D:\\\\code\\\\clinic") on 'start_task'.\n\n` +
+        `Task NOT started; the previous workflow was not changed.`,
     };
   }
 
   const sourceNote = {
     explicit: "dari argumen projectDir",
-    cwd: "dari direktori kerja sesi",
-    env: "dari WORKFLOW_PROJECT_DIR (nilai global)",
-    pinned: "dari projectDir sesi",
+    cwd: "from the session working directory",
+    env: "from WORKFLOW_PROJECT_DIR (global value)",
+    pinned: "from the session projectDir",
   }[resolved.source] || resolved.source;
 
   let message = `📁 Repo proyek: ${resolved.dir} (${sourceNote})`;
 
-  // Sumber env berarti tidak ada sinyal per-sesi sama sekali. Kalau direktori
-  // sesi ternyata menunjuk repo LAIN, hampir pasti env ini milik proyek lain -
-  // dan itulah yang dulu membuat `git add .` berjalan di repo yang salah.
+  // An env source means there is no per-session signal at all. When the session
+  // directory turns out to point at ANOTHER repo, this env value almost certainly belongs to another project -
+  // and that is exactly what used to make `git add .` run in the wrong repo.
   if (resolved.conflict) {
     message +=
-      `\n   ⚠️ KONFLIK: direktori sesi menunjuk repo lain, ${resolved.conflict.cwdDir}.` +
-      `\n   Repo dipilih dari WORKFLOW_PROJECT_DIR. Kalau task ini untuk repo sesi,` +
-      `\n   ulangi 'start_task' dengan projectDir: "${resolved.conflict.cwdDir}".`;
+      `\n   ⚠️ CONFLICT: the session directory points at another repo, ${resolved.conflict.cwdDir}.` +
+      `\n   The repo was chosen from WORKFLOW_PROJECT_DIR. If this task is for the session repo,` +
+      `\n   repeat 'start_task' with projectDir: "${resolved.conflict.cwdDir}".`;
   } else if (resolved.source === "env") {
     message +=
-      `\n   ⚠️ Repo ini berasal dari WORKFLOW_PROJECT_DIR, bukan dari sesi.` +
-      `\n   Kalau task ini bekerja di repo lain, ulangi 'start_task' dengan projectDir yang benar.`;
+      `\n   ⚠️ This repo comes from WORKFLOW_PROJECT_DIR, not from the session.` +
+      `\n   If this task works in another repo, repeat 'start_task' with the correct projectDir.`;
   }
 
   return { ok: true, dir: resolved.dir, message };
 }
 
 /**
- * Daftar berkas yang sudah kotor sebelum task dimulai.
+ * List of files that were already dirty before the task started.
  *
- * Kegagalan git di sini tidak boleh menggagalkan `start_task`: baseline hanya
- * dipakai untuk memperingatkan saat commit, dan task tanpa baseline tetap sah
- * (perilaku lama).
+ * A git failure here must not fail `start_task`: the baseline is only
+ * used to warn at commit time, and a task without a baseline is still valid
+ * (the previous behaviour).
  */
 async function captureDirtyAtStart(git) {
   if (!git || typeof git.getStatusOutput !== "function" ||
@@ -182,6 +207,15 @@ async function captureDirtyAtStart(git) {
 }
 
 export async function handleStartTask(args, workflowState, git, zettlyOptions = {}) {
+  if (workflowState && typeof workflowState.runSerialized === "function") {
+    return await workflowState.runSerialized(() =>
+      handleStartTaskSerialized(args, workflowState, git, zettlyOptions),
+    );
+  }
+  return await handleStartTaskSerialized(args, workflowState, git, zettlyOptions);
+}
+
+async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions = {}) {
   const env = zettlyOptions?.env || process.env;
   // `task` is a natural alias for `description`. Accepting it as an unknown key
   // silently created an empty task, which then had no Todo and no drawing, so
@@ -206,101 +240,17 @@ export async function handleStartTask(args, workflowState, git, zettlyOptions = 
       `If this machine should resume locally, call 'acknowledge_handover' first.`
     );
   }
-  // Satu penulis per repo.
+  // One writer per repo.
   //
-  // 31 Oktober 2026 dua sesi OpenCode menulis satu working tree yang sama. Satu
-  // sesi kehilangan seluruh suntingannya di `tools/handler-modules/index.js`
-  // tanpa pesan apa pun: berkasnya kembali ke versi HEAD di tengah pekerjaan.
-  // Penanda proses sudah ada sejak sebelumnya, tetapi hanya DICATAT sebagai
-  // peringatan, jadi tidak ada yang menghentikan tabrakan.
+  // On 31 October 2026 two OpenCode sessions wrote to the same working tree. One
+  // session lost every edit in `tools/handler-modules/index.js`
+  // without any message: the file reverted to its HEAD version mid-work.
+  // A process marker already existed, but it was only RECORDED as a
+  // warning, so nothing stopped the collision.
   //
-  // Sekarang `start_task` menolak memulai bila ada proses MCP lain yang hidup
-  // DAN baru saja bekerja (ada detak dalam 10 menit) pada proyek yang sama.
-  // Penanda yang basi diabaikan supaya proses MCP yang tertinggal tidak
-  // memblokir selamanya. `force: true` tetap tersedia untuk pemilik mesin yang
-  // tahu apa yang ia lakukan, dan alasannya dicatat di jawaban.
-  const foreignLock = activeForeignLock({
-    dir: projectLockDir(workflowState.stateFile),
-    isAlive: currentIsAlive(),
-  });
-
-  if (foreignLock && args.force !== true) {
-    const minutes = Math.max(1, Math.round(foreignLock.ageMs / 60000));
-    const host = foreignLock.host ? ` di ${foreignLock.host}` : "";
-    const started = Number.isFinite(Number(foreignLock.startedAt))
-      ? new Date(Number(foreignLock.startedAt)).toISOString()
-      : "waktu tidak diketahui";
-
-    return textResponse(
-      `⚠️ Dibatalkan: sesi lain sedang mengerjakan proyek ini.\n\n` +
-        `Proses MCP PID ${foreignLock.pid}${host} berdetak ${minutes} menit lalu ` +
-        `(hidup sejak ${started}).\n` +
-        `Dua sesi pada satu working tree saling menimpa berkas: pada 31 Oktober 2026 ` +
-        `satu sesi kehilangan seluruh suntingannya tanpa pesan.\n\n` +
-        `Pilih salah satu:\n` +
-        `  1. Tutup jendela OpenCode yang lain, lalu ulangi 'start_task'.\n` +
-        `  2. Beri sesi ini worktree sendiri: opencode.worktree_create, lalu jalankan sesi dari sana.\n` +
-        `  3. Kalau Anda yakin sesi itu sudah tidak dipakai, ulangi dengan { "force": true }.\n\n` +
-        `Penanda dianggap basi setelah ${Math.round(DEFAULT_LOCK_STALE_MS / 60000)} menit tanpa detak.\n` +
-        `Task BELUM dimulai; tidak ada state yang diubah.`
-    );
-  }
-
-  // Task HIDUP milik proses lain tidak boleh dihapus, bahkan dengan `force`.
-  //
-  // 1 November 2026: satu sesi kehilangan seluruh Definition of Done-nya dua
-  // kali dalam satu jam. Penyebabnya bukan hanya tabrakan berkas - `force: true`
-  // bisa melewati `activeForeignLock`, lalu `reset()` mengosongkan
-  // `definitionOfDone` milik task yang sedang dikerjakan sesi lain. Bukti DoD
-  // yang sudah dikumpulkan tidak bisa dipulihkan dari arsip `history`.
-  //
-  // Penjaga ini membaca ISI STATE, bukan berkas lock: state adalah kebenaran,
-  // lock hanya petunjuk. Kalau lock hilang atau rusak, penjaga tetap bekerja.
-  // `force` tetap berguna untuk satu kasus sah - pemiliknya sudah mati.
-  {
-    const disk = await workflowState.readDiskState();
-    if (disk) {
-      const phase = typeof disk.currentPhase === "string" ? disk.currentPhase : "idle";
-      const description = typeof disk.taskDescription === "string" ? disk.taskDescription.trim() : "";
-      const ownerPid = Number(disk.owner?.pid);
-      const foreignOwner = Number.isFinite(ownerPid) && ownerPid !== process.pid;
-
-      // Batas basi, sama seperti `activeForeignLock`. Tanpa ini, proses MCP yang
-      // ditinggal hidup setelah jendela OpenCode-nya ditutup - keadaan normal di
-      // mesin ini, lihat `cleanup-stale-mcp` - memblokir `start_task` SELAMANYA,
-      // dan `force` pun tidak menolong. Penjaga yang mustahil dilewati akan
-      // dilewati orang dengan membunuh proses; itu lebih buruk daripada kedaluwarsa.
-      const ownerSeenAt = Number(disk.owner?.updatedAt);
-      const ownerFresh =
-        Number.isFinite(ownerSeenAt) && Date.now() - ownerSeenAt < DEFAULT_LOCK_STALE_MS;
-
-      if (phase !== "idle" && description !== "" && foreignOwner && ownerFresh && currentIsAlive()(ownerPid)) {
-        const seen = Number.isFinite(ownerSeenAt)
-          ? new Date(ownerSeenAt).toISOString()
-          : "waktu tidak diketahui";
-
-        return textResponse(
-          `⚠️ Dibatalkan: task lain sedang berjalan di proses MCP PID ${ownerPid}.\n\n` +
-            `Task      : "${description}"\n` +
-            `Fase      : ${phase}\n` +
-            `Pemilik   : PID ${ownerPid}, terakhir menulis state ${seen}\n\n` +
-            `Memulai task baru di sini akan mengosongkan Definition of Done task itu, dan buktinya ` +
-            `tidak bisa dipulihkan dari history. Karena itu 'force' TIDAK bisa melewati penjaga ini ` +
-            `selama pemiliknya masih menulis.\n\n` +
-            `Pilih salah satu:\n` +
-            `  1. Selesaikan atau batalkan task itu dari sesi pemiliknya (complete_task / drop_task).\n` +
-            `  2. Beri sesi ini worktree sendiri: opencode.worktree_create, lalu jalankan sesi dari sana.\n` +
-            `  3. Kalau proses itu sudah tidak dipakai, tutup jendelanya. Penjaga berhenti menghalangi ` +
-            `setelah ${Math.round(DEFAULT_LOCK_STALE_MS / 60000)} menit tanpa tulisan state.\n\n` +
-            `Task BELUM dimulai; tidak ada state yang diubah.`
-        );
-      }
-    }
-  }
-
-  // Validasi rencana. Skema mewajibkan `plan`; bila agen tidak mengirimnya,
-  // rencana SEMENTARA diturunkan dari DoD supaya progres tetap bisa dibaca,
-  // dan jawabannya menyebut terus terang bahwa urutannya belum benar.
+  // Plan validation. The schema requires `plan`; when the agent does not send it,
+  // a TEMPORARY plan is derived from the DoD so progress stays readable,
+  // and the reply states plainly that the order is not yet correct.
   const planCheck = validatePlanSteps(args.plan);
   let planDerived = false;
 
@@ -309,30 +259,109 @@ export async function handleStartTask(args, workflowState, git, zettlyOptions = 
       return textResponse(
         `⚠️ ${planCheck.error}\n\n` +
           `Contoh pemakaian:\n` +
-          `  plan: ["telusuri handler yang ada", "tulis tes yang gagal", "implementasi minimum"]\n\n` +
-          `Task BELUM dimulai; workflow sebelumnya tidak diubah.`
+          `  plan: ["explore the existing handlers", "write the failing test", "minimal implementation"]\n\n` +
+          `Task NOT started; the previous workflow was not changed.`
       );
     }
     planDerived = true;
   }
 
-  // Validasi DoD SEBELUM menyentuh state apa pun. Task yang ditolak tidak boleh
-  // mengganti task yang sedang berjalan, dan tidak boleh meninggalkan state
-  // setengah jadi yang membuat `get_workflow_status` membingungkan.
+  // Validate the DoD BEFORE touching any state. A rejected task must not
+  // replace the running task, and must not leave a half-finished
+  // state that makes `get_workflow_status` confusing.
   const dodCheck = validateItemTexts(args.definitionOfDone);
   if (!dodCheck.ok) {
     return textResponse(
       `⚠️ ${dodCheck.error}\n\n` +
         `Contoh pemakaian:\n` +
-        `  definitionOfDone: ["build lulus", "halaman login terverifikasi"]\n\n` +
-        `Task BELUM dimulai; workflow sebelumnya tidak diubah.`
+        `  definitionOfDone: ["build passes", "login page verified"]\n\n` +
+        `Task NOT started; the previous workflow was not changed.`
     );
   }
 
-  // Validasi projectDir SEBELUM reset(): task tanpa proyek ditolak keras.
+  // Validate projectDir BEFORE reset(): a task without a project is rejected outright.
   const project = resolveTaskProject(args);
   if (!project.ok) {
     return textResponse(project.message);
+  }
+
+  // Resolve the target project identity and the target state file BEFORE lock validation.
+  // This prevents false collisions when two MCP clients (e.g. Antigravity and Codex)
+  // start in a shared working directory (C:\Users\mahardhika) but target
+  // different project repositories.
+  const targetResolution = resolveTargetProjectState({
+    stateFile: workflowState.stateFile,
+    projectDir: project.dir,
+    skipWrites: true,
+  });
+  const targetStateFile = targetResolution.stateFile;
+  const targetLockDir = projectLockDir(targetStateFile);
+
+  // A LIVE task owned by another process must not be deleted, even with `force`.
+  // findActiveForeignTaskInProject inspects the state on disk for the target project.
+  const detectForeignTaskOnTarget = async () => {
+    let foreignTask = findActiveForeignTaskInProject({
+      projectDirPath: targetResolution.projectDirPath,
+      targetStateFile,
+      ownPid: process.pid,
+      isAlive: currentIsAlive(),
+      isHolderProcess: currentIsHolderProcess(),
+      staleMs: DEFAULT_LOCK_STALE_MS,
+    });
+
+    if (!foreignTask && targetStateFile === workflowState.stateFile) {
+      const disk = await workflowState.readDiskState({ skipWrites: true });
+      if (disk) {
+        const phase = typeof disk.currentPhase === "string" ? disk.currentPhase : "idle";
+        const description = typeof disk.taskDescription === "string" ? disk.taskDescription.trim() : "";
+        const ownerPid = Number(disk.owner?.pid);
+        const foreignOwner = Number.isFinite(ownerPid) && ownerPid !== process.pid;
+        const ownerSeenAt = parseOwnerTimestamp(disk.owner?.updatedAt);
+        const ownerFresh =
+          Number.isFinite(ownerSeenAt) && Date.now() - ownerSeenAt < DEFAULT_LOCK_STALE_MS;
+
+        if (phase !== "idle" && description !== "" && foreignOwner && ownerFresh && currentIsAlive()(ownerPid)) {
+          foreignTask = {
+            file: targetStateFile,
+            disk,
+            phase,
+            description,
+            ownerPid,
+            ownerSeenAt,
+          };
+        }
+      }
+    }
+    return foreignTask;
+  };
+
+  const formatForeignTaskRefusal = (foreignTask) => {
+    const seen = Number.isFinite(foreignTask.ownerSeenAt)
+      ? new Date(foreignTask.ownerSeenAt).toISOString()
+      : "time unknown";
+
+    return textResponse(
+      `⚠️ Refused: another task is running in MCP process PID ${foreignTask.ownerPid}.\n\n` +
+        `Task      : "${foreignTask.description}"\n` +
+        `Phase     : ${foreignTask.phase}\n` +
+        `Owner     : PID ${foreignTask.ownerPid}, last wrote state ${seen}\n\n` +
+        `Starting a new task here would clear that task's Definition of Done, and its evidence ` +
+        `cannot be recovered from history. That is why 'force' CANNOT bypass this guard ` +
+        `while the owner is still writing.\n\n` +
+        `Choose one:\n` +
+        `  1. Finish or cancel that task from its owner session (complete_task / drop_task).\n` +
+        `  2. Give this session its own worktree: opencode.worktree_create, then run the session there.\n` +
+        `  3. If that process is no longer used, close its window. The guard stops blocking ` +
+        `after ${Math.round(DEFAULT_LOCK_STALE_MS / 60000)} minutes without a state write.\n\n` +
+        `Task NOT started; no state was changed.`
+    );
+  };
+
+  {
+    const foreignTask = await detectForeignTaskOnTarget();
+    if (foreignTask) {
+      return formatForeignTaskRefusal(foreignTask);
+    }
   }
 
   // Repository identity preflight.
@@ -347,6 +376,14 @@ export async function handleStartTask(args, workflowState, git, zettlyOptions = 
   // The comparison runs here, before `reset()`, so a refusal changes nothing:
   // the active task, its Definition of Done and its evidence stay intact.
   const requestedIdentity = await captureRepositoryIdentity({ dir: project.dir });
+  if (!requestedIdentity || !requestedIdentity.isGitRepo || !requestedIdentity.root) {
+    return textResponse(
+      `⚠️ Refused: "${project.dir}" is not a valid Git working tree.\n\n` +
+        `A task must be anchored to a real Git repository or worktree so its canonical ` +
+        `worktree mutex and repository identity can be verified fail-closed.\n\n` +
+        `Task NOT started; the previous task and its evidence are unchanged.`
+    );
+  }
   const sessionProject = readSessionProject({ stateFile: workflowState.stateFile });
   let sessionIdentity = null;
   if (sessionProject) {
@@ -377,9 +414,8 @@ export async function handleStartTask(args, workflowState, git, zettlyOptions = 
     return textResponse(switchDecision.message);
   }
 
-  // Focus binding: a focus is a container for one project's work. Reusing a
-  // focus that another project already owns would make the focus report work it
-  // does not own - the same defect in the opposite direction.
+  // Focus binding preflight: check if already bound to another project before
+  // acquiring or relocating any locks.
   const requestedRepoKey = parseRemoteIdentity(requestedIdentity.remote)?.key || "";
   const requestedFocusId = Number(args.focusId);
   const hasRequestedFocus = Number.isSafeInteger(requestedFocusId) && requestedFocusId > 0;
@@ -403,194 +439,623 @@ export async function handleStartTask(args, workflowState, git, zettlyOptions = 
         );
       }
     }
+  }
 
-    // Claim the focus before any state is reset. The claim is exclusive across
-    // operating-system processes: a concurrent start that bound the same focus
-    // to another project holds the focus lock, and this call either waits for a
-    // bounded time and then reports the conflict, or loses the atomic create.
-    const claimed = await claimFocusBinding({
-      stateFile: workflowState.stateFile,
-      focusId: requestedFocusId,
-      projectDir: project.dir,
-      repoKey: requestedRepoKey,
-    });
-    if (claimed && claimed.ok === false) {
+  // Stage 2 (Option B): Acquire authoritative OS-owned kernel mutex for the
+  // canonical Git working tree BEFORE any state, pointer, or focus mutation.
+  const sessionOwnerKey =
+    (typeof workflowState?._sessionKey === "function" ? workflowState._sessionKey()?.key : "") ||
+    workflowState?.sessionId ||
+    path.resolve(String(targetStateFile || workflowState?.stateFile || "")) ||
+    String(process.pid);
+  const targetMutex = await acquireWorktreeMutex({
+    projectDir: project.dir,
+    ownerKey: sessionOwnerKey,
+  });
+
+  if (!targetMutex.ok) {
+    if (targetMutex.reason === "unsupported_platform") {
       return textResponse(
-        `⚠️ Refused: focus ${requestedFocusId} could not be claimed.\n\n` +
-          `Reason: ${claimed.reason || "unknown"}\n` +
-          (claimed.existing
-            ? `Focus bound to: ${claimed.existing.projectDir || claimed.existing.repoKey || "(unknown)"}\n`
-            : "") +
-          `Requested repo: ${requestedIdentity.root || project.dir}\n\n` +
+        `⚠️ Refused: ${targetMutex.message}\n\n` +
           `Task NOT started; the previous task and its evidence are unchanged.`
       );
     }
+    if (targetMutex.reason === "invalid_project_dir") {
+      return textResponse(
+        `⚠️ Refused: invalid projectDir (${targetMutex.message || targetMutex.error}).\n\n` +
+          `Task NOT started; the previous task and its evidence are unchanged.`
+      );
+    }
+    if (targetMutex.reason === "mutex_error") {
+      return textResponse(
+        `⚠️ Refused: failed to acquire the OS kernel mutex for "${project.dir}" ` +
+          `(${targetMutex.error || "MUTEX_ERROR"}).\n\n` +
+          `Exclusive ownership cannot be verified (fail-closed).\n` +
+          `Task NOT started; no state was changed.`
+      );
+    }
+    return textResponse(
+      `⚠️ Refused: another session holds the OS kernel mutex for this working tree.\n\n` +
+        `Mutex endpoint: ${targetMutex.endpoint || project.dir}\n` +
+        `Two sessions on one working tree are forbidden in Option B; the kernel mutex is only ` +
+        `released when the owner session finishes or its process stops.\n\n` +
+        `Task NOT started; no state was changed.`
+    );
   }
 
-  // Selamatkan dulu pekerjaan yang mungkin tertimpa. Ini menangani dua kasus:
-  //   1. Proses MCP LAIN menulis berkas state setelah kita memuatnya.
-  //   2. Task kita sendiri yang belum selesai lalu diganti task baru.
-  const preservedBeforeSave = await workflowState.reconcileWithDisk();
-  // The previous task's identity, captured before reset() wipes it:
-  // assignWorkflowIdentity compares description+projectDir+workflowTaskId to
-  // decide card identity, and carries zettly and taskOrigin into the new card.
-  const previousTaskIdentity = {taskDescription:workflowState.state.taskDescription,projectDir:workflowState.state.projectDir,workflowTaskId:workflowState.state.workflowTaskId,zettly:workflowState.state.zettly,taskOrigin:workflowState.state.taskOrigin};
-  const { archivedTask } = workflowState.reset({ archive: true });
+  // Reject overlap with any live legacy (pre-Option-B) writer process or foreign v2 lock.
+  const legacyWriter = findActiveLegacyWriter({
+    dir: targetLockDir,
+    isAlive: currentIsAlive(),
+  });
+  if (legacyWriter) {
+    if (!targetMutex.alreadyHeld) {
+      await releaseWorktreeMutex(targetMutex.capability);
+    }
+    if (legacyWriter.inspectionError) {
+      return textResponse(
+        `⚠️ Refused: the process lock status for this project cannot be verified closed ` +
+          `(${legacyWriter.reason || legacyWriter.error || "LOCK_INSPECTION_FAILED"}).\n\n` +
+          `Exclusive ownership refuses to continue when lock metadata is corrupt or unreadable (fail-closed).\n` +
+          `Task NOT started; no state was changed.`
+      );
+    }
+    const isGenuineLegacy = isLegacyLock(legacyWriter) || legacyWriter.kernelMutex === false;
+    if (isGenuineLegacy) {
+      return textResponse(
+        `⚠️ Refused: a live legacy protocol writer (v1) was detected on this project ` +
+          `(PID ${legacyWriter.pid || "unknown"}).\n\n` +
+          `Option B refuses to work alongside an old process that does not hold the OS kernel mutex.\n` +
+          `Restart the old MCP client first before starting a task in this working tree.\n\n` +
+          `Task NOT started; no state was changed.`
+      );
+    }
+    return textResponse(
+      `⚠️ Refused: another session is working on this project ` +
+        `(PID ${legacyWriter.pid || "unknown"}).\n\n` +
+        `Two sessions on one project are forbidden; wait for the other session to finish or close its process first.\n\n` +
+        `Task NOT started; no state was changed.`
+    );
+  }
 
-  workflowState.state.currentPhase = "coding";
-  // Disimpan DI STATE, bukan hanya di memori proses.
-  //
-  // MENGAPA: `started_at` sebelumnya diisi dari `this.sessionStartedAt` milik
-  // proses. Nilai itu hilang setiap proses MCP restart, sehingga dashboard
-  // menerima startedAt kosong dan counter durasi tidak pernah muncul. Dengan
-  // menyimpannya di state, waktunya ikut tersimpan ke disk dan bertahan.
-  workflowState.state.taskStartedAt = new Date().toISOString();
-  workflowState.state.classification = classify(args);
-  workflowState.state.taskDescription = args.description;
-  // The checkpoint needs to know which machine owns this task, and the commit
-  // the session started from -- without a base there is no bounded way to list
-  // the commits this session made, and a later revert could not be scoped.
-  workflowState.state.machine = String(
-    env.DEVWF_MACHINE || os.hostname() || "unknown"
-  );
-  // baseSha is filled in after reset() below, because reset() clears projectDir
-  // and reconcileWithDisk() can replace it from an idle state on disk. Reading it
-  // here would always yield null.
-  workflowState.state.checkpoint = {
-    checkpointedAt: null,
-    summary: "",
-    baseSha: null,
-    commits: [],
-    handover: null,
-  };
-  // `state.parentTask` is written by assignWorkflowIdentity below: one card
-  // per task, so the previous card's identity links the two cards.
-  workflowState.state.taskType = args.type;
-  workflowState.state.plan = planDerived
-    ? createPlan(dodCheck.items.map((text) => `Complete: ${text}`))
-    : createPlan(planCheck.items);
-  workflowState.state.definitionOfDone = dodCheck.items.map((text, index) => ({
-    id: `dod-${index + 1}`,
-    text,
-    status: "open",
-    evidence: "",
-    waivedReason: "",
-    revision: 0,
-    updatedAt: new Date().toISOString(),
-  }));
-  workflowState.state.dodSource = "manual";
-  workflowState.state.dodFactoryTaskId = "";
-  workflowState.state.dodRevision = 0;
-  workflowState.state.testsSkipped = false;
-  workflowState.state.testsSkippedReason = "";
-  workflowState.state.commitAndPushCompleted = false;
-  workflowState.state.lastCommitMessage = "";
-  workflowState.state.lastPushBranch = "";
-  // Setelah reset(), pasang projectDir yang sudah tervalidasi.
-  workflowState.state.projectDir = project.dir;
-  setActiveProjectDir(project.dir);
+  // Also check shared state root for any live legacy v1 writers in unpinned buckets (R2-5).
+  const projectsParent = path.dirname(targetLockDir);
+  if (path.basename(projectsParent) === "projects") {
+    const stateBase = path.dirname(projectsParent);
+    if (existsSync(stateBase)) {
+      const quiescence = verifyLegacyFleetQuiescence({
+        baseDir: stateBase,
+        isAlive: currentIsAlive(),
+      });
+      if (quiescence.inspectionErrors && quiescence.inspectionErrors.length > 0) {
+        if (!targetMutex.alreadyHeld) {
+          await releaseWorktreeMutex(targetMutex.capability);
+        }
+        const errItem = quiescence.inspectionErrors[0];
+        return textResponse(
+          `⚠️ Refused: the quiescence check failed closed ` +
+            `(${errItem.reason || errItem.error || "QUIESCENCE_INSPECTION_FAILED"}).\n\n` +
+            `The directory or lock metadata cannot be inspected in full (fail-closed).\n` +
+            `Task NOT started; no state was changed.`
+        );
+      }
+      if (quiescence.legacyWriters.length > 0) {
+        if (!targetMutex.alreadyHeld) {
+          await releaseWorktreeMutex(targetMutex.capability);
+        }
+        const w = quiescence.legacyWriters[0];
+        return textResponse(
+          `⚠️ Refused: a live legacy protocol writer (v1) was detected on this project ` +
+            `(PID ${w.pid || "unknown"}).\n\n` +
+            `Option B refuses to work alongside an old process that does not hold the OS kernel mutex.\n` +
+            `Restart the old MCP client first before starting a task in this working tree.\n\n` +
+            `Task NOT started; no state was changed.`
+        );
+      }
+    }
+  }
+
+  // Re-verify foreign task under the newly acquired target worktree mutex.
+  {
+    const foreignTaskAfterLock = await detectForeignTaskOnTarget();
+    if (foreignTaskAfterLock) {
+      if (!targetMutex.alreadyHeld) {
+        await releaseWorktreeMutex(targetMutex.capability);
+      }
+      return formatForeignTaskRefusal(foreignTaskAfterLock);
+    }
+  }
 
   // README-first preflight: bounded, read-only discovery of the repository's
   // own instructions and documented CLI entrypoints. The record is persisted
   // with the task so resume_session can revalidate it and the scope guard can
   // compare against it. Documents are untrusted content; nothing is executed.
-  const preflight = runPreflight({
-    projectDir: workflowState.state.projectDir,
-    taskId: workflowState.state.workflowTaskId || "",
-    taskDescription: args.description,
-  });
+  let preflight;
+  try {
+    preflight = runPreflight({
+      projectDir: project.dir,
+      taskId: workflowState.state.workflowTaskId || "",
+      taskDescription: args.description,
+    });
+  } catch (err) {
+    if (!targetMutex.alreadyHeld) {
+      await releaseWorktreeMutex(targetMutex.capability);
+    }
+    return textResponse(
+      `⚠️ Task not started: PREFLIGHT_ERROR (${err?.message || String(err)}). The project directory could not be read as a repository root.`
+    );
+  }
   if (!preflight.ok) {
+    if (!targetMutex.alreadyHeld) {
+      await releaseWorktreeMutex(targetMutex.capability);
+    }
     return textResponse(
       `⚠️ Task not started: ${preflight.code}. The project directory could not be read as a repository root.`
     );
   }
-  workflowState.state.preflight = preflight;
 
-  // The identity contract is the answer to "what was this task allowed to
-  // touch", written once so a later operation can compare against it instead of
-  // guessing from the task text.
-  workflowState.state.identityContract = buildIdentityContract({
-    projectId: requestedRepoKey || path.basename(requestedIdentity.root || project.dir),
-    identity: requestedIdentity,
-    focusId: hasRequestedFocus ? requestedFocusId : null,
-    allowedOperations: ["read", "write", "commit", "push"],
-  });
+  // Stage 3 (Option B): Execute transition under the live OS mutex capability
+  // with a single authoritative SQLite commit boundary.
+  const transitionHooks = zettlyOptions?.transitionHooks || null;
+  const priorStateSnapshot = structuredClone(workflowState.state);
+  const priorStateFile = workflowState.stateFile;
+  const priorHistoryFile = workflowState.historyFile;
+  const priorStateVersion = workflowState.stateVersion;
+  const priorLoadedTask = workflowState.loadedTask;
+  const rawPriorCapability = workflowState.boundKernelCapability || null;
+  const priorKernelCapability =
+    rawPriorCapability &&
+    (!rawPriorCapability.ownerKey || rawPriorCapability.ownerKey === sessionOwnerKey)
+      ? rawPriorCapability
+      : null;
+  const priorRequireKernelMutex = Boolean(workflowState.requireKernelMutex);
+  const priorActiveProjectDir = priorStateSnapshot.projectDir || "";
 
-  // Now that the directory is resolved for THIS task, record the commit the task
-  // started from. Everything a later revert may touch is measured from here.
-  workflowState.state.checkpoint.baseSha = await resolveBaseSha(workflowState.state.projectDir);
+  let preservedBeforeSave = null;
+  let archivedTask = null;
+  let reconciled = null;
+  let claimedNewFocus = false;
+  let sqliteCommitted = false;
+  const warnings = [];
 
-  // Catat proyek yang BENAR untuk sesi ini, lalu pindahkan state ke sana.
-  //
-  // Tanpa langkah ini identitas proyek hanya ditebak dari `process.cwd()`, yang
-  // milik PROSES MCP dan sering bukan tempat sesi bekerja. Diukur 1 November
-  // 2026: satu direktori `projects/Default-Project-<hash>/` menampung state dari
-  // sesi yang mengerjakan `D:\code\belajar`, repo uji, dan repo ini sekaligus -
-  // history tercampur dan `start_task` saling menolak antar proyek.
-  if (workflowState.state.projectDir) {
-    const pinned = pinSessionProject({
-      stateFile: workflowState.stateFile,
-      projectDir: workflowState.state.projectDir,
-      focusId: hasRequestedFocus ? requestedFocusId : null,
-    });
+  const rollbackPreCommit = async (reason) => {
+    let focusRollbackError = null;
+    if (claimedNewFocus && hasRequestedFocus) {
+      try {
+        const retireRes = await retireFocusBinding({
+          stateFile: targetStateFile,
+          focusId: requestedFocusId,
+          projectDir: project.dir,
+          repoKey: requestedRepoKey,
+          reason,
+          kernelCapability: targetMutex.capability,
+          requireKernelMutex: true,
+          expectedOwnerKey: sessionOwnerKey,
+        });
+        if (!retireRes || retireRes.ok === false) {
+          focusRollbackError = retireRes?.reason || retireRes?.error || "RETIRE_FOCUS_FAILED";
+        }
+      } catch (err) {
+        focusRollbackError = err?.message || String(err);
+      }
+    }
+    if (workflowState.stateFile !== priorStateFile && typeof workflowState.close === "function") {
+      try {
+        await workflowState.close();
+      } catch {}
+    }
+    workflowState.state = priorStateSnapshot;
+    workflowState.stateFile = priorStateFile;
+    workflowState.historyFile = priorHistoryFile;
+    workflowState.stateVersion = priorStateVersion;
+    workflowState.loadedTask = priorLoadedTask;
+    if (focusRollbackError) {
+      workflowState.state.pendingFocusCleanup = {
+        focusId: requestedFocusId,
+        stateFile: targetStateFile,
+        projectDir: project.dir,
+        repoKey: requestedRepoKey,
+        error: focusRollbackError,
+        failedAt: new Date().toISOString(),
+      };
+      const rollbackCap = priorStateFile === targetStateFile ? targetMutex.capability : priorKernelCapability;
+      if (rollbackCap && typeof workflowState.save === "function") {
+        try {
+          if (typeof workflowState.bindKernelCapability === "function") {
+            workflowState.bindKernelCapability(rollbackCap);
+          }
+          await workflowState.save({ operation: "pending_focus_cleanup_persist" });
+        } catch {
+          // Best-effort persistence: in-memory pendingFocusCleanup remains set.
+        }
+      }
+    }
+    if (typeof workflowState.bindKernelCapability === "function") {
+      workflowState.bindKernelCapability(priorKernelCapability);
+    }
+    workflowState.requireKernelMutex = priorRequireKernelMutex;
+    setActiveProjectDir(priorActiveProjectDir);
+    if (!targetMutex.alreadyHeld) {
+      await releaseWorktreeMutex(targetMutex.capability);
+    }
+    return focusRollbackError;
+  };
 
-    if (pinned && pinned.stateFile !== workflowState.stateFile) {
-      // Bawa task yang baru saja disiapkan ke berkas proyek yang benar.
-      const carried = { ...workflowState.state };
-      workflowState.stateFile = pinned.stateFile;
-      workflowState.historyFile = resolveHistoryFile(pinned.stateFile);
-      workflowState.state = carried;
-      await workflowState.load();
-      workflowState.state = carried;
+  try {
+    if (typeof workflowState.bindKernelCapability === "function") {
+      workflowState.bindKernelCapability(targetMutex.capability);
+    }
+    workflowState.requireKernelMutex = true;
+    workflowState._lastSaveCommittedSqlite = false;
+    workflowState._lastLoadCommittedSqlite = false;
+
+    const committed = await useWorktreeCapability(
+      targetMutex.capability,
+      async () => {
+        if (typeof transitionHooks?.afterStageLock === "function") {
+          await transitionHooks.afterStageLock({ targetMutex });
+        }
+
+        const pendingCleanup = workflowState.state?.pendingFocusCleanup;
+        if (pendingCleanup && Number.isSafeInteger(Number(pendingCleanup.focusId)) && Number(pendingCleanup.focusId) > 0) {
+          try {
+            const pendingDir = pendingCleanup.projectDir || project.dir;
+            const retiredPending = await retireFocusBinding({
+              stateFile: pendingCleanup.stateFile || workflowState.stateFile,
+              focusId: Number(pendingCleanup.focusId),
+              projectDir: pendingDir,
+              repoKey: pendingCleanup.repoKey || (pendingDir === project.dir ? requestedRepoKey : ""),
+              kernelCapability: pendingDir === project.dir ? targetMutex.capability : null,
+              requireKernelMutex: true,
+              expectedOwnerKey: sessionOwnerKey,
+            });
+            if (retiredPending && retiredPending.ok !== false) {
+              delete workflowState.state.pendingFocusCleanup;
+            }
+          } catch {
+            // Keep pendingFocusCleanup recorded for next retry if retirement still fails
+          }
+        }
+
+        if (hasRequestedFocus) {
+          const claimed = await claimFocusBinding({
+            stateFile: workflowState.stateFile,
+            focusId: requestedFocusId,
+            projectDir: project.dir,
+            repoKey: requestedRepoKey,
+            kernelCapability: targetMutex.capability,
+            requireKernelMutex: true,
+            expectedOwnerKey: sessionOwnerKey,
+          });
+          if (claimed && claimed.ok === false) {
+            return { refusedResponse: textResponse(
+              `⚠️ Refused: focus ${requestedFocusId} could not be claimed.\n\n` +
+                `Reason: ${claimed.reason || "unknown"}\n` +
+                (claimed.existing
+                  ? `Focus bound to: ${claimed.existing.projectDir || claimed.existing.repoKey || "(unknown)"}\n`
+                  : "") +
+                `Requested repo: ${requestedIdentity.root || project.dir}\n\n` +
+                `Task NOT started; the previous task and its evidence are unchanged.`
+            ) };
+          }
+          if (claimed && claimed.ok && claimed.reason === "BOUND") {
+            claimedNewFocus = true;
+          }
+          if (typeof transitionHooks?.afterClaimFocus === "function") {
+            await transitionHooks.afterClaimFocus({ claimed, targetMutex });
+          }
+        }
+
+        // Pre-compute git baseline before mutating workflowState in-memory fields.
+        const resolvedBaseSha = await resolveBaseSha(project.dir);
+        if (typeof transitionHooks?.afterResolveBaseSha === "function") {
+          await transitionHooks.afterResolveBaseSha({ resolvedBaseSha, targetMutex });
+        }
+
+        // If switching to another project's state file, switch and load its authoritative
+        // SQLite version BEFORE composing and committing the new task state.
+        if (targetStateFile !== workflowState.stateFile) {
+          if (typeof workflowState.close === "function") {
+            await workflowState.close();
+          }
+          workflowState.stateFile = targetStateFile;
+          workflowState.historyFile = resolveHistoryFile(targetStateFile);
+          workflowState.state.projectDir = project.dir;
+          await workflowState.load({ skipWrites: true });
+        }
+
+        // Rescue the work that might be overwritten first.
+        preservedBeforeSave = await workflowState.reconcileWithDisk();
+        const previousTaskIdentity = {
+          taskDescription: workflowState.state.taskDescription,
+          projectDir: workflowState.state.projectDir,
+          workflowTaskId: workflowState.state.workflowTaskId,
+          zettly: workflowState.state.zettly,
+          taskOrigin: workflowState.state.taskOrigin,
+        };
+        const remainingPendingFocusCleanup = workflowState.state?.pendingFocusCleanup || null;
+        const resetResult = workflowState.reset({ archive: true });
+        archivedTask = resetResult.archivedTask;
+        if (remainingPendingFocusCleanup) {
+          workflowState.state.pendingFocusCleanup = remainingPendingFocusCleanup;
+        }
+
+        workflowState.state.currentPhase = "coding";
+        workflowState.state.taskStartedAt = new Date().toISOString();
+        workflowState.state.classification = classify(args);
+        workflowState.state.taskDescription = args.description;
+        workflowState.state.machine = String(
+          env.DEVWF_MACHINE || os.hostname() || "unknown"
+        );
+        workflowState.state.checkpoint = {
+          checkpointedAt: null,
+          summary: "",
+          baseSha: resolvedBaseSha,
+          commits: [],
+          handover: null,
+        };
+        workflowState.state.taskType = args.type;
+        workflowState.state.plan = planDerived
+          ? createPlan(dodCheck.items.map((text) => `Complete: ${text}`))
+          : createPlan(planCheck.items);
+        workflowState.state.definitionOfDone = dodCheck.items.map((text, index) => ({
+          id: `dod-${index + 1}`,
+          text,
+          status: "open",
+          evidence: "",
+          waivedReason: "",
+          revision: 0,
+          updatedAt: new Date().toISOString(),
+        }));
+        workflowState.state.dodSource = "manual";
+        workflowState.state.dodFactoryTaskId = "";
+        workflowState.state.dodRevision = 0;
+        workflowState.state.preflight = preflight;
+        workflowState.state.testsSkipped = false;
+        workflowState.state.testsSkippedReason = "";
+        workflowState.state.commitAndPushCompleted = false;
+        workflowState.state.lastCommitMessage = "";
+        workflowState.state.lastPushBranch = "";
+        workflowState.state.projectDir = project.dir;
+        setActiveProjectDir(project.dir);
+
+        workflowState.state.identityContract = buildIdentityContract({
+          projectId: requestedRepoKey || path.basename(requestedIdentity.root || project.dir),
+          identity: requestedIdentity,
+          focusId: hasRequestedFocus ? requestedFocusId : null,
+          allowedOperations: ["read", "write", "commit", "push"],
+        });
+
+        workflowState.state.dirtyAtStart = await captureDirtyAtStart(git);
+        assignWorkflowIdentity(workflowState.state, previousTaskIdentity, args);
+
+        let initialFlow = typeof args.mermaidFlow === 'string' ? args.mermaidFlow.trim() : (typeof args.mermaidCode === 'string' ? args.mermaidCode.trim() : '');
+        let flowValid = false;
+        if (initialFlow) {
+          try {
+            flowGraph(initialFlow);
+            flowValid = true;
+          } catch (err) {
+            warnings.push(`⚠️ Provided mermaidFlow is invalid (${err.message}); falling back to auto-generated architecture flow.`);
+          }
+        }
+        if (!flowValid) {
+          initialFlow = generateDefaultFlow(args.description, workflowState.state.plan);
+        }
+        workflowState.state.featureFlowCreated = true;
+        workflowState.state.mermaidCode = initialFlow;
+        workflowState.state.featureFlowDescription = args.description;
+
+        if (typeof transitionHooks?.beforeSave === "function") {
+          await transitionHooks.beforeSave({ workflowState, targetMutex });
+        }
+
+        // Authoritative SQLite commit boundary (fenced by live OS mutex).
+        workflowState._lastSaveCommittedSqlite = false;
+        reconciled = await workflowState.save({ allowReplaceRunningTask: true });
+        if (!reconciled || reconciled.verified === false || reconciled.conflict) {
+          throw new Error(
+            reconciled?.conflict?.reason ||
+              "Target project state persistence could not be verified.",
+          );
+        }
+        sqliteCommitted = true;
+
+        if (typeof transitionHooks?.afterSave === "function") {
+          await transitionHooks.afterSave({ reconciled, targetMutex });
+        }
+
+        // Post-commit reconstructible projections & pointers (fenced by live OS mutex).
+        const postCommitProjectionErrors = Array.isArray(workflowState._lastPostCommitProjectionErrors)
+          ? [...workflowState._lastPostCommitProjectionErrors]
+          : [];
+        if (workflowState._lastExportJsonOk === false && !postCommitProjectionErrors.includes("exportJson:EXPORT_RETURNED_FALSE")) {
+          postCommitProjectionErrors.push("exportJson:EXPORT_RETURNED_FALSE");
+        }
+        if (workflowState.state.projectDir) {
+          const pinRes = pinSessionProject({
+            stateFile: workflowState.stateFile,
+            projectDir: workflowState.state.projectDir,
+            focusId: hasRequestedFocus ? requestedFocusId : null,
+            kernelCapability: targetMutex.capability,
+            requireKernelMutex: true,
+            expectedOwnerKey: sessionOwnerKey,
+          });
+          if (!pinRes || pinRes.ok === false) {
+            postCommitProjectionErrors.push(`pinSessionProject:${pinRes?.error || "FAILED"}`);
+          }
+        }
+        const metaRes = writeKernelLockMetadata({
+          dir: targetLockDir,
+          capability: targetMutex.capability,
+          projectDir: targetMutex.worktreeRoot,
+          expectedOwnerKey: sessionOwnerKey,
+        });
+        if (!metaRes || metaRes.ok === false) {
+          postCommitProjectionErrors.push(`writeKernelLockMetadata:${metaRes?.error || "FAILED"}`);
+        }
+        if (postCommitProjectionErrors.length > 0) {
+          throw new Error(`Post-commit projection failed (${postCommitProjectionErrors.join(", ")})`);
+        }
+
+        workflowState.state.pendingProjectionRepair = null;
+        return { ok: true };
+      },
+      { operation: "start_task_transition" },
+    );
+
+    if (committed?.refusedResponse) {
+      await rollbackPreCommit("rollback_on_transition_refusal");
+      return committed.refusedResponse;
+    }
+
+    if (priorKernelCapability && priorKernelCapability !== targetMutex.capability) {
+      await releaseWorktreeMutex(priorKernelCapability);
+    }
+  } catch (transitionError) {
+    const committedToSqlite =
+      sqliteCommitted || Boolean(workflowState._lastSaveCommittedSqlite);
+    if (committedToSqlite) {
+      // Authoritative SQLite commit already succeeded under the live OS mutex.
+      // Never roll back committed SQLite state or release the target capability;
+      // instead, reconcile reconstructible post-commit projections under the live fence
+      // and verify every repair outcome.
+      const repairErrors = [];
+      try {
+        await useWorktreeCapability(
+          targetMutex.capability,
+          async () => {
+            if (workflowState.state.projectDir) {
+              try {
+                const pinRes = pinSessionProject({
+                  stateFile: workflowState.stateFile,
+                  projectDir: workflowState.state.projectDir,
+                  focusId: hasRequestedFocus ? requestedFocusId : null,
+                  kernelCapability: targetMutex.capability,
+                  requireKernelMutex: true,
+                  expectedOwnerKey: sessionOwnerKey,
+                });
+                if (pinRes && pinRes.ok === false) {
+                  repairErrors.push(`pinSessionProject:${pinRes.error || "FAILED"}`);
+                }
+              } catch (err) {
+                repairErrors.push(`pinSessionProject:${err?.message || String(err)}`);
+              }
+            }
+            try {
+              const metaRes = writeKernelLockMetadata({
+                dir: targetLockDir,
+                capability: targetMutex.capability,
+                projectDir: targetMutex.worktreeRoot,
+                expectedOwnerKey: sessionOwnerKey,
+              });
+              if (!metaRes || metaRes.ok === false) {
+                repairErrors.push(`writeKernelLockMetadata:${metaRes?.error || "FAILED"}`);
+              }
+            } catch (err) {
+              repairErrors.push(`writeKernelLockMetadata:${err?.message || String(err)}`);
+            }
+            if (typeof workflowState._exportJson === "function") {
+              try {
+                const exported = await workflowState._exportJson();
+                if (exported === false) {
+                  repairErrors.push("exportJson:EXPORT_RETURNED_FALSE");
+                }
+              } catch (err) {
+                repairErrors.push(`exportJson:${err?.message || String(err)}`);
+              }
+            }
+            if (typeof workflowState.writeHistoryFile === "function") {
+              try {
+                await workflowState.writeHistoryFile();
+              } catch (err) {
+                repairErrors.push(`summaryOrHistory:${err?.message || String(err)}`);
+              }
+            }
+            if (typeof workflowState.updateProjectSummary === "function") {
+              try {
+                await workflowState.updateProjectSummary();
+              } catch (err) {
+                repairErrors.push(`summaryOrHistory:${err?.message || String(err)}`);
+              }
+            }
+            if (typeof workflowState._syncHistoryToDatabase === "function") {
+              try {
+                const histRes = await workflowState._syncHistoryToDatabase();
+                if (histRes?.skipped > 0) {
+                  repairErrors.push(`syncHistoryDb:SKIPPED_${histRes.skipped}`);
+                }
+                if (histRes?.summaryFailed) {
+                  repairErrors.push(`syncHistorySummary:${histRes.summaryError || "FAILED"}`);
+                }
+              } catch (err) {
+                repairErrors.push(`syncHistoryDb:${err?.message || String(err)}`);
+              }
+            }
+          },
+          { operation: "start_task_post_commit_reconcile" },
+        );
+      } catch (fenceErr) {
+        repairErrors.push(`reconcileFence:${fenceErr?.message || String(fenceErr)}`);
+      }
+      if (priorKernelCapability && priorKernelCapability !== targetMutex.capability) {
+        await releaseWorktreeMutex(priorKernelCapability);
+      }
+      if (repairErrors.length > 0) {
+        workflowState.state.pendingProjectionRepair = sanitize({
+          failedAt: new Date().toISOString(),
+          triggerError: transitionError?.message || String(transitionError),
+          repairErrors,
+        });
+        if (typeof workflowState.save === "function") {
+          try {
+            await workflowState.save({ operation: "persist_transition_projection_repair" });
+          } catch {
+            // Best-effort persistence when projections are degraded.
+          }
+        }
+        warnings.push(
+          `⚠️ Authoritative SQLite task commit succeeded and was preserved, but post-commit projection repair is PENDING ` +
+            `(trigger: ${transitionError?.message || String(transitionError)}; repairErrors: ${repairErrors.join(", ")}).`
+        );
+      } else {
+        workflowState.state.pendingProjectionRepair = null;
+        warnings.push(
+          `⚠️ Post-commit projection warning reconciled and verified (${transitionError?.message || String(transitionError)}). ` +
+            `Authoritative SQLite task commit was preserved.`
+        );
+      }
+    } else {
+      // Pre-commit failure: restore in-memory state cleanly; prior SQLite state & DoD evidence were not overwritten.
+      const focusRollbackError = await rollbackPreCommit("rollback_on_transition_failure");
+
+      if (focusRollbackError) {
+        return textResponse(
+          `⚠️ Refused before the SQLite commit (${transitionError?.message || String(transitionError)}), ` +
+            `but cleanup of the focus binding #${requestedFocusId} FAILED (${focusRollbackError}) — rollback is NOT COMPLETE.\n\n` +
+            `The previous workflow state and session pointer were restored and the pending cleanup evidence ` +
+            `(pendingFocusCleanup) telah dicatat.`
+        );
+      }
+
+      return textResponse(
+        `⚠️ Refused: the transition to project "${project.dir}" failed before the SQLite commit ` +
+          `(${transitionError?.message || String(transitionError)}).\n\n` +
+          `All workflow state, session pointers, focus bindings, and process locks were ` +
+          `restored to the condition before 'start_task' was called.`
+      );
     }
   }
 
-  // Bind the focus to the verified repository on first use. First writer wins:
-  // a focus already bound to another project is never rebound implicitly.
-  // (The claim happens before reset(); see the preflight block above.)
-
-  // Catat berkas yang SUDAH kotor sebelum task ini dimulai.
-  //
-  // Saat commit nanti, berkas itu tidak boleh ikut ter-stage lewat `git add .`:
-  // itu pekerjaan sesi lain yang kebetulan berada di working tree yang sama.
-  // Kejadian nyata 31 Okt 2026: dua baris `billing.yaml` milik sesi lain masuk
-  // commit sesi ini, dan tidak ada yang bisa membedakannya dari luar.
-  workflowState.state.dirtyAtStart = await captureDirtyAtStart(git);
-  assignWorkflowIdentity(workflowState.state,previousTaskIdentity,args);
-
-  // Sinkronkan judul sesi AI (OpenCode / Monitor) ke deskripsi task baru
+  // Sync the AI session title (OpenCode / Monitor) to the new task description
   try {
     const sKey = (typeof workflowState._sessionKey === "function" ? workflowState._sessionKey()?.key : "") || workflowState.sessionId || "";
     if (sKey && typeof updateSessionTitle === "function") {
       updateSessionTitle(sKey, args.description);
     }
   } catch {
-    // Best effort: kegagalan penamaan sesi tidak boleh mengganggu start_task
+    // Best effort: a session naming failure must not disturb start_task
   }
-
-  const warnings = [];
-
-  let initialFlow = typeof args.mermaidFlow === 'string' ? args.mermaidFlow.trim() : (typeof args.mermaidCode === 'string' ? args.mermaidCode.trim() : '');
-  let flowValid = false;
-  if (initialFlow) {
-    try {
-      flowGraph(initialFlow);
-      flowValid = true;
-    } catch (err) {
-      warnings.push(`⚠️ Provided mermaidFlow is invalid (${err.message}); falling back to auto-generated architecture flow.`);
-    }
-  }
-  if (!flowValid) {
-    initialFlow = generateDefaultFlow(args.description, workflowState.state.plan);
-  }
-  workflowState.state.featureFlowCreated = true;
-  workflowState.state.mermaidCode = initialFlow;
-  workflowState.state.featureFlowDescription = args.description;
-
-  // start_task memang bermaksud MENGGANTI task, jadi ia boleh menang atas
-  // task berjalan. Task yang diganti tetap diarsipkan oleh reconcileWithDisk,
-  // bukan dihapus.
-  const reconciled = await workflowState.save({ allowReplaceRunningTask: true });
 
   await reportEventSafe(
     workflowState.state,
@@ -601,44 +1066,44 @@ export async function handleStartTask(args, workflowState, git, zettlyOptions = 
   const preservedForeign = reconciled?.preservedTask || preservedBeforeSave?.preservedTask;
   if (preservedForeign) {
     warnings.push(
-      `⚠️ Ada task yang SEDANG BERJALAN dari proses agen lain dan hampir tertimpa:\n` +
+      `⚠️ A task is RUNNING from another agent process and was almost overwritten:\n` +
         `   "${preservedForeign}"\n` +
-        `   Task itu sudah disimpan ke history sebagai 'interrupted', bukan dihapus.\n` +
-        `   State workflow di mesin ini dipakai bersama antar sesi - periksa sebelum commit.`
+        `   That task was saved to history as 'interrupted', not deleted.\n` +
+        `   The workflow state on this machine is shared between sessions - check before committing.`
     );
   }
   if (archivedTask) {
     warnings.push(
-      `ℹ️ Task sebelumnya belum selesai dan diganti: "${archivedTask}".\n` +
+      `ℹ️ The previous task was not finished and was replaced: "${archivedTask}".\n` +
         `   Disimpan ke history sebagai 'interrupted'.`
     );
   }
   if (reconciled?.mergedHistory > 0) {
     warnings.push(
-      `ℹ️ ${reconciled.mergedHistory} entri history dari proses lain digabungkan, tidak ditimpa.`
+      `ℹ️ ${reconciled.mergedHistory} history entries from another process were merged, not overwritten.`
     );
   }
 
-  // Catat ke board Factory bila diminta. Tidak pernah menggagalkan start_task,
-  // tetapi kegagalannya DITAMPILKAN - kegagalan tak terlihat adalah persis yang
-  // membuat board diam dua hari tanpa ada yang tahu.
+  // Record to the Factory board when requested. It never fails start_task,
+  // but its failure IS SHOWN - an invisible failure is exactly what
+  // let the board stay silent for two days without anyone knowing.
   let factoryNote = "";
   try {
     const { createRequire } = await import("node:module");
     const req = createRequire(import.meta.url);
     const { recordToFactory } = req("../../factory-auto-task.cjs");
-    const hasil = await recordToFactory({ state: workflowState.state });
-    if (hasil.ok) {
-      workflowState.state.dodFactoryTaskId = hasil.id;
-      workflowState.state.zettly.externalLinks={...workflowState.state.zettly.externalLinks,factory:{id:hasil.id,taskKey:''}};
+    const result = await recordToFactory({ state: workflowState.state });
+    if (result.ok) {
+      workflowState.state.dodFactoryTaskId = result.id;
+      workflowState.state.zettly.externalLinks={...workflowState.state.zettly.externalLinks,factory:{id:result.id,taskKey:''}};
       const persisted=await workflowState.save();
       if(persisted?.verified===false||persisted?.conflict)throw Error('Factory link persistence was not verified');
-      factoryNote = `\n\n🏭 ${hasil.reused?'Linked existing':'Recorded in'} Factory: ${hasil.id}`;
-    } else if (hasil.reason && hasil.reason !== "dimatikan" && hasil.reason !== "kredensial Factory tidak lengkap") {
-      factoryNote = `\n\n⚠️ Factory TIDAK mencatat task ini: ${hasil.reason}`;
+      factoryNote = `\n\n🏭 ${result.reused?'Linked existing':'Recorded in'} Factory: ${result.id}`;
+    } else if (result.reason && result.reason !== "dimatikan" && result.reason !== "kredensial Factory tidak lengkap") {
+      factoryNote = `\n\n⚠️ Factory did NOT record this task: ${result.reason}`;
     }
   } catch (e) {
-    factoryNote = `\n\n⚠️ Factory TIDAK mencatat task ini: ${String(e && e.message).slice(0, 160)}`;
+    factoryNote = `\n\n⚠️ Factory did NOT record this task: ${String(e && e.message).slice(0, 160)}`;
   }
 
   let drawNote = "";
@@ -651,9 +1116,9 @@ export async function handleStartTask(args, workflowState, git, zettlyOptions = 
       // start_task reply, because an agent that never sees this will work
       // through the whole task with an invisible plan.
       drawNote =
-        `\n\n⚠️ FLOW BELUM TERLIHAT DI MONITOR: ${drawing.note}\n` +
-        `   Jalankan 'create_feature_flow' sekarang (sebelum menulis kode) supaya konteksnya lengkap. ` +
-        `Setiap balasan tool akan mengingatkan sampai drawing-nya ada.`;
+        `\n\n⚠️ FLOW NOT YET VISIBLE IN THE MONITOR: ${drawing.note}\n` +
+        `   Run 'create_feature_flow' now (before writing code) so the context is complete. ` +
+        `Every tool reply will remind you until the drawing exists.`
     }
   } catch (e) {
     drawNote = `\n\n⚠️ Zettly Draw sync error: ${String(e && e.message).slice(0, 120)}`;
@@ -704,13 +1169,13 @@ export async function handleStartTask(args, workflowState, git, zettlyOptions = 
   return textResponse(
     `✅ Task Started: ${args.description}\n\n${project.message}${warningBlock}${claimBlock}${factoryNote}${drawNote}\n\n` +
       cliTip +
-      `📋 Definition of Done (${workflowState.state.definitionOfDone.length} item, semua masih terbuka):\n${dodLines}\n` +
-      `   Buktikan tiap item dengan 'mark_dod_item' { id, evidence } setelah benar-benar terbukti,\n` +
-      `   atau kecualikan dengan 'waive_dod_item' { id, reason } bila memang tidak relevan.\n\n` +
+      `📋 Definition of Done (${workflowState.state.definitionOfDone.length} items, all still open):\n${dodLines}\n` +
+      `   Prove each item with 'mark_dod_item' { id, evidence } once it is genuinely proven,\n` +
+      `   or exclude it with 'waive_dod_item' { id, reason } when it is truly irrelevant.\n\n` +
       (planDerived
-        ? `⚠️ 'plan' tidak dikirim, jadi rencana SEMENTARA diturunkan dari DoD.\n` +
-          `   Urutannya belum tentu urutan kerja yang benar. Kirim 'plan' pada 'start_task',\n` +
-          `   atau susun ulang sekarang dengan 'set_plan' { steps: [...] }.\n\n`
+        ? `⚠️ 'plan' was not sent, so a TEMPORARY plan was derived from the DoD.\n` +
+          `   Its order is not necessarily the correct working order. Send 'plan' on 'start_task',\n` +
+          `   or rearrange it now with 'set_plan' { steps: [...] }.\n\n`
         : `${renderPlanFull(workflowState.state.plan)}\n\n`) +
       mcpBlock +
       preflightBlock +
@@ -949,20 +1414,20 @@ export async function handleRunTests(args, workflowState) {
 }
 
 /**
- * Ganti rencana task yang sedang berjalan.
+ * Replace the plan of the running task.
  *
- * Dipakai saat rencana awal ternyata salah setelah ditelusuri. Langkah yang
- * sudah ditandai selesai dipertahankan bila teksnya sama, supaya mengganti
- * rencana tidak menghapus progres yang sudah nyata.
+ * Used when the initial plan turns out to be wrong after investigation. Steps already
+ * marked done are preserved when their text matches, so replacing the
+ * plan does not delete real progress.
  */
 export async function handleSetPlan(args, workflowState) {
   if (workflowState.state.currentPhase === "idle") {
-    return textResponse("⚠️ Belum ada task aktif. Mulai dengan 'start_task' sebelum menyusun rencana.");
+    return textResponse("⚠️ No active task yet. Start with 'start_task' before composing a plan.");
   }
 
   const check = validatePlanSteps(args.steps);
   if (!check.ok) {
-    return textResponse(`⚠️ ${check.error}\n\nRencana lama tidak diubah.`);
+    return textResponse(`⚠️ ${check.error}\n\nThe previous plan was not changed.`);
   }
 
   const previous = normalizePlan(workflowState.state.plan);
@@ -981,20 +1446,20 @@ export async function handleSetPlan(args, workflowState) {
 }
 
 /**
- * Tandai satu langkah rencana sebagai selesai (atau buka kembali).
+ * Mark one plan step as done (or reopen it).
  *
- * Idempoten: menandai ulang langkah yang sudah selesai tidak mengubah apa pun.
- * Membuka kembali berguna saat langkah yang dikira selesai ternyata belum.
+ * Idempotent: re-marking an already done step changes nothing.
+ * Reopening is useful when a step believed done turns out not to be.
  */
 export async function handleMarkPlanStep(args, workflowState) {
   if (workflowState.state.currentPhase === "idle") {
-    return textResponse("⚠️ Belum ada task aktif.");
+    return textResponse("⚠️ No active task yet.");
   }
 
   const plan = normalizePlan(workflowState.state.plan);
   if (plan.length === 0) {
     return textResponse(
-      "⚠️ Task ini belum punya rencana. Isi dengan 'set_plan' { steps: [...] } lebih dulu."
+      "⚠️ This task has no plan yet. Fill it with 'set_plan' { steps: [...] } first."
     );
   }
 
@@ -1002,7 +1467,7 @@ export async function handleMarkPlanStep(args, workflowState) {
   const item = plan.find((entry) => entry.id === id);
   if (!item) {
     return textResponse(
-      `⚠️ Tidak ada langkah ber-id "${id}".\n\n${renderPlanFull(plan)}`
+      `⚠️ No step with id "${id}".\n\n${renderPlanFull(plan)}`
     );
   }
 
@@ -1012,8 +1477,8 @@ export async function handleMarkPlanStep(args, workflowState) {
   );
   await workflowState.save();
 
-  // Peristiwa dikirim SESUDAH simpan berhasil: kalau simpan gagal, dashboard
-  // tidak boleh mencatat langkah yang tidak pernah tercapai.
+  // The event is sent AFTER the save succeeds: if the save fails, the dashboard
+  // must not record a step that was never reached.
   await reportEventSafe(
     workflowState.state,
     status === "done" ? "step_done" : "step_reopened",
@@ -1022,10 +1487,10 @@ export async function handleMarkPlanStep(args, workflowState) {
 
   const progress = planProgress(workflowState.state.plan);
   return textResponse(
-    `${status === "done" ? "✅" : "↩️"} Langkah ${id} ${status === "done" ? "selesai" : "dibuka kembali"}: ${item.text}\n\n` +
+    `${status === "done" ? "✅" : "↩️"} Step ${id} ${status === "done" ? "done" : "reopened"}: ${item.text}\n\n` +
       `${renderPlanFull(workflowState.state.plan)}\n\n` +
       `Progres: ${progress.done}/${progress.total}` +
-      (progress.next ? ` — berikutnya: ${progress.next.text}` : " — semua langkah selesai")
+      (progress.next ? ` — next: ${progress.next.text}` : " — all steps done")
   );
 }
 
@@ -1040,9 +1505,9 @@ export async function handleCreateDocumentation(args, workflowState, context = {
     );
   }
 
-  // `files` diverifikasi terhadap working tree. Tanpa ini, langkah dokumentasi
-  // kembali menjadi klaim: `documentationType: "inline-comments"` dulu cukup
-  // untuk menutupnya, dan README tidak pernah tersentuh.
+  // `files` is verified against the working tree. Without this, the documentation step
+  // becomes a claim again: `documentationType: "inline-comments"` used to be enough
+  // to close it, and the README was never touched.
   const requested = Array.isArray(args.files)
     ? args.files.map((entry) => String(entry ?? "").trim()).filter(Boolean)
     : [];
@@ -1054,9 +1519,9 @@ export async function handleCreateDocumentation(args, workflowState, context = {
     const notDocumentation = requested.filter((p) => !isDocumentationPath(p));
     if (notDocumentation.length > 0) {
       return textResponse(
-        `⚠️ Dibatalkan: ini bukan berkas dokumentasi: ${notDocumentation.join(", ")}\n\n` +
-          `Berkas dokumentasi adalah README*, CHANGELOG*, CONTRIBUTING*, apa pun di bawah ` +
-          `docs/ atau doc/, serta berkas .md/.mdx/.rst/.adoc di luar direktori tes.`
+        `⚠️ Refused: these are not documentation files: ${notDocumentation.join(", ")}\n\n` +
+          `Documentation files are README*, CHANGELOG*, CONTRIBUTING*, anything under ` +
+          `docs/ or doc/, plus .md/.mdx/.rst/.adoc files outside test directories.`
       );
     }
 
@@ -1064,15 +1529,15 @@ export async function handleCreateDocumentation(args, workflowState, context = {
     if (missing.length > 0) {
       const actual = inputs.changedPaths.length > 0
         ? inputs.changedPaths.map((p) => `   • ${p}`).join("\n")
-        : "   (tidak ada perubahan sama sekali)";
+        : "   (no changes at all)";
       return textResponse(
-        `⚠️ Dibatalkan: berkas ini disebut sebagai dokumentasi tetapi tidak muncul ` +
+        `⚠️ Refused: these files are declared as documentation but do not appear ` +
           `sebagai perubahan di working tree: ${missing.join(", ")}\n\n` +
-          `Yang benar-benar berubah sekarang:\n${actual}\n\n` +
+          `What actually changed right now:\n${actual}\n\n` +
           `Sebutkan path relatif terhadap akar repo (contoh: "README.md"), bukan path absolut. ` +
-          `Perbarui berkasnya lebih dulu, lalu sebut ulang. ` +
-          `Kalau dokumentasi memang tidak perlu diubah, pakai 'waive_documentation' { reason }.\n\n` +
-          `Tidak ada state yang diubah.`
+          `Update the files first, then declare them again. ` +
+          `If the documentation truly does not need changes, use 'waive_documentation' { reason }.\n\n` +
+          `No state was changed.`
       );
     }
   }
@@ -1088,9 +1553,9 @@ export async function handleCreateDocumentation(args, workflowState, context = {
   workflowState.state.documentationCreated = true;
   workflowState.state.documentationType = args.documentationType;
   workflowState.state.documentationSummary = args.summary;
-  // Hanya ditimpa bila `files` benar-benar dikirim. Panggilan kedua tanpa
-  // `files` (atau lewat run_full_workflow dengan daftar kosong) tidak boleh
-  // menghapus bukti yang sudah terverifikasi sebelumnya.
+  // Only overwritten when `files` is actually sent. A second call without
+  // `files` (or through run_full_workflow with an empty list) must not
+  // delete evidence that was already verified earlier.
   if (requested.length > 0) {
     workflowState.state.documentationFiles = requested;
   }
@@ -1105,22 +1570,22 @@ export async function handleCreateDocumentation(args, workflowState, context = {
   workflowState.state.lastPushBranch = "";
   await workflowState.save();
 
-  // Pesan sukses WAJIB diawali ✅. `isErrorResponse` memperlakukan awalan ⚠️
-  // sebagai kegagalan, dan `run_full_workflow` akan berhenti di langkah ini.
+  // The success message MUST start with ✅. `isErrorResponse` treats a ⚠️ prefix
+  // as a failure, and `run_full_workflow` stops at this step.
   const gateNote = isGateSatisfied(gate.status)
     ? requested.length > 0
       ? `✅ Gerbang dokumentasi terpenuhi oleh: ${requested.join(", ")}`
       : `✅ Gerbang dokumentasi terpenuhi (${gate.status}).`
-    : `⚠️ Gerbang dokumentasi belum terpenuhi: ${gate.sourceChanged.length} berkas source ` +
-      `berubah tanpa berkas dokumentasi.\n` +
-      `   'check_ready_to_commit' akan menolak sampai Anda memakai 'files: [...]' ` +
-      `atau 'waive_documentation'.`;
+    : `⚠️ The documentation gate is not satisfied yet: ${gate.sourceChanged.length} source files ` +
+      `changed without a documentation file.\n` +
+      `   'check_ready_to_commit' will refuse until you use 'files: [...]' ` +
+      `or 'waive_documentation'.`;
 
   return textResponse(
     `✅ Documentation created/updated!\n\n` +
       `Type: ${args.documentationType}\nSummary: ${args.summary}\n` +
       (requested.length > 0 ? `Files: ${requested.join(", ")}\n` : "") +
-      `✅ PRD check: docs/PRD.md ada di paket MCP (bukan di repo proyek).\n` +
+      `✅ PRD check: docs/PRD.md exists in the MCP package (not in the project repo).\n` +
       `${gateNote}\n\n` +
       `🎉 You're ready to verify your work!\n\n` +
       `Next Steps:\n` +
@@ -1136,17 +1601,17 @@ export async function handleCreateDocumentation(args, workflowState, context = {
 }
 
 /**
- * Kecualikan gerbang dokumentasi dengan alasan tertulis.
+ * Exclude the documentation gate with a written reason.
  *
- * Waiver adalah KEPUTUSAN, bukan jalan pintas: alasannya ikut ke entri history,
- * ke laporan commit, dan ke rekomendasi sesi berikutnya. Pola me-waive setiap
- * task jadi terlihat, bukan tersembunyi.
+ * A waiver is a DECISION, not a shortcut: the reason goes into the history entry,
+ * the commit report, and the next session's recommendations, so waiving every
+ * task becomes visible instead of hidden.
  */
 export async function handleWaiveDocumentation(args, workflowState) {
   if (!workflowState.state.testsPassed && !workflowState.state.testsSkipped) {
     return textResponse(
-      "⚠️ Selesaikan langkah tes lebih dulu (run_tests dengan passed=true, atau skip_tests), " +
-        "sebelum mengecualikan gerbang dokumentasi."
+      "⚠️ Finish the test step first (run_tests with passed=true, or skip_tests), " +
+        "before excluding the documentation gate."
     );
   }
 
@@ -1154,15 +1619,15 @@ export async function handleWaiveDocumentation(args, workflowState) {
 
   if (reason.length < MIN_WAIVER_REASON) {
     return textResponse(
-      `⚠️ Dibatalkan: alasan waiver minimal ${MIN_WAIVER_REASON} karakter.\n\n` +
-        `Tulis KENAPA dokumentasi tidak perlu diubah, bukan sekadar "tidak perlu". ` +
-        `Alasan ini masuk history dan akan terbaca lagi di sesi berikutnya.`
+      `⚠️ Refused: the waiver reason needs at least ${MIN_WAIVER_REASON} characters.\n\n` +
+        `Write WHY the documentation does not need changes, not just "not needed". ` +
+        `This reason goes into history and will be read again in the next session.`
     );
   }
 
   if (reason.length > MAX_WAIVER_REASON) {
     return textResponse(
-      `⚠️ Dibatalkan: alasan waiver maksimal ${MAX_WAIVER_REASON} karakter; dikirim ${reason.length}.`
+      `⚠️ Refused: the waiver reason allows at most ${MAX_WAIVER_REASON} characters; ${reason.length} were sent.`
     );
   }
 
@@ -1172,10 +1637,10 @@ export async function handleWaiveDocumentation(args, workflowState) {
   await workflowState.save();
 
   return textResponse(
-    `✅ Gerbang dokumentasi dikecualikan untuk task ini.\n\n` +
-      `Alasan: ${reason}\n\n` +
-      `Alasan ini dicatat di history, disebut di laporan commit, dan muncul di rekomendasi ` +
-      `sesi berikutnya. Lanjutkan dengan 'check_ready_to_commit'.`
+    `✅ The documentation gate is excluded for this task.\n\n` +
+      `Reason: ${reason}\n\n` +
+      `This reason is recorded in history, mentioned in the commit report, and appears in the next ` +
+      `session's recommendations. Continue with 'check_ready_to_commit'.`
   );
 }
 

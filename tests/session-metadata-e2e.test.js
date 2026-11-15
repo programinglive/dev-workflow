@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { mkdtemp, rm, writeFile, readdir } from "node:fs/promises";
+import { spawn, spawnSync } from "node:child_process";
+import { mkdir, mkdtemp, rm, writeFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { once } from "node:events";
@@ -81,6 +81,12 @@ function startServer(env, cwd) {
 
 test("MCP SDK meneruskan _meta sessionID sampai ke state di disk", async () => {
   const projectRoot = await mkdtemp(path.join(tmpdir(), "mcp-meta-e2e-"));
+  const repoA = path.join(projectRoot, "repo-a");
+  const repoB = path.join(projectRoot, "repo-b");
+  await mkdir(repoA, { recursive: true });
+  await mkdir(repoB, { recursive: true });
+  spawnSync("git", ["init", "-q", "-b", "main"], { cwd: repoA, encoding: "utf8" });
+  spawnSync("git", ["init", "-q", "-b", "main"], { cwd: repoB, encoding: "utf8" });
   await writeFile(path.join(projectRoot, "package.json"), JSON.stringify({ name: "fixture" }));
 
   const server = startServer({
@@ -102,7 +108,12 @@ test("MCP SDK meneruskan _meta sessionID sampai ke state di disk", async () => {
       method: "tools/call",
       params: {
         name: "start_task",
-        arguments: { description: "Task sesi A lewat stdio", type: "feature" },
+        arguments: {
+          description: "Task sesi A lewat stdio",
+          type: "feature",
+          projectDir: repoA,
+          definitionOfDone: ["done A"],
+        },
         _meta: { [SESSION_META_KEY]: "ses_E2E_AAA" },
       },
     });
@@ -113,7 +124,14 @@ test("MCP SDK meneruskan _meta sessionID sampai ke state di disk", async () => {
       method: "tools/call",
       params: {
         name: "start_task",
-        arguments: { description: "Task sesi B lewat stdio", type: "bugfix" },
+        arguments: {
+          description: "Task sesi B lewat stdio",
+          type: "bugfix",
+          projectDir: repoB,
+          definitionOfDone: ["done B"],
+          allowProjectSwitch: true,
+          projectSwitchReason: "Testing distinct session key isolation",
+        },
         _meta: { [SESSION_META_KEY]: "ses_E2E_BBB" },
       },
     });
@@ -130,7 +148,9 @@ test("MCP SDK meneruskan _meta sessionID sampai ke state di disk", async () => {
         .map((row) => row.session_key);
 
       assert.ok(
-        keys.includes("ses_E2E_AAA") && keys.includes("ses_E2E_BBB"),
+        keys.some((k) => k === "ses_E2E_AAA" || /^ses_E2E_AAA-h[0-9a-f]{32}$/.test(k)) &&
+          keys.some((k) => k === "ses_E2E_BBB" || /^ses_E2E_BBB-h[0-9a-f]{32}$/.test(k)) &&
+          keys.length >= 2,
         `harus ada baris per sesi (ses_E2E_AAA dan ses_E2E_BBB), dapat: ${JSON.stringify(keys)}`,
       );
       assert.ok(

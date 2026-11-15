@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm, mkdir } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -24,7 +25,8 @@ async function withState(callback) {
     // start_task refuses a projectDir that is not a git repository, so the test
     // provides one instead of skipping that guard.
     const repo = path.join(dir, "repo");
-    await mkdir(path.join(repo, ".git"), { recursive: true });
+    await mkdir(repo, { recursive: true });
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo, stdio: "ignore" });
     await callback(state, repo);
   } finally {
     await rm(dir, { recursive: true, force: true });

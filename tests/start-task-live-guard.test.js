@@ -38,7 +38,10 @@ async function withState(diskState) {
   return {
     state,
     file,
-    cleanup: () => rm(dir, { recursive: true, force: true }),
+    cleanup: async () => {
+      await state.close();
+      await rm(dir, { recursive: true, force: true });
+    },
   };
 }
 

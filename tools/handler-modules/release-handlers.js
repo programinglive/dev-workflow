@@ -195,9 +195,12 @@ export async function handleRecordDeployment(args, context) {
   // checkout this task never started in would attach the claim to the wrong
   // project, so the identity contract is checked first.
   {
+    const hasExplicitProjectDir = typeof args.projectDir === "string" && args.projectDir.trim() !== "";
     const repoGuard = await assertMutationRepository({
       workflowState,
-      dir: workflowState.state.projectDir || getActiveProjectDir() || "",
+      dir: hasExplicitProjectDir
+        ? getActiveProjectDir() || args.projectDir.trim()
+        : workflowState.state.projectDir || getActiveProjectDir() || "",
       operation: "record_deployment",
       taskProjectDir,
     });
@@ -310,31 +313,53 @@ export async function handleRecordDeployment(args, context) {
 }
 
 function resolveLockProjectDir(args, workflowState) {
+  const taskProjectDir =
+    typeof workflowState.state.projectDir === "string" ? workflowState.state.projectDir.trim() : "";
   const requested = typeof args.projectDir === "string" ? args.projectDir.trim() : "";
   if (requested) {
     try {
       setActiveProjectDir(resolveProjectDir({ explicit: requested }).dir);
     } catch {
-      return "";
+      return { projectDir: "", taskProjectDir };
     }
-    workflowState.state.projectDir = getActiveProjectDir();
+    if (!taskProjectDir) {
+      workflowState.state.projectDir = getActiveProjectDir();
+    }
+    return { projectDir: getActiveProjectDir() || "", taskProjectDir };
   }
-  return workflowState.state.projectDir || getActiveProjectDir() || "";
+  return { projectDir: taskProjectDir || getActiveProjectDir() || "", taskProjectDir };
 }
 
 export async function handleAcquireReleaseLock(args, context) {
   const { workflowState } = context;
-  const projectDir = resolveLockProjectDir(args, workflowState);
+  const { projectDir, taskProjectDir } = resolveLockProjectDir(args, workflowState);
   if (!projectDir) {
     return textResponse("⚠️ Tidak bisa menentukan repo. Sebutkan 'projectDir'.");
   }
 
-  const result = acquireReleaseLock({
-    projectDir,
-    tag: typeof args.tag === "string" ? args.tag.trim() : "",
-    sessionId: workflowState.sessionId || process.env.DEVWF_SESSION_ID || "",
-    machine: workflowState.state.machine || process.env.COMPUTERNAME || "",
+  const repoGuard = await assertMutationRepository({
+    workflowState,
+    dir: projectDir,
+    operation: "acquire_release_lock",
+    taskProjectDir,
   });
+  if (!repoGuard.ok) {
+    return textResponse(repoGuard.message);
+  }
+
+  const runFenced = (op, fn) =>
+    typeof workflowState._withOwnershipFence === "function"
+      ? workflowState._withOwnershipFence(op, fn)
+      : fn();
+
+  const result = await runFenced("acquire_release_lock", async () =>
+    acquireReleaseLock({
+      projectDir,
+      tag: typeof args.tag === "string" ? args.tag.trim() : "",
+      sessionId: workflowState.sessionId || process.env.DEVWF_SESSION_ID || "",
+      machine: workflowState.state.machine || process.env.COMPUTERNAME || "",
+    })
+  );
 
   if (!result.ok) {
     return textResponse(`⚠️ ${result.error}`);
@@ -351,16 +376,33 @@ export async function handleAcquireReleaseLock(args, context) {
 
 export async function handleReleaseReleaseLock(args, context) {
   const { workflowState } = context;
-  const projectDir = resolveLockProjectDir(args, workflowState);
+  const { projectDir, taskProjectDir } = resolveLockProjectDir(args, workflowState);
   if (!projectDir) {
     return textResponse("⚠️ Tidak bisa menentukan repo. Sebutkan 'projectDir'.");
   }
 
-  const result = releaseReleaseLock({
-    projectDir,
-    sessionId: workflowState.sessionId || process.env.DEVWF_SESSION_ID || "",
-    force: args.force === true,
+  const repoGuard = await assertMutationRepository({
+    workflowState,
+    dir: projectDir,
+    operation: "release_release_lock",
+    taskProjectDir,
   });
+  if (!repoGuard.ok) {
+    return textResponse(repoGuard.message);
+  }
+
+  const runFenced = (op, fn) =>
+    typeof workflowState._withOwnershipFence === "function"
+      ? workflowState._withOwnershipFence(op, fn)
+      : fn();
+
+  const result = await runFenced("release_release_lock", async () =>
+    releaseReleaseLock({
+      projectDir,
+      sessionId: workflowState.sessionId || process.env.DEVWF_SESSION_ID || "",
+      force: args.force === true,
+    })
+  );
 
   if (!result.ok) {
     return textResponse(`⚠️ ${result.error}`);
@@ -464,9 +506,12 @@ export async function handlePerformRelease(args, context) {
   // the checkout this task started in, never in another clone that happens to
   // share the remote.
   {
+    const hasExplicitProjectDir = typeof args.projectDir === "string" && args.projectDir.trim() !== "";
     const repoGuard = await assertMutationRepository({
       workflowState,
-      dir: workflowState.state.projectDir || getActiveProjectDir() || "",
+      dir: hasExplicitProjectDir
+        ? getActiveProjectDir() || args.projectDir.trim()
+        : workflowState.state.projectDir || getActiveProjectDir() || "",
       operation: "perform_release",
       taskProjectDir,
     });
@@ -693,6 +738,12 @@ export async function handlePerformRelease(args, context) {
       }
     }
 
+    const runFencedExisting = (op, fn) =>
+      typeof workflowState._withOwnershipFence === "function"
+        ? workflowState._withOwnershipFence(op, fn)
+        : fn();
+
+    return await runFencedExisting("perform_release_existing", async () => {
     if (!alreadyOnRemote) {
       try {
         await exec(pushCommand);
@@ -731,6 +782,7 @@ export async function handlePerformRelease(args, context) {
       `✅ Release recorded (already exists on HEAD${resolvedVersion ? `: v${resolvedVersion}` : ""}; skipped re-running release script).` +
       `${leftOverNote}${summaryBlock}`
     );
+    });
   }
 
   const lastCommitMessage = existingRelease.lastCommitMessage || (await git.getLastCommitMessage());
@@ -774,6 +826,12 @@ export async function handlePerformRelease(args, context) {
     );
   }
 
+  const runFenced = (op, fn) =>
+    typeof workflowState._withOwnershipFence === "function"
+      ? workflowState._withOwnershipFence(op, fn)
+      : fn();
+
+  return await runFenced("perform_release", async () => {
   // Catat keadaan SEBELUM rilis supaya, kalau push gagal, kita bisa menyebut
   // persis apa yang tertinggal di mesin.
   const headBefore = await safeExecStdout(exec, "git rev-parse HEAD");
@@ -843,4 +901,5 @@ export async function handlePerformRelease(args, context) {
   }
 
   return textResponse(`${message}${leftOverNote}`);
+  });
 }

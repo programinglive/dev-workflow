@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -10,6 +10,12 @@ import {
   readSessionPointer,
   resolveSessionKey,
 } from "../workflow-state.js";
+import { acquireWorktreeMutex, releaseWorktreeMutex } from "../process-lock.js";
+
+async function initFakeGitDir(dir) {
+  await mkdir(path.join(dir, ".git"), { recursive: true });
+  await writeFile(path.join(dir, ".git", "HEAD"), "ref: refs/heads/main\n", "utf8");
+}
 
 /**
  * Identitas proyek harus mengikuti PROYEK yang dikerjakan, bukan cwd proses.
@@ -54,7 +60,7 @@ test("penunjuk sesi mengalihkan state ke proyek yang benar-benar dikerjakan", as
     const kerja = path.join(base, "Documents", "Default Project");
     const proyek = path.join(base, "code", "belajar");
     await mkdir(kerja, { recursive: true });
-    await mkdir(path.join(proyek, ".git"), { recursive: true });
+    await initFakeGitDir(proyek);
     process.chdir(kerja);
 
     // Sebelum dipin: mengikuti cwd.
@@ -62,7 +68,19 @@ test("penunjuk sesi mengalihkan state ke proyek yang benar-benar dikerjakan", as
     assert.match(sebelum.replace(/\\/g, "/"), /Default-Project-/);
 
     // start_task memanggil ini setelah projectDir dipin.
-    const pinned = pinSessionProject({ stateFile: sebelum, projectDir: proyek });
+    const acq = await acquireWorktreeMutex({ projectDir: proyek, ownerKey: resolveSessionKey(process.env, "ses_PIN2") });
+    assert.equal(acq.ok, true);
+    let pinned;
+    try {
+      pinned = pinSessionProject({
+        stateFile: sebelum,
+        projectDir: proyek,
+        kernelCapability: acq.capability,
+        requireKernelMutex: true,
+      });
+    } finally {
+      await releaseWorktreeMutex(acq.capability);
+    }
     assert.ok(pinned, "pinSessionProject harus mengembalikan letak baru");
 
     // Sesudah dipin: mengikuti PROYEK, bukan cwd.
@@ -79,14 +97,23 @@ test("dua sesi di cwd yang sama tetapi proyek berbeda tidak lagi tercampur", asy
     const belajar = path.join(base, "code", "belajar");
     const clinic = path.join(base, "code", "clinic");
     await mkdir(kerja, { recursive: true });
-    await mkdir(path.join(belajar, ".git"), { recursive: true });
-    await mkdir(path.join(clinic, ".git"), { recursive: true });
+    await initFakeGitDir(belajar);
+    await initFakeGitDir(clinic);
     process.chdir(kerja);
 
     const a0 = resolveStateFile({ sessionId: "ses_A" });
     const b0 = resolveStateFile({ sessionId: "ses_B" });
-    pinSessionProject({ stateFile: a0, projectDir: belajar });
-    pinSessionProject({ stateFile: b0, projectDir: clinic });
+    const acqA = await acquireWorktreeMutex({ projectDir: belajar, ownerKey: resolveSessionKey(process.env, "ses_A") });
+    const acqB = await acquireWorktreeMutex({ projectDir: clinic, ownerKey: resolveSessionKey(process.env, "ses_B") });
+    assert.equal(acqA.ok, true);
+    assert.equal(acqB.ok, true);
+    try {
+      pinSessionProject({ stateFile: a0, projectDir: belajar, kernelCapability: acqA.capability, requireKernelMutex: true });
+      pinSessionProject({ stateFile: b0, projectDir: clinic, kernelCapability: acqB.capability, requireKernelMutex: true });
+    } finally {
+      await releaseWorktreeMutex(acqA.capability);
+      await releaseWorktreeMutex(acqB.capability);
+    }
 
     const a1 = resolveStateFile({ sessionId: "ses_A" });
     const b1 = resolveStateFile({ sessionId: "ses_B" });
@@ -102,14 +129,20 @@ test("penunjuk disimpan per sesi, bukan per mesin", async () => {
     const kerja = path.join(base, "kerja");
     const proyek = path.join(base, "code", "satu");
     await mkdir(kerja, { recursive: true });
-    await mkdir(path.join(proyek, ".git"), { recursive: true });
+    await initFakeGitDir(proyek);
     process.chdir(kerja);
 
     const stateFile = resolveStateFile({ sessionId: "ses_PIN3" });
-    pinSessionProject({ stateFile, projectDir: proyek });
+    const key = resolveSessionKey(process.env, "ses_PIN3");
+    const acq = await acquireWorktreeMutex({ projectDir: proyek, ownerKey: key });
+    assert.equal(acq.ok, true);
+    try {
+      pinSessionProject({ stateFile, projectDir: proyek, kernelCapability: acq.capability, requireKernelMutex: true });
+    } finally {
+      await releaseWorktreeMutex(acq.capability);
+    }
 
     const baseDir = path.join(base, "state");
-    const key = resolveSessionKey(process.env, "ses_PIN3");
     const pointer = readSessionPointer(baseDir, key);
 
     assert.ok(pointer, "penunjuk harus tertulis");
@@ -124,11 +157,17 @@ test("penunjuk yang menunjuk direktori hilang diabaikan, bukan membuat crash", a
     const kerja = path.join(base, "kerja");
     const proyek = path.join(base, "code", "sementara");
     await mkdir(kerja, { recursive: true });
-    await mkdir(path.join(proyek, ".git"), { recursive: true });
+    await initFakeGitDir(proyek);
     process.chdir(kerja);
 
     const stateFile = resolveStateFile({ sessionId: "ses_PIN4" });
-    pinSessionProject({ stateFile, projectDir: proyek });
+    const acq = await acquireWorktreeMutex({ projectDir: proyek, ownerKey: resolveSessionKey(process.env, "ses_PIN4") });
+    assert.equal(acq.ok, true);
+    try {
+      pinSessionProject({ stateFile, projectDir: proyek, kernelCapability: acq.capability, requireKernelMutex: true });
+    } finally {
+      await releaseWorktreeMutex(acq.capability);
+    }
 
     // Proyeknya dipindah/dihapus setelah dipin.
     await rm(proyek, { recursive: true, force: true });

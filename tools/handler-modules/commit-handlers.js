@@ -270,9 +270,12 @@ export async function handleCommitAndPush(args, context) {
   // in. A `projectDir` override that points at another checkout must not commit
   // there, even when the remote matches.
   {
+    const hasExplicitProjectDir = typeof args.projectDir === "string" && args.projectDir.trim() !== "";
     const repoGuard = await assertMutationRepository({
       workflowState,
-      dir: workflowState.state.projectDir,
+      dir: hasExplicitProjectDir
+        ? getActiveProjectDir() || args.projectDir.trim()
+        : workflowState.state.projectDir || getActiveProjectDir() || "",
       operation: "commit_and_push",
       taskProjectDir,
     });
@@ -391,9 +394,15 @@ export async function handleCommitAndPush(args, context) {
   // Label laporan memakai repo yang benar-benar dipakai git bila diketahui.
   const repoName = gitToplevel || repoLabel();
 
+  const runFenced = (op, fn) =>
+    typeof workflowState._withOwnershipFence === "function"
+      ? workflowState._withOwnershipFence(op, fn)
+      : fn();
+
   const branchForPush = pickPushBranch({ requestedBranch, currentBranch, primaryBranch });
 
   if (!hasWorkingChanges) {
+    return await runFenced("commit_and_push_no_changes", async () => {
     const lastCommitMessage = await git.getLastCommitMessage();
     const effectiveCommitMessage = lastCommitMessage || providedCommitMessage;
 
@@ -449,6 +458,7 @@ export async function handleCommitAndPush(args, context) {
       `oleh panggilan sebelumnya, atau berada di repo/branch lain.\n\n` +
       `Next: Run 'perform_release' to handle the release and push tags.`
     );
+    });
   }
 
   const statusOutput = await git.getStatusOutput();
@@ -489,6 +499,7 @@ export async function handleCommitAndPush(args, context) {
     );
   }
 
+  return await runFenced("commit_and_push", async () => {
   try {
     if (explicitPaths.length > 0) {
       await exec("git add", { executable: "git", arguments: ["add", "--", ...explicitPaths] });
@@ -593,6 +604,7 @@ export async function handleCommitAndPush(args, context) {
   return textResponse(
     `✅ Commit and push completed!\nRepo: ${repoName}\n\nCommit message: ${generatedSummary}\nPushed to: ${branchForPush} (verified at ${pushed.head.slice(0, 8)})${foreignNote}${waiverNote}\n\nNext: Run 'perform_release' to handle the release and push tags.`
   );
+  });
 }
 
 /**
