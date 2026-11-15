@@ -720,14 +720,77 @@ async function ensureCompatibilityLinks(primaryPath) {
  * `CallToolRequest.params._meta["ai.opencode/sessionID"]`. Itu sumber utama
  * sekarang; env tetap dibaca sebagai cadangan untuk tes dan pemanggil lain.
  */
-export const SESSION_META_KEY = "ai.opencode/sessionID";
+/**
+ * The session-identity metadata key each real client sends.
+ *
+ * Captured from the installed clients, not guessed:
+ *   - OpenCode    `ai.opencode/sessionID`
+ *   - Codex       `sessionId` (with `threadId` as the same value)
+ *   - Antigravity `antigravity.google/conversation_id`
+ *
+ * A client that sends none of these is refused for a session-scoped tool. The
+ * keys are per client so one client's identity can never stand in for another's.
+ */
+export const SESSION_META_KEYS = {
+  opencode: ["ai.opencode/sessionID"],
+  codex: ["sessionId", "threadId"],
+  // Only the conversation id. `root_conversation_id` is deliberately NOT
+  // accepted: child conversations share a root, so falling back to it would let
+  // two different conversations select the same state.
+  antigravity: ["antigravity.google/conversation_id"],
+};
 
-/** Mengambil identitas sesi dari request metadata MCP, atau null. */
-export function sessionKeyFromRequest(request) {
-  const value = request?.params?._meta?.[SESSION_META_KEY];
+// A session key becomes a file name and a database key, so it is restricted to
+// a conservative charset. Anything else is refused rather than sanitised: a
+// value that needs cleaning is not a value we should trust.
+const SESSION_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
+
+// Windows reserves these device names, with or without an extension, so
+// `sessions/con.json` is not a usable file name.
+const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+
+function normalizeSessionKey(value) {
   if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  return trimmed === "" ? null : trimmed;
+  // No trimming: a padded value is a different value, and silently accepting
+  // " victim " as "victim" would let a caller choose an identity it did not
+  // actually present.
+  if (value !== value.trim()) return null;
+  if (!SESSION_KEY_PATTERN.test(value)) return null;
+  if (WINDOWS_RESERVED.test(value)) return null;
+  return value;
+}
+
+/**
+ * The session identity a request carries, or null.
+ *
+ * `agent` scopes which keys are accepted. `device-entry.cjs` sets DEVWF_AGENT
+ * for each client, so a Codex server does not accept an Antigravity
+ * conversation id even if one is present.
+ *
+ * When the agent is unknown the resolver accepts ONLY the OpenCode key, which
+ * is exactly what the server accepted before the other clients were added. It
+ * deliberately does not fall back to "any known key": that would let a request
+ * present another client's identity, and a directly launched server can set
+ * DEVWF_AGENT if it needs a different client.
+ */
+export function sessionKeyFromRequest(request, { agent = process.env.DEVWF_AGENT } = {}) {
+  const meta = request?.params?._meta;
+  if (!meta || typeof meta !== "object") return null;
+  const scoped = SESSION_META_KEYS[String(agent || "").toLowerCase()] || SESSION_META_KEYS.opencode;
+  const keys = scoped;
+
+  let resolved = null;
+  for (const key of keys) {
+    const raw = meta[key];
+    if (raw === undefined || raw === null) continue;
+    const normalized = normalizeSessionKey(raw);
+    // A present but invalid identity is a refusal, not a reason to try the next
+    // key: the caller presented something it should not have.
+    if (!normalized) return null;
+    if (resolved !== null && resolved !== normalized) return null;
+    resolved = normalized;
+  }
+  return resolved;
 }
 
 /**
