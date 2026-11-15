@@ -105,21 +105,21 @@ Read-only verification of `bw-tools` HTTP health endpoints at `2026-11-14T14:20:
 | `programinglive/dev-workflow-mcp-server` | **#98** | Committed final release governance docs & rebased onto `main`; squash-merged | `8efafb4e343d628705902c1e577d2e46fefeea4e` | OSS public surface security test PASS |
 
 ### Gate B & C — Server Cutover & Retired Service Decommission (`COMPLETED`)
-1. **`bw-tools` (`100.77.138.14:3200`) — `central-mcp-gateway.service`:**
+1. **`bw-tools` (`100.x.x.14:3200`) — `central-mcp-gateway.service`:**
    - Deployed commit `20f5ace182be18cbc7d62c81ae7f5d44bd068728` to `/opt/central-mcp-gateway` with `User=dhika`, `Group=dhika`, and `Environment=PATH=/usr/local/bin:/usr/bin:/bin`.
    - `/health` verified: `{"status":"healthy","service":"central-mcp-gateway","toolsCount":30}` (8 PocketBase + 18 Infra/CI/CD + 4 Notify).
    - Live tool verification passed: `pb_health` (`status: 200`), `find_domain` (`beautyworld.id` on `bw-app`), `runner_status` (`bw-tools group linux` id `58937956` online), and negative security checks (`ssh_vm` and `factory_status` rejected).
-2. **`bw-tools` (`100.77.138.14:3300`) — `infra-knowledge-mcp` Decommissioned & Deleted:**
+2. **`bw-tools` (`100.x.x.14:3300`) — `infra-knowledge-mcp` Decommissioned & Deleted:**
    - Stopped and disabled `infra-knowledge-mcp.service`, `infra-knowledge-refresh.service`, and `infra-knowledge-refresh.timer`.
    - Removed unit files and `/etc/sudoers.d/infra-knowledge-refresh`, ran `systemctl daemon-reload`, and deleted `/opt/infra-knowledge-mcp-server`.
    - Verified port `3300` is closed and only port `3200` is listening.
-3. **`bw-app` (`100.103.72.86`) — Factory Quarantine & PocketBase Backend Preservation:**
+3. **`bw-app` (`100.x.x.21`) — Factory Quarantine & PocketBase Backend Preservation:**
    - Confirmed `factory.service` is inactive/disabled and quarantined any `/root/.factory` directory without rotating the shared PocketBase admin account.
    - Confirmed `pocketbase.service` remains `active` on `bw-app:8090`.
 
 ### Gate D — Fleet-Wide 6-MCP Synchronization & Clean Repository Setup (`COMPLETED`)
 1. **Identical 6-MCP Server Registration Across All 3 Devices (`MMCH`, `HELLOWORLD`, `Mac`) and All 5 Client Configs (`.gemini/antigravity/mcp_config.json`, `.gemini/antigravity-cli/mcp_config.json`, `.gemini/config/mcp_config.json`, `.config/opencode/opencode.json`, `.codex/config.toml`):**
-   - `central-gateway` (`http://100.77.138.14:3200/mcp` and `/sse`)
+   - `central-gateway` (`http://100.x.x.14:3200/mcp` and `/sse`)
    - `dev-workflow`
    - `zettly`
    - `clinic-helper`
@@ -134,3 +134,42 @@ Read-only verification of `bw-tools` HTTP health endpoints at `2026-11-14T14:20:
    - Deleted local folders `infra-knowledge-mcp-server`, `pocketbase-mcp-server`, and `programinglive-mcp-server` (plus global `mcp-mermaid` npm package) across `MMCH`, `HELLOWORLD`, and `Mac`.
 3. **GitHub Remote Repositories:**
    - Archived `programinglive/infra-knowledge-mcp-server`, `programinglive/pocketbase-mcp-server`, and `programinglive/programinglive-mcp-server` via `gh repo archive --yes`. (Permanent deletion on GitHub requires an interactive OAuth refresh with `delete_repo` scope: `gh auth refresh -h github.com -s delete_repo`).
+
+---
+
+## 10. Independent Final Verification Addendum (2026-11-15)
+
+**Verified by:** Principal Autonomous Release Engineer (OpenCode, HELLOWORLD)
+**Canonical Task:** `63821490-bbb3-4c75-981d-39cfc48b6b08` · Focus `#81` · Todo `#741`
+
+### 10.1 Live Production State (read-only)
+- `bw-tools` `/opt/central-mcp-gateway` `HEAD = 20f5ace182be18cbc7d62c81ae7f5d44bd068728`, matching the PR #2 squash merge commit.
+- `central-mcp-gateway.service` is `active`; `/health` = `status: healthy`, `toolsCount: 30`, `activeLegacySessions: 1`.
+- Registered tool set recomputed from the deployed source (`createUnifiedMcpServer()`) equals exactly the 30 names reported by `/health` (8 PocketBase, 18 infra/CI-CD, 4 notify).
+- Live negative calls rejected: `ssh_vm` and `factory_status` both return `Gateway Error: Tool "..." is not registered on Central MCP Gateway.`
+- PocketBase is reachable through the gateway: `pb_health` → `200` (`https://pocketbase.programinglive.com`); `pb_list_collections` returns the `users` collection schema.
+- Schema mutation remains controlled: no `pb_create_collection` tool is registered.
+
+### 10.2 Security Remediation
+- `bw-app` read-only checks: `NO_FACTORY_SERVICE_ACTIVE`, `NO_FACTORY_VHOST_CONFIGURED`, `NO_FACTORY_TOKEN_IN_ENV`; the shared PocketBase admin account was not touched.
+- `infra-knowledge-mcp-server` PR #11 (`29dc97b`) `tests/handlers.test.js` = 26/26 PASS, including `SECURITY: ssh_vm tool is strictly not registered in getToolList()` and `SECURITY: handleToolCall rejects ssh_vm invocation`.
+- `programinglive/infra-knowledge-mcp-server` is `archived: true`; PR #11 remains `OPEN` / `MERGEABLE` but `BLOCKED` because GitHub forbids merges into archived repositories. Its runtime service on `bw-tools:3300` was already decommissioned and deleted (Section 9), so no `ssh_vm` exposure remains.
+
+### 10.3 Regression Tests
+- `central-mcp-gateway` @ `20f5ace`: `npm ci && npm test` → 14/14 PASS.
+- `dev-workflow-mcp-server` @ `7fa2a5f0f`: `npm run test:security` initially FAILED because this runbook contained real Tailscale IPs (`100.77.x.x`); sanitized here to `100.x.x.14` / `100.x.x.21`. CI run `43573976468` on `7fa2a5f0f` was `failure` for the same reason.
+
+### 10.4 Fleet MCP Registrations (verified read-only)
+| Device | OpenCode | Antigravity | Codex | Retired registrations present |
+|---|---|---|---|---|
+| HELLOWORLD | 6 | 6 | 6 | none |
+| MMCH | 6 | 6 | 6 | none |
+| Mac | 6 | 6 | 6 | none |
+
+All three clients register exactly: `central-gateway`, `dev-workflow`, `zettly`, `clinic-helper`, `playwright`, `cloudflare`.
+
+### 10.5 Six-Server Reachability (this client, HELLOWORLD)
+`central-gateway` `pb_health` OK; `dev-workflow` focus/session reads OK; `zettly` note search OK; `clinic-helper` auth status OK; `playwright` transport OK; `cloudflare` `accounts_list` OK.
+
+### 10.6 Outstanding Item
+PR #11 is intentionally unmerged (archived repository, decommissioned service). If the owner wants the source-level `ssh_vm` containment on `main`, the smallest action is: unarchive `programinglive/infra-knowledge-mcp-server`, squash-merge PR #11, then re-archive. No production exposure exists either way.
