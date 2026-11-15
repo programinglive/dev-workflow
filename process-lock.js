@@ -641,7 +641,7 @@ export function writeKernelLockMetadata({
  * Detect whether a live legacy (pre-Option-B) writer without kernel mutex support
  * currently holds a lock in `dir`.
  */
-export function findActiveLegacyWriter({ dir, isAlive = isPidAlive, ownPid = process.pid } = {}) {
+export function findActiveLegacyWriter({ dir, isAlive = currentIsAlive(), ownPid = process.pid } = {}) {
   if (!dir) return null;
   const resolvedDir = path.resolve(dir);
   const detailed = readProcessLockDetailed({ dir: resolvedDir });

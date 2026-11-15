@@ -77,7 +77,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       if (workflowState) {
         const sessionId = sessionKeyFromRequest(request);
         if (sessionId) await workflowState.useSession(sessionId);
-        await workflowState.load();
+        await workflowState.load({ skipWrites: true });
         // Repo proyek mengikuti sesi, bukan satu nilai global. Tanpa ini, sesi yang
         // bekerja di repo lain tetap menjalankan git di WORKFLOW_PROJECT_DIR.
         setActiveProjectDir(workflowState.state.projectDir || "");
@@ -209,46 +209,7 @@ Use 'check_ready_to_commit' to verify workflow completion.
 });
 
 // Start server
-export async function main() {
-  securityMode();
-  const startTime = Date.now();
-  safeLog('info', `[${new Date().toISOString()}] MCP Server starting...`);
-
-  // Detect the tool versions once, without holding up startup: the promise is
-  // not awaited, so a slow or missing binary costs nothing here, and every
-  // later snapshot reads the cached result.
-  toolchainOnce({
-    run: async (tool, args) => {
-      const { stdout } = await exec([tool, ...args].map(shellEscape).join(' '), { timeout: 4000 });
-      return stdout;
-    },
-  })
-    .then((toolchain) => setToolchain(toolchain))
-    .catch(() => setToolchain(null));
-
-  try {
-    // Initialize workflow state
-    workflowState = new WorkflowState();
-    // Select request metadata before the first disk write. Creating an idle
-    // PID fallback here leaves a phantom session alongside the real sessions.
-    safeLog('info', `[${new Date().toISOString()}] Workflow state initialization complete.`);
-  } catch (error) {
-    safeLog('error', `[${new Date().toISOString()}] Warning: Failed to initialize workflow state:`, error.message);
-    // Continue anyway - workflow state is optional for MCP to function
-    workflowState = new WorkflowState();
-  }
-
-  // Penanda proses - DI LUAR try di atas, dengan sengaja.
-  //
-  // 31 Oktober 2026: blok ini semula berada di dalam try yang sama dengan
-  // inisialisasi state. Saat dua proses MCP start serempak, satu di antaranya
-  // gagal menginisialisasi state (berebut berkas yang sama), masuk ke catch, dan
-  // penanda prosesnya tidak pernah ditulis. Hasilnya dua proses hidup dengan
-  // satu lock file: proses ganda tidak pernah terdeteksi.
-  //
-  // Lokasinya juga harus di `.state` PROYEK, bukan di direktori user: direktori
-  // user bisa berbeda antar proses, sehingga keduanya tidak saling melihat.
-async function initStartupWorktreeMutex(state, { heartbeat = false } = {}) {
+export async function initStartupWorktreeMutex(state, { heartbeat = false } = {}) {
   state.requireKernelMutex = true;
   const lockDir = projectLockDir(state.stateFile);
   let startupProjectDir = state.state?.projectDir || "";
@@ -308,6 +269,45 @@ async function initStartupWorktreeMutex(state, { heartbeat = false } = {}) {
   }
 }
 
+async function main() {
+  securityMode();
+  const startTime = Date.now();
+  safeLog('info', `[${new Date().toISOString()}] MCP Server starting...`);
+
+  // Detect the tool versions once, without holding up startup: the promise is
+  // not awaited, so a slow or missing binary costs nothing here, and every
+  // later snapshot reads the cached result.
+  toolchainOnce({
+    run: async (tool, args) => {
+      const { stdout } = await exec([tool, ...args].map(shellEscape).join(' '), { timeout: 4000 });
+      return stdout;
+    },
+  })
+    .then((toolchain) => setToolchain(toolchain))
+    .catch(() => setToolchain(null));
+
+  try {
+    // Initialize workflow state
+    workflowState = new WorkflowState();
+    // Select request metadata before the first disk write. Creating an idle
+    // PID fallback here leaves a phantom session alongside the real sessions.
+    safeLog('info', `[${new Date().toISOString()}] Workflow state initialization complete.`);
+  } catch (error) {
+    safeLog('error', `[${new Date().toISOString()}] Warning: Failed to initialize workflow state:`, error.message);
+    // Continue anyway - workflow state is optional for MCP to function
+    workflowState = new WorkflowState();
+  }
+
+  // Penanda proses - DI LUAR try di atas, dengan sengaja.
+  //
+  // 31 Oktober 2026: blok ini semula berada di dalam try yang sama dengan
+  // inisialisasi state. Saat dua proses MCP start serempak, satu di antaranya
+  // gagal menginisialisasi state (berebut berkas yang sama), masuk ke catch, dan
+  // penanda prosesnya tidak pernah ditulis. Hasilnya dua proses hidup dengan
+  // satu lock file: proses ganda tidak pernah terdeteksi.
+  //
+  // Lokasinya juga harus di `.state` PROYEK, bukan di direktori user: direktori
+  // user bisa berbeda antar proses, sehingga keduanya tidak saling melihat.
   try {
     await initStartupWorktreeMutex(workflowState, { heartbeat: true });
   } catch (lockError) {

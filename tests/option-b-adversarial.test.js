@@ -25,6 +25,7 @@ import {
   canonicalProjectPath,
   projectKey,
   pinSessionProject,
+  restoreSessionPointerSnapshot,
   claimFocusBinding,
 } from "../workflow-state.js";
 import { resolveProjectDir } from "../exec.js";
@@ -1371,6 +1372,79 @@ test("Adversarial 24 (F3): pinSessionProject atomically rejects stale older writ
     } finally {
       await releaseWorktreeMutex(acqA.capability);
       await releaseWorktreeMutex(acqB.capability);
+    }
+  });
+});
+
+test("Adversarial 25 (R1/R3/R4): CLI non-start_task acquires mutex, stale _lastLoadCommittedSqlite cannot trigger post-commit mode, and restoreSessionPointerSnapshot is fenced & atomic", async () => {
+  await withTempWorkspace(async (base) => {
+    const repo = await createRepo(base, "adv25-repo");
+    const stateBase = path.join(base, "state", ".state");
+    const env = {
+      ...process.env,
+      DEV_WORKFLOW_STATE_FILE: path.join(stateBase, "workflow-state.json"),
+      OPENCODE_SESSION_ID: "s25",
+    };
+
+    // 1. R1: Real CLI `start_task` followed by non-start_task CLI `set_plan` from repo CWD
+    const cliStart = spawnSync(
+      process.execPath,
+      [path.resolve("index.js"), "call", "start_task", "--args", JSON.stringify(makeStartArgs(repo, "CLI R1 task"))],
+      { cwd: repo, env, encoding: "utf8" },
+    );
+    assert.equal(cliStart.status, 0, `CLI start_task failed: ${cliStart.stderr}\n${cliStart.stdout}`);
+
+    const { readdir, readFile } = await import("node:fs/promises");
+    const sessionsDir = path.join(stateBase, "sessions");
+    const ptrFiles = (await readdir(sessionsDir)).filter((f) => f.endsWith(".json") && !f.startsWith("focus-"));
+    assert.ok(ptrFiles.length >= 1, "start_task must publish session pointer");
+    const ptrFile = path.join(sessionsDir, ptrFiles[0]);
+    const ptr = JSON.parse(await readFile(ptrFile, "utf8"));
+
+    const cliPlan = spawnSync(
+      process.execPath,
+      [path.resolve("index.js"), "call", "set_plan", "--args", JSON.stringify({ steps: ["step A", "step B"] })],
+      { cwd: repo, env, encoding: "utf8" },
+    );
+    assert.equal(cliPlan.status, 0, `CLI set_plan failed: ${cliPlan.stderr}\n${cliPlan.stdout}`);
+
+    // Contending worktree mutex held by another owner must block CLI non-start_task
+    const contender = await acquireWorktreeMutex({ projectDir: repo, ownerKey: "other-holder" });
+    assert.equal(contender.ok, true);
+    try {
+      const cliPlanBlocked = spawnSync(
+        process.execPath,
+        [path.resolve("index.js"), "call", "set_plan", "--args", JSON.stringify({ steps: ["step C"] })],
+        { cwd: repo, env, encoding: "utf8" },
+      );
+      assert.notEqual(cliPlanBlocked.status, 0, "CLI set_plan must fail when another owner holds the worktree mutex");
+    } finally {
+      await releaseWorktreeMutex(contender.capability);
+    }
+
+    // 2. R4: restoreSessionPointerSnapshot requires live capability and preserves newer pinSessionProject
+    assert.throws(
+      () => restoreSessionPointerSnapshot({ applicable: true, file: ptrFile, raw: null }, { sourceProjectDir: repo, sessionKey: ptr.ownerKey }),
+      (err) => err instanceof ProjectOwnershipLostError || err?.code === "PROJECT_OWNERSHIP_LOST",
+    );
+
+    const acq = await acquireWorktreeMutex({ projectDir: repo, ownerKey: ptr.ownerKey });
+    assert.equal(acq.ok, true);
+    try {
+      const staleJournal = {
+        sessionKey: ptr.ownerKey,
+        sourceProjectDir: repo,
+        startedAt: Date.now() - 60000,
+      };
+      const restoreRes = restoreSessionPointerSnapshot(
+        { applicable: true, file: ptrFile, raw: null },
+        staleJournal,
+        { kernelCapability: acq.capability },
+      );
+      assert.equal(restoreRes.ok, true);
+      assert.equal(restoreRes.skippedNewerOwner, true, "stale journal must not delete newer pointer");
+    } finally {
+      await releaseWorktreeMutex(acq.capability);
     }
   });
 });

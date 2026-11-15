@@ -1261,35 +1261,165 @@ export function captureSessionPointerSnapshot(stateFile) {
   }
 }
 
-export function restoreSessionPointerSnapshot(snapshot, journal = null) {
+function withSessionPointerDb(baseDir, fn) {
+  const sessionsDir = path.join(baseDir, SESSIONS_DIR);
+  mkdirSync(sessionsDir, { recursive: true });
+  const ptrDbFile = path.join(sessionsDir, "session-pointers.sqlite");
+  let ptrDb = null;
+  try {
+    let Database;
+    try {
+      Database = createRequire(import.meta.url)("better-sqlite3");
+    } catch {
+      Database = createRequire(path.join(process.cwd(), "package.json"))("better-sqlite3");
+    }
+    ptrDb = new Database(ptrDbFile, { timeout: 5000 });
+    ptrDb.pragma("journal_mode = DELETE");
+    ptrDb.pragma("busy_timeout = 5000");
+    ptrDb.exec(`
+      CREATE TABLE IF NOT EXISTS session_pointers (
+        session_key TEXT PRIMARY KEY,
+        owner_key TEXT NOT NULL,
+        lease_id TEXT NOT NULL,
+        project_dir TEXT NOT NULL,
+        project_dir_path TEXT NOT NULL,
+        focus_id INTEGER,
+        updated_at_ms INTEGER NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `);
+    let outcome;
+    const tx = ptrDb.transaction(() => {
+      outcome = fn(ptrDb);
+    });
+    tx.immediate();
+    return outcome;
+  } finally {
+    if (ptrDb) {
+      try {
+        ptrDb.close();
+      } catch {
+        // Ignore close cleanup errors.
+      }
+    }
+  }
+}
+
+export function restoreSessionPointerSnapshot(snapshot, journal = null, { kernelCapability = null } = {}) {
   if (!snapshot || !snapshot.applicable || !snapshot.file) {
     return { ok: true, notApplicable: true };
   }
+  let snapObj = null;
+  if (snapshot.raw) {
+    try {
+      snapObj = JSON.parse(snapshot.raw);
+    } catch {
+      snapObj = null;
+    }
+  }
+  const capProjectDir =
+    snapObj?.projectDir || journal?.sourceProjectDir || journal?.targetProjectDir || "";
+  const cap = kernelCapability || (capProjectDir ? getHeldWorktreeCapability(capProjectDir) : null);
+  assertWorktreeCapabilityLive(cap, {
+    operation: "restoreSessionPointerSnapshot",
+    allowDrainingInFlight: true,
+  });
+
+  const baseDir = resolveBaseDirFromState(snapshot.file);
+  const sessionKey =
+    journal?.sessionKey ||
+    path.basename(snapshot.file).replace(/^pointer-/, "").replace(/\.json$/, "");
+
   try {
-    if (existsSync(snapshot.file) && journal) {
-      try {
-        const cur = JSON.parse(readFileSync(snapshot.file, "utf8"));
-        const curTs = cur?.updatedAt ? Date.parse(cur.updatedAt) : NaN;
-        if (Number.isFinite(curTs) && Number.isFinite(Number(journal.startedAt)) && curTs > Number(journal.startedAt) + 5) {
-          let snapTs = NaN;
-          if (snapshot.raw) {
-            try {
-              snapTs = Date.parse(JSON.parse(snapshot.raw)?.updatedAt || "");
-            } catch {}
-          }
-          if (!Number.isFinite(snapTs) || curTs !== snapTs) {
-            return { ok: true, skippedNewerOwner: true };
-          }
+    return withSessionPointerDb(baseDir, (ptrDb) => {
+      const dbRow = ptrDb
+        .prepare("SELECT owner_key, lease_id, updated_at_ms FROM session_pointers WHERE session_key = ?")
+        .get(sessionKey);
+
+      let curPtr = null;
+      if (existsSync(snapshot.file)) {
+        try {
+          const parsed = JSON.parse(readFileSync(snapshot.file, "utf8"));
+          if (parsed && typeof parsed === "object") curPtr = parsed;
+        } catch {
+          // Corrupt pointer file will be restored/removed atomically.
         }
-      } catch {}
-    }
-    if (snapshot.raw === null) {
-      if (existsSync(snapshot.file)) unlinkSync(snapshot.file);
-    } else {
-      mkdirSync(path.dirname(snapshot.file), { recursive: true });
-      writeFileSync(snapshot.file, snapshot.raw, "utf8");
-    }
-    return { ok: true, skippedNewerOwner: false };
+      }
+
+      const candidates = [];
+      if (dbRow) {
+        candidates.push({
+          ownerKey: dbRow.owner_key,
+          leaseId: dbRow.lease_id,
+          updatedAtMs: Number(dbRow.updated_at_ms || 0),
+        });
+      }
+      if (curPtr) {
+        candidates.push({
+          ownerKey: curPtr.ownerKey,
+          leaseId: curPtr.leaseId,
+          updatedAtMs: Number(
+            curPtr.updatedAtMs || (curPtr.updatedAt ? Date.parse(curPtr.updatedAt) : 0) || 0,
+          ),
+        });
+      }
+
+      const journalStartedAt = Number(journal?.startedAtMs || journal?.startedAt || 0);
+      const snapTs = Number(
+        snapObj?.updatedAtMs || (snapObj?.updatedAt ? Date.parse(snapObj.updatedAt) : 0) || 0,
+      );
+      for (const cur of candidates) {
+        if (cur.ownerKey && sessionKey && cur.ownerKey !== sessionKey) {
+          return { ok: true, skippedNewerOwner: true };
+        }
+        if (
+          journal &&
+          Number.isFinite(journalStartedAt) &&
+          journalStartedAt > 0 &&
+          cur.updatedAtMs > journalStartedAt &&
+          (!Number.isFinite(snapTs) || cur.updatedAtMs !== snapTs)
+        ) {
+          return { ok: true, skippedNewerOwner: true };
+        }
+      }
+
+      if (snapshot.raw === null) {
+        ptrDb.prepare("DELETE FROM session_pointers WHERE session_key = ?").run(sessionKey);
+        if (existsSync(snapshot.file)) unlinkSync(snapshot.file);
+      } else {
+        const focus = Number(snapObj?.focusId);
+        const restoredTs = Number.isFinite(snapTs) && snapTs > 0 ? snapTs : Date.now();
+        ptrDb
+          .prepare(
+            `INSERT INTO session_pointers (
+               session_key, owner_key, lease_id, project_dir, project_dir_path, focus_id, updated_at_ms, updated_at
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(session_key) DO UPDATE SET
+               owner_key = excluded.owner_key,
+               lease_id = excluded.lease_id,
+               project_dir = excluded.project_dir,
+               project_dir_path = excluded.project_dir_path,
+               focus_id = excluded.focus_id,
+               updated_at_ms = excluded.updated_at_ms,
+               updated_at = excluded.updated_at`,
+          )
+          .run(
+            sessionKey,
+            String(snapObj?.ownerKey || sessionKey),
+            String(snapObj?.leaseId || cap.token || ""),
+            String(snapObj?.projectDir || capProjectDir || ""),
+            String(snapObj?.projectDirPath || ""),
+            Number.isSafeInteger(focus) && focus > 0 ? focus : null,
+            restoredTs,
+            String(snapObj?.updatedAt || new Date(restoredTs).toISOString()),
+          );
+        mkdirSync(path.dirname(snapshot.file), { recursive: true });
+        const tmpFile = `${snapshot.file}.tmp.${process.pid}.${Date.now()}`;
+        writeFileSync(tmpFile, snapshot.raw, "utf8");
+        renameSync(tmpFile, snapshot.file);
+      }
+      return { ok: true, skippedNewerOwner: false };
+    });
   } catch (error) {
     return { ok: false, error: error?.code || error?.message || "SESSION_POINTER_RESTORE_FAILED" };
   }
@@ -1370,10 +1500,6 @@ export function pinSessionProject({
   });
 
   const ptrFile = sessionPointerPath(baseDir, sessionKey);
-  const sessionsDir = path.join(baseDir, SESSIONS_DIR);
-  mkdirSync(sessionsDir, { recursive: true });
-  const ptrDbFile = path.join(sessionsDir, "session-pointers.sqlite");
-  let ptrDb = null;
   let refusal = null;
   let pointerWriteError = null;
   const nowMs = Date.now();
@@ -1388,29 +1514,7 @@ export function pinSessionProject({
   };
 
   try {
-    let Database;
-    try {
-      Database = createRequire(import.meta.url)("better-sqlite3");
-    } catch {
-      Database = createRequire(path.join(process.cwd(), "package.json"))("better-sqlite3");
-    }
-    ptrDb = new Database(ptrDbFile, { timeout: 5000 });
-    ptrDb.pragma("journal_mode = DELETE");
-    ptrDb.pragma("busy_timeout = 5000");
-    ptrDb.exec(`
-      CREATE TABLE IF NOT EXISTS session_pointers (
-        session_key TEXT PRIMARY KEY,
-        owner_key TEXT NOT NULL,
-        lease_id TEXT NOT NULL,
-        project_dir TEXT NOT NULL,
-        project_dir_path TEXT NOT NULL,
-        focus_id INTEGER,
-        updated_at_ms INTEGER NOT NULL,
-        updated_at TEXT NOT NULL
-      )
-    `);
-
-    const commitPointer = ptrDb.transaction(() => {
+    withSessionPointerDb(baseDir, (ptrDb) => {
       const dbRow = ptrDb
         .prepare("SELECT owner_key, lease_id, updated_at_ms FROM session_pointers WHERE session_key = ?")
         .get(sessionKey);
@@ -1495,18 +1599,8 @@ export function pinSessionProject({
       writeFileSync(tmpFile, JSON.stringify(payload, null, 2), "utf8");
       renameSync(tmpFile, ptrFile);
     });
-
-    commitPointer.immediate();
   } catch (err) {
     pointerWriteError = err?.code || err?.message || "SESSION_POINTER_WRITE_FAILED";
-  } finally {
-    if (ptrDb) {
-      try {
-        ptrDb.close();
-      } catch {
-        // Ignore close cleanup errors.
-      }
-    }
   }
 
   if (refusal) {
@@ -4331,8 +4425,11 @@ export class WorkflowState {
 
     if (hasil.status === "missing") return null;
 
+    const hasEnforcedLockWithoutCap =
+      Boolean(this.requireKernelMutex || this.boundKernelCapability) && !this._resolveKernelCapability();
+
     if (hasil.status === "corrupt") {
-      if (skipWrites) {
+      if (skipWrites || hasEnforcedLockWithoutCap) {
         throw new StateUnavailable(
           `Berkas state "${this.stateFile}" rusak dan tidak bisa dibaca, ` +
             `sehingga state sesi "${sessionKey}" tidak boleh dimulai dari kosong.`,
@@ -4374,30 +4471,13 @@ export class WorkflowState {
       }
     };
     if (this.requireKernelMutex || this.boundKernelCapability) {
-      if (this._resolveKernelCapability()) {
-        return await this._withOwnershipFence("adoptLegacyJson", performAdopt);
-      }
-      const adoptProjectDir = state.projectDir || projectPath;
-      const acq = await acquireWorktreeMutex({
-        projectDir: adoptProjectDir,
-        timeoutMs: 25,
-        ownerKey: sessionKey,
-      });
-      if (!acq.ok || !acq.capability) {
+      if (!this._resolveKernelCapability()) {
         throw new ProjectOwnershipLostError(
-          `Project ownership lost before adoptLegacyJson: ${acq.reason || acq.error || "mutex_unavailable"}.`,
-          { operation: "adoptLegacyJson", reason: acq.reason || "mutex_unavailable" },
+          `Project ownership lost before adoptLegacyJson: capability_not_held.`,
+          { operation: "adoptLegacyJson", reason: "capability_not_held" },
         );
       }
-      try {
-        return await useWorktreeCapability(acq.capability, performAdopt, {
-          operation: "adoptLegacyJson",
-        });
-      } finally {
-        if (!acq.alreadyHeld) {
-          await releaseWorktreeMutex(acq.capability);
-        }
-      }
+      return await this._withOwnershipFence("adoptLegacyJson", performAdopt);
     }
     return await performAdopt();
   }
