@@ -51,18 +51,26 @@ five new fields (34 bound parameters in total). Two rules matter:
 - the body is parsed and verified by `verifyReaperRequest()` in
   `monitor-server/reaper-query.cjs`;
 - the signature is HMAC-SHA256 over the canonical JSON of the whole payload, so
-  changing the action, the limit or the timestamp invalidates it;
+  changing the action, the machine, the limit or the timestamp invalidates it;
 - the payload must carry an ISO `at` timestamp inside a 60-second replay window;
 - comparison is constant-time;
-- a missing `DEVWF_REAPER_SECRET` answers `401 REAPER_SECRET_MISSING`, never an
-  empty result that looks like "no sessions".
+- credentials are per machine: `DEVWF_REAPER_SECRETS` is a JSON map of machine
+  name to secret, and a request must name a machine that is in the map. Removing
+  one entry revokes exactly one host. `DEVWF_REAPER_SECRET` remains a
+  single-machine fallback;
+- a missing credential answers `401 REAPER_SECRET_MISSING`, an unknown machine
+  `401 MACHINE_NOT_AUTHORIZED`, and a missing machine `401 MACHINE_REQUIRED` -
+  never an empty result that looks like "no sessions";
+- every accepted and refused request is logged with the machine name, never the
+  credential.
 
 `buildReaperSessionsQuery()` is the only query that selects `owner_pid`,
 `owner_started_at`, `owner_executable` and the lease columns, and it bounds the
 limit to 500.
 
-`DEVWF_REAPER_SECRET` is provisioned in the monitor's environment file, never in
-the browser bundle. The endpoint returns no secret and no credential.
+`DEVWF_REAPER_SECRETS` (or the single-machine `DEVWF_REAPER_SECRET`) is
+provisioned in the monitor's environment file, never in the browser bundle. The
+endpoint returns no secret and no credential.
 
 ## 4. Public payload
 
@@ -143,16 +151,22 @@ reported as `PROCESS_DID_NOT_EXIT`; the reaper never escalates to a force kill.
 
 ## 9. Rollout
 
-1. Apply migration `005`; restart the monitor in observation mode.
-2. Provision `DEVWF_REAPER_SECRET`; verify a signed request returns rows and an
-   unsigned request returns `401`.
-3. Deploy the machine-local controllers on MMCH, HELLOWORLD and Mac; verify each
+The executable procedure, including the backup and the read-only verifier, is
+`docs/operations/monitor-deployment.md`. In short:
+
+1. Back up the database and `/opt/devwf-monitor`; record path, size and sha256.
+2. Apply migration `005`; restart the monitor in observation mode.
+3. Provision `DEVWF_REAPER_SECRETS` (one entry per machine); verify a signed
+   request returns rows and an unsigned request returns `401`.
+4. Deploy the machine-local controllers on MMCH, HELLOWORLD and Mac; verify each
    one reports the same identity the monitor stored.
-4. Run `scripts/session-reaper.cjs` in dry-run mode; confirm the states match the
+5. Run `scripts/session-reaper.cjs` in dry-run mode; confirm the states match the
    real processes.
-5. Set `DEVWF_REAPER_DRY_RUN=0` only after steps 1–4 pass, and only for orphan
+6. Set `DEVWF_REAPER_DRY_RUN=0` only after steps 1-5 pass, and only for orphan
    archival.
-6. Enable graceful cleanup only for explicitly disposable sessions.
+7. Enable graceful cleanup only for explicitly disposable sessions.
+
+CI never performs any of these steps.
 
 ## 10. Rollback
 
