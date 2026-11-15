@@ -1350,23 +1350,75 @@ export function pinSessionProject({
 
   const baseDir = resolveBaseDirFromState(stateFile);
   const sessionKey = sessionKeyFromStateFile(stateFile);
+  if (expectedOwnerKey && expectedOwnerKey !== sessionKey) {
+    throw new ProjectOwnershipLostError(
+      `Session pointer owner override rejected in pinSessionProject: expectedOwnerKey "${expectedOwnerKey}" does not match destination session "${sessionKey}".`,
+      { operation: "pinSessionProject", expectedOwnerKey, destinationSessionKey: sessionKey },
+    );
+  }
   const projectDirPath = path.join(baseDir, PROJECTS_DIR, projectKey(target));
   const focus = Number(focusId);
 
+  const cap = kernelCapability || getHeldWorktreeCapability(target);
+  assertWorktreeCapabilityMatches({
+    capability: cap,
+    operation: "pinSessionProject",
+    ownerKey: sessionKey,
+    projectDir: target,
+    allowDrainingInFlight: true,
+  });
+
+  const ptrFile = sessionPointerPath(baseDir, sessionKey);
+  if (existsSync(ptrFile)) {
+    try {
+      const existingPtr = JSON.parse(readFileSync(ptrFile, "utf8"));
+      if (existingPtr && typeof existingPtr === "object") {
+        if (existingPtr.ownerKey && existingPtr.ownerKey !== sessionKey) {
+          return {
+            ok: false,
+            error: "pointer_owned_by_other_session",
+            projectDirPath,
+            stateFile: path.join(getUserScopedDir(projectDirPath), sessionStateFilename(process.env, sessionKey)),
+          };
+        }
+        const existingTs = Number(
+          existingPtr.updatedAtMs || (existingPtr.updatedAt ? Date.parse(existingPtr.updatedAt) : 0) || 0,
+        );
+        if (
+          existingPtr.leaseId &&
+          existingPtr.leaseId !== cap.token &&
+          existingTs > Number(cap.acquiredAt || 0)
+        ) {
+          return {
+            ok: false,
+            error: "superseded_by_newer_pointer",
+            projectDirPath,
+            stateFile: path.join(getUserScopedDir(projectDirPath), sessionStateFilename(process.env, sessionKey)),
+          };
+        }
+      }
+    } catch {
+      // Corrupt pointer will be replaced atomically under the live capability.
+    }
+  }
+
   let pointerWriteError = null;
+  const nowMs = Date.now();
   const writePointer = () => {
     try {
       mkdirSync(path.join(baseDir, SESSIONS_DIR), { recursive: true });
-      const ptrFile = sessionPointerPath(baseDir, sessionKey);
-      const tmpFile = `${ptrFile}.tmp.${process.pid}.${Date.now()}`;
+      const tmpFile = `${ptrFile}.tmp.${process.pid}.${nowMs}`;
       writeFileSync(
         tmpFile,
         JSON.stringify(
           {
             projectDir: target,
             projectDirPath,
+            ownerKey: cap.ownerKey,
+            leaseId: cap.token,
             focusId: Number.isSafeInteger(focus) && focus > 0 ? focus : null,
-            updatedAt: new Date().toISOString(),
+            updatedAtMs: nowMs,
+            updatedAt: new Date(nowMs).toISOString(),
           },
           null,
           2,
@@ -1379,14 +1431,6 @@ export function pinSessionProject({
     }
   };
 
-  const cap = kernelCapability || getHeldWorktreeCapability(target);
-  assertWorktreeCapabilityMatches({
-    capability: cap,
-    operation: "pinSessionProject",
-    ownerKey: expectedOwnerKey || sessionKey,
-    projectDir: target,
-    allowDrainingInFlight: true,
-  });
   writePointer();
 
   return {
@@ -2951,7 +2995,16 @@ export class WorkflowState {
 
     // Identitas sesi untuk kunci baris. Diisi dispatcher lewat `useSession`, atau
     // lewat `options.sessionId` pada pemanggil seperti tes dan CLI.
-    this.sessionId = options.sessionId || null;
+    const inferredSessionMatch = stateFilePath
+      ? /^workflow-state\.(.+)\.json$/.exec(path.basename(String(stateFilePath)))
+      : null;
+    this.sessionId =
+      options.sessionId ||
+      (inferredSessionMatch &&
+      !inferredSessionMatch[1].startsWith("user-") &&
+      !inferredSessionMatch[1].startsWith("proc-")
+        ? inferredSessionMatch[1]
+        : null);
 
     // Versi baris yang kita pegang. `null` berarti "belum pernah menyimpan".
     this.stateVersion = null;
@@ -3201,18 +3254,6 @@ export class WorkflowState {
     if (cap) {
       return await useWorktreeCapability(cap, fn, { operation });
     }
-    const fence = this._resolveFencingContext();
-    if (fence.requireLease || this.boundLockLease) {
-      return await withProjectOwnershipFence(
-        {
-          dir: fence.dir,
-          expectedLeaseId: fence.expectedLeaseId,
-          requireLease: fence.requireLease,
-          operation,
-        },
-        fn,
-      );
-    }
     return await fn();
   }
 
@@ -3300,11 +3341,18 @@ export class WorkflowState {
         history: [],
         taskType: "",
       };
+      if (this.requireKernelMutex) {
+        const sKey = this._sessionKey()?.key || this.sessionId || "";
+        const preBound = getHeldWorktreeCapability(this._projectPath());
+        if (preBound && sKey && preBound.ownerKey === sKey) {
+          this.boundKernelCapability = preBound;
+        }
+      }
       await this.load();
       if (this.state?.projectDir) {
         const cap = getHeldWorktreeCapability(this.state.projectDir);
         const sKey = this._sessionKey()?.key || this.sessionId || "";
-        if (cap && (!cap.ownerKey || !sKey || cap.ownerKey === sKey)) {
+        if (cap && sKey && cap.ownerKey === sKey) {
           this.boundKernelCapability = cap;
         }
       }
@@ -4198,14 +4246,43 @@ export class WorkflowState {
     const state = sanitize(migrateOwnerMetadata(hasil.data));
     if (!state || typeof state !== "object") return null;
 
-    try {
-      await db.saveStateVersioned({ userId, projectPath, sessionKey, state, expectedVersion: null });
-      safeLog("info", `State sesi "${sessionKey}" diadopsi dari berkas JSON ke SQLite.`);
-      return state;
-    } catch {
-      // Ada penulis lain yang lebih dulu menyiapkan baris ini; biarkan ia menang.
-      return null;
+    const performAdopt = async () => {
+      try {
+        await db.saveStateVersioned({ userId, projectPath, sessionKey, state, expectedVersion: null });
+        safeLog("info", `State sesi "${sessionKey}" diadopsi dari berkas JSON ke SQLite.`);
+        return state;
+      } catch {
+        // Ada penulis lain yang lebih dulu menyiapkan baris ini; biarkan ia menang.
+        return null;
+      }
+    };
+    if (this.requireKernelMutex || this.boundKernelCapability) {
+      if (this._resolveKernelCapability()) {
+        return await this._withOwnershipFence("adoptLegacyJson", performAdopt);
+      }
+      const adoptProjectDir = state.projectDir || projectPath;
+      const acq = await acquireWorktreeMutex({
+        projectDir: adoptProjectDir,
+        timeoutMs: 25,
+        ownerKey: sessionKey,
+      });
+      if (!acq.ok || !acq.capability) {
+        throw new ProjectOwnershipLostError(
+          `Project ownership lost before adoptLegacyJson: ${acq.reason || acq.error || "mutex_unavailable"}.`,
+          { operation: "adoptLegacyJson", reason: acq.reason || "mutex_unavailable" },
+        );
+      }
+      try {
+        return await useWorktreeCapability(acq.capability, performAdopt, {
+          operation: "adoptLegacyJson",
+        });
+      } finally {
+        if (!acq.alreadyHeld) {
+          await releaseWorktreeMutex(acq.capability);
+        }
+      }
     }
+    return await performAdopt();
   }
 
   /** Kunci sesi untuk baris state, beserta asalnya untuk dicatat. */
@@ -4232,21 +4309,33 @@ export class WorkflowState {
       .get(marker);
     if (done) return null;
 
-    const baseDir = path.join(projectPath, STATE_DIR);
-    const { migrateLegacyJson } = await import("./db/migrate-legacy.js");
-    const result = await migrateLegacyJson(db, { baseDir });
+    if ((this.requireKernelMutex || this.boundKernelCapability) && !this._resolveKernelCapability()) {
+      // Do not perform unfenced migration writes when kernel mutex enforcement is active without a held capability.
+      return null;
+    }
 
-    safeLog(
-      "info",
-      `Migrasi JSON lama (${projectPath}): ${result.sessions} sesi masuk, ` +
-        `${result.legacyFallback} cadangan, ${result.skipped} dilewati.`,
-    );
+    const runMigration = async () => {
+      const baseDir = path.join(projectPath, STATE_DIR);
+      const { migrateLegacyJson } = await import("./db/migrate-legacy.js");
+      const result = await migrateLegacyJson(db, { baseDir });
 
-    db.db
-      .prepare("INSERT OR IGNORE INTO migration_log (name, applied_at) VALUES (?, datetime('now'))")
-      .run(marker);
+      safeLog(
+        "info",
+        `Migrasi JSON lama (${projectPath}): ${result.sessions} sesi masuk, ` +
+          `${result.legacyFallback} cadangan, ${result.skipped} dilewati.`,
+      );
 
-    return result;
+      db.db
+        .prepare("INSERT OR IGNORE INTO migration_log (name, applied_at) VALUES (?, datetime('now'))")
+        .run(marker);
+
+      return result;
+    };
+
+    if (this.requireKernelMutex || this.boundKernelCapability) {
+      return await this._withOwnershipFence("ensureMigrated", runMigration);
+    }
+    return await runMigration();
   }
 
   /**

@@ -851,12 +851,13 @@ test("F5 Fencing: Former owner blocked from save/_exportJson/writeHistoryFile/up
     const stateFileA = path.join(lockDir, "users", "u1", "workflow-state.ses_A.json");
     await mkdir(path.dirname(stateFileA), { recursive: true });
 
-    // Owner A acquires lock and binds lease to WorkflowState
-    const leaseA = acquireProcessLock({ dir: lockDir, pid: process.pid, now: 1000 });
-    assert.equal(leaseA.acquired, true);
+    // Owner A acquires OS worktree mutex capability and binds it to WorkflowState
+    const { acquireWorktreeMutex, releaseWorktreeMutex } = await import("../process-lock.js");
+    const acqA = await acquireWorktreeMutex({ projectDir: repo, ownerKey: stateFileA });
+    assert.equal(acqA.ok, true);
 
     const stateA = new WorkflowState(stateFileA);
-    stateA.bindLockLease({ dir: lockDir, leaseId: leaseA.leaseId });
+    stateA.bindKernelCapability(acqA.capability);
     await stateA.load();
     stateA.state.currentPhase = "coding";
     stateA.state.taskDescription = "Owner A legitimate task";
@@ -880,15 +881,8 @@ test("F5 Fencing: Former owner blocked from save/_exportJson/writeHistoryFile/up
     assert.ok(detectedForeign, "findActiveForeignTaskInProject must detect active task with ISO owner.updatedAt");
     assert.equal(detectedForeign.description, "Owner A legitimate task");
 
-    // Now Owner B (PID 77777) forcibly takes over the project lock!
-    const leaseB = acquireProcessLock({
-      dir: lockDir,
-      pid: 77777,
-      now: 2000,
-      force: true,
-      isAlive: () => true,
-    });
-    assert.equal(leaseB.acquired, true);
+    // Owner A loses worktree capability (released / superseded by Owner B)
+    await releaseWorktreeMutex(acqA.capability);
 
     // Owner A attempts protected writes after losing lock ownership: ALL must throw ProjectOwnershipLostError!
     stateA.state.taskDescription = "Stale Owner A illicit overwrite";
