@@ -37,9 +37,10 @@
     "web": "npm start --prefix web",
     "release:first": "commiter release --first-release",
     "verify:bundle": "node scripts/verify-bundle.mjs",
-    "ci:test": "npm test && npm run test:security && node --test tests/setup-stack.test.js",
+    "ci:test": "npm run check:english && npm test && npm run test:security && node --test tests/setup-stack.test.js",
     "ci:build": "npm run build:server && npm run verify:bundle",
-    "update:check": "node scripts/check-update.mjs"
+    "update:check": "node scripts/check-update.mjs",
+    "check:english": "node scripts/check-english.mjs"
   },
   "keywords": [
     "mcp",
