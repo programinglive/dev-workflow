@@ -1771,17 +1771,26 @@ export function pinSessionProject({
       // would silently erase it and free the focus for another project.
       const strandedBinding = readFocusBindingRecord(ptrFile);
       if (strandedBinding) {
-        const nested = focusBindingPath(baseDir, strandedBinding.focusId ?? 0);
-        if (strandedBinding.focusId) {
+        if (!strandedBinding.focusId) {
+          throw new Error("FOCUS_BINDING_MIGRATION_FAILED");
+        }
+        const nested = focusBindingPath(baseDir, strandedBinding.focusId);
+        const alreadyNested = readFocusBindingRecord(nested);
+        if (alreadyNested) {
+          // Both locations hold a binding. Overwriting either one would let one
+          // project silently take the other's claim, so refuse.
+          const strandedKey = strandedBinding.repoKey || normalizeRepoPathForBinding(strandedBinding.projectDir);
+          const nestedKey = alreadyNested.repoKey || normalizeRepoPathForBinding(alreadyNested.projectDir);
+          if (strandedKey !== nestedKey) {
+            throw new Error("FOCUS_BINDING_CONFLICT");
+          }
+        } else {
           mkdirSync(path.dirname(nested), { recursive: true });
           try {
             renameSync(ptrFile, nested);
           } catch {
-            // If the move fails, refuse to overwrite the binding.
             throw new Error("FOCUS_BINDING_MIGRATION_FAILED");
           }
-        } else {
-          throw new Error("FOCUS_BINDING_MIGRATION_FAILED");
         }
       }
 
@@ -2089,8 +2098,11 @@ function claimFocusBindingUnderLock({ baseDir, focusId, projectDir, repoKey }) {
   const requestedDir = path.resolve(String(projectDir || ""));
   const requestedKey = typeof repoKey === "string" ? repoKey.trim() : "";
 
-  const existing =
-    readFocusBindingRecord(target) || readFocusBindingRecord(legacyFocusBindingPath(baseDir, focusId));
+  const bindingState = readFocusBindingState(baseDir, focusId);
+  if (bindingState.conflict) {
+    return { ok: false, existing: bindingState.nested, reason: "FOCUS_BINDING_CONFLICT" };
+  }
+  const existing = bindingState.record;
   let replacingStale = false;
 
   if (existing) {
@@ -2172,21 +2184,12 @@ export async function retireFocusBinding({
       validateRetireCap();
       const target = focusBindingPath(baseDir, id);
       const legacyTarget = legacyFocusBindingPath(baseDir, id);
-      const nestedRecord = readFocusBindingRecord(target);
-      const legacyRecord = readFocusBindingRecord(legacyTarget);
-
-      // Two records for one focus that name different projects is a conflict,
-      // not a merge: acting on one of them would let the other project's claim
-      // be deleted by a retirement authorized only for this one.
-      if (nestedRecord && legacyRecord) {
-        const nestedKey = nestedRecord.repoKey || normalizeRepoPathForBinding(nestedRecord.projectDir);
-        const legacyKey = legacyRecord.repoKey || normalizeRepoPathForBinding(legacyRecord.projectDir);
-        if (nestedKey !== legacyKey) {
-          return { ok: false, existing: nestedRecord, reason: "FOCUS_BINDING_CONFLICT" };
-        }
+      const bindingState = readFocusBindingState(baseDir, id);
+      if (bindingState.conflict) {
+        return { ok: false, existing: bindingState.nested, reason: "FOCUS_BINDING_CONFLICT" };
       }
 
-      const existing = nestedRecord || legacyRecord;
+      const existing = bindingState.record;
       if (!existing) return { ok: true, retired: false, reason: "NOT_BOUND" };
 
       const requestedDir = projectDir ? path.resolve(String(projectDir)) : "";
@@ -3289,6 +3292,29 @@ function readFocusBindingRecord(file) {
   } catch {
     return null;
   }
+}
+
+/**
+ * Read both binding locations for one focus and detect a disagreement.
+ *
+ * The nested record is the current layout; the flat record is the pre-upgrade
+ * layout. Two records for one focus that name different projects is a conflict:
+ * acting on either one would let one project delete or block the other's claim.
+ *
+ * @returns {{record: object|null, nested: object|null, legacy: object|null, conflict: boolean}}
+ */
+function readFocusBindingState(baseDir, focusId) {
+  const nested = readFocusBindingRecord(focusBindingPath(baseDir, focusId));
+  const legacy = readFocusBindingRecord(legacyFocusBindingPath(baseDir, focusId));
+
+  let conflict = false;
+  if (nested && legacy) {
+    const nestedKey = nested.repoKey || normalizeRepoPathForBinding(nested.projectDir);
+    const legacyKey = legacy.repoKey || normalizeRepoPathForBinding(legacy.projectDir);
+    conflict = nestedKey !== legacyKey;
+  }
+
+  return { record: nested || legacy, nested, legacy, conflict };
 }
 
 function normalizeRepoPathForBinding(value) {
