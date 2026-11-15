@@ -52,6 +52,7 @@ import {
   parseRemoteIdentity,
   normalizeRepoPath,
 } from "../../repository-identity.js";
+import { runPreflight } from "../../preflight.js";
 import path from "node:path";
 import { assignWorkflowIdentity, validateZettlyTaskArguments } from '../../zettly-workflow.js';
 import { recommendMcpTools, formatMcpRecommendations, formatFullMcpCatalog } from "../../mcp-index.js";
@@ -561,6 +562,24 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
     }
   }
 
+  // README-first preflight: bounded, read-only discovery of the repository's
+  // own instructions and documented CLI entrypoints. The record is persisted
+  // with the task so resume_session can revalidate it and the scope guard can
+  // compare against it. Documents are untrusted content; nothing is executed.
+  const preflight = runPreflight({
+    projectDir: project.dir,
+    taskId: workflowState.state.workflowTaskId || "",
+    taskDescription: args.description,
+  });
+  if (!preflight.ok) {
+    if (!targetMutex.alreadyHeld) {
+      await releaseWorktreeMutex(targetMutex.capability);
+    }
+    return textResponse(
+      `⚠️ Task not started: ${preflight.code}. The project directory could not be read as a repository root.`
+    );
+  }
+
   // Stage 3 (Option B): Execute transition under the live OS mutex capability
   // with a single authoritative SQLite commit boundary.
   const transitionHooks = zettlyOptions?.transitionHooks || null;
@@ -598,6 +617,25 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
       async () => {
         if (typeof transitionHooks?.afterStageLock === "function") {
           await transitionHooks.afterStageLock({ targetMutex });
+        }
+
+        const pendingCleanup = workflowState.state?.pendingFocusCleanup;
+        if (pendingCleanup && Number.isSafeInteger(Number(pendingCleanup.focusId)) && Number(pendingCleanup.focusId) > 0) {
+          try {
+            const retiredPending = await retireFocusBinding({
+              stateFile: pendingCleanup.stateFile || workflowState.stateFile,
+              focusId: Number(pendingCleanup.focusId),
+              projectDir: project.dir,
+              kernelCapability: targetMutex.capability,
+              requireKernelMutex: true,
+              expectedOwnerKey: sessionOwnerKey,
+            });
+            if (retiredPending && retiredPending.ok !== false) {
+              delete workflowState.state.pendingFocusCleanup;
+            }
+          } catch {
+            // Keep pendingFocusCleanup recorded for next retry if retirement still fails
+          }
         }
 
         if (hasRequestedFocus) {
@@ -689,6 +727,7 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
         workflowState.state.dodSource = "manual";
         workflowState.state.dodFactoryTaskId = "";
         workflowState.state.dodRevision = 0;
+        workflowState.state.preflight = preflight;
         workflowState.state.testsSkipped = false;
         workflowState.state.testsSkippedReason = "";
         workflowState.state.commitAndPushCompleted = false;
@@ -1095,6 +1134,23 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
     ? `💡 Multiplatform / CLI-First Standard: Build core business logic into headless services/actions first and expose an executable CLI command before or alongside UI components. Verify CLI execution in your DoD.\n\n`
     : "";
 
+  const preflightBlock = (() => {
+    const record = workflowState.state.preflight;
+    if (!record || !record.ok) return "";
+    const readme = record.readme ? `README: ${record.readme.path}` : "README: MISSING";
+    const agents = record.agents.length > 0
+      ? `AGENTS: ${record.agents.map((a) => a.path).join(", ")}`
+      : "AGENTS: none found";
+    const cli = record.cli.length > 0
+      ? `CLI: ${record.cli.slice(0, 5).map((c) => c.invocation).join(", ")}${record.cli.length > 5 ? ` (+${record.cli.length - 5} more)` : ""}`
+      : "CLI: none documented";
+    const summary = record.instructionSummary?.text
+      ? `\n\n   ${record.instructionSummary.text.split("\n").join("\n   ")}`
+      : "";
+    const fingerprint = record.preflightFingerprint || record.readme?.fingerprint || "n/a";
+    return `\n\n📖 Preflight (bounded, read-only):\n   ${readme}\n   ${agents}\n   ${cli}${summary}\n   Fingerprint: ${fingerprint}\n   Evidence: ${record.preflightAt} · ${record.verification}`;
+  })();
+
   return textResponse(
     `✅ Task Started: ${args.description}\n\n${project.message}${warningBlock}${claimBlock}${factoryNote}${drawNote}\n\n` +
       cliTip +
@@ -1107,6 +1163,7 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
           `   atau susun ulang sekarang dengan 'set_plan' { steps: [...] }.\n\n`
         : `${renderPlanFull(workflowState.state.plan)}\n\n`) +
       mcpBlock +
+      preflightBlock +
       `🎯 Be conscious about what you're coding!\n\nWorkflow Steps:\n1. ✓ Start task & Zettly Draw flow recorded (current)\n2. ⏳ Refine feature flow with 'create_feature_flow' if needed\n3. ⏳ Fix/implement the feature\n4. ⏳ Prove each definition-of-done item\n5. ⏳ Create tests\n6. ⏳ Run tests (must pass!)\n7. ⏳ Create documentation\n8. ⏳ Run 'check_ready_to_commit'\n9. ⏳ Run 'commit_and_push' (commits and pushes)\n10. ⏳ Run 'perform_release' or 'skip_release' (when no release is needed)\n11. ⏳ Complete task\n12. ✓ Workflow closed\n\nReminder: Focus on writing clean, maintainable code!`
   );
 }

@@ -507,13 +507,21 @@ test("Adversarial 9: Actual CLI/stdio start_task across independent repositories
         jsonrpc: "2.0",
         id: 2,
         method: "tools/call",
-        params: { name: "start_task", arguments: makeStartArgs(repoA, "CLI Task A") },
+        params: {
+          name: "start_task",
+          arguments: makeStartArgs(repoA, "CLI Task A"),
+          _meta: { "ai.opencode/sessionID": "ses_adv9_a" },
+        },
       });
       const resB = await sendJsonRpc(srvB, {
         jsonrpc: "2.0",
         id: 3,
         method: "tools/call",
-        params: { name: "start_task", arguments: makeStartArgs(repoB, "CLI Task B") },
+        params: {
+          name: "start_task",
+          arguments: makeStartArgs(repoB, "CLI Task B"),
+          _meta: { "ai.opencode/sessionID": "ses_adv9_b" },
+        },
       });
 
       assert.match(resA?.result?.content?.[0]?.text || "", /Task Started/);
@@ -526,6 +534,7 @@ test("Adversarial 9: Actual CLI/stdio start_task across independent repositories
         method: "tools/call",
         params: {
           name: "start_task",
+          _meta: { "ai.opencode/sessionID": "ses_adv9_b" },
           arguments: {
             ...makeStartArgs(repoA, "Colliding CLI Task A"),
             allowProjectSwitch: true,
@@ -2078,5 +2087,106 @@ test("Adversarial 30 (Cycle 12): projectDir override to repoB refused, pointer s
     );
     assert.equal(restartRes.sent, 0);
     assert.equal(retriedAfterRestart, true, "persisted syncHistorySummary repairError must trigger retry even when sent === 0");
+  });
+});
+
+test("Adversarial 31 (Cycle 13): ref: without target rejected, skipWrites does not write user-id, and save() persists summary repair marker across restart", async () => {
+  await withTempWorkspace(async (base) => {
+    const repoA = await createRepo(base, "adv31-a");
+    const stateBase = path.join(base, "state", ".state");
+    const { mkdir, writeFile } = await import("node:fs/promises");
+    const { existsSync } = await import("node:fs");
+    await mkdir(stateBase, { recursive: true });
+
+    // 1. .git/HEAD containing "ref:" without target fails closed before acquiring mutex
+    const emptyRefRepo = path.join(base, "bad-ref-repo");
+    await mkdir(path.join(emptyRefRepo, ".git"), { recursive: true });
+    await writeFile(path.join(emptyRefRepo, ".git", "HEAD"), "ref:\n", "utf8");
+    const wtBad = resolveCanonicalWorktreeRoot(emptyRefRepo);
+    assert.equal(wtBad.ok, false, "ref: without target must be rejected");
+    assert.equal(wtBad.error, "INVALID_GIT_WORKTREE");
+
+    // 2. load({ skipWrites: true }) with DEV_WORKFLOW_USER_ID unset does not write user-id file
+    const savedEnvUserId = process.env.DEV_WORKFLOW_USER_ID;
+    delete process.env.DEV_WORKFLOW_USER_ID;
+    try {
+      const noWriteStateBase = path.join(base, "nowrite-state", ".state");
+      const wsReadOnly = new WorkflowState(
+        path.join(noWriteStateBase, "users", "u_ro", "workflow-state.ses_ro.json"),
+        { sessionId: "ses_ro", requireKernelMutex: true },
+      );
+      await wsReadOnly.load({ skipWrites: true });
+      assert.equal(
+        existsSync(path.join(noWriteStateBase, "user-id")),
+        false,
+        "load({ skipWrites: true }) must not write user-id file",
+      );
+    } finally {
+      if (savedEnvUserId !== undefined) process.env.DEV_WORKFLOW_USER_ID = savedEnvUserId;
+    }
+
+    // 3. save() with updateSummaryForUser failure persists pendingHistorySummaryRepairKeys into SQLite across restart
+    const acq = await acquireWorktreeMutex({ projectDir: repoA, ownerKey: "ses_c13_repair" });
+    assert.equal(acq.ok, true);
+    try {
+      const stateFile = path.join(stateBase, "projects", "adv31", "users", "u1", "workflow-state.ses_c13_repair.json");
+      let failSummary = true;
+      let summaryCalls = 0;
+      const { SqliteAdapter } = await import("../db/adapters/sqlite.js");
+      const db1 = new SqliteAdapter({ stateFile });
+      await db1.connect();
+      const origInsert1 = db1.insertHistoryEntry.bind(db1);
+      const origUpdate1 = db1.updateSummaryForUser.bind(db1);
+      let inInsert = false;
+      db1.insertHistoryEntry = async (...iArgs) => {
+        inInsert = true;
+        try {
+          return await origInsert1(...iArgs);
+        } finally {
+          inInsert = false;
+        }
+      };
+      db1.updateSummaryForUser = async (...uArgs) => {
+        if (inInsert) return origUpdate1(...uArgs);
+        summaryCalls += 1;
+        if (failSummary) throw new Error("C13_SUMMARY_FAIL");
+        return origUpdate1(...uArgs);
+      };
+      const ws1 = new WorkflowState(stateFile, {
+        sessionId: "ses_c13_repair",
+        requireKernelMutex: true,
+        db: db1,
+      });
+      ws1.bindKernelCapability(acq.capability);
+      await ws1.load();
+      ws1.state.projectDir = repoA;
+      ws1.state.history = [{ timestamp: new Date().toISOString(), taskDescription: "c13-t1" }];
+      await ws1.save();
+      assert.equal(summaryCalls, 1);
+      await db1.close();
+
+      // Simulate restart: new SqliteAdapter and new WorkflowState loading from SQLite
+      failSummary = false;
+      const db2 = new SqliteAdapter({ stateFile });
+      await db2.connect();
+      const origUpdate2 = db2.updateSummaryForUser.bind(db2);
+      db2.updateSummaryForUser = async (...uArgs) => {
+        summaryCalls += 1;
+        return origUpdate2(...uArgs);
+      };
+      const ws2 = new WorkflowState(stateFile, {
+        sessionId: "ses_c13_repair",
+        requireKernelMutex: true,
+        db: db2,
+      });
+      ws2.bindKernelCapability(acq.capability);
+      await ws2.load();
+      await ws2.save();
+      assert.equal(summaryCalls, 2, "persisted summary repair marker must trigger retry after restart even with sent === 0");
+      assert.equal(ws2.state.pendingHistorySummaryRepairKeys, undefined);
+      await db2.close();
+    } finally {
+      await releaseWorktreeMutex(acq.capability);
+    }
   });
 });

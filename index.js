@@ -30,6 +30,7 @@ import {
   determineReleaseTypeFromCommit,
 } from "./commit-helpers.js";
 import { WorkflowState, sessionKeyFromRequest, reportToMonitorSafe, resolveStateFile } from "./workflow-state.js";
+import { resolveRequestSession } from "./session-scope.js";
 import { getToolList } from "./tools/definitions.js";
 import { WORKFLOW_INSTRUCTIONS, ENGLISH_IMPLEMENTATION_RULE } from './workflow-guidance.js';
 import { handleToolCall } from "./tools/handlers.js";
@@ -68,15 +69,37 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: getToolList(),
 }));
 
+// Serialize request handling. The workflow state is a process-global object,
+// so two interleaved requests could switch sessions between `useSession()` and
+// `handleToolCall()`. A promise chain keeps one request's session selection and
+// its handler atomic without changing the public tool contract.
+let requestQueue = Promise.resolve();
+function withRequestLock(fn) {
+  const run = requestQueue.then(fn, fn);
+  requestQueue = run.then(() => undefined, () => undefined);
+  return run;
+}
+
 // Handle tool calls
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
     lastToolInvocationTimestamp = Date.now();
+    // Fail closed: a session-scoped tool without a verified session identity
+    // must not reuse the previous request's session.
+    const gate = resolveRequestSession(request);
+    if (!gate.ok) {
+      return { isError: true, content: [{ type: "text", text: gate.error }] };
+    }
+
     const runToolRequest = async () => {
-      // Reload state from disk before each request to ensure consistency
+      // Reload state from disk before each request to ensure consistency.
+      // Only a request with a verified session may switch the state file.
+      // A non-session tool keeps the current file only to read project context;
+      // it never switches sessions and never mutates task state.
       if (workflowState) {
-        const sessionId = sessionKeyFromRequest(request);
-        if (sessionId) await workflowState.useSession(sessionId);
+        if (gate.sessionId) {
+          await workflowState.useSession(gate.sessionId);
+        }
         await workflowState.load({ skipWrites: true });
         // Repo proyek mengikuti sesi, bukan satu nilai global. Tanpa ini, sesi yang
         // bekerja di repo lain tetap menjalankan git di WORKFLOW_PROJECT_DIR.
@@ -91,10 +114,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         utils: { shellEscape, determineReleaseTypeFromCommit, createCommitMessageParts },
       }));
     };
-    if (workflowState && typeof workflowState.runSerialized === "function") {
-      return await workflowState.runSerialized(runToolRequest);
-    }
-    return await runToolRequest();
+    return await withRequestLock(async () => {
+      if (workflowState && typeof workflowState.runSerialized === "function") {
+        return await workflowState.runSerialized(runToolRequest);
+      }
+      return await runToolRequest();
+    });
   } catch(error) {
     safeLog('error','MCP request failed',error);
     return {isError:true,content:[{type:'text',text:'Request failed; inspect sanitized server diagnostics.'}]};

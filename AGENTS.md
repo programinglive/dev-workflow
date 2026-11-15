@@ -60,3 +60,22 @@ Before taking any action or answering user requests regarding code changes, chec
 - Use `get_workflow_status` at any time to check what step is next.
 
 **Do not bypass these steps. The MCP server will block commits and releases if any required step is skipped.**
+
+### README-first preflight (server-enforced)
+
+`start_task` records a bounded preflight automatically: the project root,
+`README.md`, root and nested `AGENTS.md`, and documented CLI entrypoints. The
+record contains paths and SHA-256 fingerprints, never document bodies or secret
+values. `start_task` also returns a bounded instruction summary: purpose, rules,
+build/test/release commands, prohibited operations, task scope and documentation
+paths. `resume_session` revalidates the fingerprints and reports
+`README_CHANGED` / `AGENTS_CHANGED`.
+
+`acknowledge_instructions` records the README fingerprint and task scope; the
+server validates both against the current preflight. `commit_and_push` requires
+that acknowledgment when a preflight exists. The same scope check applies to
+`perform_release` and `record_deployment`: a governed write must target the
+checkout the task preflight recorded (`SCOPE_MISMATCH`). Legacy tasks without a
+preflight remain governed by the repository identity contract. Discovered CLI
+references are advisory (`verified: false`) and are never executed
+automatically.

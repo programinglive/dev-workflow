@@ -10,6 +10,7 @@ import path from "path";
 import fs from "fs";
 import { updateTaskStatus, isConfigured, readFactoryConfig } from "../../factory-client.js";
 import { cleanupWorkBranches } from "../../branch-cleanup.js";
+import { assertPreflightScope } from "../../preflight.js";
 
 /**
  * Tutup task Factory yang di-claim saat workflow berakhir, supaya board tidak
@@ -280,6 +281,41 @@ export async function handleCommitAndPush(args, context) {
     });
     if (!repoGuard.ok) {
       return textResponse(repoGuard.message);
+    }
+  }
+
+  // README-first scope guard: the task's preflight record names the project
+  // root it was started in. A governed commit must not target a different root.
+  // An idle state has no task to scope, so it falls through to the existing
+  // "no active task" message instead of a misleading preflight error.
+  if (workflowState.state.currentPhase !== "idle" && workflowState.state.taskDescription) {
+    const scope = assertPreflightScope(workflowState.state.preflight, {
+      projectDir: workflowState.state.projectDir,
+      operation: "commit_and_push",
+    });
+    if (!scope.ok) {
+      return textResponse(
+        `⚠️ Dibatalkan: ${scope.code}. ${scope.reason}\n\n` +
+          `The task's preflight record does not authorize this operation. ` +
+          `Re-run 'start_task' in the correct project, or resume the task that owns this checkout.`
+      );
+    }
+  }
+
+  // Instruction acknowledgment: when a preflight exists, the agent must have
+  // acknowledged the README fingerprint and task scope. This is an observable
+  // operation constraint, not proof of comprehension.
+  if (workflowState.state.preflight?.ok === true) {
+    const ack = workflowState.state.instructionAcknowledgment;
+    const expectedFingerprint =
+      workflowState.state.preflight.preflightFingerprint ||
+      workflowState.state.preflight.readme?.fingerprint ||
+      "";
+    const expectedScope = workflowState.state.preflight.projectRoot || "";
+    if (!ack || ack.fingerprint !== expectedFingerprint || ack.scope !== expectedScope) {
+      return textResponse(
+        `⚠️ Dibatalkan: INSTRUCTION_ACK_REQUIRED. Call 'acknowledge_instructions' with the README fingerprint and the task scope before committing.`
+      );
     }
   }
 

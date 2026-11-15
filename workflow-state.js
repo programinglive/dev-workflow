@@ -238,7 +238,7 @@ export function ensureUserIdFile(userIdFile, candidateId) {
   return candidateId;
 }
 
-function resolveUserId(stateDir) {
+function resolveUserId(stateDir, { skipWrites = false } = {}) {
   const envUserId = (process.env.DEV_WORKFLOW_USER_ID || "").trim();
   if (envUserId) {
     cachedUserId = envUserId;
@@ -274,14 +274,16 @@ function resolveUserId(stateDir) {
     const candidateDirs = entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
     if (candidateDirs.length === 1) {
       const legacyId = candidateDirs[0];
-      try {
-        mkdirSync(stateDir, { recursive: true });
-        const id = ensureUserIdFile(userIdFile, legacyId);
-        cachedUserId = id;
-        cachedUserStateDir = stateDir;
-        return id;
-      } catch {
-        // Persisting the legacy ID is best-effort.
+      if (!skipWrites) {
+        try {
+          mkdirSync(stateDir, { recursive: true });
+          const id = ensureUserIdFile(userIdFile, legacyId);
+          cachedUserId = id;
+          cachedUserStateDir = stateDir;
+          return id;
+        } catch {
+          // Persisting the legacy ID is best-effort.
+        }
       }
       cachedUserId = legacyId;
       cachedUserStateDir = stateDir;
@@ -295,17 +297,23 @@ function resolveUserId(stateDir) {
 
   const legacyDefaultPath = path.join(usersDir, "default", STATE_FILENAME);
   if (existsSync(legacyDefaultPath)) {
-    try {
-      mkdirSync(stateDir, { recursive: true });
-      const id = ensureUserIdFile(userIdFile, "default");
-      cachedUserId = id;
-      cachedUserStateDir = stateDir;
-      return id;
-    } catch {
-      // Best-effort persistence; continue with in-memory fallback.
+    if (!skipWrites) {
+      try {
+        mkdirSync(stateDir, { recursive: true });
+        const id = ensureUserIdFile(userIdFile, "default");
+        cachedUserId = id;
+        cachedUserStateDir = stateDir;
+        return id;
+      } catch {
+        // Best-effort persistence; continue with in-memory fallback.
+      }
     }
     cachedUserId = "default";
     cachedUserStateDir = stateDir;
+    return "default";
+  }
+
+  if (skipWrites) {
     return "default";
   }
 
@@ -444,7 +452,7 @@ function getUserScopedDir(baseDir) {
  * tidak bergantung pada direktori kerja proses, tidak bergantung pada urutan
  * pemanggilan, dan tidak bocor antar proyek dalam satu proses.
  */
-function getCurrentUserId(stateFile = null) {
+function getCurrentUserId(stateFile = null, { skipWrites = false } = {}) {
   const envUserId = (process.env.DEV_WORKFLOW_USER_ID || "").trim();
   if (envUserId) {
     return envUserId;
@@ -480,7 +488,7 @@ function getCurrentUserId(stateFile = null) {
     // .state langsung (bukan .state/users/<id>): pakai resolveUserId, yang
     // menangani migrasi id lama maupun pembuatan id baru.
     try {
-      return resolveUserId(anchorDir);
+      return resolveUserId(anchorDir, { skipWrites });
     } catch {
       // Biarkan jatuh ke nilai cadangan di bawah.
     }
@@ -3342,6 +3350,10 @@ export class WorkflowState {
       // Naik setiap ada perubahan kerja baru setelah commit tercatat, sehingga
       // bukti item `done` yang lama otomatis tidak lagi berlaku.
       dodRevision: 0,
+      // README-first preflight evidence: bounded discovery of README, AGENTS.md
+      // and documented CLI entrypoints, recorded at start_task and revalidated
+      // at resume_session. Null means the task predates the preflight.
+      preflight: null,
       // Urutan kerja yang sedang dijalankan. Terpisah dari `definitionOfDone`:
       // DoD adalah syarat selesai, ini adalah rencana langkahnya. Rencana tidak
       // menjadi gerbang - ia hanya membuat progres bisa dibaca.
@@ -3611,6 +3623,10 @@ export class WorkflowState {
         // Naik setiap ada perubahan kerja baru setelah commit tercatat, sehingga
         // bukti item `done` yang lama otomatis tidak lagi berlaku.
         dodRevision: 0,
+        // README-first preflight evidence: bounded discovery of README, AGENTS.md
+        // and documented CLI entrypoints, recorded at start_task and revalidated
+        // at resume_session. Null means the task predates the preflight.
+        preflight: null,
         // Urutan kerja yang sedang dijalankan. Terpisah dari `definitionOfDone`:
         // DoD adalah syarat selesai, ini adalah rencana langkahnya. Rencana tidak
         // menjadi gerbang - ia hanya membuat progres bisa dibaca.
@@ -3662,7 +3678,7 @@ export class WorkflowState {
     }
 
     const { key: sessionKey } = this._sessionKey();
-    const userId = getCurrentUserId(this.stateFile);
+    const userId = getCurrentUserId(this.stateFile, { skipWrites });
     const projectPath = this._projectPath();
 
     // True read-only path: when skipWrites is true and no injected dbAdapter is present,
@@ -3953,7 +3969,7 @@ export class WorkflowState {
 
       // Always ensure a fresh project summary so dependent tooling can read it immediately.
       await this.updateProjectSummary();
-      ensureCompatibilityLinks(this.stateFile).catch(() => { });
+      await ensureCompatibilityLinks(this.stateFile).catch(() => {});
 
       return created;
     });
@@ -4274,12 +4290,32 @@ export class WorkflowState {
 
     // History milik PROYEK, jadi masuk tabel bersama - bukan hanya berkas.
     try {
+      const prevRepairJson = JSON.stringify(this.state?.pendingHistorySummaryRepairKeys || null);
       const histRes = await this._syncHistoryToDatabase(db, userId, projectPath);
       if (histRes?.skipped > 0) {
         postCommitProjectionErrors.push(`syncHistoryDb:SKIPPED_${histRes.skipped}`);
       }
       if (histRes?.summaryFailed) {
         postCommitProjectionErrors.push(`syncHistorySummary:${histRes.summaryError || "FAILED"}`);
+      }
+      const nextRepairJson = JSON.stringify(this.state?.pendingHistorySummaryRepairKeys || null);
+      if (nextRepairJson !== prevRepairJson && typeof db.saveStateVersioned === "function") {
+        try {
+          this._assertKernelOwnership("save_repair_marker", { allowDrainingInFlight: true });
+          const { history: _omitHistory2, ...persistedRepairState } = this.state;
+          const repairWritten = await db.saveStateVersioned({
+            userId,
+            projectPath,
+            sessionKey,
+            state: persistedRepairState,
+            expectedVersion: this.stateVersion,
+          });
+          if (repairWritten && Number.isFinite(Number(repairWritten.version))) {
+            this.stateVersion = repairWritten.version;
+          }
+        } catch (repairPersistErr) {
+          postCommitProjectionErrors.push(`persistSummaryRepairMarker:${repairPersistErr.message}`);
+        }
       }
     } catch (error) {
       postCommitProjectionErrors.push(`syncHistoryDb:${error.message}`);
@@ -5208,6 +5244,10 @@ export class WorkflowState {
       // Naik setiap ada perubahan kerja baru setelah commit tercatat, sehingga
       // bukti item `done` yang lama otomatis tidak lagi berlaku.
       dodRevision: 0,
+      // README-first preflight evidence: bounded discovery of README, AGENTS.md
+      // and documented CLI entrypoints, recorded at start_task and revalidated
+      // at resume_session. Null means the task predates the preflight.
+      preflight: null,
       // Urutan kerja yang sedang dijalankan. Terpisah dari `definitionOfDone`:
       // DoD adalah syarat selesai, ini adalah rencana langkahnya. Rencana tidak
       // menjadi gerbang - ia hanya membuat progres bisa dibaca.
