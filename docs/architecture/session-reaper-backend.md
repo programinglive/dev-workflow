@@ -1,25 +1,26 @@
-# Session Reaper — Monitor Backend Contract
+# Session Reaper — Monitor Backend Implementation
 
-**Status:** source prepared; deployment requires authorization.
-**Related:** `session-reaper.js`, `reaper-client.js`, `scripts/session-reaper.cjs`.
+**Status:** implemented in source; production rollout requires authorization.
+**Related:** `session-reaper.js`, `session-controller-adapters.js`,
+`reaper-client.js`, `monitor-server/reaper-query.cjs`,
+`monitor-server/reaper-scheduler.cjs`, `monitor-server/reaper-actions.cjs`,
+`scripts/session-reaper.cjs`.
 
-## Why the backend must change
+## Why the backend had to change
 
-The monitor already stores `owner_pid` in the `sessions` table
-(`session-upsert.cjs`), but `sessions-query.cjs` does not select it, so
-`/api/sessions` never returns process ownership. The reaper therefore classifies
-every session as `RECOVERY_REQUIRED` (`session has no recorded owner PID`).
+The monitor already stored `owner_pid` in the `sessions` table, but
+`sessions-query.cjs` never selected it, so `/api/sessions` returned no process
+ownership and the reaper classified every session as `RECOVERY_REQUIRED`
+(`session has no recorded owner PID`).
 
 The fix is deliberately split:
 
 - **Public `/api/sessions`** stays as it is. It must not expose PID, process
   creation time, executable identity or fencing tokens to a browser.
-- **Privileged `/api/reaper/sessions`** returns the ownership evidence to an
-  authenticated internal controller only.
+- **Privileged `POST /api/reaper/sessions`** returns the ownership evidence to an
+  authenticated internal caller only.
 
-## 1. Schema
-
-Add the columns if they do not exist:
+## 1. Schema — `monitor-server/migrations/005-reaper-owner.sql`
 
 ```sql
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS owner_started_at text NOT NULL DEFAULT '';
@@ -29,73 +30,137 @@ ALTER TABLE sessions ADD COLUMN IF NOT EXISTS lease_generation integer NOT NULL 
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS lease_fencing_token text NOT NULL DEFAULT '';
 ```
 
-## 2. Upsert
+Every column has a default, so the migration is backward compatible: existing
+rows and older publishers keep working, and a row that predates the migration is
+`RECOVERY_REQUIRED` until it reports again.
 
-In `session-upsert.cjs`, add the new fields to the `INSERT ... ON CONFLICT`
-column list and the `EXCLUDED` update list, and bind:
+## 2. Upsert — `monitor-server/session-upsert.cjs`
 
-```js
-b.ownerStartedAt ? str(b.ownerStartedAt, 80) : '',
-b.ownerExecutable ? str(b.ownerExecutable, 300) : '',
-b.leaseOwner ? str(b.leaseOwner, 200) : '',
-Number.isInteger(b.leaseGeneration) ? b.leaseGeneration : 0,
-b.leaseFencingToken ? str(b.leaseFencingToken, 200) : '',
-```
+The `INSERT ... ON CONFLICT` column list and the `EXCLUDED` update list carry the
+five new fields (34 bound parameters in total). Two rules matter:
 
-The client already sends `ownerStartedAt` and `ownerExecutable` in the snapshot
-(`monitor.js`). The lease fields are optional until the lease owner starts
-reporting them.
+- a sparse report cannot erase what an earlier report proved
+  (`COALESCE(NULLIF(EXCLUDED.x, ''), sessions.x)`);
+- `lease_generation` only moves forward (`GREATEST`), so a stale publisher cannot
+  lower it.
 
-## 3. Privileged endpoint
+## 3. Privileged endpoint — `monitor-server/dashboard.cjs`
 
-Add to `monitor.cjs` (before the public `/api/sessions` handler):
+`POST /api/reaper/sessions` is handled before the public `/api/sessions` route:
 
-```js
-if (url.pathname === '/api/reaper/sessions' && req.method === 'POST') {
-  const body = bacaJson(await readBody(req), res);
-  if (body === null) return undefined;
-  const provided = String(req.headers['x-devwf-reaper-signature'] || '');
-  const expected = createHmac('sha256', process.env.DEVWF_REAPER_SECRET || '')
-    .update(JSON.stringify(body))
-    .digest('hex');
-  const ok = provided.length === expected.length &&
-    timingSafeEqual(Buffer.from(provided), Buffer.from(expected));
-  if (!ok) {
-    res.writeHead(401, { 'content-type': 'application/json' });
-    return res.end(JSON.stringify({ ok: false, error: 'unauthorized' }));
-  }
-  const rows = await query(`
-    SELECT session_key, machine, project_name, phase, state, updated_at,
-           owner_pid, owner_started_at, owner_executable,
-           lease_owner, lease_generation, lease_fencing_token
-      FROM sessions
-     WHERE phase NOT IN ('closed','done','cancelled')
-     ORDER BY updated_at DESC
-     LIMIT 200
-  `);
-  res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
-  return res.end(JSON.stringify({ ok: true, sessions: rows.rows }));
-}
-```
+- the body is parsed and verified by `verifyReaperRequest()` in
+  `monitor-server/reaper-query.cjs`;
+- the signature is HMAC-SHA256 over the canonical JSON of the whole payload, so
+  changing the action, the limit or the timestamp invalidates it;
+- the payload must carry an ISO `at` timestamp inside a 60-second replay window;
+- comparison is constant-time;
+- a missing `DEVWF_REAPER_SECRET` answers `401 REAPER_SECRET_MISSING`, never an
+  empty result that looks like "no sessions".
+
+`buildReaperSessionsQuery()` is the only query that selects `owner_pid`,
+`owner_started_at`, `owner_executable` and the lease columns, and it bounds the
+limit to 500.
 
 `DEVWF_REAPER_SECRET` is provisioned in the monitor's environment file, never in
 the browser bundle. The endpoint returns no secret and no credential.
 
-## 4. Client
+## 4. Public payload
 
-`reaper-client.js` signs the request with the same secret and maps the rows to
-the reaper's session shape. `scripts/session-reaper.cjs` can then run a real
-dry-run instead of reporting `RECOVERY_REQUIRED` for every card.
+`collectDashboardPayload()` computes the verified state internally and adds only:
 
-## 5. Rollout
+- `reaper_state` — one of `ACTIVE`, `IDLE`, `SUSPECTED_STALE`, `UNREACHABLE`,
+  `ORPHANED`, `RECOVERY_REQUIRED`, `ARCHIVED`, or `UNKNOWN` when the privileged
+  query is unavailable;
+- `reaper_reason` — the human-readable reason;
+- `reaper_actions` — the controls the state authorizes.
 
-1. Apply the schema and upsert change; restart the monitor (observation only).
-2. Deploy the privileged endpoint; verify a signed request returns rows and an
-   unsigned request returns 401.
-3. Run `scripts/session-reaper.cjs` in dry-run mode; confirm the states match
-   the real processes.
-4. Enable orphan archival only after the machine-local controllers are running
-   on MMCH, HELLOWORLD and Mac.
-5. Enable graceful cleanup only for explicitly disposable sessions.
+If the migration is missing or the query fails, the dashboard still renders; the
+state is simply `UNKNOWN`.
+
+## 5. Scheduler — `monitor-server/reaper-scheduler.cjs`
+
+One idempotent reconciliation cycle, started once from `dashboard.cjs`:
+
+- `start()` is a no-op when a timer already exists, so there is a single
+  scheduler owner;
+- `runOnce()` refuses to overlap itself (`ALREADY_RUNNING`);
+- the default is dry-run; `DEVWF_REAPER_DRY_RUN=0` is the only switch that
+  enables mutation;
+- only a confirmed `ORPHANED` plan is archived, and archiving is a phase update,
+  never a delete;
+- the cycle never stops a process and never releases a lease: those need the
+  machine-local controller, which alone can re-verify the process on its host;
+- every cycle appends to an in-memory audit trail;
+- a failed cycle is logged and the next interval retries, so an interrupted run
+  leaves no partial state.
+
+Interval: `DEVWF_REAPER_INTERVAL_MS`, default 5 minutes.
+
+## 6. Authorization table — `monitor-server/reaper-actions.cjs`
+
+The endpoint and the UI read the same table, so the browser can never offer an
+action the backend refuses:
+
+| Action | Allowed states | Effect |
+|---|---|---|
+| `verify` | any | read-only, returns the verified state |
+| `checkpoint` | any | read-only |
+| `evidence` | any | read-only |
+| `archive` | `ORPHANED` only | sets `phase = 'closed'` |
+| `stop` | `IDLE` only | always `CONTROLLER_REQUIRED` from the monitor |
+
+`POST /api/reaper/action` requires the monitor write token, recomputes the state
+server-side, and refuses an action the state does not authorize with `409`.
+
+## 7. Machine-local controllers — `session-controller-adapters.js`
+
+- Windows: `Get-CimInstance Win32_Process` (PowerShell CIM) for creation time and
+  executable, `wmic` as a fallback for older hosts, `taskkill /PID` without `/F`
+  for a graceful request. `wmic` is absent on current Windows 11 builds, so CIM
+  is the primary provider.
+- macOS: `ps -o lstart=` / `ps -o comm=` for identity, `SIGTERM` for a graceful
+  stop.
+
+`createMachineController()` refuses a session from another machine, re-verifies
+PID + creation time + executable locally, and refuses to stop a PID shared by
+more than one session (`SHARED_PROCESS_REFUSED`). A failed graceful request is
+reported as `PROCESS_DID_NOT_EXIT`; the reaper never escalates to a force kill.
+
+## 8. Tests
+
+- `tests/monitor-reaper-api.test.js` — query columns, bounded limit, valid /
+  tampered / expired / missing-secret signatures, upsert persistence.
+- `tests/monitor-reaper-actions.test.js` — the authorization table.
+- `tests/monitor-reaper-scheduler.test.js` — dry-run, orphan-only mutation,
+  single-run ownership, idempotent start/stop, row mapping.
+- `tests/session-controller-adapters.test.js` — CIM and wmic parsing, `taskkill`
+  arguments, `ps` parsing, `SIGTERM`, exit polling, platform selection.
+- `tests/session-reaper-integration.test.js` — real isolated fixture processes:
+  running, exited, reused PID, legacy session, offline machine, shared PID
+  refusal, identity-mismatch refusal, cross-machine refusal, verified stop that
+  never touches a sibling fixture, idempotent duplicate reconciliation, lease
+  ownership change, unauthorized cleanup, checkpoint preservation.
+
+## 9. Rollout
+
+1. Apply migration `005`; restart the monitor in observation mode.
+2. Provision `DEVWF_REAPER_SECRET`; verify a signed request returns rows and an
+   unsigned request returns `401`.
+3. Deploy the machine-local controllers on MMCH, HELLOWORLD and Mac; verify each
+   one reports the same identity the monitor stored.
+4. Run `scripts/session-reaper.cjs` in dry-run mode; confirm the states match the
+   real processes.
+5. Set `DEVWF_REAPER_DRY_RUN=0` only after steps 1–4 pass, and only for orphan
+   archival.
+6. Enable graceful cleanup only for explicitly disposable sessions.
+
+## 10. Rollback
+
+1. Unset `DEVWF_REAPER_DRY_RUN` (or set it to `1`) and restart the monitor: the
+   scheduler returns to observation and mutates nothing.
+2. Stop the machine-local controllers.
+3. The migration is additive; leaving the columns in place is safe. Dropping them
+   is only necessary if the monitor is rolled back to a build that cannot parse
+   the wider row, and it discards ownership evidence.
 
 No step in this document kills a process or releases a lease by itself.

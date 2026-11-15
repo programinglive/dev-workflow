@@ -1565,6 +1565,58 @@ state machine: `ACTIVE`, `IDLE`, `SUSPECTED_STALE`, `UNREACHABLE`,
 - Every action is recorded in an audit trail. Canonical checkpoints and history
   are never deleted.
 
+### Monitor integration
+
+The Monitor backend lives in `monitor-server/` and is the only place that reads
+process ownership:
+
+- `migrations/005-reaper-owner.sql` adds `owner_started_at`, `owner_executable`,
+  `lease_owner`, `lease_generation` and `lease_fencing_token`. Every column has a
+  default, so existing rows and older publishers keep working; a row that
+  predates the migration is `RECOVERY_REQUIRED` until it reports again.
+- `session-upsert.cjs` persists those fields. A sparse report cannot erase what
+  an earlier report proved, and `lease_generation` only moves forward.
+- `reaper-query.cjs` is the only query that selects owner and lease columns. It
+  is reachable only through `POST /api/reaper/sessions`, which requires an
+  HMAC-SHA256 signature over the canonical JSON payload and a timestamp inside a
+  60-second replay window. The secret is `DEVWF_REAPER_SECRET`, server-side only.
+- The public `/api/sessions` payload never contains the owner PID, creation time,
+  executable or fencing token. It carries only `reaper_state`, `reaper_reason`
+  and `reaper_actions`.
+- `reaper-scheduler.cjs` runs one idempotent reconciliation cycle every
+  `DEVWF_REAPER_INTERVAL_MS` (default 5 minutes). It refuses to overlap itself,
+  defaults to dry-run, and archives only a confirmed `ORPHANED` session. It never
+  stops a process and never releases a lease: those need the machine-local
+  controller.
+- `reaper-actions.cjs` is the single authorization table shared by the endpoint
+  and the UI. `Verify now`, `View checkpoint` and `View cleanup evidence` are
+  read-only and always available; `Recover orphan` is offered only for
+  `ORPHANED`; `Graceful stop` is offered only for `IDLE` and always answers
+  `CONTROLLER_REQUIRED` from the monitor.
+
+### Machine-local controllers
+
+`session-controller-adapters.js` is the only code that touches the OS:
+
+- Windows: `Get-CimInstance Win32_Process` (PowerShell CIM) for creation time and
+  executable, with `wmic` as a fallback for older hosts, and `taskkill /PID`
+  without `/F` for a graceful request. `wmic` is absent on current Windows 11
+  builds, so CIM is the primary provider.
+- macOS: `ps -o lstart=` / `ps -o comm=` for identity and `SIGTERM` for a
+  graceful stop.
+
+`createMachineController()` refuses a session from another machine, re-verifies
+PID + creation time + executable locally, and refuses to stop a PID shared by
+more than one session (`SHARED_PROCESS_REFUSED`). A failed graceful request is
+reported as `PROCESS_DID_NOT_EXIT`; the reaper never escalates to a force kill.
+
+### Enabling mutation
+
+`DEVWF_REAPER_DRY_RUN=0` is the only switch that lets the scheduler archive a
+confirmed orphan. Leave it unset until the controllers are deployed and verified
+on every machine. `DEVWF_REAPER_SECRET` must be provisioned on the monitor host
+before the privileged endpoint answers anything but `401`.
+
 ## README-first preflight
 
 `start_task` performs a bounded, read-only preflight before the task is recorded:

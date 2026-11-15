@@ -360,6 +360,63 @@ startup tetap di bawah 2 detik.
 Diverifikasi dengan sesi sungguhan: `start_task` → kartu tampil `live`, lalu
 `drop_task` → baris langsung menjadi `idle` dan kartunya hilang.
 
+## Reaper: status terverifikasi dan tombol yang diizinkan
+
+Sejak PR #103, kartu membawa status reaper yang **dihitung backend**, bukan
+tebakan dari umur laporan:
+
+| `reaper_state` | Arti | Tombol yang tampil |
+|---|---|---|
+| `ACTIVE` | proses hidup dan masih melapor | Verify now, View checkpoint, View cleanup evidence |
+| `IDLE` | proses hidup, heartbeat lewat `IDLE_MS` | + Graceful stop |
+| `SUSPECTED_STALE` | proses hidup, heartbeat lewat `STALE_MS` | Verify now, checkpoint, evidence |
+| `UNREACHABLE` | mesin sedang offline | Verify now, checkpoint, evidence |
+| `ORPHANED` | proses **dipastikan** sudah tidak ada | + Recover orphan |
+| `RECOVERY_REQUIRED` | identitas tidak dapat diverifikasi (PID dipakai ulang, executable berubah, sesi lama tanpa metadata) | Verify now, checkpoint, evidence |
+| `ARCHIVED` | kartu sudah ditutup | Verify now, checkpoint, evidence |
+| `UNKNOWN` | query istimewa tidak tersedia (migrasi belum jalan) | Verify now, checkpoint, evidence |
+
+Tombolnya **tidak** ditulis di UI sebagai daftar terpisah: backend mengirim
+`reaper_actions` dari `monitor-server/reaper-actions.cjs`, dan UI hanya merender
+daftar itu. Jadi UI tidak mungkin menawarkan aksi yang akan ditolak server.
+
+Batas kewenangan monitor:
+
+- `Verify now`, `View checkpoint`, `View cleanup evidence` — baca saja.
+- `Recover orphan` — hanya untuk `ORPHANED`, dan hanya menutup kartu
+  (`phase = 'closed'`). Lease dilepas oleh controller di mesinnya sendiri.
+- `Graceful stop` — hanya untuk `IDLE`, dan monitor **selalu** menjawab
+  `CONTROLLER_REQUIRED`. Monitor tidak pernah mematikan proses.
+
+`POST /api/reaper/action` memakai token tulis monitor yang sama dengan
+`/api/session` dan `/api/event`, menghitung ulang status di server, dan menolak
+aksi yang tidak diizinkan status itu dengan `409`.
+
+Yang **tidak** pernah dikirim ke browser: `owner_pid`, `owner_started_at`,
+`owner_executable`, `lease_owner`, `lease_generation`, `lease_fencing_token`, dan
+`DEVWF_REAPER_SECRET`. Payload publik hanya berisi `reaper_state`,
+`reaper_reason`, dan `reaper_actions`.
+
+### Scheduler
+
+`monitor-server/reaper-scheduler.cjs` berjalan satu kali per
+`DEVWF_REAPER_INTERVAL_MS` (bawaan 5 menit). Sifatnya:
+
+- satu pemilik timer (`start()` tidak melakukan apa pun bila timer sudah ada);
+- `runOnce()` menolak tumpang tindih (`ALREADY_RUNNING`);
+- **dry-run secara bawaan**; `DEVWF_REAPER_DRY_RUN=0` satu-satunya saklar yang
+  mengizinkan perubahan;
+- hanya `ORPHANED` yang diarsipkan, dan arsip adalah perubahan `phase`, bukan
+  `DELETE`;
+- siklus yang gagal dicatat lalu dicoba lagi pada interval berikutnya, jadi
+  tidak meninggalkan state setengah jadi.
+
+### Rollback
+
+Set `DEVWF_REAPER_DRY_RUN=1` (atau hapus variabelnya) lalu restart monitor:
+scheduler kembali mengamati dan tidak mengubah apa pun. Migrasi `005` bersifat
+aditif, jadi kolomnya boleh tetap ada.
+
 ## Sesi `idle` yang basi disembunyikan
 Proses MCP mati bersama sesi OpenCode-nya, jadi baris `idle` tinggal selamanya.
 Tanpa filter, dashboard yang dipakai berhari-hari memenuhi layar tablet dengan

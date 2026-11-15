@@ -27,11 +27,36 @@ async function pollExit(isAlive, pid, { attempts = 10, delayMs = 500 } = {}) {
   return { ok: false, reason: "PROCESS_DID_NOT_EXIT" };
 }
 
-/** Windows: tasklist/taskkill and wmic process identity. */
+/** Windows: CIM (wmic fallback) for identity and taskkill for a graceful stop. */
 export function createWindowsAdapters({ exec = execFileSync, isAlive = defaultIsAlive } = {}) {
   return {
     isAlive,
     processInfo(pid) {
+      // wmic is removed on current Windows 11 builds, so PowerShell CIM is the
+      // primary provider and wmic stays only as a fallback for older hosts.
+      try {
+        const out = String(
+          exec(
+            "powershell",
+            [
+              "-NoProfile",
+              "-NonInteractive",
+              "-Command",
+              `$p = Get-CimInstance Win32_Process -Filter "ProcessId=${pid}"; ` +
+                `if ($p) { $p | Select-Object ProcessId,CreationDate,ExecutablePath | ConvertTo-Json -Compress }`,
+            ],
+            { encoding: "utf8", windowsHide: true }
+          )
+        ).trim();
+        if (out) {
+          const parsed = JSON.parse(out);
+          const startedAt = parsed.CreationDate ? String(parsed.CreationDate) : "";
+          const executable = parsed.ExecutablePath ? String(parsed.ExecutablePath) : "";
+          if (startedAt || executable) return { pid, startedAt, executable };
+        }
+      } catch {
+        // fall through to wmic
+      }
       try {
         const out = String(
           exec("wmic", ["process", "where", `processid=${pid}`, "get", "CreationDate,ExecutablePath", "/format:list"], {

@@ -7,17 +7,46 @@ import {
   createWindowsAdapters,
 } from "../session-controller-adapters.js";
 
-test("Windows processInfo parses wmic creation time and executable", () => {
+test("Windows processInfo reads identity from PowerShell CIM", () => {
   const exec = (cmd, args) => {
+    assert.equal(cmd, "powershell");
+    assert.ok(args.join(" ").includes("ProcessId=123"));
+    return JSON.stringify({
+      ProcessId: 123,
+      CreationDate: "2026-11-15T08:00:00.000Z",
+      ExecutablePath: "C:\\Program Files\\nodejs\\node.exe",
+    });
+  };
+  const adapters = createWindowsAdapters({ exec, isAlive: () => true });
+  const info = adapters.processInfo(123);
+  assert.equal(info.pid, 123);
+  assert.match(info.startedAt, /2026-11-15T08:00:00/);
+  assert.match(info.executable, /node\.exe$/);
+});
+
+test("Windows processInfo falls back to wmic when CIM returns nothing", () => {
+  const calls = [];
+  const exec = (cmd, args) => {
+    calls.push(cmd);
+    if (cmd === "powershell") return "";
     assert.equal(cmd, "wmic");
     assert.ok(args.includes("processid=123"));
     return "CreationDate=20261115080000.000000+420\r\r\nExecutablePath=C:\\Program Files\\nodejs\\node.exe\r\r\n";
   };
   const adapters = createWindowsAdapters({ exec, isAlive: () => true });
   const info = adapters.processInfo(123);
-  assert.equal(info.pid, 123);
+  assert.deepEqual(calls, ["powershell", "wmic"]);
   assert.match(info.startedAt, /20261115080000/);
   assert.match(info.executable, /node\.exe$/);
+});
+
+test("Windows processInfo returns null when the process is gone", () => {
+  const exec = (cmd) => {
+    if (cmd === "powershell") return "";
+    throw new Error("No Instance(s) Available.");
+  };
+  const adapters = createWindowsAdapters({ exec, isAlive: () => false });
+  assert.equal(adapters.processInfo(999999), null);
 });
 
 test("Windows requestStop calls taskkill for the exact PID", () => {
