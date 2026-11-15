@@ -90,12 +90,45 @@ test("report_build_status keeps an explicit buildHost", async () => {
   });
 });
 
-test("managed launcher defaults DEVWF_BUILD_HOST to build-host.example", () => {
-  const source = readFileSync(path.join(ROOT, "managed/launcher.cjs"), "utf8");
-  assert.match(
-    source,
-    /DEVWF_BUILD_HOST:process\.env\.DEVWF_BUILD_HOST\|\|'build-host\.example'/,
-  );
+test("managed launcher defaults DEVWF_BUILD_HOST to build-host.example", async () => {
+  // Behavioural, not a source regex: the launcher must hand the child a
+  // build-host default, and must still honour an explicit value.
+  const { createRequire } = await import("node:module");
+  const require = createRequire(import.meta.url);
+  const { launchManaged } = require("../managed/launcher.cjs");
+  const os = await import("node:os");
+  const fs = await import("node:fs/promises");
+
+  const cacheRoot = await fs.mkdtemp(path.join(os.tmpdir(), "devwf-buildhost-"));
+  try {
+    const captured = [];
+    const spawnImpl = (_exec, _args, options) => {
+      captured.push(options.env);
+      return { on() {}, kill() {} };
+    };
+    const release = { revision: "d".repeat(40), version: "1.2.3", runtimeRoot: cacheRoot, offline: false };
+
+    await launchManaged({
+      env: {},
+      cacheRoot,
+      now: () => Date.now(),
+      resolveReleaseImpl: async () => release,
+      spawnImpl,
+    });
+    assert.equal(captured[0].DEVWF_BUILD_HOST, "build-host.example");
+    assert.equal(captured[0].DEVWF_RELEASE_VERSION, "1.2.3");
+
+    await launchManaged({
+      env: { DEVWF_BUILD_HOST: "builder-vm" },
+      cacheRoot,
+      now: () => Date.now(),
+      resolveReleaseImpl: async () => release,
+      spawnImpl,
+    });
+    assert.equal(captured[1].DEVWF_BUILD_HOST, "builder-vm");
+  } finally {
+    await fs.rm(cacheRoot, { recursive: true, force: true });
+  }
 });
 
 test("run_tests exposes buildHost in its tool schema", () => {
