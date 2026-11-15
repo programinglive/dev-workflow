@@ -1,6 +1,7 @@
 import { textResponse, isReleaseSatisfied, resetToCommitIfWorkingChanges, summarizeHistory } from "./shared.js";
 import { resolveProjectDir, setActiveProjectDir, getActiveProjectDir } from "../../exec.js";
 import { assertMutationRepository } from "./commit-handlers.js";
+import { assertPreflightScope } from "../../preflight.js";
 import { captureRepositoryIdentity, parseRemoteIdentity } from "../../repository-identity.js";
 import { acquireReleaseLock, releaseReleaseLock, readReleaseLock } from "../release-lock.js";
 
@@ -202,6 +203,18 @@ export async function handleRecordDeployment(args, context) {
     });
     if (!repoGuard.ok) {
       return textResponse(repoGuard.message);
+    }
+  }
+
+  // README-first scope guard: a deployment record must target the checkout the
+  // task preflight recorded.
+  {
+    const scope = assertPreflightScope(workflowState.state.preflight, {
+      projectDir: workflowState.state.projectDir || getActiveProjectDir() || "",
+      operation: "record_deployment",
+    });
+    if (!scope.ok) {
+      return textResponse(`⚠️ Dibatalkan: ${scope.code}. ${scope.reason}`);
     }
   }
 
@@ -459,6 +472,18 @@ export async function handlePerformRelease(args, context) {
     });
     if (!repoGuard.ok) {
       return textResponse(repoGuard.message);
+    }
+  }
+
+  // README-first scope guard: a release must target the checkout the task
+  // preflight recorded.
+  {
+    const scope = assertPreflightScope(workflowState.state.preflight, {
+      projectDir: workflowState.state.projectDir || getActiveProjectDir() || "",
+      operation: "perform_release",
+    });
+    if (!scope.ok) {
+      return textResponse(`⚠️ Dibatalkan: ${scope.code}. ${scope.reason}`);
     }
   }
 
