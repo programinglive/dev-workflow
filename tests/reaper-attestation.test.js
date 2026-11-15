@@ -5,6 +5,7 @@ import {
   ATTESTATION_TTL_MS,
   buildArchiveQuery,
   buildLeaseReleaseQuery,
+  buildReconcileQuery,
   parseAttestation,
   revalidateAttestation,
 } from "../monitor-server/reaper-attestation.cjs";
@@ -22,7 +23,10 @@ import {
  * stored row.
  */
 
-const NOW = 1_800_000_000_000;
+// The fixture clock follows the real clock so a call site that omits `now`
+// (and therefore uses Date.now()) still sees a fresh attestation. A fixed
+// future timestamp would make every such call fail as ATTESTATION_FROM_FUTURE.
+const NOW = Date.now();
 
 function payload(overrides = {}) {
   return {
@@ -192,6 +196,48 @@ test("lease release is a compare-and-swap that bumps the generation", () => {
 test("a session with no lease has nothing to release", () => {
   const parsed = parseAttestation(payload({ leaseOwner: "", leaseGeneration: 0, leaseFencingToken: "" }), { now: NOW });
   assert.equal(buildLeaseReleaseQuery(parsed.value), null);
+});
+
+// ------------------------------------------------------- atomic arbitration
+
+test("reconciliation is one statement, not three", () => {
+  const parsed = parseAttestation(payload(), { now: NOW });
+  const { sql } = buildReconcileQuery(parsed.value);
+
+  // Archive, release and consumption live in the same statement, so a crash
+  // cannot leave the session archived while the attestation stays unconsumed.
+  assert.match(sql, /WITH archived AS/);
+  assert.match(sql, /released AS/);
+  assert.match(sql, /consumed AS/);
+  assert.match(sql, /consumed_at IS NULL/);
+  assert.equal((sql.match(/^\s*UPDATE /gm) || []).length, 3);
+});
+
+test("the attestation is always consumed, even when nothing was archived", () => {
+  const parsed = parseAttestation(payload(), { now: NOW });
+  const { sql } = buildReconcileQuery(parsed.value);
+  assert.match(sql, /WHEN \(SELECT count\(\*\) FROM archived\) = 0 THEN 'identity_changed'/);
+});
+
+test("a session with no lease emits no release body", () => {
+  const parsed = parseAttestation(payload({ leaseOwner: "", leaseGeneration: 0, leaseFencingToken: "" }), { now: NOW });
+  const { sql } = buildReconcileQuery(parsed.value);
+  assert.match(sql, /released AS \(\s*SELECT NULL::text AS session_key WHERE false/);
+  assert.equal(/lease_generation = lease_generation \+ 1/.test(sql), false);
+});
+
+test("reconciliation reports the outcome it actually achieved", () => {
+  const parsed = parseAttestation(payload(), { now: NOW });
+  const { sql } = buildReconcileQuery(parsed.value);
+  for (const outcome of [
+    "identity_changed",
+    "archived_lease_unresolved",
+    "archived_no_lease",
+    "archived_and_released",
+  ]) {
+    assert.ok(sql.includes(outcome), `${outcome} must be a possible recorded outcome`);
+  }
+  assert.match(sql, /SELECT \(SELECT count\(\*\) FROM archived\)::int AS archived/);
 });
 
 // ------------------------------------------------------------- attestation rows
