@@ -355,9 +355,15 @@ export async function handleCommitAndPush(args, context) {
   // Label laporan memakai repo yang benar-benar dipakai git bila diketahui.
   const repoName = gitToplevel || repoLabel();
 
+  const runFenced = (op, fn) =>
+    typeof workflowState._withOwnershipFence === "function"
+      ? workflowState._withOwnershipFence(op, fn)
+      : fn();
+
   const branchForPush = pickPushBranch({ requestedBranch, currentBranch, primaryBranch });
 
   if (!hasWorkingChanges) {
+    return await runFenced("commit_and_push_no_changes", async () => {
     const lastCommitMessage = await git.getLastCommitMessage();
     const effectiveCommitMessage = lastCommitMessage || providedCommitMessage;
 
@@ -413,6 +419,7 @@ export async function handleCommitAndPush(args, context) {
       `oleh panggilan sebelumnya, atau berada di repo/branch lain.\n\n` +
       `Next: Run 'perform_release' to handle the release and push tags.`
     );
+    });
   }
 
   const statusOutput = await git.getStatusOutput();
@@ -452,11 +459,6 @@ export async function handleCommitAndPush(args, context) {
         `Nothing was staged and nothing was committed.`
     );
   }
-
-  const runFenced = (op, fn) =>
-    typeof workflowState._withOwnershipFence === "function"
-      ? workflowState._withOwnershipFence(op, fn)
-      : fn();
 
   return await runFenced("commit_and_push", async () => {
   try {

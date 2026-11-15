@@ -29,6 +29,9 @@ import {
   lstatSync,
   readdirSync,
   realpathSync,
+  openSync,
+  closeSync,
+  constants as fsConstants,
 } from "fs";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { execFileSync } from "child_process";
@@ -406,6 +409,67 @@ export async function useWorktreeCapability(
 
 let nextWorktreeAcquireSeq = 0;
 
+function allocateCrossProcessAcquireStamp() {
+  const seqDir = (typeof process.env.DEVWF_ACQUIRE_SEQ_DIR === "string" && process.env.DEVWF_ACQUIRE_SEQ_DIR.trim())
+    ? path.resolve(process.env.DEVWF_ACQUIRE_SEQ_DIR.trim())
+    : os.tmpdir();
+  mkdirSync(seqDir, { recursive: true });
+  const counterPath = path.join(seqDir, "dev-workflow-acquire-seq.json");
+  const lockPath = path.join(seqDir, "dev-workflow-acquire-seq.lock");
+  const deadline = Date.now() + 2000;
+  let lockFd = -1;
+
+  while (lockFd === -1) {
+    try {
+      lockFd = openSync(
+        lockPath,
+        fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_RDWR,
+        0o600,
+      );
+    } catch (err) {
+      if (err?.code === "EEXIST") {
+        try {
+          const st = statSync(lockPath);
+          if (Date.now() - st.mtimeMs > 5000) {
+            unlinkSync(lockPath);
+            continue;
+          }
+        } catch {
+          // Ignore race with lock owner unlinking
+        }
+        if (Date.now() >= deadline) {
+          throw new Error(`Timed out waiting for acquire-seq lock: ${lockPath}`);
+        }
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  try {
+    let lastMs = 0;
+    let lastSeq = 0;
+    try {
+      const parsed = JSON.parse(readFileSync(counterPath, "utf8"));
+      if (Number.isFinite(Number(parsed?.lastMs))) lastMs = Number(parsed.lastMs);
+      if (Number.isFinite(Number(parsed?.seq))) lastSeq = Number(parsed.seq);
+    } catch {
+      // Missing or uninitialized counter starts fresh
+    }
+    const nowMs = Date.now();
+    const stampedMs = nowMs > lastMs ? nowMs : lastMs;
+    const nextSeq = stampedMs === lastMs ? lastSeq + 1 : 1;
+    nextWorktreeAcquireSeq = Math.max(nextWorktreeAcquireSeq + 1, nextSeq);
+    const tmpPath = `${counterPath}.${process.pid}.${randomUUID()}.tmp`;
+    writeFileSync(tmpPath, JSON.stringify({ lastMs: stampedMs, seq: nextSeq }), "utf8");
+    renameSync(tmpPath, counterPath);
+    return { acquiredAt: stampedMs, acquireSeq: nextSeq };
+  } finally {
+    try { closeSync(lockFd); } catch {}
+    try { unlinkSync(lockPath); } catch {}
+  }
+}
+
 export async function acquireWorktreeMutex({
   projectDir,
   timeoutMs = 50,
@@ -483,6 +547,7 @@ export async function acquireWorktreeMutex({
         server.once("error", reject);
         server.listen(listenTarget, resolve);
       });
+      const stamp = allocateCrossProcessAcquireStamp();
       const capability = {
         token: randomUUID(),
         pid,
@@ -496,8 +561,8 @@ export async function acquireWorktreeMutex({
         releaseRequested: false,
         inFlightCount: 0,
         _drainWaiters: [],
-        acquiredAt: Date.now(),
-        acquireSeq: ++nextWorktreeAcquireSeq,
+        acquiredAt: stamp.acquiredAt,
+        acquireSeq: stamp.acquireSeq,
       };
       server.once("close", () => {
         capability.active = false;
