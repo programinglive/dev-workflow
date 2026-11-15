@@ -55,7 +55,7 @@ assert m.doctor(home)['ok'] is True
 `);
 });
 
-test('an installed credential wrapper targets the gate, not the launcher',()=>{
+test('an installed credential wrapper targets the gate, not the launcher', { skip: process.platform !== 'win32' ? 'credential wrappers exist only on Windows' : false }, ()=>{
   runPython(`
 src=pathlib.Path(tempfile.mkdtemp())
 for n in ('launcher.cjs','protocol.cjs','device-entry.cjs','admission.cjs'):(src/n).write_text('',encoding='utf-8')
@@ -67,11 +67,11 @@ wrapper.parent.mkdir(parents=True,exist_ok=True)
 wrapper.write_text('const serverPath = path.join(globalModules, "dev-workflow-mcp-server", "index.js");' + chr(10),encoding='utf-8')
 import os
 os.environ['LOCALAPPDATA']=str(home/'local')
-m.install(home,src,node='node',verify=False)
+result=m.install(home,src,node='node',verify=False)
 text=wrapper.read_text(encoding='utf-8')
 assert text.rstrip().endswith('device-entry.cjs";'), 'the wrapper must route through the admission gate: '+text
 assert 'launcher.cjs' not in text, 'the wrapper must not target the launcher directly'
-bootstrap=home/'local/ProgramingLive/ManagedMCP/bootstrap'
+bootstrap=pathlib.Path(result['bootstrap'])
 assert json.dumps(str(bootstrap/'device-entry.cjs')) in text
 `);
 });
@@ -93,7 +93,7 @@ assert entry['command']=='node' and entry['args'][-1]=='antigravity' and entry['
 assert entry['env']=={'KEEP':'test-only'}
 assert data['mcpServers']['playwright']=={'command':'npx','args':['keep']}
 assert str(cli) in result['changed']
-bootstrap=home/'local/ProgramingLive/ManagedMCP/bootstrap'
+bootstrap=pathlib.Path(result['bootstrap'])
 assert (bootstrap/'admission.cjs').exists(), 'the admission gate must be installed beside the entry'
 `);
 });
