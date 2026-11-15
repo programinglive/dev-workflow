@@ -21,6 +21,8 @@
  * - Every action is a plan first; applying it is a separate, auditable step.
  */
 
+import { createHmac, timingSafeEqual } from "node:crypto";
+
 export const SESSION_STATES = Object.freeze({
   ACTIVE: "ACTIVE",
   IDLE: "IDLE",
@@ -243,4 +245,85 @@ export async function applyCleanup(plan, adapters = {}) {
 
   record({ action: plan.action, result: "unsupported" });
   return { ok: false, mutated: false, audit, reason: "UNSUPPORTED_ACTION" };
+}
+
+/**
+ * Classify every session and return a plan for each. Read-only.
+ */
+export function reconcileSessions(sessions, context = {}) {
+  return (sessions || []).map((session) => planCleanup(session, context));
+}
+
+/**
+ * Restricted machine-local controller.
+ *
+ * The controller only ever acts on sessions whose `machine` matches its own.
+ * It never receives a bare PID from a remote caller: the caller passes a
+ * session record, and the controller re-verifies identity locally before any
+ * stop or lease release.
+ */
+export function createMachineController({ machine, adapters = {} } = {}) {
+  if (!machine) throw new Error("machine is required");
+  const audit = [];
+  const record = (event) => audit.push({ at: new Date().toISOString(), machine, ...event });
+
+  function assertLocal(session) {
+    if (String(session?.machine || "") !== String(machine)) {
+      return { ok: false, reason: "REMOTE_SESSION_REFUSED" };
+    }
+    return { ok: true };
+  }
+
+  return {
+    machine,
+    audit,
+    async verify(session) {
+      const local = assertLocal(session);
+      if (!local.ok) return local;
+      const identity = verifyProcessIdentity(session, adapters);
+      record({ action: "verify", sessionKey: session?.session_key, ok: identity.ok, code: identity.code });
+      return identity;
+    },
+    async requestStop(session) {
+      const local = assertLocal(session);
+      if (!local.ok) return local;
+      if (typeof adapters.requestStop !== "function") return { ok: false, reason: "NO_STOP_ADAPTER" };
+      const result = await adapters.requestStop(session);
+      record({ action: "request_stop", sessionKey: session?.session_key, ok: result?.ok !== false });
+      return result;
+    },
+    async waitForExit(session, { attempts = 10, delayMs = 500 } = {}) {
+      const local = assertLocal(session);
+      if (!local.ok) return local;
+      if (typeof adapters.waitForExit !== "function") return { ok: false, reason: "NO_WAIT_ADAPTER" };
+      const result = await adapters.waitForExit(session, { attempts, delayMs });
+      record({ action: "wait_for_exit", sessionKey: session?.session_key, ok: result?.ok === true });
+      return result;
+    },
+    async reconcileOrphanLease(session, lease) {
+      const local = assertLocal(session);
+      if (!local.ok) return local;
+      if (typeof adapters.releaseLease !== "function") return { ok: false, reason: "NO_LEASE_ADAPTER" };
+      const result = await adapters.releaseLease(session.session_key, {
+        expectedOwner: lease?.owner,
+        expectedGeneration: lease?.generation,
+        expectedFencingToken: lease?.fencingToken,
+      });
+      record({ action: "reconcile_orphan_lease", sessionKey: session?.session_key, ok: result?.ok === true });
+      return result;
+    },
+  };
+}
+
+/** HMAC signature for a controller request payload. */
+export function signControllerRequest(payload, secret) {
+  return createHmac("sha256", String(secret)).update(JSON.stringify(payload)).digest("hex");
+}
+
+/** Constant-time verification of a controller request signature. */
+export function verifyControllerRequest(request, secret) {
+  const expected = signControllerRequest(request?.payload, secret);
+  const provided = String(request?.signature || "");
+  if (expected.length !== provided.length) return false;
+  return timingSafeEqual(Buffer.from(expected), Buffer.from(provided));
 }
