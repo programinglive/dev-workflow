@@ -32,6 +32,7 @@ import {
   acquireWorktreeMutex,
   releaseWorktreeMutex,
   assertWorktreeCapabilityLive,
+  assertWorktreeCapabilityMatches,
   useWorktreeCapability,
   getHeldWorktreeCapability,
   resolveCanonicalWorktreeRoot,
@@ -1334,6 +1335,7 @@ export function pinSessionProject({
   requireLease = false,
   kernelCapability = null,
   requireKernelMutex = false,
+  expectedOwnerKey = null,
 }) {
   const target = canonicalProjectPath(projectDir);
   if (!target) {
@@ -1377,26 +1379,15 @@ export function pinSessionProject({
     }
   };
 
-  if (kernelCapability || requireKernelMutex) {
-    const cap = kernelCapability || getHeldWorktreeCapability(target);
-    assertWorktreeCapabilityLive(cap, {
-      operation: "pinSessionProject",
-      allowDrainingInFlight: true,
-    });
-    writePointer();
-  } else if (requireLease || expectedLeaseId) {
-    withProjectOwnershipFence(
-      {
-        dir: projectDirPath,
-        expectedLeaseId,
-        requireLease,
-        operation: "pinSessionProject",
-      },
-      writePointer,
-    );
-  } else {
-    writePointer();
-  }
+  const cap = kernelCapability || getHeldWorktreeCapability(target);
+  assertWorktreeCapabilityMatches({
+    capability: cap,
+    operation: "pinSessionProject",
+    ownerKey: expectedOwnerKey || sessionKey,
+    projectDir: target,
+    allowDrainingInFlight: true,
+  });
+  writePointer();
 
   return {
     ok: !pointerWriteError,
@@ -1587,14 +1578,18 @@ export async function claimFocusBinding({
   timeoutMs,
   kernelCapability = null,
   requireKernelMutex = false,
+  expectedOwnerKey = null,
 } = {}) {
   const id = Number(focusId);
   if (!Number.isSafeInteger(id) || id <= 0) return { ok: false, reason: "INVALID_FOCUS" };
 
   if (kernelCapability || requireKernelMutex) {
     const cap = kernelCapability || (projectDir ? getHeldWorktreeCapability(projectDir) : null);
-    assertWorktreeCapabilityLive(cap, {
+    assertWorktreeCapabilityMatches({
+      capability: cap,
       operation: "claimFocusBinding",
+      ownerKey: expectedOwnerKey || (stateFile ? sessionKeyFromStateFile(stateFile) : null),
+      projectDir: projectDir || null,
       allowDrainingInFlight: true,
     });
   }
@@ -2350,7 +2345,27 @@ export async function rollbackTransitionJournal(
   }
 
   const acquiredRecoveryCaps = [];
-  const recoveryOwnerKey = journal.sessionKey ? `recovery:${journal.sessionKey}` : `recovery:${process.pid}`;
+  const recoveryOwnerKey = `recovery:${journal.sessionKey || process.pid}:${randomUUID()}`;
+  const assertAllRecoveryCapsLive = (operation) => {
+    for (const cap of acquiredRecoveryCaps) {
+      assertWorktreeCapabilityMatches({
+        capability: cap,
+        operation,
+        ownerKey: recoveryOwnerKey,
+        projectDir: cap.worktreeRoot,
+        allowDrainingInFlight: true,
+      });
+    }
+  };
+  const runUnderRecoveryCaps = async (fn) => {
+    let runner = fn;
+    for (let i = acquiredRecoveryCaps.length - 1; i >= 0; i -= 1) {
+      const cap = acquiredRecoveryCaps[i];
+      const next = runner;
+      runner = () => useWorktreeCapability(cap, next, { operation: "rollbackTransitionJournal" });
+    }
+    return await runner();
+  };
   try {
     for (const wt of verifiedWorktrees.worktrees) {
       const m = await acquireWorktreeMutex({
@@ -2358,74 +2373,78 @@ export async function rollbackTransitionJournal(
         timeoutMs: 25,
         ownerKey: recoveryOwnerKey,
       });
-      if (!m.ok || !m.capability) {
-        // Required worktree mutex could not be acquired: fail closed and preserve journal.
+      if (!m.ok || !m.capability || m.alreadyHeld) {
+        // Required worktree mutex could not be exclusively acquired: fail closed and preserve journal.
         return false;
       }
-      if (!m.alreadyHeld) {
-        acquiredRecoveryCaps.push(m.capability);
+      acquiredRecoveryCaps.push(m.capability);
+    }
+
+    return await runUnderRecoveryCaps(async () => {
+      if (typeof hooks?.onBeforeRestore === "function") {
+        await hooks.onBeforeRestore({ journal, capabilities: acquiredRecoveryCaps });
       }
-    }
 
-    if (typeof hooks?.onBeforeRestore === "function") {
-      await hooks.onBeforeRestore({ journal });
-    }
+      assertAllRecoveryCapsLive("rollbackTransitionJournal:restoreDb");
+      let targetDbRes = { ok: true };
+      if (journal.targetDbSnapshot && journal.targetStateFile !== journal.sourceStateFile) {
+        targetDbRes = await restoreDbRowSnapshot(journal.targetDbSnapshot, journal, "target");
+      }
+      const sourceDbRes = journal.sourceDbSnapshot
+        ? await restoreDbRowSnapshot(journal.sourceDbSnapshot, journal, "source")
+        : { ok: true };
 
-    let targetDbRes = { ok: true };
-    if (journal.targetDbSnapshot && journal.targetStateFile !== journal.sourceStateFile) {
-      targetDbRes = await restoreDbRowSnapshot(journal.targetDbSnapshot, journal, "target");
-    }
-    const sourceDbRes = journal.sourceDbSnapshot
-      ? await restoreDbRowSnapshot(journal.sourceDbSnapshot, journal, "source")
-      : { ok: true };
+      if (!targetDbRes.ok || !sourceDbRes.ok) {
+        // R3-5: Pertahankan jurnal di disk sebagai bukti bila pemulihan DB gagal.
+        return false;
+      }
 
-    if (!targetDbRes.ok || !sourceDbRes.ok) {
-      // R3-5: Pertahankan jurnal di disk sebagai bukti bila pemulihan DB gagal.
-      return false;
-    }
+      const dbSuperseded = Boolean(targetDbRes.skippedNewerOwner || sourceDbRes.skippedNewerOwner);
 
-    const dbSuperseded = Boolean(targetDbRes.skippedNewerOwner || sourceDbRes.skippedNewerOwner);
+      assertAllRecoveryCapsLive("rollbackTransitionJournal:rollbackFiles");
+      const fileRes = rollbackJournalFilesAndLocksSync(journal, {
+        isCrashRecovery: !stagedLock,
+        recoveryAuthority,
+        skipFocusSync: true,
+        supersededByNewerOwner: dbSuperseded,
+      });
+      if (!fileRes.ok) {
+        return false;
+      }
 
-    const fileRes = rollbackJournalFilesAndLocksSync(journal, {
-      isCrashRecovery: !stagedLock,
-      recoveryAuthority,
-      skipFocusSync: true,
-      supersededByNewerOwner: dbSuperseded,
+      if (!dbSuperseded && !fileRes.skippedNewerOwner && journal.priorFocusBinding && journal.priorFocusBinding.applicable) {
+        assertAllRecoveryCapsLive("rollbackTransitionJournal:restoreFocus");
+        const focusRes = await restoreFocusBindingSnapshot(journal.priorFocusBinding, journal);
+        if (!focusRes || focusRes.ok === false) {
+          return false;
+        }
+      }
+
+      if (workflowState && journal.priorInMemory) {
+        workflowState.stateFile = journal.sourceStateFile;
+        workflowState.historyFile = journal.sourceHistoryFile;
+        workflowState.stateVersion = journal.priorInMemory.stateVersion;
+        workflowState.loadedTask = journal.priorInMemory.loadedTask;
+        if (journal.priorInMemory.state) {
+          workflowState.state = structuredClone(journal.priorInMemory.state);
+        }
+        if (typeof workflowState.bindLockLease === "function") {
+          workflowState.bindLockLease(journal.priorInMemory.boundLease);
+        }
+      }
+
+      if (typeof setActiveProjectDirFn === "function" && journal.priorInMemory) {
+        setActiveProjectDirFn(journal.priorInMemory.activeProjectDir || "");
+      }
+
+      if (typeof hooks?.onBeforeCompleteJournal === "function") {
+        await hooks.onBeforeCompleteJournal({ journal, capabilities: acquiredRecoveryCaps });
+      }
+
+      assertAllRecoveryCapsLive("rollbackTransitionJournal:completeJournal");
+      completeTransitionJournal(journal);
+      return true;
     });
-    if (!fileRes.ok) {
-      return false;
-    }
-
-    if (!dbSuperseded && !fileRes.skippedNewerOwner && journal.priorFocusBinding && journal.priorFocusBinding.applicable) {
-      const focusRes = await restoreFocusBindingSnapshot(journal.priorFocusBinding, journal);
-      if (!focusRes || focusRes.ok === false) {
-        return false;
-      }
-    }
-
-    if (workflowState && journal.priorInMemory) {
-      workflowState.stateFile = journal.sourceStateFile;
-      workflowState.historyFile = journal.sourceHistoryFile;
-      workflowState.stateVersion = journal.priorInMemory.stateVersion;
-      workflowState.loadedTask = journal.priorInMemory.loadedTask;
-      if (journal.priorInMemory.state) {
-        workflowState.state = structuredClone(journal.priorInMemory.state);
-      }
-      if (typeof workflowState.bindLockLease === "function") {
-        workflowState.bindLockLease(journal.priorInMemory.boundLease);
-      }
-    }
-
-    if (typeof setActiveProjectDirFn === "function" && journal.priorInMemory) {
-      setActiveProjectDirFn(journal.priorInMemory.activeProjectDir || "");
-    }
-
-    if (typeof hooks?.onBeforeCompleteJournal === "function") {
-      await hooks.onBeforeCompleteJournal({ journal });
-    }
-
-    completeTransitionJournal(journal);
-    return true;
   } finally {
     for (const cap of acquiredRecoveryCaps) {
       try {
@@ -2598,7 +2617,7 @@ export async function reconcilePendingTransitionJournals({
           continue;
         }
         const acquiredCaps = [];
-        const recoveryOwnerKey = journal.sessionKey ? `recovery:${journal.sessionKey}` : `recovery:${process.pid}`;
+        const recoveryOwnerKey = `recovery:${journal.sessionKey || process.pid}:${randomUUID()}`;
         let allAcquired = true;
         try {
           for (const wt of verifiedWorktrees.worktrees) {
@@ -2607,13 +2626,11 @@ export async function reconcilePendingTransitionJournals({
               timeoutMs: 25,
               ownerKey: recoveryOwnerKey,
             });
-            if (!m.ok || !m.capability) {
+            if (!m.ok || !m.capability || m.alreadyHeld) {
               allAcquired = false;
               break;
             }
-            if (!m.alreadyHeld) {
-              acquiredCaps.push(m.capability);
-            }
+            acquiredCaps.push(m.capability);
           }
           if (!allAcquired) {
             reconciled.push({
@@ -2623,11 +2640,28 @@ export async function reconcilePendingTransitionJournals({
             });
             continue;
           }
-          if (journal.relocatedLock && journal.fromLockDir && journal.fromLockDir !== journal.toLockDir) {
-            releaseOrphanedLockFromJournal(journal.fromLockDir, journal.fromLeaseId, journal.pid, { recoveryAuthority });
+          let runCleanup = async () => {
+            for (const cap of acquiredCaps) {
+              assertWorktreeCapabilityMatches({
+                capability: cap,
+                operation: "reconcilePendingTransitionJournals:committedCleanup",
+                ownerKey: recoveryOwnerKey,
+                projectDir: cap.worktreeRoot,
+                allowDrainingInFlight: true,
+              });
+            }
+            if (journal.relocatedLock && journal.fromLockDir && journal.fromLockDir !== journal.toLockDir) {
+              releaseOrphanedLockFromJournal(journal.fromLockDir, journal.fromLeaseId, journal.pid, { recoveryAuthority });
+            }
+            completeTransitionJournal(journal);
+          };
+          for (let i = acquiredCaps.length - 1; i >= 0; i -= 1) {
+            const cap = acquiredCaps[i];
+            const next = runCleanup;
+            runCleanup = () => useWorktreeCapability(cap, next, { operation: "reconcilePendingTransitionJournals:committedCleanup" });
           }
           try {
-            completeTransitionJournal(journal);
+            await runCleanup();
             reconciled.push({
               journalId: journal.journalId,
               sessionKey: journal.sessionKey,
@@ -3099,8 +3133,8 @@ export class WorkflowState {
   }
 
   _capabilityMatchesSession(cap) {
-    if (!cap) return false;
-    if (!cap.ownerKey) return true;
+    if (!cap || typeof cap !== "object") return false;
+    if (typeof cap.ownerKey !== "string" || cap.ownerKey.trim() === "") return false;
     const explicitSessionKey =
       (typeof this._sessionKey === "function" ? this._sessionKey()?.key : "") ||
       this.sessionId ||
@@ -3147,10 +3181,15 @@ export class WorkflowState {
     }
     if (this.state?.projectDir) {
       const wt = resolveCanonicalWorktreeRoot(this.state.projectDir);
-      if (wt.ok && wt.canonicalKey !== cap.canonicalKey) {
+      if (!wt.ok || wt.canonicalKey !== cap.canonicalKey) {
         throw new ProjectOwnershipLostError(
-          `Project ownership mismatch before ${operation}: capability is for "${cap.worktreeRoot}", not "${wt.worktreeRoot}".`,
-          { operation, capabilityWorktree: cap.worktreeRoot, targetWorktree: wt.worktreeRoot },
+          `Project ownership mismatch before ${operation}: capability is for "${cap.worktreeRoot}", not "${wt.ok ? wt.worktreeRoot : this.state.projectDir}".`,
+          {
+            operation,
+            capabilityWorktree: cap.worktreeRoot,
+            targetWorktree: wt.ok ? wt.worktreeRoot : this.state.projectDir,
+            reason: wt.ok ? "capability_worktree_mismatch" : "invalid_target_worktree",
+          },
         );
       }
     }
@@ -3159,25 +3198,22 @@ export class WorkflowState {
 
   async _withOwnershipFence(operation, fn) {
     const cap = this._assertKernelOwnership(operation, { allowDrainingInFlight: false });
-    const fence = this._resolveFencingContext();
-    const runWithLeaseFence = async () => {
-      if (fence.requireLease || this.boundLockLease) {
-        return await withProjectOwnershipFence(
-          {
-            dir: fence.dir,
-            expectedLeaseId: fence.expectedLeaseId,
-            requireLease: fence.requireLease,
-            operation,
-          },
-          fn,
-        );
-      }
-      return await fn();
-    };
     if (cap) {
-      return await useWorktreeCapability(cap, runWithLeaseFence, { operation });
+      return await useWorktreeCapability(cap, fn, { operation });
     }
-    return await runWithLeaseFence();
+    const fence = this._resolveFencingContext();
+    if (fence.requireLease || this.boundLockLease) {
+      return await withProjectOwnershipFence(
+        {
+          dir: fence.dir,
+          expectedLeaseId: fence.expectedLeaseId,
+          requireLease: fence.requireLease,
+          operation,
+        },
+        fn,
+      );
+    }
+    return await fn();
   }
 
   /**
@@ -3821,7 +3857,8 @@ export class WorkflowState {
     // Berikutnya semuanya opsional: ekspor, history, ringkasan, replika, monitor.
     // Tidak satu pun boleh menggagalkan penyimpanan yang sudah berhasil - itu
     // kelas bug yang membuat dokumentasi hilang karena hal lain gagal.
-    await this._exportJson();
+    const exportOk = await this._exportJson();
+    this._lastExportJsonOk = exportOk !== false;
 
     try {
       await this.writeHistoryFile();

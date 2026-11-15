@@ -606,6 +606,7 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
             repoKey: requestedRepoKey,
             kernelCapability: targetMutex.capability,
             requireKernelMutex: true,
+            expectedOwnerKey: sessionOwnerKey,
           });
           if (claimed && claimed.ok === false) {
             return { refusedResponse: textResponse(
@@ -740,21 +741,37 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
         }
 
         // Post-commit reconstructible projections & pointers (fenced by live OS mutex).
+        const postCommitProjectionErrors = [];
+        if (workflowState._lastExportJsonOk === false) {
+          postCommitProjectionErrors.push("exportJson:EXPORT_RETURNED_FALSE");
+        }
         if (workflowState.state.projectDir) {
-          pinSessionProject({
+          const pinRes = pinSessionProject({
             stateFile: workflowState.stateFile,
             projectDir: workflowState.state.projectDir,
             focusId: hasRequestedFocus ? requestedFocusId : null,
             kernelCapability: targetMutex.capability,
             requireKernelMutex: true,
+            expectedOwnerKey: sessionOwnerKey,
           });
+          if (!pinRes || pinRes.ok === false) {
+            postCommitProjectionErrors.push(`pinSessionProject:${pinRes?.error || "FAILED"}`);
+          }
         }
-        writeKernelLockMetadata({
+        const metaRes = writeKernelLockMetadata({
           dir: targetLockDir,
           capability: targetMutex.capability,
           projectDir: targetMutex.worktreeRoot,
+          expectedOwnerKey: sessionOwnerKey,
         });
+        if (!metaRes || metaRes.ok === false) {
+          postCommitProjectionErrors.push(`writeKernelLockMetadata:${metaRes?.error || "FAILED"}`);
+        }
+        if (postCommitProjectionErrors.length > 0) {
+          throw new Error(`Post-commit projection failed (${postCommitProjectionErrors.join(", ")})`);
+        }
 
+        workflowState.state.pendingProjectionRepair = null;
         return { ok: true };
       },
       { operation: "start_task_transition" },
@@ -810,6 +827,7 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
                   focusId: hasRequestedFocus ? requestedFocusId : null,
                   kernelCapability: targetMutex.capability,
                   requireKernelMutex: true,
+                  expectedOwnerKey: sessionOwnerKey,
                 });
                 if (pinRes && pinRes.ok === false) {
                   repairErrors.push(`pinSessionProject:${pinRes.error || "FAILED"}`);
@@ -823,6 +841,7 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
                 dir: targetLockDir,
                 capability: targetMutex.capability,
                 projectDir: targetMutex.worktreeRoot,
+                expectedOwnerKey: sessionOwnerKey,
               });
               if (!metaRes || metaRes.ok === false) {
                 repairErrors.push(`writeKernelLockMetadata:${metaRes?.error || "FAILED"}`);
@@ -832,7 +851,10 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
             }
             if (typeof workflowState._exportJson === "function") {
               try {
-                await workflowState._exportJson();
+                const exported = await workflowState._exportJson();
+                if (exported === false) {
+                  repairErrors.push("exportJson:EXPORT_RETURNED_FALSE");
+                }
               } catch (err) {
                 repairErrors.push(`exportJson:${err?.message || String(err)}`);
               }
