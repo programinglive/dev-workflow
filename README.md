@@ -516,7 +516,31 @@ says there is no baseline yet.
 
 ### Searching the active project
 
+### English-only engineering policy
+
 New implementation artifacts use English: identifiers, comments, docstrings, test descriptions, developer documentation and commit messages. MCP initialization, the workflow prompt and key tool responses deliver this rule to the AI. User conversation and explicitly localized product text can retain the requested language.
+
+The rule is also enforced deterministically, because a prompt is advice and advice is not a gate:
+
+```bash
+npm run check:english          # fail on new Indonesian engineering text
+node scripts/check-english.mjs --json
+node scripts/check-english.mjs --update-baseline
+```
+
+`scripts/check-english.mjs` splits every source file into comments, string literals and identifiers and scans each part for Indonesian marker words. A marker of five characters or more flags on its own; shorter, ambiguous markers need two different ones. It never rewrites anything: it reports `file:line [kind] markers :: text` and exits non-zero.
+
+The same command runs in three places, so every client on every machine is covered:
+
+- `npm run lint` (the CI `lint-command`), which is a required check;
+- `npm run ci:test`, the CI test job;
+- `.husky/pre-commit`, so a local commit is blocked before it is pushed.
+
+Exceptions are explicit and reviewable:
+
+- localization paths (`locales`, `i18n`, `lang`, `translations`) and `*.id.*` files are skipped: that is product text;
+- a line carrying `language-allow: <reason>` is skipped, and the reason is required;
+- `scripts/english-policy-baseline.json` records violations that predate the gate. They are reported as baselined and do not fail the build, but any new violation does. The list may only shrink.
 
 Zettly task tracking is automatic at task start, progress and successful completion. Use the existing owner account, not an unverified retired journal service credential. See [Zettly workflow tracking](docs/zettly-workflow.md) for protected credentials, deduplication, retry behavior and linked completion outcomes.
 
@@ -1545,6 +1569,91 @@ plus SSH across three machines (MMCH, HELLOWORLD, Mac).
 > ⚠️ This repository is **private**. Do not share it publicly.
 
 ---
+
+## Session lifecycle and stale-session reaper
+
+`session-reaper.js` replaces the single "possibly_stuck" label with a verified
+state machine: `ACTIVE`, `IDLE`, `SUSPECTED_STALE`, `UNREACHABLE`,
+`TERMINATED`, `ORPHANED`, `RECOVERY_REQUIRED`, `ARCHIVED`.
+
+- A PID alone is not proof of ownership. The reaper compares process creation
+  time and executable identity; a mismatch is `RECOVERY_REQUIRED`.
+- A disconnected machine is `UNREACHABLE`, never `TERMINATED`.
+- A release lock, an active child, or uncommitted work keeps a session `ACTIVE`
+  even when its heartbeat is old.
+- `planCleanup()` never mutates. `applyCleanup()` releases a lease only through
+  a compare-and-swap on owner + generation + fencing token, and aborts if
+  ownership changes during cleanup.
+- Confirmed orphans are archived after the lease is released; idle sessions are
+  stopped gracefully only when explicitly designated auto-disposable.
+- Every action is recorded in an audit trail. Canonical checkpoints and history
+  are never deleted.
+
+### Monitor integration
+
+The Monitor backend lives in `monitor-server/` and is the only place that reads
+process ownership:
+
+- `migrations/005-reaper-owner.sql` adds `owner_started_at`, `owner_executable`,
+  `lease_owner`, `lease_generation` and `lease_fencing_token`. Every column has a
+  default, so existing rows and older publishers keep working; a row that
+  predates the migration is `RECOVERY_REQUIRED` until it reports again.
+- `session-upsert.cjs` persists those fields. A sparse report cannot erase what
+  an earlier report proved, and `lease_generation` only moves forward.
+- `reaper-query.cjs` is the only query that selects owner and lease columns. It
+  is reachable only through `POST /api/reaper/sessions`, which requires an
+  HMAC-SHA256 signature over the canonical JSON payload and a timestamp inside a
+  60-second replay window. Credentials are per machine: `DEVWF_REAPER_SECRETS` is
+  a JSON map of machine name to secret, so one host's key cannot speak for
+  another and a single key can be rotated or revoked on its own.
+  `DEVWF_REAPER_SECRET` remains a single-machine fallback. The secret is
+  server-side only.
+- The public `/api/sessions` payload never contains the owner PID, creation time,
+  executable or fencing token. It carries only `reaper_state`, `reaper_reason`
+  and `reaper_actions`.
+- `reaper-scheduler.cjs` runs one idempotent reconciliation cycle every
+  `DEVWF_REAPER_INTERVAL_MS` (default 5 minutes). It refuses to overlap itself,
+  defaults to dry-run, and archives only a confirmed `ORPHANED` session. It never
+  stops a process and never releases a lease: those need the machine-local
+  controller.
+- `reaper-actions.cjs` is the single authorization table shared by the endpoint
+  and the UI. `Verify now`, `View checkpoint` and `View cleanup evidence` are
+  read-only and always available; `Recover orphan` is offered only for
+  `ORPHANED`; `Graceful stop` is offered only for `IDLE` and always answers
+  `CONTROLLER_REQUIRED` from the monitor.
+
+### Machine-local controllers
+
+`session-controller-adapters.js` is the only code that touches the OS:
+
+- Windows: `Get-CimInstance Win32_Process` (PowerShell CIM) for creation time and
+  executable, with `wmic` as a fallback for older hosts, and `taskkill /PID`
+  without `/F` for a graceful request. `wmic` is absent on current Windows 11
+  builds, so CIM is the primary provider.
+- macOS: `ps -o lstart=` / `ps -o comm=` for identity and `SIGTERM` for a
+  graceful stop.
+
+`createMachineController()` refuses a session from another machine, re-verifies
+PID + creation time + executable locally, and refuses to stop a PID shared by
+more than one session (`SHARED_PROCESS_REFUSED`). A failed graceful request is
+reported as `PROCESS_DID_NOT_EXIT`; the reaper never escalates to a force kill.
+
+### Enabling mutation
+
+`DEVWF_REAPER_DRY_RUN=0` is the only switch that lets the scheduler archive a
+confirmed orphan. Leave it unset until the controllers are deployed and verified
+on every machine. `DEVWF_REAPER_SECRETS` must be provisioned on the monitor host
+before the privileged endpoint answers anything but `401`.
+
+### Deployment
+
+CI verifies the code and never deploys it. Production deployment is a separate,
+independently authorized action documented in
+[Monitor deployment and Session Reaper rollout](docs/operations/monitor-deployment.md):
+backup, migration 005, backend copy (the unit runs `monitor.cjs`, so
+`dashboard.cjs` is installed under both names), per-machine credentials, one
+service restart, a read-only canary, and rollback. `scripts/verify-monitor-deployment.mjs`
+is the read-only verifier for that procedure.
 
 ## README-first preflight
 

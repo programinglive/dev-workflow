@@ -360,6 +360,62 @@ startup tetap di bawah 2 detik.
 Diverifikasi dengan sesi sungguhan: `start_task` → kartu tampil `live`, lalu
 `drop_task` → baris langsung menjadi `idle` dan kartunya hilang.
 
+## Reaper: verified state and authorized controls
+
+Since PR #103 a card carries a reaper state that the **backend computes**, not a
+guess from the age of the last report:
+
+| `reaper_state` | Meaning | Controls shown |
+|---|---|---|
+| `ACTIVE` | process alive and still reporting | Verify now, View checkpoint, View cleanup evidence |
+| `IDLE` | process alive, heartbeat older than `IDLE_MS` | + Graceful stop |
+| `SUSPECTED_STALE` | process alive, heartbeat older than `STALE_MS` | Verify now, checkpoint, evidence |
+| `UNREACHABLE` | machine is offline | Verify now, checkpoint, evidence |
+| `ORPHANED` | process is **confirmed** gone | + Recover orphan |
+| `RECOVERY_REQUIRED` | identity cannot be verified (PID reused, executable changed, legacy row without metadata) | Verify now, checkpoint, evidence |
+| `ARCHIVED` | card already closed | Verify now, checkpoint, evidence |
+| `UNKNOWN` | privileged query unavailable (migration not applied) | Verify now, checkpoint, evidence |
+
+The controls are **not** a separate list in the UI: the backend sends
+`reaper_actions` from `monitor-server/reaper-actions.cjs` and the UI renders that
+list. The UI therefore cannot offer an action the server would refuse.
+
+What the monitor is allowed to do:
+
+- `Verify now`, `View checkpoint`, `View cleanup evidence` - read only.
+- `Recover orphan` - only for `ORPHANED`, and it only closes the card
+  (`phase = 'closed'`). The lease is released by the controller on its own host.
+- `Graceful stop` - only for `IDLE`, and the monitor **always** answers
+  `CONTROLLER_REQUIRED`. The monitor never terminates a process.
+
+`POST /api/reaper/action` uses the same monitor write token as `/api/session` and
+`/api/event`, recomputes the state on the server, and refuses an action the state
+does not authorize with `409`.
+
+What is **never** sent to the browser: `owner_pid`, `owner_started_at`,
+`owner_executable`, `lease_owner`, `lease_generation`, `lease_fencing_token`, and
+`DEVWF_REAPER_SECRET`. The public payload carries only `reaper_state`,
+`reaper_reason` and `reaper_actions`.
+
+### Scheduler
+
+`monitor-server/reaper-scheduler.cjs` runs once per `DEVWF_REAPER_INTERVAL_MS`
+(default 5 minutes):
+
+- one timer owner (`start()` does nothing when a timer already exists);
+- `runOnce()` refuses to overlap itself (`ALREADY_RUNNING`);
+- **dry-run by default**; `DEVWF_REAPER_DRY_RUN=0` is the only switch that allows
+  mutation;
+- only `ORPHANED` is archived, and archiving is a `phase` update, not a `DELETE`;
+- a failed cycle is audited and retried on the next interval, so it never leaves
+  half-applied state.
+
+### Rollback
+
+Set `DEVWF_REAPER_DRY_RUN=1` (or remove the variable) and restart the monitor:
+the scheduler returns to observation and changes nothing. Migration `005` is
+additive, so the columns may stay in place.
+
 ## Sesi `idle` yang basi disembunyikan
 Proses MCP mati bersama sesi OpenCode-nya, jadi baris `idle` tinggal selamanya.
 Tanpa filter, dashboard yang dipakai berhari-hari memenuhi layar tablet dengan

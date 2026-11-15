@@ -2140,6 +2140,11 @@ export class WorkflowState {
     this.state.owner = {
       processMarker: PROCESS_TOKEN,
       pid: process.pid,
+      // Process identity for the reaper: a PID alone is not proof of
+      // ownership, so record when this process started and which executable
+      // owns it. Both are stable for the life of the process.
+      startedAt: new Date(Date.now() - Math.round(process.uptime() * 1000)).toISOString(),
+      executable: process.execPath,
       updatedAt: new Date().toISOString(),
     };
 
@@ -2194,7 +2199,13 @@ export class WorkflowState {
               ourDod,
             ),
             dodRevision: Math.max(Number(latest.state.dodRevision) || 0, ourRevision),
-            owner: { processMarker: PROCESS_TOKEN, pid: process.pid, updatedAt: new Date().toISOString() },
+            owner: {
+              processMarker: PROCESS_TOKEN,
+              pid: process.pid,
+              startedAt: new Date(Date.now() - Math.round(process.uptime() * 1000)).toISOString(),
+              executable: process.execPath,
+              updatedAt: new Date().toISOString(),
+            },
           };
 
           try {
