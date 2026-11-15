@@ -53,7 +53,8 @@ export function canonicalSessionKey(value) {
     return raw;
   }
   const cleaned = raw.replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
-  const hash = createHash("sha256").update(raw).digest("hex").slice(0, 32);
+  // Hash lossless UTF-16 code units so lone surrogates (e.g. "\ud800" vs "\ud801") never collapse to U+FFFD.
+  const hash = createHash("sha256").update(Buffer.from(raw, "utf16le")).digest("hex").slice(0, 32);
   const prefix = (cleaned || "session").slice(0, 29).replace(/-+$/g, "") || "session";
   return `${prefix}-h${hash}`;
 }
