@@ -11,7 +11,7 @@
  * bagian lain aplikasi.
  */
 
-import { randomUUID } from "crypto";
+import { randomUUID, createHash } from "crypto";
 
 /** Nama kunci metadata yang dikirim OpenCode v2 pada setiap panggilan. */
 export const SESSION_META_KEY = "ai.opencode/sessionID";
@@ -41,6 +41,22 @@ export function sanitizeSessionKey(value) {
 }
 
 /**
+ * Collision-free session key normalization for active request/env identities.
+ * Safe <=64-char `[A-Za-z0-9_-]` IDs stay unchanged; any punctuation or
+ * overlong ID receives a SHA-256 suffix so distinct identities never collide.
+ */
+export function canonicalSessionKey(value) {
+  const raw = String(value);
+  if (/^[A-Za-z0-9_-]{1,64}$/.test(raw)) {
+    return raw;
+  }
+  const cleaned = raw.replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
+  const hash = createHash("sha256").update(raw).digest("hex").slice(0, 10);
+  const prefix = (cleaned || "session").slice(0, 53).replace(/-+$/g, "") || "session";
+  return `${prefix}-${hash}`;
+}
+
+/**
  * Menentukan kunci sesi beserta ASALNYA.
  *
  * Asal ikut dikembalikan supaya bisa dicatat di `state_writer`. Tanpa itu,
@@ -50,14 +66,14 @@ export function sanitizeSessionKey(value) {
 export function resolveSessionKeyWithSource(env = process.env, explicitSessionId = null, metaKey = null) {
   const fromRequest = typeof explicitSessionId === "string" ? explicitSessionId.trim() : "";
   if (fromRequest) {
-    return { key: sanitizeSessionKey(fromRequest), source: "request-metadata" };
+    return { key: canonicalSessionKey(fromRequest), source: "request-metadata" };
   }
 
   // `metaKey` disediakan untuk pemanggil yang membaca metadata sendiri lalu
   // ingin tetap tercatat sebagai metadata, bukan env.
   const fromMeta = typeof metaKey === "string" ? metaKey.trim() : "";
   if (fromMeta) {
-    return { key: sanitizeSessionKey(fromMeta), source: "request-metadata" };
+    return { key: canonicalSessionKey(fromMeta), source: "request-metadata" };
   }
 
   for (const candidate of [
@@ -66,7 +82,7 @@ export function resolveSessionKeyWithSource(env = process.env, explicitSessionId
     env?.CLIENT_SESSION_ID,
   ]) {
     const value = typeof candidate === "string" ? candidate.trim() : "";
-    if (value) return { key: sanitizeSessionKey(value), source: "env" };
+    if (value) return { key: canonicalSessionKey(value), source: "env" };
   }
 
   return { key: PROCESS_SESSION_KEY, source: "process-random" };

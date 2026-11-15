@@ -88,7 +88,7 @@ function isValidGitHeadFile(headPath) {
     const headStat = statSync(headPath);
     if (!headStat.isFile()) return false;
     const headContent = readFileSync(headPath, "utf8").trim();
-    return /^ref:\s*\S+/.test(headContent) || /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(headContent);
+    return /^ref:\s*\S+$/.test(headContent) || /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(headContent);
   } catch {
     return false;
   }

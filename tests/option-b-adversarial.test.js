@@ -2430,3 +2430,125 @@ test("Adversarial 33 (Cycle 15): same-repoKey different-worktree retire rejected
     }
   });
 });
+
+test("Adversarial 34 (Cycle 16): sessionKey collision-free, multi-line HEAD rejected, retire requires target, save preserves transition repairErrors, same-ms restore respects acquireSeq", async () => {
+  await withTempWorkspace(async (base) => {
+    const repoA = await createRepo(base, "adv34-a");
+    const stateBase = path.join(base, "state", ".state");
+    const { mkdir, writeFile } = await import("node:fs/promises");
+    const { canonicalSessionKey, resolveSessionKeyWithSource } = await import("../db/session-key.js");
+    const { resolveCanonicalWorktreeRoot } = await import("../process-lock.js");
+    const {
+      claimFocusBinding,
+      retireFocusBinding,
+      pinSessionProject,
+      restoreSessionPointerSnapshot,
+    } = await import("../workflow-state.js");
+    const { SqliteAdapter } = await import("../db/adapters/sqlite.js");
+    await mkdir(stateBase, { recursive: true });
+
+    // 1. F6: session/a vs session?a must not collide
+    assert.notEqual(
+      canonicalSessionKey("session/a"),
+      canonicalSessionKey("session?a"),
+      "distinct punctuation session keys must not collide",
+    );
+    assert.notEqual(
+      resolveSessionKeyWithSource({}, "session/a").key,
+      resolveSessionKeyWithSource({}, "session?a").key,
+      "resolveSessionKeyWithSource must preserve distinct session identities",
+    );
+    assert.equal(canonicalSessionKey("ses_plain-1"), "ses_plain-1", "safe <=64-char keys stay unchanged");
+
+    // 2. F8: multi-line HEAD rejected
+    const badHeadRepo = path.join(base, "bad-multiline-head");
+    await mkdir(path.join(badHeadRepo, ".git"), { recursive: true });
+    await writeFile(path.join(badHeadRepo, ".git", "HEAD"), "ref: refs/heads/main\nextra line\n", "utf8");
+    const badRes = resolveCanonicalWorktreeRoot(badHeadRepo);
+    assert.equal(badRes.ok, false, "multi-line HEAD must be rejected fail-closed");
+
+    // 3. F2 & F4: retire without projectDir/repoKey rejected when fenced; save() preserves transition repairErrors
+    const acq = await acquireWorktreeMutex({ projectDir: repoA, ownerKey: "ses_c16" });
+    try {
+      const sf = path.join(stateBase, "projects", "adv34a", "users", "u1", "workflow-state.ses_c16.json");
+      await claimFocusBinding({
+        stateFile: sf,
+        focusId: 93401,
+        projectDir: repoA,
+        kernelCapability: acq.capability,
+        requireKernelMutex: true,
+        expectedOwnerKey: "ses_c16",
+      });
+      const noTargetRetire = await retireFocusBinding({
+        stateFile: sf,
+        focusId: 93401,
+        kernelCapability: acq.capability,
+        requireKernelMutex: true,
+        expectedOwnerKey: "ses_c16",
+      });
+      assert.equal(noTargetRetire.ok, false);
+      assert.equal(noTargetRetire.reason, "FOCUS_BOUND_TO_ANOTHER_PROJECT");
+
+      const db = new SqliteAdapter({ stateFile: sf });
+      await db.connect();
+      const ws = new WorkflowState(sf, { sessionId: "ses_c16", requireKernelMutex: true, db });
+      ws.bindKernelCapability(acq.capability);
+      await ws.load();
+      ws.state.projectDir = repoA;
+      ws.state.pendingProjectionRepair = {
+        failedAt: new Date().toISOString(),
+        triggerError: "POINTER_FAIL",
+        repairErrors: ["pointerUpdateFailed"],
+      };
+      await ws.save();
+      assert.ok(
+        ws.state.pendingProjectionRepair?.repairErrors?.includes("pointerUpdateFailed"),
+        "clean ordinary save must preserve unresolved transition repairErrors",
+      );
+      await db.close();
+
+      // 4. F3: same-ms restore with lower acquireSeq cannot overwrite newer pointer with higher acquireSeq
+      const repoB = await createRepo(base, "adv34-b");
+      const acqB = await acquireWorktreeMutex({ projectDir: repoB, ownerKey: "ses_c16" });
+      try {
+        const ptrDir = path.join(stateBase, "sessions");
+        await mkdir(ptrDir, { recursive: true });
+        const sameMs = Date.now();
+        const pinOld = await pinSessionProject({
+          stateFile: sf,
+          projectDir: repoA,
+          projectDirPath: path.join(stateBase, "projects", "adv34a"),
+          kernelCapability: acq.capability,
+          requireKernelMutex: true,
+          expectedOwnerKey: "ses_c16",
+          nowMs: sameMs,
+        });
+        assert.equal(pinOld.ok, true);
+        const ptrFile = path.join(ptrDir, "ses_c16.json");
+        const { readFile } = await import("node:fs/promises");
+        const snapRaw = await readFile(ptrFile, "utf8");
+        const sfB = path.join(stateBase, "projects", "adv34b", "users", "u1", "workflow-state.ses_c16.json");
+        const pinNew = await pinSessionProject({
+          stateFile: sfB,
+          projectDir: repoB,
+          projectDirPath: path.join(stateBase, "projects", "adv34b"),
+          kernelCapability: acqB.capability,
+          requireKernelMutex: true,
+          expectedOwnerKey: "ses_c16",
+          nowMs: sameMs,
+        });
+        assert.equal(pinNew.ok, true);
+        const restoreRes = restoreSessionPointerSnapshot(
+          { applicable: true, file: ptrFile, raw: snapRaw },
+          { startedAtMs: sameMs, acquireSeq: acq.capability.acquireSeq },
+          { kernelCapability: acq.capability },
+        );
+        assert.equal(restoreRes.skippedNewerOwner, true, "same-ms older acquireSeq snapshot must not overwrite newer pointer");
+      } finally {
+        await releaseWorktreeMutex(acqB.capability);
+      }
+    } finally {
+      await releaseWorktreeMutex(acq.capability);
+    }
+  });
+});

@@ -970,7 +970,8 @@ export function projectKey(projectRoot) {
     .replace(/[^A-Za-z0-9._-]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 40) || "proyek";
-  const hash = createHash("sha1").update(resolved.toLowerCase()).digest("hex").slice(0, 10);
+  const hashInput = process.platform === "win32" ? resolved.toLowerCase() : resolved;
+  const hash = createHash("sha1").update(hashInput).digest("hex").slice(0, 10);
   return `${nama}-${hash}`;
 }
 
@@ -1387,7 +1388,9 @@ export function restoreSessionPointerSnapshot(snapshot, journal = null, { kernel
   try {
     return withSessionPointerDb(baseDir, (ptrDb) => {
       const dbRow = ptrDb
-        .prepare("SELECT owner_key, lease_id, updated_at_ms FROM session_pointers WHERE session_key = ?")
+        .prepare(
+          "SELECT owner_key, lease_id, updated_at_ms, acquire_seq, generation FROM session_pointers WHERE session_key = ?",
+        )
         .get(sessionKey);
 
       let curPtr = null;
@@ -1406,6 +1409,8 @@ export function restoreSessionPointerSnapshot(snapshot, journal = null, { kernel
           ownerKey: dbRow.owner_key,
           leaseId: dbRow.lease_id,
           updatedAtMs: Number(dbRow.updated_at_ms || 0),
+          acquireSeq: Number(dbRow.acquire_seq || 0),
+          generation: Number(dbRow.generation || 1),
         });
       }
       if (curPtr) {
@@ -1415,58 +1420,108 @@ export function restoreSessionPointerSnapshot(snapshot, journal = null, { kernel
           updatedAtMs: Number(
             curPtr.updatedAtMs || (curPtr.updatedAt ? Date.parse(curPtr.updatedAt) : 0) || 0,
           ),
+          acquireSeq: Number(curPtr.acquireSeq || 0),
+          generation: Number(curPtr.generation || 1),
         });
       }
 
       const journalStartedAt = Number(journal?.startedAtMs || journal?.startedAt || 0);
+      const journalAcquireSeq = Number(journal?.acquireSeq || 0);
       const snapTs = Number(
         snapObj?.updatedAtMs || (snapObj?.updatedAt ? Date.parse(snapObj.updatedAt) : 0) || 0,
       );
+      const snapSeq = Number(snapObj?.acquireSeq || 0);
       for (const cur of candidates) {
         if (cur.ownerKey && sessionKey && cur.ownerKey !== sessionKey) {
           return { ok: true, skippedNewerOwner: true };
         }
-        if (
+        const newerThanJournal =
           journal &&
           Number.isFinite(journalStartedAt) &&
           journalStartedAt > 0 &&
-          cur.updatedAtMs > journalStartedAt &&
-          (!Number.isFinite(snapTs) || cur.updatedAtMs !== snapTs)
-        ) {
+          (cur.updatedAtMs > journalStartedAt ||
+            (cur.updatedAtMs === journalStartedAt &&
+              journalAcquireSeq > 0 &&
+              cur.acquireSeq > journalAcquireSeq)) &&
+          (!Number.isFinite(snapTs) || cur.updatedAtMs !== snapTs || cur.acquireSeq !== snapSeq);
+        const newerThanSnapshotSameMs =
+          Number.isFinite(snapTs) &&
+          snapTs > 0 &&
+          (cur.updatedAtMs > snapTs ||
+            (cur.updatedAtMs === snapTs &&
+              cur.acquireSeq > snapSeq &&
+              cur.leaseId &&
+              cur.leaseId !== snapObj?.leaseId));
+        if (newerThanJournal || newerThanSnapshotSameMs) {
           return { ok: true, skippedNewerOwner: true };
         }
       }
 
+      const expectedGeneration = Number(dbRow?.generation ?? 0);
+      const nextGeneration = dbRow ? expectedGeneration + 1 : 1;
       if (snapshot.raw === null) {
-        ptrDb.prepare("DELETE FROM session_pointers WHERE session_key = ?").run(sessionKey);
+        if (dbRow) {
+          const delRes = ptrDb
+            .prepare("DELETE FROM session_pointers WHERE session_key = ? AND COALESCE(generation, 1) = ?")
+            .run(sessionKey, expectedGeneration);
+          if (delRes.changes !== 1) {
+            return { ok: true, skippedNewerOwner: true };
+          }
+        }
         if (existsSync(snapshot.file)) unlinkSync(snapshot.file);
       } else {
         const focus = Number(snapObj?.focusId);
         const restoredTs = Number.isFinite(snapTs) && snapTs > 0 ? snapTs : Date.now();
-        ptrDb
-          .prepare(
-            `INSERT INTO session_pointers (
-               session_key, owner_key, lease_id, project_dir, project_dir_path, focus_id, updated_at_ms, updated_at
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(session_key) DO UPDATE SET
-               owner_key = excluded.owner_key,
-               lease_id = excluded.lease_id,
-               project_dir = excluded.project_dir,
-               project_dir_path = excluded.project_dir_path,
-               focus_id = excluded.focus_id,
-               updated_at_ms = excluded.updated_at_ms,
-               updated_at = excluded.updated_at`,
-          )
-          .run(
-            sessionKey,
-            String(snapObj?.ownerKey || sessionKey),
-            String(snapObj?.leaseId || cap.token || ""),
-            String(snapObj?.projectDir || capProjectDir || ""),
-            String(snapObj?.projectDirPath || ""),
-            Number.isSafeInteger(focus) && focus > 0 ? focus : null,
-            restoredTs,
-            String(snapObj?.updatedAt || new Date(restoredTs).toISOString()),
-          );
+        const restoredSeq = snapSeq > 0 ? snapSeq : 0;
+        const upsertRes = dbRow
+          ? ptrDb
+              .prepare(
+                `UPDATE session_pointers SET
+                   owner_key = ?,
+                   lease_id = ?,
+                   project_dir = ?,
+                   project_dir_path = ?,
+                   focus_id = ?,
+                   updated_at_ms = ?,
+                   updated_at = ?,
+                   acquire_seq = ?,
+                   generation = ?
+                 WHERE session_key = ? AND COALESCE(generation, 1) = ?`,
+              )
+              .run(
+                String(snapObj?.ownerKey || sessionKey),
+                String(snapObj?.leaseId || cap.token || ""),
+                String(snapObj?.projectDir || capProjectDir || ""),
+                String(snapObj?.projectDirPath || ""),
+                Number.isSafeInteger(focus) && focus > 0 ? focus : null,
+                restoredTs,
+                String(snapObj?.updatedAt || new Date(restoredTs).toISOString()),
+                restoredSeq,
+                nextGeneration,
+                sessionKey,
+                expectedGeneration,
+              )
+          : ptrDb
+              .prepare(
+                `INSERT INTO session_pointers (
+                   session_key, owner_key, lease_id, project_dir, project_dir_path, focus_id, updated_at_ms, updated_at, acquire_seq, generation
+                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              )
+              .run(
+                sessionKey,
+                String(snapObj?.ownerKey || sessionKey),
+                String(snapObj?.leaseId || cap.token || ""),
+                String(snapObj?.projectDir || capProjectDir || ""),
+                String(snapObj?.projectDirPath || ""),
+                Number.isSafeInteger(focus) && focus > 0 ? focus : null,
+                restoredTs,
+                String(snapObj?.updatedAt || new Date(restoredTs).toISOString()),
+                restoredSeq,
+                nextGeneration,
+              );
+        if (upsertRes.changes !== 1) {
+          return { ok: true, skippedNewerOwner: true };
+        }
         mkdirSync(path.dirname(snapshot.file), { recursive: true });
         const tmpFile = `${snapshot.file}.tmp.${process.pid}.${Date.now()}`;
         writeFileSync(tmpFile, snapshot.raw, "utf8");
@@ -1811,18 +1866,59 @@ function focusLockIsStale(file, { isAlive = defaultPidIsAlive, hostname = os.hos
  * new lock. The loser retries the atomic create and finds the winner's lock.
  */
 function tryRecoverStaleLock(file) {
-  const tombstone = `${file}.stale.${process.pid}.${Date.now()}`;
+  const recoveryGate = `${file}.recover.lock`;
+  const gateTmp = `${recoveryGate}.${process.pid}.${Date.now()}.tmp`;
   try {
-    renameSync(file, tombstone);
+    writeFileSync(gateTmp, JSON.stringify({ pid: process.pid, startedAt: Date.now() }));
+    try {
+      linkSync(gateTmp, recoveryGate);
+    } finally {
+      try {
+        unlinkSync(gateTmp);
+      } catch {}
+    }
   } catch {
+    // Another process is actively recovering or creating a fresh lock; do not touch `file`.
     return false;
   }
   try {
-    unlinkSync(tombstone);
-  } catch {
-    // The tombstone is harmless; the lock itself is already gone.
+    // Re-check staleness inside the serialized recovery gate so a delayed observer
+    // cannot evict a fresh lock created by the previous recovery winner.
+    if (!focusLockIsStale(file)) {
+      return false;
+    }
+    const tombstone = `${file}.stale.${process.pid}.${Date.now()}`;
+    try {
+      renameSync(file, tombstone);
+    } catch {
+      return false;
+    }
+    try {
+      unlinkSync(tombstone);
+    } catch {
+      // The tombstone is harmless; the lock itself is already gone.
+    }
+    return true;
+  } finally {
+    try {
+      unlinkSync(recoveryGate);
+    } catch {}
   }
-  return true;
+}
+
+function releaseOwnedFocusLock(lock) {
+  if (!lock?.file) return;
+  try {
+    if (lock.token && existsSync(lock.file)) {
+      const current = JSON.parse(readFileSync(lock.file, "utf8"));
+      if (current?.token && current.token !== lock.token) {
+        return;
+      }
+    }
+    unlinkSync(lock.file);
+  } catch {
+    // Releasing is best-effort; a leftover lock is broken as stale later.
+  }
 }
 
 function defaultPidIsAlive(pid) {
@@ -1841,13 +1937,14 @@ async function acquireFocusLock({ baseDir, focusId, timeoutMs = FOCUS_LOCK_TIMEO
 
   for (;;) {
     try {
+      const lockToken = randomUUID();
       // Write the record to a temp file and hard-link it into place. `link` is
       // atomic and fails when the target exists, and the content is complete
       // before the name appears - so a crash can never leave an unreadable lock.
       const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
       writeFileSync(
         temporary,
-        JSON.stringify({ pid: process.pid, host: os.hostname(), startedAt: Date.now() }),
+        JSON.stringify({ pid: process.pid, host: os.hostname(), startedAt: Date.now(), token: lockToken }),
       );
       try {
         linkSync(temporary, file);
@@ -1858,12 +1955,12 @@ async function acquireFocusLock({ baseDir, focusId, timeoutMs = FOCUS_LOCK_TIMEO
           // Best-effort cleanup of the temp name.
         }
       }
-      return { ok: true, file };
+      return { ok: true, file, token: lockToken };
     } catch (error) {
       if (error.code !== "EEXIST") return { ok: false, code: "FOCUS_LOCK_UNWRITABLE" };
 
       if (focusLockIsStale(file)) {
-        // Only the process that wins the atomic rename may recover it.
+        // Only the process that wins the serialized recovery gate may recover it.
         tryRecoverStaleLock(file);
         continue;
       }
@@ -1903,8 +2000,9 @@ export async function claimFocusBinding({
 
   const cap = kernelCapability || (projectDir ? getHeldWorktreeCapability(projectDir) : null);
   const effectiveOwnerKey = expectedOwnerKey || (stateFile ? sessionKeyFromStateFile(stateFile) : null);
+  const enforceFocusCap = Boolean(kernelCapability || requireKernelMutex || cap);
   const validateFocusCap = () => {
-    if (kernelCapability || requireKernelMutex) {
+    if (enforceFocusCap) {
       assertWorktreeCapabilityMatches({
         capability: cap,
         operation: "claimFocusBinding",
@@ -1925,11 +2023,7 @@ export async function claimFocusBinding({
       validateFocusCap();
       return claimFocusBindingUnderLock({ baseDir, focusId: id, projectDir, repoKey });
     } finally {
-      try {
-        unlinkSync(lock.file);
-      } catch {
-        // Releasing is best-effort; a leftover lock is broken as stale later.
-      }
+      releaseOwnedFocusLock(lock);
     }
   };
 
@@ -2000,8 +2094,9 @@ export async function retireFocusBinding({
 
   const cap = kernelCapability || (projectDir ? getHeldWorktreeCapability(projectDir) : null);
   const effectiveOwnerKey = expectedOwnerKey || (stateFile ? sessionKeyFromStateFile(stateFile) : null);
+  const enforceRetireCap = Boolean(kernelCapability || requireKernelMutex || cap);
   const validateRetireCap = () => {
-    if (kernelCapability || requireKernelMutex) {
+    if (enforceRetireCap) {
       assertWorktreeCapabilityMatches({
         capability: cap,
         operation: "retireFocusBinding",
@@ -2026,7 +2121,7 @@ export async function retireFocusBinding({
 
       const requestedDir = projectDir ? path.resolve(String(projectDir)) : "";
       const requestedKey = typeof repoKey === "string" ? repoKey.trim() : "";
-      if (requestedDir || requestedKey) {
+      if (enforceRetireCap || requestedDir || requestedKey) {
         if (existing.projectDir) {
           if (
             !requestedDir ||
@@ -2036,6 +2131,9 @@ export async function retireFocusBinding({
           }
         }
         if (existing.repoKey && requestedKey && existing.repoKey !== requestedKey) {
+          return { ok: false, existing, reason: "FOCUS_BOUND_TO_ANOTHER_PROJECT" };
+        }
+        if (enforceRetireCap && !requestedDir && !requestedKey) {
           return { ok: false, existing, reason: "FOCUS_BOUND_TO_ANOTHER_PROJECT" };
         }
       }
@@ -2052,11 +2150,7 @@ export async function retireFocusBinding({
         return { ok: false, reason: "RETIRE_FAILED" };
       }
     } finally {
-      try {
-        unlinkSync(lock.file);
-      } catch {
-        // Best-effort release.
-      }
+      releaseOwnedFocusLock(lock);
     }
   };
 
@@ -4375,12 +4469,26 @@ export class WorkflowState {
     this._lastPostCommitProjectionErrors = postCommitProjectionErrors;
 
     if (postCommitProjectionErrors.length > 0) {
+      const existingRepair =
+        this.state?.pendingProjectionRepair && typeof this.state.pendingProjectionRepair === "object"
+          ? this.state.pendingProjectionRepair
+          : {};
       this.state.pendingProjectionRepair = {
+        ...existingRepair,
         errors: [...postCommitProjectionErrors],
         failedAt: new Date().toISOString(),
       };
     } else if (this.state?.pendingProjectionRepair) {
-      delete this.state.pendingProjectionRepair;
+      const hasUnresolvedTransitionRepair = Boolean(
+        this.state.pendingProjectionRepair.triggerError ||
+          (Array.isArray(this.state.pendingProjectionRepair.repairErrors) &&
+            this.state.pendingProjectionRepair.repairErrors.length > 0),
+      );
+      if (hasUnresolvedTransitionRepair) {
+        delete this.state.pendingProjectionRepair.errors;
+      } else {
+        delete this.state.pendingProjectionRepair;
+      }
     }
 
     const nextRepairMarkersJson = JSON.stringify({
