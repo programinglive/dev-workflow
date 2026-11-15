@@ -1613,9 +1613,13 @@ process ownership:
   and `reaper_actions`.
 - `reaper-scheduler.cjs` runs one idempotent reconciliation cycle every
   `DEVWF_REAPER_INTERVAL_MS` (default 5 minutes). It refuses to overlap itself,
-  defaults to dry-run, and archives only a confirmed `ORPHANED` session. It never
-  stops a process and never releases a lease: those need the machine-local
-  controller.
+  defaults to dry-run, and archives only a session with a valid controller
+  attestation. It never stops a process, and it releases a lease only by
+  compare-and-swap on owner + generation + fencing token.
+- `reaper-attestation.cjs` is the controller-to-monitor evidence path. The
+  monitor cannot see another host's process table, so a signed, fresh,
+  single-use attestation from the machine that owns the process is the only way
+  a session becomes `ORPHANED`.
 - `reaper-actions.cjs` is the single authorization table shared by the endpoint
   and the UI. `Verify now`, `View checkpoint` and `View cleanup evidence` are
   read-only and always available; `Recover orphan` is offered only for

@@ -57,22 +57,35 @@ const MIGRATION_COLUMNS = [
   'lease_fencing_token',
 ];
 
+/** Tables the deployed monitor needs beyond the base schema. */
+const REQUIRED_TABLES = ['reaper_attestations'];
+
 function arg(argv, name, fallback = '') {
   const index = argv.indexOf(`--${name}`);
   return index > -1 && argv[index + 1] ? argv[index + 1] : fallback;
 }
 
 /**
- * Collect the local `require('./x.cjs')` targets of a CommonJS file.
+ * Collect the local module targets of a file.
+ *
+ * Both `require('./x.cjs')` and `import('./x.js')` are followed. The monitor
+ * loads the reaper core with a dynamic import, so a verifier that only looked at
+ * `require` would miss exactly the dependency that broke the first deployment.
  *
  * @param {string} source
  * @returns {string[]}
  */
 export function localRequires(source) {
   const found = new Set();
-  const pattern = /require\(\s*['"](\.[^'"]+)['"]\s*\)/g;
-  let match;
-  while ((match = pattern.exec(String(source))) !== null) found.add(match[1]);
+  const patterns = [
+    /require\(\s*['"](\.[^'"]+)['"]\s*\)/g,
+    /import\(\s*['"](\.[^'"]+)['"]\s*\)/g,
+    /from\s+['"](\.[^'"]+)['"]/g,
+  ];
+  for (const pattern of patterns) {
+    let match;
+    while ((match = pattern.exec(String(source))) !== null) found.add(match[1]);
+  }
   return [...found];
 }
 
@@ -172,7 +185,17 @@ async function checkMigration(connectionString) {
     const present = new Set(rows.map((row) => row.column_name));
     const missing = MIGRATION_COLUMNS.filter((column) => !present.has(column));
     if (missing.length > 0) throw new Error(`migration 005 not applied: missing ${missing.join(', ')}`);
-    return `${MIGRATION_COLUMNS.length} column(s)`;
+
+    const tables = await client.query(
+      `SELECT table_name FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_name = ANY($1::text[])`,
+      [REQUIRED_TABLES],
+    );
+    const found = new Set(tables.rows.map((row) => row.table_name));
+    const absent = REQUIRED_TABLES.filter((table) => !found.has(table));
+    if (absent.length > 0) throw new Error(`migration 006 not applied: missing ${absent.join(', ')}`);
+
+    return `${MIGRATION_COLUMNS.length} column(s), ${REQUIRED_TABLES.length} table(s)`;
   } finally {
     await client.end().catch(() => {});
   }

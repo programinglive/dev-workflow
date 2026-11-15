@@ -12,6 +12,7 @@ const http = require('node:http');
 const pg = require('pg');
 const { buildSessionsQuery } = require('./sessions-query.cjs');
 const { buildReaperSessionsQuery, parseReaperSecrets, verifyReaperRequest } = require('./reaper-query.cjs');
+const { parseAttestation, revalidateAttestation } = require('./reaper-attestation.cjs');
 const { createReaperScheduler, toReaperSession } = require('./reaper-scheduler.cjs');
 const { authorizedActions, planReaperAction } = require('./reaper-actions.cjs');
 const { visibleTaskSessions } = require('./visible-task-sessions.cjs');
@@ -2268,7 +2269,7 @@ async function collectDashboardPayload({ query, limit = 20 }) {
   try {
     const rq = buildReaperSessionsQuery({ limit: 200 });
     const rr = await query(rq.sql, rq.params);
-    const { classifySession: classifyReaper } = await import('../session-reaper.js');
+    const { classifySession: classifyReaper } = await import('./session-reaper.js');
     for (const row of rr.rows) {
       reaperMap.set(row.session_key, classifyReaper(toReaperSession(row), { now: nowMs, machineOnline: true }));
     }
@@ -2748,6 +2749,90 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       return res.end(JSON.stringify({ ok: true, sessions: rows.rows }));
     }
+    if (url.pathname === '/api/reaper/attest' && req.method === 'POST') {
+      // Controller-to-monitor orphan attestation.
+      //
+      // The controller is the only party that can inspect a process on its own
+      // host, so the monitor accepts its evidence — but only when the request is
+      // signed with that machine's credential, the nonce is unused, the
+      // timestamp is fresh, and every bound field still matches the stored row.
+      const body = bacaJson(await readBody(req), res);
+      if (body === null) return undefined;
+
+      const check = verifyReaperRequest({
+        payload: body,
+        signature: req.headers['x-devwf-reaper-signature'],
+        secret: process.env.DEVWF_REAPER_SECRET || '',
+        secrets: parseReaperSecrets(process.env.DEVWF_REAPER_SECRETS),
+      });
+      if (!check.ok) {
+        console.warn(`[reaper] attestation refused: ${check.reason} machine=${String(body.machine || '-')}`);
+        res.writeHead(401, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: check.reason }));
+      }
+
+      const parsed = parseAttestation(body);
+      if (!parsed.ok) {
+        res.writeHead(400, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: parsed.reason }));
+      }
+      const attestation = parsed.value;
+
+      // The credential must speak for the machine it claims. A valid MMCH
+      // signature on a payload that says "Mac" is a forged identity.
+      if (check.machine && check.machine !== attestation.machine) {
+        console.warn(`[reaper] attestation refused: MACHINE_MISMATCH credential=${check.machine} claimed=${attestation.machine}`);
+        res.writeHead(403, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: 'MACHINE_MISMATCH' }));
+      }
+
+      const rq = buildReaperSessionsQuery({ limit: 500 });
+      const rr = await query(rq.sql, rq.params);
+      const row = rr.rows.find((candidate) => candidate.session_key === attestation.sessionKey);
+      if (!row) {
+        res.writeHead(404, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: 'SESSION_NOT_FOUND' }));
+      }
+
+      const verdict = revalidateAttestation(attestation, row);
+      if (!verdict.ok) {
+        console.warn(`[reaper] attestation refused: ${verdict.reason} machine=${attestation.machine} session=${attestation.sessionKey}`);
+        res.writeHead(409, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: verdict.reason }));
+      }
+
+      // The unique (machine, nonce) index is the replay guard: a second insert
+      // with the same nonce fails and is reported as a replay, not accepted.
+      try {
+        await query(
+          `INSERT INTO reaper_attestations
+             (machine, session_key, project_name, pid, process_started_at, process_executable,
+              lease_owner, lease_generation, lease_fencing_token, verified_at, nonce)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+          [
+            attestation.machine,
+            attestation.sessionKey,
+            attestation.projectName,
+            attestation.pid,
+            attestation.startedAt,
+            attestation.executable,
+            attestation.leaseOwner,
+            attestation.leaseGeneration,
+            attestation.leaseFencingToken,
+            attestation.verifiedAt,
+            attestation.nonce,
+          ],
+        );
+      } catch (error) {
+        const replay = /duplicate key|unique constraint/i.test(String(error && error.message || error));
+        res.writeHead(replay ? 409 : 500, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: replay ? 'ATTESTATION_REPLAYED' : 'ATTESTATION_STORE_FAILED' }));
+      }
+
+      console.log(`[reaper] attestation accepted: machine=${attestation.machine} session=${attestation.sessionKey} pid=${attestation.pid}`);
+      res.writeHead(202, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ ok: true, accepted: true, machine: attestation.machine, sessionKey: attestation.sessionKey }));
+    }
     if (url.pathname === '/api/reaper/action' && req.method === 'POST') {
       if (!writeAllowed(req)) return denyWrite(res);
       const body = bacaJson(await readBody(req), res);
@@ -2768,7 +2853,7 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(404, { 'content-type': 'application/json' });
         return res.end(JSON.stringify({ ok: false, error: 'session not found' }));
       }
-      const { classifySession: classifyReaper } = await import('../session-reaper.js');
+      const { classifySession: classifyReaper } = await import('./session-reaper.js');
       const c = classifyReaper(toReaperSession(row), { now: Date.now(), machineOnline: true });
       const decision = planReaperAction(c.state, action);
       if (!decision.ok) {
