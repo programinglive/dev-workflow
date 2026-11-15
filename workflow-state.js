@@ -796,7 +796,7 @@ export function resolveProjectRootForState(stateFilePath) {
   return path.dirname(resolved);
 }
 
-export function resolveStateFile({ sessionId = null } = {}) {
+export function resolveStateFile({ sessionId = null, skipMigrationWrites = false } = {}) {
   const customPath = process.env.DEV_WORKFLOW_STATE_FILE;
   const moduleRoot = path.resolve(__dirname, "..");
   const cwdResolved = path.resolve(process.cwd());
@@ -889,18 +889,20 @@ export function resolveStateFile({ sessionId = null } = {}) {
     // Dua sumber lama, keduanya hanya menyalin state menganggur:
     //   1. berkas pin bersama (era pra-1.16.0)
     //   2. <proyek>/workflow-state.json (era 1.16.0, satu berkas per proyek)
-    migrateStateToSession({
-      sourcePath: resolvedCustom,
-      targetPath: target,
-      projectRoot: identityRoot,
-      projectDir,
-    });
-    migrateStateToSession({
-      sourcePath: path.join(projectDir, STATE_FILENAME),
-      targetPath: target,
-      projectRoot: identityRoot,
-      projectDir,
-    });
+    if (!skipMigrationWrites) {
+      migrateStateToSession({
+        sourcePath: resolvedCustom,
+        targetPath: target,
+        projectRoot: identityRoot,
+        projectDir,
+      });
+      migrateStateToSession({
+        sourcePath: path.join(projectDir, STATE_FILENAME),
+        targetPath: target,
+        projectRoot: identityRoot,
+        projectDir,
+      });
+    }
 
     return target;
   }
@@ -1320,17 +1322,38 @@ export function restoreSessionPointerSnapshot(snapshot, journal = null, { kernel
   const capProjectDir =
     snapObj?.projectDir || journal?.sourceProjectDir || journal?.targetProjectDir || "";
   const cap = kernelCapability || (capProjectDir ? getHeldWorktreeCapability(capProjectDir) : null);
-  assertWorktreeCapabilityLive(cap, {
+
+  const sessionKey =
+    journal?.sessionKey ||
+    path.basename(snapshot.file).replace(/^pointer-/, "").replace(/\.json$/, "");
+
+  if (!capProjectDir || !sessionKey) {
+    throw new ProjectOwnershipLostError(
+      `Ownership mismatch during restoreSessionPointerSnapshot: missing destination projectDir or sessionKey`,
+      {
+        reason: !capProjectDir ? "invalid_target_worktree" : "missing_session_key",
+        projectDir: capProjectDir,
+        sessionKey,
+      },
+    );
+  }
+
+  const isAuthorizedRecovery =
+    String(cap?.ownerKey || "").startsWith(`recovery:${sessionKey}:`) &&
+    journal?.sessionKey === sessionKey &&
+    (!snapObj?.ownerKey || snapObj.ownerKey === sessionKey);
+
+  assertWorktreeCapabilityMatches({
+    capability: cap,
     operation: "restoreSessionPointerSnapshot",
+    ownerKey: isAuthorizedRecovery ? cap.ownerKey : sessionKey,
+    projectDir: capProjectDir,
     allowDrainingInFlight: true,
   });
 
   const ptrParent = path.dirname(snapshot.file);
   const baseDir =
     path.basename(ptrParent) === "sessions" ? path.dirname(ptrParent) : resolveBaseDirFromState(snapshot.file);
-  const sessionKey =
-    journal?.sessionKey ||
-    path.basename(snapshot.file).replace(/^pointer-/, "").replace(/\.json$/, "");
 
   try {
     return withSessionPointerDb(baseDir, (ptrDb) => {
@@ -3135,7 +3158,7 @@ export async function reportToMonitorSafe({ state, stateFile, createdAt }) {
 }
 
 export class WorkflowState {
-  constructor(stateFilePath = resolveStateFile(), options = {}) {
+  constructor(stateFilePath = resolveStateFile({ skipMigrationWrites: true }), options = {}) {
     this.stateFile = stateFilePath;
     // Dipakai tes untuk menyuntikkan kegagalan baca yang nyata (EBUSY/EACCES)
     // tanpa harus benar-benar mengunci berkas di sistem operasi.
@@ -3447,7 +3470,11 @@ export class WorkflowState {
       // jatuh ke environment - dan satu variabel environment membuat semua sesi
       // di proses ini berbagi satu baris.
       const explicit = typeof sessionId === "string" ? sessionId.trim() : "";
-      const target = resolveStateFile({ sessionId });
+      const hasLiveCwdCap = Boolean(getHeldWorktreeCapability(process.cwd()));
+      const target = resolveStateFile({
+        sessionId,
+        skipMigrationWrites: Boolean(this.requireKernelMutex || this.boundKernelCapability) && !hasLiveCwdCap,
+      });
       if (target === this.stateFile && explicit === this.sessionId) return false;
 
       this.sessionId = explicit || null;
@@ -4108,8 +4135,12 @@ export class WorkflowState {
     // Berikutnya semuanya opsional: ekspor, history, ringkasan, replika, monitor.
     // Tidak satu pun boleh menggagalkan penyimpanan yang sudah berhasil - itu
     // kelas bug yang membuat dokumentasi hilang karena hal lain gagal.
+    const postCommitProjectionErrors = [];
     const exportOk = await this._exportJson();
     this._lastExportJsonOk = exportOk !== false;
+    if (exportOk === false) {
+      postCommitProjectionErrors.push("exportJson:EXPORT_RETURNED_FALSE");
+    }
 
     try {
       await this.writeHistoryFile();
@@ -4118,6 +4149,7 @@ export class WorkflowState {
       if (error instanceof ProjectOwnershipLostError || error?.code === "PROJECT_OWNERSHIP_LOST") {
         throw error;
       }
+      postCommitProjectionErrors.push(`summaryOrHistory:${error.message}`);
       safeLog("warn", `Riwayat/ringkasan gagal diperbarui: ${error.message}`);
     }
 
@@ -4125,8 +4157,10 @@ export class WorkflowState {
     try {
       await this._syncHistoryToDatabase(db, userId, projectPath);
     } catch (error) {
+      postCommitProjectionErrors.push(`syncHistoryDb:${error.message}`);
       safeLog("warn", `Sinkronisasi history ke database gagal: ${error.message}`);
     }
+    this._lastPostCommitProjectionErrors = postCommitProjectionErrors;
 
     // Sambungkan antrean replika: laporan yang gagal terkirim ke dashboard
     // ditampung di sini, bukan ditelan. Kegagalannya tidak pernah menggagalkan
@@ -4220,7 +4254,7 @@ export class WorkflowState {
    * Baca isi berkas state APA ADANYA dari disk (bukan dari memori).
    * Mengembalikan null kalau belum ada / rusak.
    */
-  async readDiskState() {
+  async readDiskState({ skipWrites = false } = {}) {
     let terakhir = null;
     // Berkas state bisa terkunci sesaat (OneDrive, antivirus, proses MCP lain).
     // Percobaan ulang singkat mencegah kegagalan sesaat berubah menjadi
@@ -4235,7 +4269,13 @@ export class WorkflowState {
         return null;
       }
       if (hasil.status === "corrupt") {
-        const cadangan = await backupDamagedFile(this.stateFile, this.fs);
+        if (skipWrites) {
+          throw new Error(`Berkas state "${this.stateFile}" rusak dan tidak bisa dibaca.`);
+        }
+        const cadangan = await this._withOwnershipFence(
+          "readDiskState.backupDamaged",
+          async () => backupDamagedFile(this.stateFile, this.fs),
+        );
         throw new Error(
           `Berkas state "${this.stateFile}" rusak dan tidak bisa dibaca. ` +
             `Isi aslinya disimpan di "${cadangan}". Perbaiki atau hapus berkas itu ` +
