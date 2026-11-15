@@ -1789,12 +1789,23 @@ export function pinSessionProject({
         }
 
         if (!linked) {
+          // Same acceptance rule as claimFocusBindingUnderLock: the same repo
+          // key OR the same project directory is the same claim. Comparing only
+          // the key would reject a checkout whose remote key changed across
+          // versions even though the directory is identical.
           const alreadyNested = readFocusBindingRecord(nested);
-          const strandedKey = strandedBinding.repoKey || normalizeRepoPathForBinding(strandedBinding.projectDir);
-          const nestedKey = alreadyNested
-            ? alreadyNested.repoKey || normalizeRepoPathForBinding(alreadyNested.projectDir)
-            : "";
-          if (!alreadyNested || strandedKey !== nestedKey) {
+          if (!alreadyNested) {
+            throw new Error("FOCUS_BINDING_CONFLICT");
+          }
+          const strandedKey = strandedBinding.repoKey || "";
+          const nestedKey = alreadyNested.repoKey || "";
+          const sameKey = Boolean(strandedKey) && Boolean(nestedKey) && strandedKey === nestedKey;
+          const sameDir =
+            Boolean(strandedBinding.projectDir) &&
+            Boolean(alreadyNested.projectDir) &&
+            normalizeRepoPathForBinding(strandedBinding.projectDir) ===
+              normalizeRepoPathForBinding(alreadyNested.projectDir);
+          if (!sameKey && !sameDir) {
             throw new Error("FOCUS_BINDING_CONFLICT");
           }
         }

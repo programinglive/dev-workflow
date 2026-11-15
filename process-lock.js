@@ -1211,7 +1211,7 @@ function readGateDetailed(gateFile, { waitForPartialInit = true } = {}) {
           return { status: "ok", gate: parsed, error: null };
         }
       } catch {
-        // Kemungkinan inisialisasi parsial dari penulis eksternal; tunggu singkat.
+        // Possibly a partial initialization by an external writer; wait briefly.
       }
     }
 
