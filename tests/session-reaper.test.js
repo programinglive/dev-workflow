@@ -5,7 +5,11 @@ import {
   SESSION_STATES,
   applyCleanup,
   classifySession,
+  createMachineController,
   planCleanup,
+  reconcileSessions,
+  signControllerRequest,
+  verifyControllerRequest,
   verifyProcessIdentity,
 } from "../session-reaper.js";
 
@@ -241,4 +245,70 @@ test("cleanup never deletes the canonical checkpoint", async () => {
   });
   assert.deepEqual(calls, ["release", "archive"]);
   assert.equal(calls.includes("deleteState"), false);
+});
+
+test("reconcileSessions returns one plan per session", () => {
+  const sessions = [
+    session({ session_key: "ses_a" }),
+    session({ session_key: "ses_b", updated_at: NOW - 20 * 60_000 }),
+  ];
+  const plans = reconcileSessions(sessions, { now: NOW, isAlive: alive, processInfo: info });
+  assert.equal(plans.length, 2);
+  assert.equal(plans[0].sessionKey, "ses_a");
+  assert.equal(plans[1].sessionKey, "ses_b");
+});
+
+test("machine controller refuses a session from another machine", async () => {
+  const controller = createMachineController({ machine: "MMCH", adapters: { isAlive: alive, processInfo: info } });
+  const result = await controller.verify(session({ machine: "HELLOWORLD" }));
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "REMOTE_SESSION_REFUSED");
+});
+
+test("machine controller verifies a local session", async () => {
+  const controller = createMachineController({ machine: "HELLOWORLD", adapters: { isAlive: alive, processInfo: info } });
+  const result = await controller.verify(session({ machine: "HELLOWORLD" }));
+  assert.equal(result.ok, true);
+  assert.equal(controller.audit.length, 1);
+});
+
+test("machine controller requests stop and confirms exit", async () => {
+  let stopped = false;
+  const controller = createMachineController({
+    machine: "Mac",
+    adapters: {
+      isAlive: alive,
+      processInfo: info,
+      requestStop: async () => { stopped = true; return { ok: true }; },
+      waitForExit: async () => ({ ok: true }),
+    },
+  });
+  const s = session({ machine: "Mac" });
+  assert.equal((await controller.requestStop(s)).ok, true);
+  assert.equal((await controller.waitForExit(s)).ok, true);
+  assert.equal(stopped, true);
+});
+
+test("machine controller reconciles an orphan lease with the expected fencing token", async () => {
+  let received = null;
+  const controller = createMachineController({
+    machine: "MMCH",
+    adapters: {
+      isAlive: dead,
+      processInfo: info,
+      releaseLease: async (key, expected) => { received = { key, expected }; return { ok: true }; },
+    },
+  });
+  const s = session({ machine: "MMCH" });
+  const result = await controller.reconcileOrphanLease(s, { owner: "o1", generation: 3, fencingToken: "f3" });
+  assert.equal(result.ok, true);
+  assert.deepEqual(received, { key: "ses_test", expected: { expectedOwner: "o1", expectedGeneration: 3, expectedFencingToken: "f3" } });
+});
+
+test("controller request signatures are verified and tampering is rejected", () => {
+  const payload = { machine: "MMCH", sessionKey: "ses_test", action: "verify" };
+  const signature = signControllerRequest(payload, "secret");
+  assert.equal(verifyControllerRequest({ payload, signature }, "secret"), true);
+  assert.equal(verifyControllerRequest({ payload: { ...payload, action: "stop" }, signature }, "secret"), false);
+  assert.equal(verifyControllerRequest({ payload, signature }, "other-secret"), false);
 });
