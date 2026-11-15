@@ -11,6 +11,7 @@ import {
   processLockPath,
   projectLockDir,
   lockWarning,
+  clearHeldLeasesForTests,
 } from "../process-lock.js";
 
 // Kenapa tes ini ada:
@@ -29,6 +30,7 @@ function withTempDir(body) {
   try {
     return body(dir);
   } finally {
+    clearHeldLeasesForTests();
     rmSync(dir, { recursive: true, force: true });
   }
 }
@@ -223,9 +225,8 @@ test("state di luar tata letak .state memakai direktorinya sendiri", () => {
   assert.equal(projectLockDir(stateFile), path.dirname(path.resolve(stateFile)));
 });
 
-test("gagal menulis lock dilaporkan, bukan ditelan diam-diam", () => {
-  // Sebelum ini kegagalan menulis mengembalikan { acquired: true } saja, jadi
-  // sistem tampak sehat padahal tidak ada penanda apa pun di disk.
+test("lock write failure is reported and fails closed (acquired: false)", () => {
+  // F6 remediation: failing to write the lock file must never report `acquired: true` (must fail closed).
   withTempDir((dir) => {
     const result = acquireProcessLock({
       dir,
@@ -237,7 +238,7 @@ test("gagal menulis lock dilaporkan, bukan ditelan diam-diam", () => {
       },
     });
 
-    assert.equal(result.acquired, true);
+    assert.equal(result.acquired, false);
     assert.equal(result.wrote, false);
     assert.match(String(result.error || ""), /EACCES/);
 

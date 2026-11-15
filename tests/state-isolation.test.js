@@ -51,8 +51,8 @@ test("dua sesi pada proyek yang sama mendapat dua berkas state", async () => {
       const b = resolveStateFile({ sessionId: "ses_BBB" });
 
       assert.notEqual(a, b, "dua sesi tidak boleh berbagi satu berkas");
-      assert.match(a.replace(/\\/g, "/"), /projects\/.+\/users\/.+\/workflow-state\.ses_AAA\.json$/);
-      assert.match(b.replace(/\\/g, "/"), /projects\/.+\/users\/.+\/workflow-state\.ses_BBB\.json$/);
+      assert.match(a.replace(/\\/g, "/"), /projects\/.+\/users\/.+\/workflow-state\.ses_AAA(?:-h[0-9a-f]{32})?\.json$/);
+      assert.match(b.replace(/\\/g, "/"), /projects\/.+\/users\/.+\/workflow-state\.ses_BBB(?:-h[0-9a-f]{32})?\.json$/);
     } finally {
       process.chdir(previousCwd);
     }

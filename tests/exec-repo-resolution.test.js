@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert";
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -19,6 +19,7 @@ import { resolveWorkingDirectory, PACKAGE_DIR } from "../exec.js";
 async function makeRepo() {
   const dir = await mkdtemp(path.join(tmpdir(), "repo-resolve-"));
   await mkdir(path.join(dir, ".git"), { recursive: true });
+  await writeFile(path.join(dir, ".git", "HEAD"), "ref: refs/heads/main\n", "utf8");
   return dir;
 }
 

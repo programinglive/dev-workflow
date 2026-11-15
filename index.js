@@ -14,15 +14,24 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { fileURLToPath } from "url";
 import path from "path";
-import { acquireProcessLock, releaseProcessLock, lockWarning, projectLockDir, refreshProcessLock, HEARTBEAT_MS } from "./process-lock.js";
-import { exec, setActiveProjectDir } from "./exec.js";
+import { existsSync } from "node:fs";
+import {
+  acquireWorktreeMutex,
+  writeKernelLockMetadata,
+  releaseAllWorktreeMutexesSync,
+  findActiveLegacyWriter,
+  verifyLegacyFleetQuiescence,
+  projectLockDir,
+  HEARTBEAT_MS,
+} from "./process-lock.js";
+import { exec, setActiveProjectDir, resolveProjectDir } from "./exec.js";
 import { normalizeRequestArgs, shellEscape } from "./utils.js";
 import { createGitFacade } from "./git-facade.js";
 import {
   createCommitMessageParts,
   determineReleaseTypeFromCommit,
 } from "./commit-helpers.js";
-import { WorkflowState, sessionKeyFromRequest, reportToMonitorSafe } from "./workflow-state.js";
+import { WorkflowState, sessionKeyFromRequest, reportToMonitorSafe, resolveStateFile, resolveHistoryFile } from "./workflow-state.js";
 import { resolveRequestSession } from "./session-scope.js";
 import { getToolList } from "./tools/definitions.js";
 import { WORKFLOW_INSTRUCTIONS, ENGLISH_IMPLEMENTATION_RULE } from './workflow-guidance.js';
@@ -77,7 +86,6 @@ function withRequestLock(fn) {
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
     lastToolInvocationTimestamp = Date.now();
-
     // Fail closed: a session-scoped tool without a verified session identity
     // must not reuse the previous request's session.
     const gate = resolveRequestSession(request);
@@ -85,7 +93,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       return { isError: true, content: [{ type: "text", text: gate.error }] };
     }
 
-    return await withRequestLock(async () => {
+    const runToolRequest = async () => {
       // Reload state from disk before each request to ensure consistency.
       // Only a request with a verified session may switch the state file.
       // A non-session tool keeps the current file only to read project context;
@@ -94,9 +102,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (gate.sessionId) {
           await workflowState.useSession(gate.sessionId);
         }
-        await workflowState.load();
-        // Repo proyek mengikuti sesi, bukan satu nilai global. Tanpa ini, sesi
-        // yang bekerja di repo lain tetap menjalankan git di WORKFLOW_PROJECT_DIR.
+        await workflowState.load({ skipWrites: true });
+        // Project repo follows the active session rather than a single global value.
+        // Without this, a session working in another repo would still run git in WORKFLOW_PROJECT_DIR.
         setActiveProjectDir(workflowState.state.projectDir || "");
       }
       return securityOutputFilter(await handleToolCall({
@@ -107,6 +115,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         git: createGitFacade(),
         utils: { shellEscape, determineReleaseTypeFromCommit, createCommitMessageParts },
       }));
+    };
+    return await withRequestLock(async () => {
+      if (workflowState && typeof workflowState.runSerialized === "function") {
+        return await workflowState.runSerialized(runToolRequest);
+      }
+      return await runToolRequest();
     });
   } catch(error) {
     safeLog('error','MCP request failed',error);
@@ -222,7 +236,113 @@ Use 'check_ready_to_commit' to verify workflow completion.
 });
 
 // Start server
-export async function main() {
+/**
+ * The shared state root that contains `projects/` and `sessions/`.
+ *
+ * `projectLockDir()` returns `<state>/projects/<projectKey>`, so only that
+ * exact shape identifies the root. A looser "any ancestor named projects" rule
+ * would resolve a checkout that happens to live under `D:\projects\...` to
+ * the drive root and scan the wrong tree.
+ */
+function sharedStateRoot(lockDir) {
+  const parent = path.dirname(path.resolve(lockDir));
+  return path.basename(parent) === "projects" ? path.dirname(parent) : null;
+}
+
+export async function initStartupWorktreeMutex(state, { heartbeat = false } = {}) {
+  state.requireKernelMutex = true;
+  const lockDir = projectLockDir(state.stateFile);
+  let startupProjectDir = state.state?.projectDir || "";
+  if (!startupProjectDir) {
+    try {
+      startupProjectDir = resolveProjectDir({
+        env: process.env,
+        candidates: [process.cwd(), process.env.INIT_CWD],
+      }).dir;
+    } catch {
+      startupProjectDir = "";
+    }
+  }
+  if (startupProjectDir) {
+    // Fail closed before any capability is bound. A live legacy writer, an
+    // abandoned gate, a pending transition journal, or an unreadable metadata
+    // directory means the fleet is not quiescent, and binding a kernel
+    // capability on top of that would create two owners of one worktree.
+    // `projectLockDir()` returns `<state>/projects/<projectKey>`, so the
+    // shared state root is two levels up. Passing a bucket's parent would make
+    // the scan miss sibling project locks and the shared `sessions/` directory.
+    const stateBase = sharedStateRoot(lockDir);
+    const quiescence = verifyLegacyFleetQuiescence({
+      baseDir: stateBase && existsSync(stateBase) ? stateBase : null,
+      dirs: [lockDir],
+    });
+    if (!quiescence.quiescent) {
+      const legacyPids = (quiescence.legacyWriters || []).map((writer) => writer.pid).filter(Boolean);
+      safeLog(
+        'error',
+        `Refusing to bind the worktree mutex: legacy fleet is not quiescent ` +
+          `(legacyWriters=${legacyPids.length}, abandonedGates=${(quiescence.abandonedGates || []).length}, ` +
+          `pendingJournals=${(quiescence.pendingJournals || []).length}, ` +
+          `inspectionErrors=${(quiescence.inspectionErrors || []).length}).`,
+      );
+      process.once('exit', () => releaseAllWorktreeMutexesSync());
+      return;
+    }
+
+    const legacy = findActiveLegacyWriter({ dir: lockDir });
+    if (legacy) {
+      safeLog('error', `Warning: active legacy (pre-Option-B) MCP process PID ${legacy.pid} detected in ${lockDir}.`);
+    } else {
+      const startupOwnerKey =
+        (typeof state._sessionKey === "function" ? state._sessionKey()?.key : "") ||
+        state.sessionId ||
+        state.stateFile ||
+        String(process.pid);
+      const acquired = await acquireWorktreeMutex({
+        projectDir: startupProjectDir,
+        ownerKey: startupOwnerKey,
+      });
+      if (acquired.ok) {
+        acquired.capability._isStartupPlaceholder = true;
+        state.bindKernelCapability(acquired.capability);
+        if (!state._hasExplicitStateFile) {
+          const resolvedStateFile = resolveStateFile({ sessionId: state.sessionId, skipMigrationWrites: false });
+          if (resolvedStateFile && resolvedStateFile !== state.stateFile) {
+            state.stateFile = resolvedStateFile;
+            state.historyFile = resolveHistoryFile(resolvedStateFile);
+          }
+        }
+        writeKernelLockMetadata({
+          dir: lockDir,
+          capability: acquired.capability,
+          projectDir: acquired.worktreeRoot,
+          expectedOwnerKey: startupOwnerKey,
+        });
+      } else if (acquired.reason === "unsupported_platform") {
+        safeLog('error', acquired.message || `Unsupported kernel mutex platform: ${process.platform}`);
+      } else {
+        safeLog('error', `Warning: worktree mutex held by another process (${acquired.endpoint || startupProjectDir}).`);
+      }
+    }
+  }
+  process.once('exit', () => releaseAllWorktreeMutexesSync());
+
+  if (heartbeat) {
+    const hb = setInterval(() => {
+      const cap = state?.boundKernelCapability;
+      if (cap && cap.active) {
+        writeKernelLockMetadata({
+          dir: projectLockDir(state.stateFile),
+          capability: cap,
+          projectDir: cap.worktreeRoot,
+        });
+      }
+    }, HEARTBEAT_MS);
+    hb.unref?.();
+  }
+}
+
+async function main() {
   securityMode();
   const startTime = Date.now();
   safeLog('info', `[${new Date().toISOString()}] MCP Server starting...`);
@@ -262,20 +382,7 @@ export async function main() {
   // Lokasinya juga harus di `.state` PROYEK, bukan di direktori user: direktori
   // user bisa berbeda antar proses, sehingga keduanya tidak saling melihat.
   try {
-    const lockDir = projectLockDir(workflowState.stateFile);
-    const warning = lockWarning(acquireProcessLock({ dir: lockDir }));
-    if (warning) safeLog('error', warning);
-    process.once('exit', () => releaseProcessLock({ dir: lockDir }));
-
-    // Detak jantung penanda proses.
-    //
-    // Tanpa ini, penanda hanya menyebut KAPAN proses start. Proses MCP yang
-    // tertinggal hidup setelah jendela OpenCode-nya ditutup akan terlihat sama
-    // hidupnya dengan sesi yang benar-benar bekerja, sehingga aturan "satu
-    // penulis per repo" tidak bisa ditegakkan tanpa memblokir sesi yang sah.
-    // Dengan detak, "hidup" berarti "hidup DAN baru saja bekerja".
-    const heartbeat = setInterval(() => refreshProcessLock(), HEARTBEAT_MS);
-    heartbeat.unref?.();
+    await initStartupWorktreeMutex(workflowState, { heartbeat: true });
   } catch (lockError) {
     safeLog('error', 'Warning: could not record process lock:', lockError.message);
   }
@@ -346,11 +453,19 @@ async function cliMain(argv) {
   }
 
   try {
-    // Initialize workflow state similar to the server path
-    workflowState = new WorkflowState();
-    await workflowState.load();
-    await workflowState.ensurePrimaryFile();
+    // Initialize workflow state with kernel mutex enforcement enabled (Option B).
+    workflowState = new WorkflowState(undefined, { requireKernelMutex: true });
+    await workflowState.load({ skipWrites: true });
     setActiveProjectDir(workflowState.state.projectDir || "");
+    if (toolName !== "start_task") {
+      try {
+        await initStartupWorktreeMutex(workflowState, { heartbeat: false });
+      } catch (lockError) {
+        safeLog('error', 'Warning: could not record CLI process lock:', lockError.message);
+      }
+    } else {
+      process.once('exit', () => releaseAllWorktreeMutexesSync());
+    }
 
     const request = {
       params: {
