@@ -27,9 +27,12 @@ test("server punya jalur token lama selama masa rotasi", () => {
   assert.match(dash, /if \(!WRITE_TOKEN_PREVIOUS\) return false;/);
 });
 
-test("kedua endpoint tulis memakai pemeriksaan yang sama", () => {
+test("ketiga endpoint tulis memakai pemeriksaan yang sama", () => {
   const panggilan = (dash.match(/if \(!writeAllowed\(req\)\)/g) || []).length;
-  assert.equal(panggilan, 2, "POST /api/session dan /api/event harus sama-sama dijaga");
+  // POST /api/session, POST /api/event, and POST /api/reaper/action. The reaper
+  // action can archive a card, so it must use the same write token as the
+  // report endpoints instead of a separate weaker check.
+  assert.equal(panggilan, 3, "POST /api/session, /api/event dan /api/reaper/action harus dijaga");
 });
 
 test("templat env monitor mendokumentasikan token tanpa nilai nyata", () => {

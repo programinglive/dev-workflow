@@ -74,6 +74,19 @@ plan aborts. Confirmed orphans are archived after the lease is released; idle
 sessions are stopped gracefully only when explicitly auto-disposable. Every
 action is audited and canonical checkpoints are never deleted.
 
+The Monitor (`monitor-server/`) is the only place that reads process ownership.
+`POST /api/reaper/sessions` is HMAC-signed with `DEVWF_REAPER_SECRET` and a
+60-second replay window; the public `/api/sessions` payload carries only
+`reaper_state`, `reaper_reason` and `reaper_actions`, never the owner PID,
+creation time, executable or fencing token. `reaper-scheduler.cjs` runs one
+idempotent cycle per interval, refuses to overlap itself, defaults to dry-run
+(`DEVWF_REAPER_DRY_RUN=0` enables archiving), and archives only a confirmed
+`ORPHANED` session. `reaper-actions.cjs` is the single authorization table the
+endpoint and the UI share. The machine-local controller
+(`session-controller-adapters.js`) verifies PID + creation time + executable
+before any stop and refuses a PID shared by more than one session; it never
+escalates to a force kill.
+
 ### README-first preflight (server-enforced)
 
 `start_task` records a bounded preflight automatically: the project root,

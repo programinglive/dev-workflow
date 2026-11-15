@@ -284,20 +284,47 @@ export function createMachineController({ machine, adapters = {} } = {}) {
       record({ action: "verify", sessionKey: session?.session_key, ok: identity.ok, code: identity.code });
       return identity;
     },
-    async requestStop(session) {
+    /**
+     * Stop a session's owner process.
+     *
+     * Three guards run before the OS is touched, because a bare PID is not
+     * proof of ownership and a shared client process hosts several projects:
+     *  1. the session must belong to this machine;
+     *  2. the recorded owner must still be the same process (PID + creation
+     *     time + executable), so a reused PID is never signalled;
+     *  3. the PID must not be shared with another live session, so stopping one
+     *     project cannot kill an unrelated one.
+     */
+    async requestStop(session, { sharedPids = [] } = {}) {
       const local = assertLocal(session);
       if (!local.ok) return local;
       if (typeof adapters.requestStop !== "function") return { ok: false, reason: "NO_STOP_ADAPTER" };
-      const result = await adapters.requestStop(session);
-      record({ action: "request_stop", sessionKey: session?.session_key, ok: result?.ok !== false });
+
+      const identity = verifyProcessIdentity(session, adapters);
+      if (!identity.ok) {
+        record({ action: "request_stop", sessionKey: session?.session_key, ok: false, code: identity.code });
+        return { ok: false, reason: identity.code, detail: identity.reason };
+      }
+
+      const pid = Number(session.owner.pid);
+      const shared = (sharedPids || []).map(Number).filter((value) => Number.isFinite(value));
+      if (shared.includes(pid)) {
+        record({ action: "request_stop", sessionKey: session?.session_key, ok: false, code: "SHARED_PROCESS_REFUSED" });
+        return { ok: false, reason: "SHARED_PROCESS_REFUSED", detail: `PID ${pid} hosts more than one session` };
+      }
+
+      const result = await adapters.requestStop(pid);
+      record({ action: "request_stop", sessionKey: session?.session_key, pid, ok: result?.ok !== false });
       return result;
     },
     async waitForExit(session, { attempts = 10, delayMs = 500 } = {}) {
       const local = assertLocal(session);
       if (!local.ok) return local;
       if (typeof adapters.waitForExit !== "function") return { ok: false, reason: "NO_WAIT_ADAPTER" };
-      const result = await adapters.waitForExit(session, { attempts, delayMs });
-      record({ action: "wait_for_exit", sessionKey: session?.session_key, ok: result?.ok === true });
+      const pid = Number(session?.owner?.pid);
+      if (!Number.isFinite(pid)) return { ok: false, reason: "OWNER_MISSING" };
+      const result = await adapters.waitForExit(pid, { attempts, delayMs });
+      record({ action: "wait_for_exit", sessionKey: session?.session_key, pid, ok: result?.ok === true });
       return result;
     },
     async reconcileOrphanLease(session, lease) {

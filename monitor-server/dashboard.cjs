@@ -12,6 +12,8 @@ const http = require('node:http');
 const pg = require('pg');
 const { buildSessionsQuery } = require('./sessions-query.cjs');
 const { buildReaperSessionsQuery, verifyReaperRequest } = require('./reaper-query.cjs');
+const { createReaperScheduler, toReaperSession } = require('./reaper-scheduler.cjs');
+const { authorizedActions, planReaperAction } = require('./reaper-actions.cjs');
 const { visibleTaskSessions } = require('./visible-task-sessions.cjs');
 const {
   buildPruneEventsQuery,
@@ -1455,6 +1457,31 @@ function pesanKartu(tombol, teks) {
   return div;
 }
 
+async function tombolReaper(action, sessionKey, tombol) {
+  if (!sessionKey) return;
+  if (tombol) tombol.disabled = true;
+  try {
+    var r = await fetch('/api/reaper/action', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionKey: sessionKey, action: action }),
+    });
+    var data = await r.json().catch(function () { return {}; });
+    if (!r.ok) {
+      alert('Reaper: ' + (data.error || ('HTTP ' + r.status)));
+    } else if (action === 'archive') {
+      alert('Orphan archived.');
+      location.reload();
+    } else {
+      alert('Reaper ' + action + ': ' + JSON.stringify(data));
+    }
+  } catch (err) {
+    alert('Reaper request failed: ' + err.message);
+  } finally {
+    if (tombol) tombol.disabled = false;
+  }
+}
+
 async function tombolBagikan(sessionKey, tombol) {
   tombol.disabled = true;
   var asli = tombol.textContent;
@@ -1619,6 +1646,30 @@ function render(data) {
           ? '<div class="meta">berakhir ' + ago(s.updated_at, jNow) + ' — kemungkinan sudah selesai tanpa penutupan</div>'
           : '');
 
+      // Verified lifecycle state from the backend reaper. Only the state and
+      // reason are shown; owner PID, creation time, executable and fencing
+      // tokens never reach the browser.
+      const reaperState = s.reaper_state || 'UNKNOWN';
+      const reaperBadge = reaperState !== 'UNKNOWN'
+        ? '<div class="meta" style="margin-top:3px">reaper: <b>' + esc(reaperState) + '</b>' +
+          (s.reaper_reason ? ' — ' + esc(s.reaper_reason) : '') + '</div>'
+        : '';
+      const reaperLabels = {
+        verify: 'Verify now',
+        stop: 'Graceful stop',
+        archive: 'Recover orphan',
+        checkpoint: 'View checkpoint',
+        evidence: 'View cleanup evidence',
+      };
+      const reaperAllowed = Array.isArray(s.reaper_actions) ? s.reaper_actions : ['verify', 'checkpoint', 'evidence'];
+      const reaperActions = '<div class="btnrow">' + reaperAllowed
+        .filter(function (a) { return reaperLabels[a]; })
+        .map(function (a) {
+          return '<button class="btn' + (a === 'archive' ? ' danger' : '') + '" data-reaper="' + esc(a) +
+            '" data-key="' + esc(s.session_key) + '">' + esc(reaperLabels[a]) + '</button>';
+        })
+        .join('') + '</div>';
+
       const tautan = (data.shares || []).find(x => x.sessionKey === s.session_key);
       const tombolShare = tautan
         ? '<div class="btnrow"><button class="btn" data-copy="' + esc(tautan.url) + '">Salin tautan</button>' +
@@ -1642,6 +1693,8 @@ function render(data) {
         renderChain(s) +
         (s.session_title ? '<div class="meta" style="color:#79c0ff;margin-top:2px">💬 ' + esc(s.session_title) + '</div>' : '') +
         note +
+        reaperBadge +
+        reaperActions +
         '<div class="meta" style="margin-top:3px">' + esc(s.machine) + ' · ' + esc(s.project_name) +
         ' · ' + esc(s.task_type) + ' · ' + ago(s.updated_at, jNow) + '</div>' +
         (repoLinkHtml(s) ? '<div style="margin-top:3px">' + repoLinkHtml(s) + '</div>' : '') +
@@ -1864,6 +1917,11 @@ document.getElementById('list').addEventListener('click', function (e) {
   var flowBtn = e.target.closest('[data-flow-id]');
   if (flowBtn) {
     openFlowModal(flowBtn.dataset.flowId, flowBtn.dataset.flowTitle, flowBtn.dataset.flowUrl);
+    return;
+  }
+  var reaperBtn = e.target.closest('[data-reaper]');
+  if (reaperBtn) {
+    void tombolReaper(reaperBtn.dataset.reaper, reaperBtn.dataset.key, reaperBtn);
     return;
   }
   var btn = e.target.closest('[data-share],[data-copy],[data-revoke]');
@@ -2203,6 +2261,20 @@ async function collectDashboardPayload({ query, limit = 20 }) {
   const fleet = buildFleetParity(machines);
   const hq = buildHistoryQuery({ historyDays: HISTORY_DAYS });
   const nowMs = Date.now();
+  // Verified lifecycle state for the UI. The privileged query runs inside the
+  // backend; only the state and reason are added to the public payload, never
+  // the owner PID, creation time, executable or fencing token.
+  const reaperMap = new Map();
+  try {
+    const rq = buildReaperSessionsQuery({ limit: 200 });
+    const rr = await query(rq.sql, rq.params);
+    const { classifySession: classifyReaper } = await import('../session-reaper.js');
+    for (const row of rr.rows) {
+      reaperMap.set(row.session_key, classifyReaper(toReaperSession(row), { now: nowMs, machineOnline: true }));
+    }
+  } catch {
+    // A missing migration or an older database must not break the dashboard.
+  }
   const historyRows = await query(hq.sql, hq.params);
   const historyKeys = historyRows.rows.map((r) => r.session_key).filter(Boolean);
   const historyBuildRows = historyKeys.length ? await query(
@@ -2277,7 +2349,18 @@ async function collectDashboardPayload({ query, limit = 20 }) {
         updatedAt: row.updated_at,
       });
     }
-    return { ...withRepoLink(row), state: s.status, state_label: LABELS[s.status] || s.status, active_build: activeBuild };
+    const reaper = reaperMap.get(row.session_key);
+    return {
+      ...withRepoLink(row),
+      state: s.status,
+      state_label: LABELS[s.status] || s.status,
+      reaper_state: reaper?.state || "UNKNOWN",
+      reaper_reason: reaper?.reason || "",
+      // The UI renders exactly these controls, so it can never offer an action
+      // the backend would refuse for this verified state.
+      reaper_actions: reaper ? authorizedActions(reaper.state) : ["verify", "checkpoint", "evidence"],
+      active_build: activeBuild,
+    };
   });
   const bersambung = rows.map((row) => {
     const { from, to } = chainLabels(row, rows);
@@ -2660,6 +2743,57 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       return res.end(JSON.stringify({ ok: true, sessions: rows.rows }));
     }
+    if (url.pathname === '/api/reaper/action' && req.method === 'POST') {
+      if (!writeAllowed(req)) return denyWrite(res);
+      const body = bacaJson(await readBody(req), res);
+      if (body === null) return undefined;
+      const sessionKey = String(body.sessionKey || '');
+      const action = String(body.action || '');
+      if (!sessionKey || !action) {
+        res.writeHead(400, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: 'sessionKey and action are required' }));
+      }
+      // The verified state decides what is authorized. The browser cannot ask
+      // for an action its state does not allow, and the state is recomputed
+      // here rather than trusted from the request.
+      const rq = buildReaperSessionsQuery({ limit: 500 });
+      const rr = await query(rq.sql, rq.params);
+      const row = rr.rows.find((r) => r.session_key === sessionKey);
+      if (!row) {
+        res.writeHead(404, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: 'session not found' }));
+      }
+      const { classifySession: classifyReaper } = await import('../session-reaper.js');
+      const c = classifyReaper(toReaperSession(row), { now: Date.now(), machineOnline: true });
+      const decision = planReaperAction(c.state, action);
+      if (!decision.ok) {
+        res.writeHead(409, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: decision.reason, state: c.state }));
+      }
+      if (decision.mutate && action === 'archive') {
+        // Archive only after a confirmed orphan: the process is gone, so no
+        // live agent loses its card. The lease is released by the controller,
+        // never by the monitor.
+        await query(
+          `UPDATE sessions SET phase = 'closed', updated_at = now()
+            WHERE session_key = $1 AND phase NOT IN ('closed', 'done', 'cancelled')`,
+          [sessionKey],
+        );
+        res.writeHead(200, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true, archived: true, state: c.state }));
+      }
+      // verify / checkpoint / evidence are read-only: they report the verified
+      // state and the actions the state authorizes.
+      res.writeHead(200, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({
+        ok: true,
+        action,
+        sessionKey,
+        state: c.state,
+        reason: c.reason,
+        actions: authorizedActions(c.state),
+      }));
+    }
     if (url.pathname === '/api/sessions') {
       const limit = Math.min(50, Number(url.searchParams.get('limit') || 20));
       const payload = await collectDashboardPayload({ query, limit });
@@ -2753,6 +2887,16 @@ server.listen(PORT, HOST, () => {
       console.error('Jalankan sekali sebagai user database aplikasi:\n' + ensureSessionRepositoryColumnsSql);
     }
   })();
+  // Session reaper: one idempotent reconciliation cycle. Dry-run by default;
+  // set DEVWF_REAPER_DRY_RUN=0 only after the machine-local controllers are
+  // deployed and verified.
+  const reaperScheduler = createReaperScheduler({
+    query,
+    dryRun: process.env.DEVWF_REAPER_DRY_RUN !== '0',
+    intervalMs: Number(process.env.DEVWF_REAPER_INTERVAL_MS || 5 * 60 * 1000),
+  });
+  reaperScheduler.start();
+
   // Penghapusan otomatis MATI kecuali PRUNE_ENABLED diisi eksplisit.
   if (!PRUNE_ON) {
     console.log('retensi: MATI (set PRUNE_ENABLED=1 untuk menyalakan). Tidak ada data yang dihapus.');
