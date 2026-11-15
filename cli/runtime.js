@@ -5,7 +5,8 @@
  * and apart from `bin/cli.js` so the entry point stays a thin wire.
  */
 import path from "node:path";
-import { WorkflowState } from "../workflow-state.js";
+import { WorkflowState, resolveProjectRootForState, ProjectOwnershipLostError } from "../workflow-state.js";
+import { acquireWorktreeMutex, releaseWorktreeMutex } from "../process-lock.js";
 import { handleDropTask, handleCompleteTask } from "../tools/handler-modules/commit-handlers.js";
 import { findSession, listSessions } from "./sessions.js";
 
@@ -37,9 +38,30 @@ export function resolveStateRoot(env = process.env) {
  * snapshot.
  */
 export async function openSessionState(found) {
-  const workflowState = new WorkflowState(found.file);
+  const workflowState = new WorkflowState(found.file, { requireKernelMutex: true });
+  await workflowState.load({ skipWrites: true });
+  const targetProjectDir = workflowState.state?.projectDir || resolveProjectRootForState(found.file);
+  const ownerKey =
+    (typeof workflowState._sessionKey === "function" ? workflowState._sessionKey()?.key : "") ||
+    workflowState.sessionId ||
+    found.file;
+  const acq = await acquireWorktreeMutex({
+    projectDir: targetProjectDir,
+    ownerKey,
+  });
+  if (!acq.ok) {
+    throw new ProjectOwnershipLostError(
+      acq.message || `Cannot acquire worktree mutex for "${targetProjectDir}": ${acq.reason || "locked"}`,
+      {
+        reason: acq.reason || "worktree_mutex_unavailable",
+        projectDir: targetProjectDir,
+        endpoint: acq.endpoint || null,
+      },
+    );
+  }
+  workflowState.bindKernelCapability(acq.capability);
   await workflowState.load();
-  return workflowState;
+  return { workflowState, capability: acq.capability };
 }
 
 /**
@@ -54,15 +76,23 @@ export async function openSessionState(found) {
 export function createHandlers({ out }) {
   return {
     async drop({ file, reason }) {
-      const workflowState = await openSessionState({ file });
-      const response = await handleDropTask({ reason }, workflowState, {});
-      return { response, settled: isSettled(workflowState) };
+      const { workflowState, capability } = await openSessionState({ file });
+      try {
+        const response = await handleDropTask({ reason }, workflowState, {});
+        return { response, settled: isSettled(workflowState) };
+      } finally {
+        await releaseWorktreeMutex(capability);
+      }
     },
     async complete({ file, nextSteps }) {
-      const workflowState = await openSessionState({ file });
-      const args = nextSteps && nextSteps.length ? { nextSteps } : {};
-      const response = await handleCompleteTask(args, workflowState, {});
-      return { response, settled: isSettled(workflowState) };
+      const { workflowState, capability } = await openSessionState({ file });
+      try {
+        const args = nextSteps && nextSteps.length ? { nextSteps } : {};
+        const response = await handleCompleteTask(args, workflowState, {});
+        return { response, settled: isSettled(workflowState) };
+      } finally {
+        await releaseWorktreeMutex(capability);
+      }
     },
   };
 }

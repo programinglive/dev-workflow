@@ -878,11 +878,31 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
                 repairErrors.push(`exportJson:${err?.message || String(err)}`);
               }
             }
+            if (typeof workflowState.writeHistoryFile === "function") {
+              try {
+                await workflowState.writeHistoryFile();
+              } catch (err) {
+                repairErrors.push(`summaryOrHistory:${err?.message || String(err)}`);
+              }
+            }
             if (typeof workflowState.updateProjectSummary === "function") {
               try {
                 await workflowState.updateProjectSummary();
               } catch (err) {
                 repairErrors.push(`summaryOrHistory:${err?.message || String(err)}`);
+              }
+            }
+            if (typeof workflowState._syncHistoryToDatabase === "function") {
+              try {
+                const histRes = await workflowState._syncHistoryToDatabase();
+                if (histRes?.skipped > 0) {
+                  repairErrors.push(`syncHistoryDb:SKIPPED_${histRes.skipped}`);
+                }
+                if (histRes?.summaryFailed) {
+                  repairErrors.push(`syncHistorySummary:${histRes.summaryError || "FAILED"}`);
+                }
+              } catch (err) {
+                repairErrors.push(`syncHistoryDb:${err?.message || String(err)}`);
               }
             }
           },
