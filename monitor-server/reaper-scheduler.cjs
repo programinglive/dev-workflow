@@ -46,6 +46,9 @@ function createReaperScheduler({
   dryRun = true,
   now = () => Date.now(),
   reaper = null,
+  retries = MAX_RETRIES,
+  baseDelayMs = 500,
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 } = {}) {
   let running = false;
   let timer = null;
@@ -56,13 +59,45 @@ function createReaperScheduler({
     return import('../session-reaper.js');
   }
 
+  /**
+   * Bounded retry with exponential backoff.
+   *
+   * A transient database error must not turn into a permanently skipped cycle,
+   * and it must not turn into an unbounded retry loop either. The attempt count
+   * is returned so the audit trail shows how hard the cycle tried.
+   */
+  async function withRetry(fn) {
+    let lastError = null;
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+      try {
+        return { ok: true, value: await fn(), attempts: attempt + 1 };
+      } catch (error) {
+        lastError = error;
+        if (attempt < retries) await sleep(baseDelayMs * 2 ** attempt);
+      }
+    }
+    return { ok: false, error: lastError, attempts: retries + 1 };
+  }
+
   async function runOnce() {
     if (running) return { ok: false, reason: 'ALREADY_RUNNING' };
     running = true;
     try {
       const { planCleanup } = await loadReaper();
       const { sql, params } = buildReaperSessionsQuery({ limit: 200 });
-      const rows = await query(sql, params);
+      const loaded = await withRetry(() => query(sql, params));
+      if (!loaded.ok) {
+        const failure = {
+          ok: false,
+          reason: String(loaded.error?.message || loaded.error),
+          attempts: loaded.attempts,
+        };
+        audit.push({ at: new Date().toISOString(), ...failure });
+        log.error?.('reaper cycle failed', loaded.error);
+        return failure;
+      }
+
+      const rows = loaded.value;
       const plans = rows.rows.map((row) => planCleanup(toReaperSession(row), { now: now(), machineOnline: true }));
       const actionable = plans.filter((plan) => plan.action === 'recover_orphan');
 
@@ -83,6 +118,7 @@ function createReaperScheduler({
         dryRun,
         total: plans.length,
         actionable: actionable.length,
+        attempts: loaded.attempts,
         plans,
       };
       audit.push({ at: new Date().toISOString(), ...result });
@@ -91,6 +127,8 @@ function createReaperScheduler({
       log.error?.('reaper cycle failed', error);
       return { ok: false, reason: String(error?.message || error) };
     } finally {
+      // Always released, so an interrupted or failed cycle cannot leave the
+      // scheduler permanently stuck in ALREADY_RUNNING.
       running = false;
     }
   }

@@ -71,6 +71,76 @@ test("start is idempotent and stop clears the timer", () => {
   assert.equal(scheduler.stop(), false);
 });
 
+test("a transient failure is retried with bounded backoff", async () => {
+  let calls = 0;
+  const delays = [];
+  const query = async (sql) => {
+    if (/FROM sessions/.test(sql)) {
+      calls += 1;
+      if (calls < 3) throw new Error("connection reset");
+      return { rows: [] };
+    }
+    return { rows: [] };
+  };
+  const scheduler = createReaperScheduler({
+    query,
+    reaper,
+    dryRun: true,
+    retries: 3,
+    baseDelayMs: 1,
+    sleep: async (ms) => { delays.push(ms); },
+  });
+  const result = await scheduler.runOnce();
+  assert.equal(result.ok, true);
+  assert.equal(result.attempts, 3);
+  assert.deepEqual(delays, [1, 2], "backoff must double and stay bounded");
+});
+
+test("the retry budget is finite and the failure is audited", async () => {
+  const query = async (sql) => {
+    if (/FROM sessions/.test(sql)) throw new Error("database is down");
+    return { rows: [] };
+  };
+  const scheduler = createReaperScheduler({
+    query,
+    reaper,
+    dryRun: false,
+    retries: 2,
+    baseDelayMs: 1,
+    sleep: async () => {},
+    log: { error: () => {} },
+  });
+  const result = await scheduler.runOnce();
+  assert.equal(result.ok, false);
+  assert.equal(result.attempts, 3);
+  assert.match(result.reason, /database is down/);
+  assert.equal(scheduler.audit.length, 1);
+  assert.equal(scheduler.audit[0].ok, false);
+});
+
+test("a failed cycle releases ownership so the next cycle can run", async () => {
+  let fail = true;
+  const query = async (sql) => {
+    if (/FROM sessions/.test(sql)) {
+      if (fail) throw new Error("temporary");
+      return { rows: [] };
+    }
+    return { rows: [] };
+  };
+  const scheduler = createReaperScheduler({
+    query,
+    reaper,
+    dryRun: true,
+    retries: 0,
+    sleep: async () => {},
+    log: { error: () => {} },
+  });
+  assert.equal((await scheduler.runOnce()).ok, false);
+  assert.equal(scheduler.isRunning(), false);
+  fail = false;
+  assert.equal((await scheduler.runOnce()).ok, true, "a failed run must not wedge the scheduler");
+});
+
 test("toReaperSession maps owner and lease metadata", () => {
   const mapped = toReaperSession({
     session_key: "ses_a",
