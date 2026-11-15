@@ -200,30 +200,55 @@ test("a session with no lease has nothing to release", () => {
 
 // ------------------------------------------------------- atomic arbitration
 
-test("reconciliation is one statement, not three", () => {
+test("archive and lease release are a single UPDATE on sessions", () => {
   const parsed = parseAttestation(payload(), { now: NOW });
   const { sql } = buildReconcileQuery(parsed.value);
 
-  // Archive, release and consumption live in the same statement, so a crash
-  // cannot leave the session archived while the attestation stays unconsumed.
-  assert.match(sql, /WITH archived AS/);
-  assert.match(sql, /released AS/);
-  assert.match(sql, /consumed AS/);
+  // PostgreSQL does not support updating the same row twice in one statement:
+  // "Only one of the modifications takes place, but it is not easy to reliably
+  // predict which one." Archive and release must therefore be one UPDATE.
+  assert.equal(
+    (sql.match(/UPDATE sessions/g) || []).length,
+    1,
+    "sessions must be updated exactly once",
+  );
+  assert.match(sql, /lease_generation = CASE WHEN \$7 <> '' THEN lease_generation \+ 1/);
+  assert.match(sql, /lease_owner = CASE WHEN \$7 <> '' THEN '' ELSE lease_owner END/);
+});
+
+test("the archive is gated on the attestation being unconsumed", () => {
+  const parsed = parseAttestation(payload(), { now: NOW });
+  const { sql } = buildReconcileQuery(parsed.value);
+
+  // A consumed attestation must not archive a reopened session. The archive
+  // reads the unconsumed set, so a replay finds it empty and does nothing.
+  assert.match(sql, /EXISTS \(SELECT 1 FROM fresh\)/);
   assert.match(sql, /consumed_at IS NULL/);
-  assert.equal((sql.match(/^\s*UPDATE /gm) || []).length, 3);
+});
+
+test("the write itself refuses an expired attestation", () => {
+  const parsed = parseAttestation(payload(), { now: NOW });
+  const { sql } = buildReconcileQuery(parsed.value);
+
+  // Freshness is checked when the report arrives AND when it is consumed. A
+  // delayed query or lock wait must not commit after the TTL.
+  assert.match(sql, /verified_at > now\(\) - \(\$11::bigint \* interval '1 millisecond'\)/);
+  assert.match(sql, /verified_at <= now\(\) \+ interval '60 seconds'/);
+  // And the reason is reported honestly rather than as an identity change.
+  assert.match(sql, /THEN 'attestation_expired'/);
 });
 
 test("the attestation is always consumed, even when nothing was archived", () => {
   const parsed = parseAttestation(payload(), { now: NOW });
   const { sql } = buildReconcileQuery(parsed.value);
-  assert.match(sql, /WHEN \(SELECT count\(\*\) FROM archived\) = 0 THEN 'identity_changed'/);
+  assert.match(sql, /ELSE 'identity_changed'/);
+  assert.match(sql, /consumed_at = now\(\)/);
 });
 
-test("a session with no lease emits no release body", () => {
+test("a session with no lease releases nothing", () => {
   const parsed = parseAttestation(payload({ leaseOwner: "", leaseGeneration: 0, leaseFencingToken: "" }), { now: NOW });
   const { sql } = buildReconcileQuery(parsed.value);
-  assert.match(sql, /released AS \(\s*SELECT NULL::text AS session_key WHERE false/);
-  assert.equal(/lease_generation = lease_generation \+ 1/.test(sql), false);
+  assert.match(sql, /CASE WHEN \$7 <> '' THEN \(SELECT count\(\*\) FROM archived\)::int ELSE 0 END AS released/);
 });
 
 test("reconciliation reports the outcome it actually achieved", () => {
@@ -231,7 +256,6 @@ test("reconciliation reports the outcome it actually achieved", () => {
   const { sql } = buildReconcileQuery(parsed.value);
   for (const outcome of [
     "identity_changed",
-    "archived_lease_unresolved",
     "archived_no_lease",
     "archived_and_released",
   ]) {

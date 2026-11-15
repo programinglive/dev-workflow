@@ -224,9 +224,32 @@ function buildLeaseReleaseQuery(attestation) {
  *   - two schedulers interleave -> one archives, the other releases, and both
  *     write a consumption outcome that contradicts the other.
  *
- * A single statement with data-modifying CTEs makes the whole decision one
- * transaction. The attestation is always consumed, and the recorded outcome
- * says exactly what happened, including the "nothing was archived" case.
+ * WHY ONE UPDATE ON `sessions`, NOT TWO
+ * -------------------------------------
+ * PostgreSQL does not support updating the same row twice in one statement:
+ * "Only one of the modifications takes place, but it is not easy (and sometimes
+ * not possible) to reliably predict which one." Archiving and releasing the
+ * lease are therefore a single UPDATE with conditional column expressions, not
+ * two data-modifying CTEs.
+ *
+ * WHY THE ARCHIVE READS `fresh`
+ * -----------------------------
+ * The archive is gated on the attestation still being unconsumed and still
+ * fresh. A consumed attestation cannot archive a session that was reopened
+ * afterwards, and a query delayed past the TTL cannot commit an archive.
+ *
+ * WHY THE WHOLE SESSION IS ARCHIVED, SCOPED BY PROCESS IDENTITY
+ * --------------------------------------------------------------
+ * `sessions` is keyed by `(session_key, task_id)`, so one session can own
+ * several cards. The attestation is about the *process*, not about one card:
+ * when that process is confirmed gone, every card it owns is orphaned too.
+ * Archiving only the card the scheduler happened to read first would leave the
+ * rest of the dead session open forever.
+ *
+ * That is safe because the predicate is a full process-identity match -
+ * machine, owner_pid, owner_started_at, owner_executable and the lease triple.
+ * A card belonging to a different process cannot match, and a reused PID has a
+ * different `owner_started_at`, so a live session cannot be archived this way.
  *
  * @returns {{sql: string, params: Array}}
  */
@@ -242,32 +265,35 @@ function buildReconcileQuery(attestation) {
     attestation.leaseGeneration,
     attestation.leaseFencingToken,
     attestation.nonce,
+    ATTESTATION_TTL_MS,
   ];
 
-  // A session with no attested lease has nothing to release, so the release CTE
-  // is replaced by an empty result rather than matching rows it should not.
-  const releaseCte = attestation.leaseOwner
-    ? `released AS (
-         UPDATE sessions
-            SET lease_owner = '',
-                lease_generation = lease_generation + 1,
-                lease_fencing_token = '',
-                updated_at = now()
-          WHERE session_key IN (SELECT session_key FROM archived)
-            AND machine = $2
-            AND lease_owner = $7
-            AND lease_generation = $8
-            AND lease_fencing_token = $9
-          RETURNING session_key
-       )`
-    : `released AS (
-         SELECT NULL::text AS session_key WHERE false
-       )`;
-
   return {
-    sql: `WITH archived AS (
+    sql: `WITH fresh AS (
+             SELECT 1
+               FROM reaper_attestations
+              WHERE machine = $2
+                AND nonce = $10
+                AND consumed_at IS NULL
+                AND verified_at > now() - ($11::bigint * interval '1 millisecond')
+                AND verified_at <= now() + interval '60 seconds'
+           ),
+           stale AS (
+             SELECT 1
+               FROM reaper_attestations
+              WHERE machine = $2
+                AND nonce = $10
+                AND consumed_at IS NULL
+                AND (verified_at <= now() - ($11::bigint * interval '1 millisecond')
+                     OR verified_at > now() + interval '60 seconds')
+           ),
+           archived AS (
              UPDATE sessions
-                SET phase = 'closed', updated_at = now()
+                SET phase = 'closed',
+                    updated_at = now(),
+                    lease_owner = CASE WHEN $7 <> '' THEN '' ELSE lease_owner END,
+                    lease_generation = CASE WHEN $7 <> '' THEN lease_generation + 1 ELSE lease_generation END,
+                    lease_fencing_token = CASE WHEN $7 <> '' THEN '' ELSE lease_fencing_token END
               WHERE session_key = $1
                 AND machine = $2
                 AND project_name = $3
@@ -278,23 +304,23 @@ function buildReconcileQuery(attestation) {
                 AND lease_generation = $8
                 AND lease_fencing_token = $9
                 AND phase NOT IN ('closed', 'done', 'cancelled', 'handed-off')
+                AND EXISTS (SELECT 1 FROM fresh)
               RETURNING session_key
            ),
-           ${releaseCte},
            consumed AS (
              UPDATE reaper_attestations
                 SET consumed_at = now(),
                     outcome = CASE
-                      WHEN (SELECT count(*) FROM archived) = 0 THEN 'identity_changed'
-                      WHEN (SELECT count(*) FROM released) = 0 AND $7 <> '' THEN 'archived_lease_unresolved'
-                      WHEN (SELECT count(*) FROM released) = 0 THEN 'archived_no_lease'
-                      ELSE 'archived_and_released'
+                      WHEN (SELECT count(*) FROM archived) > 0 AND $7 = '' THEN 'archived_no_lease'
+                      WHEN (SELECT count(*) FROM archived) > 0 THEN 'archived_and_released'
+                      WHEN EXISTS (SELECT 1 FROM stale) THEN 'attestation_expired'
+                      ELSE 'identity_changed'
                     END
               WHERE machine = $2 AND nonce = $10 AND consumed_at IS NULL
               RETURNING outcome
            )
            SELECT (SELECT count(*) FROM archived)::int AS archived,
-                  (SELECT count(*) FROM released)::int AS released,
+                  CASE WHEN $7 <> '' THEN (SELECT count(*) FROM archived)::int ELSE 0 END AS released,
                   COALESCE((SELECT outcome FROM consumed), 'already_consumed') AS outcome`,
     params,
   };

@@ -213,11 +213,11 @@ function createReaperScheduler({
             sessionKey: plan.sessionKey,
             archived: Number(row?.archived || 0) > 0,
             leaseReleased: Number(row?.released || 0) > 0,
-            leaseReason: attestation.leaseOwner
-              ? Number(row?.released || 0) > 0
+            leaseReason: !attestation.leaseOwner
+              ? 'NO_LEASE'
+              : Number(row?.released || 0) > 0
                 ? 'RELEASED'
-                : 'LEASE_OWNERSHIP_CHANGED'
-              : 'NO_LEASE',
+                : 'NOT_RELEASED',
             outcome: String(row?.outcome || 'unknown'),
           });
         }

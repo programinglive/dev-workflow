@@ -72,6 +72,64 @@ test("a readable binding still blocks another project", async () => {
   }
 });
 
+test("a structurally invalid binding is unreadable, so a claim is refused", async () => {
+  const { base, stateFile } = await stateBase();
+  const repo = await mkdtemp(path.join(tmpdir(), "focus-e-repo-"));
+  try {
+    const bindings = path.join(base, "sessions", "focus-bindings");
+    await mkdir(bindings, { recursive: true });
+    // Valid JSON, but not a binding and not a session pointer. Treating this as
+    // "unbound" would let a claim overwrite a damaged record.
+    await writeFile(path.join(bindings, "focus-506.json"), JSON.stringify({ focusId: 506 }), "utf8");
+
+    const claimed = await claimFocusBinding({ stateFile, focusId: 506, projectDir: repo, repoKey: "repo-c" });
+    assert.equal(claimed.ok, false, "a structurally invalid binding must not be overwritten");
+    assert.equal(claimed.reason, "FOCUS_BINDING_UNREADABLE");
+  } finally {
+    await rm(base, { recursive: true, force: true });
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("a non-object binding payload is unreadable", async () => {
+  const { base, stateFile } = await stateBase();
+  const repo = await mkdtemp(path.join(tmpdir(), "focus-e-repo-"));
+  try {
+    const bindings = path.join(base, "sessions", "focus-bindings");
+    await mkdir(bindings, { recursive: true });
+    await writeFile(path.join(bindings, "focus-507.json"), JSON.stringify(["not", "a", "binding"]), "utf8");
+
+    const claimed = await claimFocusBinding({ stateFile, focusId: 507, projectDir: repo, repoKey: "repo-d" });
+    assert.equal(claimed.ok, false);
+    assert.equal(claimed.reason, "FOCUS_BINDING_UNREADABLE");
+  } finally {
+    await rm(base, { recursive: true, force: true });
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("a session pointer is still not a binding and does not block a claim", async () => {
+  const { base, stateFile } = await stateBase();
+  const repo = await mkdtemp(path.join(tmpdir(), "focus-e-repo-"));
+  try {
+    const sessions = path.join(base, "sessions");
+    await mkdir(sessions, { recursive: true });
+    // The legacy flat name can hold a session pointer. That is a different,
+    // valid record type, not damage, so it must not be reported as unreadable.
+    await writeFile(
+      path.join(sessions, "focus-508.json"),
+      JSON.stringify({ ownerKey: "ses_abc", projectDir: repo }),
+      "utf8",
+    );
+
+    const claimed = await claimFocusBinding({ stateFile, focusId: 508, projectDir: repo, repoKey: "repo-e" });
+    assert.equal(claimed.ok, true, "a session pointer must not block a focus claim");
+  } finally {
+    await rm(base, { recursive: true, force: true });
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
 test("an unreadable binding is refused rather than treated as absent", async () => {
   const { base, stateFile } = await stateBase();
   const repo = await mkdtemp(path.join(tmpdir(), "focus-e-repo-"));

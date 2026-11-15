@@ -51,19 +51,18 @@ function makeDb({ sessions, attestations = [], archived = 1, released = 1, outco
   const calls = [];
   const query = async (sql, params) => {
     calls.push({ sql, params });
-    if (/FROM reaper_attestations/.test(sql)) return { rows: attestations };
-    if (/FROM sessions/.test(sql)) return { rows: sessions };
-    // Arbitration is one statement now: it reports what it actually did.
-    if (/WITH archived AS/.test(sql)) {
+    // The reconcile statement also mentions reaper_attestations, so it must be
+    // matched before the plain attestation read.
+    if (/WITH fresh AS/.test(sql)) {
       const decided = outcome || (archived === 0
         ? "identity_changed"
-        : released === 0 && params[6]
-          ? "archived_lease_unresolved"
-          : released === 0
-            ? "archived_no_lease"
-            : "archived_and_released");
+        : released === 0
+          ? "archived_no_lease"
+          : "archived_and_released");
       return { rows: [{ archived, released, outcome: decided }], rowCount: 1 };
     }
+    if (/FROM reaper_attestations/.test(sql)) return { rows: attestations };
+    if (/FROM sessions/.test(sql)) return { rows: sessions };
     return { rows: [], rowCount: 0 };
   };
   return { query, calls };
@@ -99,7 +98,7 @@ test("a valid attestation archives and releases the lease", async () => {
   assert.equal(result.applied[0].leaseReleased, true);
   assert.equal(result.applied[0].outcome, "archived_and_released");
   // One statement carries archive, release and consumption together.
-  assert.equal(calls.filter((c) => /WITH archived AS/.test(c.sql)).length, 1);
+  assert.equal(calls.filter((c) => /WITH fresh AS/.test(c.sql)).length, 1);
   assert.equal(calls.filter((c) => /UPDATE sessions[\s\S]*UPDATE reaper_attestations/.test(c.sql)).length, 1);
 });
 
@@ -138,19 +137,21 @@ test("a lost archive race archives nothing and releases nothing", async () => {
   assert.equal(result.applied[0].outcome, "identity_changed");
 });
 
-test("a lost lease race archives but reports the lease unresolved", async () => {
+test("a lease mismatch archives nothing, because archive and release are one write", async () => {
+  // The archive predicate includes the lease triple, so a lease that moved
+  // means the whole UPDATE matches no row. There is no state where a session is
+  // archived but its lease is left behind.
   const { query } = makeDb({
     sessions: [sessionRow()],
     attestations: [attestationRow()],
-    archived: 1,
+    archived: 0,
     released: 0,
   });
   const scheduler = createReaperScheduler({ query, reaper, dryRun: false });
   const result = await scheduler.runOnce();
-  assert.equal(result.applied[0].archived, true);
+  assert.equal(result.applied[0].archived, false);
   assert.equal(result.applied[0].leaseReleased, false);
-  assert.equal(result.applied[0].leaseReason, "LEASE_OWNERSHIP_CHANGED");
-  assert.equal(result.applied[0].outcome, "archived_lease_unresolved");
+  assert.equal(result.applied[0].outcome, "identity_changed");
 });
 
 test("a session without a lease archives without a release attempt", async () => {
