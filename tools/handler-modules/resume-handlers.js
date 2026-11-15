@@ -4,6 +4,7 @@ import { textResponse } from "./shared.js";
 import { summarize as summarizeDod, renderOutstanding } from "./dod.js";
 import { planProgress } from "./plan.js";
 import { DEFAULT_LOCK_STALE_MS } from "../../process-lock.js";
+import { revalidatePreflight, runPreflight } from "../../preflight.js";
 
 /**
  * Reconnect ke state sesi lain yang tertinggal.
@@ -209,6 +210,36 @@ export async function handleResumeSession(args, workflowState) {
   writeFileSync(target, JSON.stringify(resumed, null, 2), "utf8");
   await workflowState.load();
 
+  // Revalidate the README-first preflight against the current working tree.
+  // Documentation edits are reported, not treated as failures; the caller
+  // decides whether a change affects the task contract.
+  let preflightNote = "";
+  const previous = workflowState.state.preflight;
+  if (previous && previous.ok) {
+    const revalidated = revalidatePreflight(previous, { projectDir: workflowState.state.projectDir });
+    if (revalidated.ok) {
+      workflowState.state.preflight = revalidated.current;
+      if (revalidated.changed) {
+        preflightNote =
+          `\n\n⚠️ Repository guidance changed since the task started:\n` +
+          revalidated.changes.map((change) => `   • ${change}`).join("\n") +
+          `\nRe-read the changed files before continuing.`;
+      }
+    } else {
+      preflightNote = `\n\n⚠️ Preflight could not be revalidated: ${revalidated.code}.`;
+    }
+  } else {
+    const fresh = runPreflight({
+      projectDir: workflowState.state.projectDir,
+      taskId: workflowState.state.workflowTaskId || "",
+    });
+    if (fresh.ok) {
+      workflowState.state.preflight = fresh;
+      preflightNote = `\n\nℹ️ Preflight recorded for this resumed task.`;
+    }
+  }
+  await workflowState.save();
+
   const dod = summarizeDod(workflowState.state.definitionOfDone, workflowState.state.dodRevision);
   const outstanding = dod.open > 0 ? `\n\nDoD yang belum terpenuhi:\n${renderOutstanding(workflowState.state.definitionOfDone, workflowState.state.dodRevision)}` : "";
 
@@ -220,6 +251,7 @@ export async function handleResumeSession(args, workflowState) {
       `Rencana   : ${planProgress(workflowState.state.plan).done}/${planProgress(workflowState.state.plan).total}\n` +
       `Berkas asli tetap di: ${chosen.file}\n` +
       outstanding +
+      preflightNote +
       `\n\nLanjutkan dengan 'continue_workflow' atau 'get_workflow_status'.`
   );
 }

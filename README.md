@@ -1546,6 +1546,36 @@ plus SSH across three machines (MMCH, HELLOWORLD, Mac).
 
 ---
 
+## README-first preflight
+
+`start_task` performs a bounded, read-only preflight before the task is recorded:
+
+- resolves the project root and validates `projectDir`;
+- reads `README.md` (or `README`, `README.rst`, `README.txt`) up to 64 KiB;
+- discovers the root `AGENTS.md` and nested `AGENTS.md` files (depth 2, max 20);
+- discovers documented CLI entrypoints from `package.json`, `composer.json`,
+  `pyproject.toml` and `Makefile`;
+- records paths, SHA-256 fingerprints and CLI references in the task state.
+
+The preflight never executes a command found in a document and never stores
+document bodies or secret values. `start_task` also returns a bounded
+instruction summary: project purpose, applicable rules, build/test/release
+commands, prohibited operations, task scope and documentation paths.
+`resume_session` revalidates the fingerprints and reports `README_CHANGED` /
+`AGENTS_CHANGED` instead of silently continuing.
+
+`acknowledge_instructions` records the README fingerprint and task scope; the
+server validates both against the current preflight. `commit_and_push` requires
+that acknowledgment when a preflight exists. The same scope check applies to
+`perform_release` and `record_deployment`: a governed write must target the
+checkout the task preflight recorded (`SCOPE_MISMATCH`). A task that predates
+the preflight is allowed under the existing repository identity contract.
+
+What is enforced: the preflight record, the scope check on `commit_and_push`,
+and the existing identity/DoD/documentation gates. What is advisory: discovered
+CLI references are marked `verified: false` until a human or a test proves them.
+Shell and Git commands that bypass DevWorkflow cannot be intercepted.
+
 ## License
 
 MIT
