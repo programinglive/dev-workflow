@@ -45,7 +45,7 @@ export function sanitizeSessionKey(value) {
  * Safe <=64-char `[A-Za-z0-9_-]` IDs stay unchanged; any punctuation or
  * overlong ID receives a SHA-256 suffix so distinct identities never collide.
  */
-const HASHED_SESSION_KEY_RE = /-h[0-9a-f]{10}$/;
+const HASHED_SESSION_KEY_RE = /-h[0-9a-f]{32}$/;
 
 export function canonicalSessionKey(value) {
   const raw = String(value);
@@ -53,8 +53,8 @@ export function canonicalSessionKey(value) {
     return raw;
   }
   const cleaned = raw.replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
-  const hash = createHash("sha256").update(raw).digest("hex").slice(0, 10);
-  const prefix = (cleaned || "session").slice(0, 51).replace(/-+$/g, "") || "session";
+  const hash = createHash("sha256").update(raw).digest("hex").slice(0, 32);
+  const prefix = (cleaned || "session").slice(0, 29).replace(/-+$/g, "") || "session";
   return `${prefix}-h${hash}`;
 }
 
