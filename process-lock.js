@@ -26,6 +26,7 @@ import {
   renameSync,
   linkSync,
   statSync,
+  lstatSync,
   readdirSync,
   realpathSync,
 } from "fs";
@@ -163,7 +164,17 @@ export function resolveCanonicalWorktreeRoot(projectDir, platform = process.plat
   let current = realDir;
   const { root } = path.parse(current);
   while (true) {
-    if (existsSync(path.join(current, ".git"))) {
+    const markerPath = path.join(current, ".git");
+    let markerPresent = false;
+    try {
+      lstatSync(markerPath);
+      markerPresent = true;
+    } catch (err) {
+      if (err?.code !== "ENOENT" && err?.code !== "ENOTDIR") {
+        markerPresent = true;
+      }
+    }
+    if (markerPresent) {
       if (!isValidGitWorktreeMarker(current)) {
         return {
           ok: false,
@@ -393,6 +404,8 @@ export async function useWorktreeCapability(
   }
 }
 
+let nextWorktreeAcquireSeq = 0;
+
 export async function acquireWorktreeMutex({
   projectDir,
   timeoutMs = 50,
@@ -484,6 +497,7 @@ export async function acquireWorktreeMutex({
         inFlightCount: 0,
         _drainWaiters: [],
         acquiredAt: Date.now(),
+        acquireSeq: ++nextWorktreeAcquireSeq,
       };
       server.once("close", () => {
         capability.active = false;

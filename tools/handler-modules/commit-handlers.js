@@ -453,6 +453,12 @@ export async function handleCommitAndPush(args, context) {
     );
   }
 
+  const runFenced = (op, fn) =>
+    typeof workflowState._withOwnershipFence === "function"
+      ? workflowState._withOwnershipFence(op, fn)
+      : fn();
+
+  return await runFenced("commit_and_push", async () => {
   try {
     if (explicitPaths.length > 0) {
       await exec("git add", { executable: "git", arguments: ["add", "--", ...explicitPaths] });
@@ -557,6 +563,7 @@ export async function handleCommitAndPush(args, context) {
   return textResponse(
     `✅ Commit and push completed!\nRepo: ${repoName}\n\nCommit message: ${generatedSummary}\nPushed to: ${branchForPush} (verified at ${pushed.head.slice(0, 8)})${foreignNote}${waiverNote}\n\nNext: Run 'perform_release' to handle the release and push tags.`
   );
+  });
 }
 
 /**

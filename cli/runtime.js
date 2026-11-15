@@ -38,12 +38,18 @@ export function resolveStateRoot(env = process.env) {
  * snapshot.
  */
 export async function openSessionState(found) {
-  const workflowState = new WorkflowState(found.file, { requireKernelMutex: true });
+  const base = path.basename(String(found.file || ""));
+  const match = /^workflow-state\.(.+)\.json$/.exec(base);
+  const discoveredSessionId = match ? match[1] : null;
+  const workflowState = new WorkflowState(found.file, {
+    sessionId: discoveredSessionId,
+    requireKernelMutex: true,
+  });
   await workflowState.load({ skipWrites: true });
   const targetProjectDir = workflowState.state?.projectDir || resolveProjectRootForState(found.file);
   const ownerKey =
+    discoveredSessionId ||
     (typeof workflowState._sessionKey === "function" ? workflowState._sessionKey()?.key : "") ||
-    workflowState.sessionId ||
     found.file;
   const acq = await acquireWorktreeMutex({
     projectDir: targetProjectDir,
@@ -60,7 +66,12 @@ export async function openSessionState(found) {
     );
   }
   workflowState.bindKernelCapability(acq.capability);
-  await workflowState.load();
+  try {
+    await workflowState.load();
+  } catch (err) {
+    await releaseWorktreeMutex(acq.capability);
+    throw err;
+  }
   return { workflowState, capability: acq.capability };
 }
 

@@ -1703,3 +1703,138 @@ test("Adversarial 27 (C9-1..C9-4): cli/runtime enforces OS mutex, useSession ski
     }
   });
 });
+
+test("Adversarial 28 (C10-1..C10-6): commit/release fenced, proc-* CLI session preserved, skipWrites avoids DB creation, same-ms pointer CAS & summary repair persistence", async () => {
+  await withTempWorkspace(async (base) => {
+    const repoA = await createRepo(base, "adv28-a");
+    const repoB = await createRepo(base, "adv28-b");
+    const stateBase = path.join(base, "state", ".state");
+    const { mkdir, writeFile } = await import("node:fs/promises");
+    const { existsSync } = await import("node:fs");
+    await mkdir(stateBase, { recursive: true });
+
+    // C10-3: load({ skipWrites: true }) on fresh stateBase does not create SQLite DB file
+    const wsSkip = new WorkflowState(
+      path.join(stateBase, "users", "ses_c10_skip", "workflow-state.ses_c10_skip.json"),
+      { sessionId: "ses_c10_skip", requireKernelMutex: true },
+    );
+    await wsSkip.load({ skipWrites: true });
+    assert.equal(existsSync(path.join(stateBase, "workflow-state.db")), false, "skipWrites must not create SQLite DB");
+
+    // C10-1: handleCommitAndPush fails closed before git add/commit when capability is missing
+    const { handleCommitAndPush } = await import("../tools/handler-modules/commit-handlers.js");
+    let execCalled = false;
+    wsSkip.state.projectDir = repoA;
+    wsSkip.state.currentPhase = "commit";
+    wsSkip.state.readyToCommit = true;
+    wsSkip.state.readyCheckCompleted = true;
+    wsSkip.state.taskDescription = "C10-1 task";
+    wsSkip.state.definitionOfDone = [{ id: 1, text: "done", status: "done", evidence: "ok", revision: 1 }];
+    wsSkip.state.dodRevision = 1;
+    await assert.rejects(
+      () =>
+        handleCommitAndPush(
+          { commitMessage: "should not run", projectDir: repoA },
+          {
+            workflowState: wsSkip,
+            exec: async () => {
+              execCalled = true;
+              return { stdout: "", stderr: "" };
+            },
+            git: {
+              getPrimaryBranch: async () => "main",
+              getCurrentBranch: async () => "main",
+              hasWorkingChanges: async () => true,
+              getStatusOutput: async () => "M tests/file.test.js",
+              getToplevel: async () => repoA,
+            },
+            utils: {
+              createCommitMessageParts: () => ({ summary: "msg", body: "" }),
+              shellEscape: (s) => s,
+            },
+          },
+        ),
+      (err) => err instanceof ProjectOwnershipLostError || err?.code === "PROJECT_OWNERSHIP_LOST",
+    );
+    assert.equal(execCalled, false, "handleCommitAndPush must not run git exec without live capability");
+
+    // C10-2: openSessionState preserves proc-* sessionId from filename
+    const { openSessionState } = await import("../cli/runtime.js");
+    const procFile = path.join(stateBase, "users", "u1", "workflow-state.proc-c10.json");
+    await mkdir(path.dirname(procFile), { recursive: true });
+    await writeFile(procFile, JSON.stringify({ currentPhase: "idle", projectDir: repoA }), "utf8");
+    const opened = await openSessionState({ file: procFile });
+    try {
+      assert.equal(opened.workflowState.sessionId, "proc-c10", "openSessionState must preserve proc-* sessionId");
+    } finally {
+      await releaseWorktreeMutex(opened.capability);
+    }
+
+    // C10-5: same-millisecond acquiredAt tie still rejects older capability via acquireSeq
+    const acq1 = await acquireWorktreeMutex({ projectDir: repoA, ownerKey: "s_c10_5" });
+    const acq2 = await acquireWorktreeMutex({ projectDir: repoB, ownerKey: "s_c10_5" });
+    const sameMs = Date.now();
+    acq1.capability.acquiredAt = sameMs;
+    acq2.capability.acquiredAt = sameMs;
+    try {
+      const f1 = path.join(stateBase, "projects", "a", "users", "u1", "workflow-state.s_c10_5.json");
+      const f2 = path.join(stateBase, "projects", "b", "users", "u1", "workflow-state.s_c10_5.json");
+      const r2 = pinSessionProject({
+        stateFile: f2,
+        projectDir: repoB,
+        kernelCapability: acq2.capability,
+        requireKernelMutex: true,
+        expectedOwnerKey: "s_c10_5",
+      });
+      assert.equal(r2.ok, true);
+      const r1 = pinSessionProject({
+        stateFile: f1,
+        projectDir: repoA,
+        kernelCapability: acq1.capability,
+        requireKernelMutex: true,
+        expectedOwnerKey: "s_c10_5",
+      });
+      assert.equal(r1.ok, false);
+      assert.equal(r1.error, "superseded_by_newer_pointer");
+    } finally {
+      await releaseWorktreeMutex(acq1.capability);
+      await releaseWorktreeMutex(acq2.capability);
+    }
+
+    // C10-6: _syncHistoryToDatabase retries failed summary even when sent === 0 on next call
+    const wsHist = new WorkflowState(path.join(stateBase, "users", "u1", "workflow-state.s_c10_6.json"), {
+      sessionId: "s_c10_6",
+    });
+    wsHist.state.history = [{ timestamp: new Date().toISOString(), taskDescription: "t1" }];
+    let summaryShouldFail = true;
+    const fakeDb = {
+      insertHistoryEntry: async () => {},
+      updateSummaryForUser: async () => {
+        if (summaryShouldFail) throw new Error("SUMMARY_IO_ERR");
+      },
+    };
+    const first = await wsHist._syncHistoryToDatabase(fakeDb, "u1", repoA);
+    assert.equal(first.sent, 1);
+    assert.equal(first.summaryFailed, true);
+    const second = await wsHist._syncHistoryToDatabase(fakeDb, "u1", repoA);
+    assert.equal(second.sent, 0);
+    assert.equal(second.summaryFailed, true, "second call with sent=0 must still retry failed summary");
+    summaryShouldFail = false;
+    const third = await wsHist._syncHistoryToDatabase(fakeDb, "u1", repoA);
+    assert.equal(third.summaryFailed, false, "summary repair clears once updateSummaryForUser succeeds");
+
+    // C10-4: dangling .git symlink inside a valid Git parent repo fails closed without ancestor fallback
+    const { symlink } = await import("node:fs/promises");
+    const danglingChild = path.join(repoA, "dangling-git-child");
+    await mkdir(danglingChild, { recursive: true });
+    const symlinkType = process.platform === "win32" ? "junction" : "file";
+    try {
+      await symlink(path.join(danglingChild, "missing-git-target"), path.join(danglingChild, ".git"), symlinkType);
+      const danglingRes = resolveCanonicalWorktreeRoot(danglingChild);
+      assert.equal(danglingRes.ok, false, "dangling .git symlink must fail closed without ancestor fallback");
+      assert.equal(danglingRes.error, "INVALID_GIT_WORKTREE");
+    } catch (err) {
+      if (err?.code !== "EPERM" && err?.code !== "ENOTSUP") throw err;
+    }
+  });
+});
