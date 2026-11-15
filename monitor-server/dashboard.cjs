@@ -15,6 +15,16 @@ const { buildReaperSessionsQuery, parseReaperSecrets, verifyReaperRequest } = re
 const { parseAttestation, revalidateAttestation } = require('./reaper-attestation.cjs');
 const { createReaperScheduler, toReaperSession } = require('./reaper-scheduler.cjs');
 const { authorizedActions, planReaperAction } = require('./reaper-actions.cjs');
+const {
+  RESTART_MODES,
+  planRestartOne,
+  planRestartAll,
+  createRestartController,
+} = require('./restart-orchestrator.cjs');
+
+// One control plane, one fleet lock. A second Monitor is a deployment error,
+// not a supported topology, so an in-process lock is the right scope.
+const restartController = createRestartController();
 const { visibleTaskSessions } = require('./visible-task-sessions.cjs');
 const {
   buildPruneEventsQuery,
@@ -2883,6 +2893,91 @@ const server = http.createServer(async (req, res) => {
         reason: c.reason,
         actions: authorizedActions(c.state),
       }));
+    }
+    if (url.pathname === '/api/fleet/restart' && req.method === 'POST') {
+      // Centralized restart control surface (Outcome C).
+      //
+      // The Monitor decides WHAT may be restarted and in what order; the
+      // machine-local controller performs the stop and relaunch, because only
+      // that machine can verify its own process. This endpoint therefore
+      // returns a plan and an audit record, never a process action.
+      if (!writeAllowed(req)) return denyWrite(res);
+      const body = bacaJson(await readBody(req), res);
+      if (body === null) return undefined;
+      const mode = String(body.mode || 'one');
+      const rq = buildReaperSessionsQuery({ limit: 500 });
+      const rr = await query(rq.sql, rq.params);
+      const { classifySession: classifyRestart } = await import('./session-reaper.js');
+
+      const toPlanSession = (row) => {
+        const c = classifyRestart(toReaperSession(row), { now: Date.now(), machineOnline: true });
+        return {
+          sessionKey: row.session_key,
+          machine: row.machine,
+          state: c.state,
+          phase: row.phase,
+          owner: row.owner_pid
+            ? { pid: Number(row.owner_pid), startedAt: String(row.owner_started_at || ''), executable: String(row.owner_executable || '') }
+            : null,
+          // The Monitor cannot see a checkpoint on another host, so it assumes
+          // none exists. That makes the plan refuse until the controller has
+          // actually checkpointed, which is the safe direction.
+          hasCheckpoint: ['ready_to_complete', 'complete', 'release'].includes(String(row.phase || '')),
+          dirtyWorktree: false,
+          activeTask: Boolean(row.task && String(row.task).trim()),
+        };
+      };
+
+      if (mode === 'all') {
+        const begun = restartController.begin('restart-all');
+        if (!begun.ok) {
+          res.writeHead(409, { 'content-type': 'application/json' });
+          return res.end(JSON.stringify({ ok: false, error: begun.code, reason: begun.reason }));
+        }
+        const sessions = rr.rows.map(toPlanSession);
+        const machines = [...new Set(sessions.map((s) => s.machine))].map((name) => ({ name, online: true }));
+        const plan = planRestartAll({ machines, sessions, admission: null });
+        restartController.record({ kind: 'restart-all', plan: { order: plan.order, blocked: plan.blocked } });
+        res.writeHead(200, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({
+          ok: plan.ok,
+          mode,
+          plan,
+          note: 'Each machine controller executes its own entries; the Monitor never stops a remote process.',
+        }));
+      }
+
+      const sessionKey = String(body.sessionKey || '');
+      if (!sessionKey) {
+        res.writeHead(400, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: 'sessionKey is required' }));
+      }
+      const row = rr.rows.find((candidate) => candidate.session_key === sessionKey);
+      if (!row) {
+        res.writeHead(404, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: 'session not found' }));
+      }
+      const planMode = mode === 'force' ? RESTART_MODES.force : RESTART_MODES.graceful;
+      const plan = planRestartOne({
+        session: toPlanSession(row),
+        mode: planMode,
+        forceAuthorized: Boolean(body.authorization),
+      });
+      restartController.record({ kind: planMode, sessionKey, ok: plan.ok, code: plan.code });
+      res.writeHead(plan.ok ? 200 : 409, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ ok: plan.ok, mode: planMode, plan }));
+    }
+    if (url.pathname === '/api/fleet/restart/status') {
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      return res.end(JSON.stringify({
+        ok: true,
+        active: restartController.isActive(),
+        audit: restartController.audit().slice(-20),
+      }));
+    }
+    if (url.pathname === '/api/fleet/restart/audit') {
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      return res.end(JSON.stringify({ ok: true, audit: restartController.audit() }));
     }
     if (url.pathname === '/api/sessions') {
       const limit = Math.min(50, Number(url.searchParams.get('limit') || 20));
