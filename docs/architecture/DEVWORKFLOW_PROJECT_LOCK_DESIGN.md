@@ -175,18 +175,18 @@ process.once('exit', () => releaseActiveProcessLock({ fallbackDir: lockDir }));
 | R3-3 Async capability lifetime | Epoch-scoped capability invalidated on exit in `runSerialized` & `withLockGate` | R3-3 (detached child C vs active B) |
 | R3-4 / R3-5 Journal recovery & persistence | Exclusive `.recover.lock`, `transitionJournalId` fencing, no `history`/`project_summary` clobber, fail-closed write/commit/cleanup | R3-4 & R3-5 (barrier, newer owner, crash, commit fail) |
 | R3-6 Legacy admission barrier | Fail-closed `EACCES` inspection + `maintenance-admission.json` (`acquireMaintenanceAdmissionBarrier`) | R3-6 (`EACCES` quiescence + barrier) |
-| Option B OS-Owned Kernel Mutex | `acquireKernelMutex`, `acquireProcessLockAsync`, `stageProcessLockTransitionAsync` (`net.createServer` exclusive Windows Named Pipe / Linux abstract socket / macOS loopback) | Option B two-process `SIGKILL` & kernel-exclusion test |
+| Option B OS-Owned Kernel Mutex | `acquireWorktreeMutex`, `WorktreeMutexCapability`, `useWorktreeCapability`, `writeKernelLockMetadata` (`net.createServer` exclusive Windows Named Pipe / Linux abstract socket; `darwin` fails closed) | Option B two-process `SIGKILL` & kernel-exclusion tests |
 
 ---
 
 ## 6. Approved Option B: OS-Owned Kernel Mutex Integration
 
-- **OS-Level Process-Lifetime Exclusion (`acquireKernelMutex`):**
-  - Windows (`win32`): `\\.\pipe\devwf-lock-<sha256(canonicalDir).slice(0, 32)>` (`exclusive: true`)
-  - Linux (`linux`): `\0devwf-lock-<sha256(canonicalDir).slice(0, 32)>` (abstract Unix domain socket, `exclusive: true`)
-  - macOS (`darwin`): `127.0.0.1` exclusive hashed loopback listener (`30000 + (digest.readUInt32BE(0) % 30000)`)
+- **OS-Level Process-Lifetime Exclusion (`acquireWorktreeMutex`):**
+  - Windows (`win32`): `\\.\pipe\devwf-wt-<sha256(canonicalWorktreeRoot).slice(0, 32)>` (`exclusive: true`)
+  - Linux (`linux`): `\0devwf-wt-<sha256(canonicalWorktreeRoot).slice(0, 32)>` (abstract Unix domain socket, `exclusive: true`)
+  - macOS (`darwin`): Explicitly blocked (`unsupported_platform`); admission fails closed until a native OS-owned primitive is implemented and verified.
 - **Automatic `SIGKILL` Cleanup:** Because the kernel closes the pipe/socket handle immediately on process termination, a successor process acquires the mutex cleanly without abandoned-gate deadlocks or pathname-rename races.
-- **Entrypoints:** [index.js](file:///D:/code/dev-workflow-mcp-server/index.js) uses `acquireProcessLockAsync` at startup, and `handleStartTask` in [workflow-handlers.js](file:///D:/code/dev-workflow-mcp-server/tools/handler-modules/workflow-handlers.js) uses `stageProcessLockTransitionAsync`. `releaseProcessLock` automatically closes the held kernel mutex.
+- **Entrypoints:** [index.js](file:///D:/code/dev-workflow-mcp-server/index.js) (both MCP server `main()` and CLI `cliMain()`) enables `requireKernelMutex: true` and binds the startup `WorktreeMutexCapability`. `handleStartTask` in [workflow-handlers.js](file:///D:/code/dev-workflow-mcp-server/tools/handler-modules/workflow-handlers.js) acquires the target worktree capability directly via `acquireWorktreeMutex`, binds it to `WorkflowState`, and fences all persistence operations through `useWorktreeCapability`. `releaseWorktreeMutex` drains in-flight operations and closes the held kernel mutex.
 
 ---
 

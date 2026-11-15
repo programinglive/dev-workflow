@@ -62,22 +62,28 @@ async function readDirSafe(dir) {
  * 1.17) dan `users/<user>/` (sebelumnya). Keduanya memakai aturan nama berkas
  * yang sama.
  */
-async function collectLegacyStateFiles(baseDir) {
+async function collectLegacyStateFiles(
+  baseDir,
+  { allowedSessionKey = null, allowedUserId = null, allowedProjectSlug = null } = {},
+) {
   const found = [];
 
   const projectsRoot = path.join(baseDir, "projects");
   for (const projectEntry of await readDirSafe(projectsRoot)) {
     if (!projectEntry.isDirectory()) continue;
+    if (allowedProjectSlug && projectEntry.name !== allowedProjectSlug) continue;
 
     const usersRoot = path.join(projectsRoot, projectEntry.name, "users");
     for (const userEntry of await readDirSafe(usersRoot)) {
       if (!userEntry.isDirectory()) continue;
+      if (allowedUserId && userEntry.name !== allowedUserId) continue;
       const userDir = path.join(usersRoot, userEntry.name);
 
       for (const file of await readDirSafe(userDir)) {
         if (!file.isFile()) continue;
         const sessionKey = sessionKeyFromFilename(file.name);
         if (!sessionKey) continue;
+        if (allowedSessionKey && sessionKey !== allowedSessionKey) continue;
         found.push({ userId: userEntry.name, sessionKey, filePath: path.join(userDir, file.name) });
       }
     }
@@ -86,12 +92,14 @@ async function collectLegacyStateFiles(baseDir) {
   const legacyUsersRoot = path.join(baseDir, "users");
   for (const userEntry of await readDirSafe(legacyUsersRoot)) {
     if (!userEntry.isDirectory()) continue;
+    if (allowedUserId && userEntry.name !== allowedUserId) continue;
     const userDir = path.join(legacyUsersRoot, userEntry.name);
 
     for (const file of await readDirSafe(userDir)) {
       if (!file.isFile()) continue;
       const sessionKey = sessionKeyFromFilename(file.name);
       if (!sessionKey) continue;
+      if (allowedSessionKey && sessionKey !== allowedSessionKey) continue;
       found.push({ userId: userEntry.name, sessionKey, filePath: path.join(userDir, file.name) });
     }
   }
@@ -132,13 +140,20 @@ function recordWriter(adapter, { userId, projectPath, sessionKey, keySource }) {
  * Sebaliknya, kegagalan MENGHITUNG ulang tetap menggagalkan migrasi - lihat
  * pemanggil di `workflow-state.js`.
  */
-export async function migrateLegacyJson(adapter, { baseDir } = {}) {
+export async function migrateLegacyJson(
+  adapter,
+  { baseDir, allowedSessionKey = null, allowedUserId = null, allowedProjectSlug = null } = {},
+) {
   if (!baseDir) throw new Error("baseDir wajib diisi untuk migrasi JSON lama.");
 
   const projectPath = projectPathFor(baseDir);
-  const files = await collectLegacyStateFiles(baseDir);
+  const files = await collectLegacyStateFiles(baseDir, {
+    allowedSessionKey,
+    allowedUserId,
+    allowedProjectSlug,
+  });
 
-  const result = { sessions: 0, skipped: 0, legacyFallback: 0, movedTo: "" };
+  const result = { sessions: 0, skipped: 0, legacyFallback: 0, movedTo: "", movedFiles: [] };
   const parsed = [];
 
   for (const file of files) {
@@ -173,18 +188,22 @@ export async function migrateLegacyJson(adapter, { baseDir } = {}) {
 
     // Cadangan untuk pengguna yang berhak atas baris lama tetapi tidak punya
     // satu pun berkas JSON. Tanpa ini, state mereka hilang sama sekali.
-    const candidates = adapter.db
-      .prepare(
-        `SELECT user_id, state_json FROM workflow_state_legacy l
-          WHERE project_path = ?
-            AND updated_at = (SELECT max(updated_at) FROM workflow_state_legacy
-                               WHERE user_id = l.user_id AND project_path = l.project_path)
-            AND user_id NOT IN (
-              SELECT user_id FROM workflow_state
-               WHERE project_path = ? AND session_key <> ?
-            )`,
-      )
-      .all(projectPath, projectPath, LEGACY_FALLBACK_KEY);
+    const includeFallback = !allowedSessionKey || allowedSessionKey === LEGACY_FALLBACK_KEY;
+    const candidates = includeFallback
+      ? adapter.db
+          .prepare(
+            `SELECT user_id, state_json FROM workflow_state_legacy l
+              WHERE project_path = ?
+                ${allowedUserId ? "AND user_id = ?" : ""}
+                AND updated_at = (SELECT max(updated_at) FROM workflow_state_legacy
+                                   WHERE user_id = l.user_id AND project_path = l.project_path)
+                AND user_id NOT IN (
+                  SELECT user_id FROM workflow_state
+                   WHERE project_path = ? AND session_key <> ?
+                )`,
+          )
+          .all(...(allowedUserId ? [projectPath, allowedUserId, projectPath, LEGACY_FALLBACK_KEY] : [projectPath, projectPath, LEGACY_FALLBACK_KEY]))
+      : [];
 
     for (const row of candidates) {
       let state;
@@ -225,6 +244,7 @@ export async function migrateLegacyJson(adapter, { baseDir } = {}) {
         await mkdir(path.dirname(targetPath), { recursive: true });
         await rename(entry.filePath, targetPath);
         result.movedTo = targetRoot;
+        result.movedFiles.push({ from: entry.filePath, to: targetPath });
       } catch (error) {
         safeLog("warn", `Gagal memindahkan berkas lama "${entry.filePath}": ${error.message}`);
       }
