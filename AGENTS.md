@@ -61,6 +61,27 @@ Before taking any action or answering user requests regarding code changes, chec
 
 **Do not bypass these steps. The MCP server will block commits and releases if any required step is skipped.**
 
+### English-only engineering policy (enforced)
+
+Write new identifiers, comments, docstrings, test descriptions, developer
+documentation and commit messages in English. User conversation and explicitly
+localized product text may use the requested language.
+
+This is not advice only. `scripts/check-english.mjs` scans every source file and
+fails on new Indonesian engineering text. It runs in `npm run lint` (the CI
+`lint-command`), in `npm run ci:test`, and in `.husky/pre-commit`, so the rule is
+the same for Antigravity, Codex and OpenCode on MMCH, HELLOWORLD and Mac.
+
+- Localization paths (`locales`, `i18n`, `lang`, `translations`) and `*.id.*`
+  files are exempt: that is product text.
+- A line carrying `language-allow: <reason>` is exempt, and the reason is
+  required.
+- `scripts/english-policy-baseline.json` records violations that predate the
+  gate. They do not fail the build; any new violation does. The list may only
+  shrink.
+- The checker never rewrites code. It reports `file:line [kind] markers :: text`
+  and exits non-zero, so translation stays a human decision.
+
 ### Stale-session reaper (server-enforced)
 
 `session-reaper.js` classifies sessions as `ACTIVE`, `IDLE`, `SUSPECTED_STALE`,
