@@ -148,7 +148,9 @@ test("MCP SDK meneruskan _meta sessionID sampai ke state di disk", async () => {
         .map((row) => row.session_key);
 
       assert.ok(
-        keys.includes("ses_E2E_AAA") && keys.includes("ses_E2E_BBB"),
+        keys.some((k) => k === "ses_E2E_AAA" || /^ses_E2E_AAA-h[0-9a-f]{32}$/.test(k)) &&
+          keys.some((k) => k === "ses_E2E_BBB" || /^ses_E2E_BBB-h[0-9a-f]{32}$/.test(k)) &&
+          keys.length >= 2,
         `harus ada baris per sesi (ses_E2E_AAA dan ses_E2E_BBB), dapat: ${JSON.stringify(keys)}`,
       );
       assert.ok(

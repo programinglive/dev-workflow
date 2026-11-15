@@ -2585,6 +2585,13 @@ test("Adversarial 35 (Cycle 18): canonical hashed keys never re-hashed or collid
     const surB = resolveStateFile({ sessionId: "\ud801", stateDir: stateBase });
     assert.notEqual(path.basename(surA), path.basename(surB), "lone UTF-16 surrogates must not collide on state filename");
     assert.notEqual(canonicalSessionKey("\ud800"), canonicalSessionKey("\ud801"), "lone UTF-16 surrogates must produce distinct canonical keys");
+    const caseA = resolveStateFile({ sessionId: "ReviewSessionA", stateDir: stateBase });
+    const caseB = resolveStateFile({ sessionId: "reviewsessiona", stateDir: stateBase });
+    assert.notEqual(
+      path.basename(caseA).toLowerCase(),
+      path.basename(caseB).toLowerCase(),
+      "case-distinct session IDs must not alias on case-insensitive filesystems",
+    );
 
     // 1c. Invalid symbolic HEAD target (ref: refs/heads/../main) must be rejected fail-closed
     const { isValidGitHeadContent } = await import("../exec.js");

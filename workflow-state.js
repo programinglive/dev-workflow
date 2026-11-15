@@ -1256,7 +1256,11 @@ function sessionPointerPath(baseDir, sessionKey) {
 /** Proyek yang tercatat untuk sesi ini, atau null. */
 export function readSessionPointer(baseDir, sessionKey) {
   try {
-    return JSON.parse(readFileSync(sessionPointerPath(baseDir, sessionKey), "utf-8"));
+    const ptr = JSON.parse(readFileSync(sessionPointerPath(baseDir, sessionKey), "utf-8"));
+    if (ptr && ptr.ownerKey && ptr.ownerKey !== sessionKey) {
+      return null;
+    }
+    return ptr;
   } catch {
     return null;
   }
