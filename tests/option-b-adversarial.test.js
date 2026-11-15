@@ -29,6 +29,7 @@ import {
 } from "../workflow-state.js";
 import { resolveProjectDir } from "../exec.js";
 import { handleStartTask } from "../tools/handler-modules/workflow-handlers.js";
+import { closeLocalAdapters } from "../db/index.js";
 
 function gitInit(dir) {
   const res = spawnSync("git", ["init"], { cwd: dir, encoding: "utf8" });
@@ -56,7 +57,8 @@ async function withTempWorkspace(fn) {
   } finally {
     clearHeldLeasesForTests();
     setIsAliveForTests(null);
-    await rm(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    await closeLocalAdapters();
+    await rm(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }).catch(() => {});
   }
 }
 
@@ -1250,5 +1252,125 @@ test("Adversarial 21 (R3): pre-commit focus rollback failure records pendingFocu
     assert.ok(ws.state.pendingFocusCleanup, "pendingFocusCleanup must be recorded when retireFocusBinding fails");
     assert.equal(ws.state.pendingFocusCleanup.focusId, 991);
     await ws.close();
+  });
+});
+
+test("Adversarial 22 (F1): load({ skipWrites: true }) and ensurePrimaryFile enforce capability fencing", async () => {
+  await withTempWorkspace(async (base) => {
+    const repo = await createRepo(base, "adv22-f1");
+    const stateBase = path.join(base, "state");
+    const stateFile = path.join(stateBase, "projects", "adv22", "users", "u1", "workflow-state.s22.json");
+
+    const ws = new WorkflowState(stateFile, {
+      sessionId: "s22",
+      requireKernelMutex: true,
+    });
+    ws.state.projectDir = repo;
+
+    // 1. load() without a capability must not write stateFile or project-summary.json
+    await ws.load({ skipWrites: true });
+    assert.equal(existsSync(stateFile), false, "load({ skipWrites: true }) must not create stateFile");
+    assert.equal(
+      existsSync(path.join(path.dirname(stateFile), "project-summary.json")),
+      false,
+      "load({ skipWrites: true }) must not write project-summary.json",
+    );
+
+    // 2. ensurePrimaryFile() without a capability must fail closed
+    await assert.rejects(
+      () => ws.ensurePrimaryFile(),
+      (err) => err instanceof ProjectOwnershipLostError || err?.code === "PROJECT_OWNERSHIP_LOST",
+    );
+
+    await ws.close();
+  });
+});
+
+test("Adversarial 23 (F2): migration is scoped to active session/project and pre-commit start_task failure leaves legacy JSON untouched", async () => {
+  await withTempWorkspace(async (base) => {
+    const repoA = await createRepo(base, "adv23-f2-a");
+    const repoB = await createRepo(base, "adv23-f2-b");
+    const stateBase = path.join(base, "state");
+    process.env.DEV_WORKFLOW_STATE_FILE = path.join(stateBase, "workflow-state.json");
+
+    const slugA = projectKey(canonicalProjectPath(repoA));
+    const slugB = projectKey(canonicalProjectPath(repoB));
+    const legacyFileA = path.join(stateBase, "projects", slugA, "users", "u1", "workflow-state.s23a.json");
+    const legacyFileB = path.join(stateBase, "projects", slugB, "users", "u1", "workflow-state.s23b.json");
+    await mkdir(path.dirname(legacyFileA), { recursive: true });
+    await mkdir(path.dirname(legacyFileB), { recursive: true });
+    await writeFile(
+      legacyFileA,
+      JSON.stringify({ currentPhase: "executing", taskDescription: "Legacy A", projectDir: repoA }),
+      "utf8",
+    );
+    await writeFile(
+      legacyFileB,
+      JSON.stringify({ currentPhase: "executing", taskDescription: "Legacy B", projectDir: repoB }),
+      "utf8",
+    );
+
+    // 1. Pre-commit failure in handleStartTask on repoA must NOT migrate or move legacyFileA or legacyFileB
+    const ws = new WorkflowState(path.join(stateBase, "users", "u1", "workflow-state.s23a.json"), {
+      sessionId: "s23a",
+      requireKernelMutex: true,
+    });
+    const res = await handleStartTask(
+      makeStartArgs(repoA, "Should fail before save"),
+      ws,
+      null,
+      {
+        transitionHooks: {
+          beforeSave: async () => {
+            throw new Error("SIMULATED_PRE_COMMIT_FAILURE_F2");
+          },
+        },
+      },
+    );
+    assert.match(res?.content?.[0]?.text || "", /SIMULATED_PRE_COMMIT_FAILURE_F2|dibatalkan|rolled back/i);
+    assert.equal(existsSync(legacyFileA), true, "legacyFileA must remain untouched on pre-commit failure");
+    assert.equal(existsSync(legacyFileB), true, "legacyFileB must remain untouched");
+    await ws.close();
+  });
+});
+
+test("Adversarial 24 (F3): pinSessionProject atomically rejects stale older writer across distinct worktrees", async () => {
+  await withTempWorkspace(async (base) => {
+    const repoA = await createRepo(base, "adv24-f3-a");
+    const repoB = await createRepo(base, "adv24-f3-b");
+    const stateBase = path.join(base, "state");
+    const sessionKey = "s24";
+    const stateFileA = path.join(stateBase, "projects", "a", "users", "u1", `workflow-state.${sessionKey}.json`);
+    const stateFileB = path.join(stateBase, "projects", "b", "users", "u1", `workflow-state.${sessionKey}.json`);
+
+    const acqA = await acquireWorktreeMutex({ projectDir: repoA, ownerKey: sessionKey });
+    assert.equal(acqA.ok, true);
+    await new Promise((r) => setTimeout(r, 25));
+    const acqB = await acquireWorktreeMutex({ projectDir: repoB, ownerKey: sessionKey });
+    assert.equal(acqB.ok, true);
+
+    try {
+      const resB = pinSessionProject({
+        stateFile: stateFileB,
+        projectDir: repoB,
+        kernelCapability: acqB.capability,
+        requireKernelMutex: true,
+        expectedOwnerKey: sessionKey,
+      });
+      assert.equal(resB.ok, true);
+
+      const resA = pinSessionProject({
+        stateFile: stateFileA,
+        projectDir: repoA,
+        kernelCapability: acqA.capability,
+        requireKernelMutex: true,
+        expectedOwnerKey: sessionKey,
+      });
+      assert.equal(resA.ok, false);
+      assert.equal(resA.error, "superseded_by_newer_pointer");
+    } finally {
+      await releaseWorktreeMutex(acqA.capability);
+      await releaseWorktreeMutex(acqB.capability);
+    }
   });
 });

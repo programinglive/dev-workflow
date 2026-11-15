@@ -643,7 +643,7 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
           workflowState.stateFile = targetStateFile;
           workflowState.historyFile = resolveHistoryFile(targetStateFile);
           workflowState.state.projectDir = project.dir;
-          await workflowState.load();
+          await workflowState.load({ skipWrites: true });
         }
 
         // Selamatkan dulu pekerjaan yang mungkin tertimpa.
@@ -824,7 +824,9 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
     }
   } catch (transitionError) {
     const committedToSqlite =
-      sqliteCommitted || Boolean(workflowState._lastSaveCommittedSqlite);
+      sqliteCommitted ||
+      Boolean(workflowState._lastSaveCommittedSqlite) ||
+      Boolean(workflowState._lastLoadCommittedSqlite);
     if (committedToSqlite) {
       // Authoritative SQLite commit already succeeded under the live OS mutex.
       // Never roll back committed SQLite state or release the target capability;

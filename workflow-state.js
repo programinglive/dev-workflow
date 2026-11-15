@@ -1,4 +1,5 @@
 import { safeLog } from './security/sanitizer.js';
+import { createRequire } from "node:module";
 import fs from "fs/promises";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, realpathSync, unlinkSync, linkSync, renameSync } from "fs";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -1369,69 +1370,148 @@ export function pinSessionProject({
   });
 
   const ptrFile = sessionPointerPath(baseDir, sessionKey);
-  if (existsSync(ptrFile)) {
+  const sessionsDir = path.join(baseDir, SESSIONS_DIR);
+  mkdirSync(sessionsDir, { recursive: true });
+  const ptrDbFile = path.join(sessionsDir, "session-pointers.sqlite");
+  let ptrDb = null;
+  let refusal = null;
+  let pointerWriteError = null;
+  const nowMs = Date.now();
+  const payload = {
+    projectDir: target,
+    projectDirPath,
+    ownerKey: cap.ownerKey,
+    leaseId: cap.token,
+    focusId: Number.isSafeInteger(focus) && focus > 0 ? focus : null,
+    updatedAtMs: nowMs,
+    updatedAt: new Date(nowMs).toISOString(),
+  };
+
+  try {
+    let Database;
     try {
-      const existingPtr = JSON.parse(readFileSync(ptrFile, "utf8"));
-      if (existingPtr && typeof existingPtr === "object") {
+      Database = createRequire(import.meta.url)("better-sqlite3");
+    } catch {
+      Database = createRequire(path.join(process.cwd(), "package.json"))("better-sqlite3");
+    }
+    ptrDb = new Database(ptrDbFile, { timeout: 5000 });
+    ptrDb.pragma("journal_mode = DELETE");
+    ptrDb.pragma("busy_timeout = 5000");
+    ptrDb.exec(`
+      CREATE TABLE IF NOT EXISTS session_pointers (
+        session_key TEXT PRIMARY KEY,
+        owner_key TEXT NOT NULL,
+        lease_id TEXT NOT NULL,
+        project_dir TEXT NOT NULL,
+        project_dir_path TEXT NOT NULL,
+        focus_id INTEGER,
+        updated_at_ms INTEGER NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `);
+
+    const commitPointer = ptrDb.transaction(() => {
+      const dbRow = ptrDb
+        .prepare("SELECT owner_key, lease_id, updated_at_ms FROM session_pointers WHERE session_key = ?")
+        .get(sessionKey);
+
+      let filePtr = null;
+      if (existsSync(ptrFile)) {
+        try {
+          const parsed = JSON.parse(readFileSync(ptrFile, "utf8"));
+          if (parsed && typeof parsed === "object") filePtr = parsed;
+        } catch {
+          // Corrupt pointer will be replaced atomically under the live capability + SQLite write lock.
+        }
+      }
+
+      const candidates = [];
+      if (dbRow) {
+        candidates.push({
+          ownerKey: dbRow.owner_key,
+          leaseId: dbRow.lease_id,
+          updatedAtMs: Number(dbRow.updated_at_ms || 0),
+        });
+      }
+      if (filePtr) {
+        candidates.push({
+          ownerKey: filePtr.ownerKey,
+          leaseId: filePtr.leaseId,
+          updatedAtMs: Number(filePtr.updatedAtMs || (filePtr.updatedAt ? Date.parse(filePtr.updatedAt) : 0) || 0),
+        });
+      }
+
+      for (const existingPtr of candidates) {
         if (existingPtr.ownerKey && existingPtr.ownerKey !== sessionKey) {
-          return {
+          refusal = {
             ok: false,
             error: "pointer_owned_by_other_session",
             projectDirPath,
             stateFile: path.join(getUserScopedDir(projectDirPath), sessionStateFilename(process.env, sessionKey)),
           };
+          return;
         }
-        const existingTs = Number(
-          existingPtr.updatedAtMs || (existingPtr.updatedAt ? Date.parse(existingPtr.updatedAt) : 0) || 0,
-        );
         if (
           existingPtr.leaseId &&
           existingPtr.leaseId !== cap.token &&
-          existingTs > Number(cap.acquiredAt || 0)
+          existingPtr.updatedAtMs > Number(cap.acquiredAt || 0)
         ) {
-          return {
+          refusal = {
             ok: false,
             error: "superseded_by_newer_pointer",
             projectDirPath,
             stateFile: path.join(getUserScopedDir(projectDirPath), sessionStateFilename(process.env, sessionKey)),
           };
+          return;
         }
       }
-    } catch {
-      // Corrupt pointer will be replaced atomically under the live capability.
+
+      ptrDb
+        .prepare(
+          `INSERT INTO session_pointers (
+             session_key, owner_key, lease_id, project_dir, project_dir_path, focus_id, updated_at_ms, updated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(session_key) DO UPDATE SET
+             owner_key = excluded.owner_key,
+             lease_id = excluded.lease_id,
+             project_dir = excluded.project_dir,
+             project_dir_path = excluded.project_dir_path,
+             focus_id = excluded.focus_id,
+             updated_at_ms = excluded.updated_at_ms,
+             updated_at = excluded.updated_at`,
+        )
+        .run(
+          sessionKey,
+          payload.ownerKey,
+          payload.leaseId,
+          payload.projectDir,
+          payload.projectDirPath,
+          payload.focusId,
+          payload.updatedAtMs,
+          payload.updatedAt,
+        );
+
+      const tmpFile = `${ptrFile}.tmp.${process.pid}.${nowMs}`;
+      writeFileSync(tmpFile, JSON.stringify(payload, null, 2), "utf8");
+      renameSync(tmpFile, ptrFile);
+    });
+
+    commitPointer.immediate();
+  } catch (err) {
+    pointerWriteError = err?.code || err?.message || "SESSION_POINTER_WRITE_FAILED";
+  } finally {
+    if (ptrDb) {
+      try {
+        ptrDb.close();
+      } catch {
+        // Ignore close cleanup errors.
+      }
     }
   }
 
-  let pointerWriteError = null;
-  const nowMs = Date.now();
-  const writePointer = () => {
-    try {
-      mkdirSync(path.join(baseDir, SESSIONS_DIR), { recursive: true });
-      const tmpFile = `${ptrFile}.tmp.${process.pid}.${nowMs}`;
-      writeFileSync(
-        tmpFile,
-        JSON.stringify(
-          {
-            projectDir: target,
-            projectDirPath,
-            ownerKey: cap.ownerKey,
-            leaseId: cap.token,
-            focusId: Number.isSafeInteger(focus) && focus > 0 ? focus : null,
-            updatedAtMs: nowMs,
-            updatedAt: new Date(nowMs).toISOString(),
-          },
-          null,
-          2,
-        ),
-        "utf8",
-      );
-      renameSync(tmpFile, ptrFile);
-    } catch (err) {
-      pointerWriteError = err?.code || err?.message || "SESSION_POINTER_WRITE_FAILED";
-    }
-  };
-
-  writePointer();
+  if (refusal) {
+    return refusal;
+  }
 
   return {
     ok: !pointerWriteError,
@@ -3360,11 +3440,19 @@ export class WorkflowState {
     });
   }
 
-  async load() {
+  async load(options = {}) {
+    this._lastLoadCommittedSqlite = false;
+    const explicitSkipWrites = options?.skipWrites === true;
+    const hasEnforcedLockWithoutCap =
+      (this.requireKernelMutex || this.boundKernelCapability) && !this._resolveKernelCapability();
+    const skipWrites = explicitSkipWrites || hasEnforcedLockWithoutCap;
+
     // Berkas bernama lama (`.workflow-state.json`) dipindahkan ke nama sekarang
     // SEBELUM apa pun dibaca. Tanpa ini, pengguna yang memutakhirkan dari versi
     // pra-1.16 akan tampak kehilangan seluruh state-nya.
-    await migrateLegacyStateFile(this.stateFile);
+    if (!skipWrites) {
+      await migrateLegacyStateFile(this.stateFile);
+    }
 
     const db = await this._db();
     const { key: sessionKey } = this._sessionKey();
@@ -3372,7 +3460,9 @@ export class WorkflowState {
     const projectPath = this._projectPath();
 
     // Migrasi berkas JSON lama dijalankan SEKALI per database, bukan tiap load.
-    await this._ensureMigrated(db, projectPath);
+    if (!skipWrites) {
+      await this._ensureMigrated(db, projectPath);
+    }
 
     const row = await db.loadStateVersioned({ userId, projectPath, sessionKey });
     this.stateVersion = row?.version ?? null;
@@ -3380,22 +3470,37 @@ export class WorkflowState {
     if (!row) {
       // Sesi ini belum punya baris. Bila berkas JSON-nya ada, adopsi sekali
       // supaya task yang sedang berjalan tidak hilang saat pemutakhiran.
-      const adopted = await this._adoptLegacyJsonIfPresent(db, userId, projectPath, sessionKey);
+      const adopted = await this._adoptLegacyJsonIfPresent(db, userId, projectPath, sessionKey, {
+        skipWrites: explicitSkipWrites,
+      });
       if (!adopted) {
         // Benar-benar sesi baru: state default dari constructor sudah tepat.
         // History proyek tetap dibaca supaya rekomendasi tidak buta.
         await this._hydrateHistoryFromDatabase(db, userId, projectPath);
         await this.mergeSharedHistory();
         this.loadedTask = "";
-        // Ekspor awal supaya alat yang membaca JSON tidak menemui berkas hilang
-        // hanya karena sesinya belum pernah menyimpan. Jika saat load awal
-        // proyek sedang dipegang penulis asing, jangan menulis ekspor kosong.
-        await this._exportJson({ allowSkipIfForeignLock: true });
-        try {
-          await this.updateProjectSummary({ allowSkipIfForeignLock: true });
-        } catch (error) {
-          safeLog("warn", `Ringkasan proyek awal gagal ditulis: ${error.message}`);
+        if (!skipWrites) {
+          // Ekspor awal supaya alat yang membaca JSON tidak menemui berkas hilang
+          // hanya karena sesinya belum pernah menyimpan. Jika saat load awal
+          // proyek sedang dipegang penulis asing, jangan menulis ekspor kosong.
+          await this._exportJson({ allowSkipIfForeignLock: true });
+          try {
+            await this.updateProjectSummary({ allowSkipIfForeignLock: true });
+          } catch (error) {
+            safeLog("warn", `Ringkasan proyek awal gagal ditulis: ${error.message}`);
+          }
         }
+        return;
+      }
+      if (explicitSkipWrites) {
+        const parsedAdopted = sanitize(migrateOwnerMetadata(adopted));
+        this.state = {
+          ...this.state,
+          ...parsedAdopted,
+        };
+        await this._hydrateHistoryFromDatabase(db, userId, projectPath);
+        await this.mergeSharedHistory();
+        this.loadedTask = this.state.taskDescription || "";
         return;
       }
     }
@@ -3593,21 +3698,23 @@ export class WorkflowState {
   }
 
   async ensurePrimaryFile() {
-    assertSafeKnowledge(this.state);
-    let created = false;
-    try {
-      await fs.access(this.stateFile);
-    } catch {
-      await fs.mkdir(path.dirname(this.stateFile), { recursive: true });
-      await fs.writeFile(this.stateFile, JSON.stringify(this.state, null, 2));
-      created = true;
-    }
+    return await this._withOwnershipFence("ensurePrimaryFile", async () => {
+      assertSafeKnowledge(this.state);
+      let created = false;
+      try {
+        await fs.access(this.stateFile);
+      } catch {
+        await fs.mkdir(path.dirname(this.stateFile), { recursive: true });
+        await fs.writeFile(this.stateFile, JSON.stringify(this.state, null, 2));
+        created = true;
+      }
 
-    // Always ensure a fresh project summary so dependent tooling can read it immediately.
-    await this.updateProjectSummary();
-    ensureCompatibilityLinks(this.stateFile).catch(() => { });
+      // Always ensure a fresh project summary so dependent tooling can read it immediately.
+      await this.updateProjectSummary();
+      ensureCompatibilityLinks(this.stateFile).catch(() => { });
 
-    return created;
+      return created;
+    });
   }
 
   /**
@@ -4219,12 +4326,18 @@ export class WorkflowState {
    * Berkas yang RUSAK atau TIDAK TERBACA tetap menggagalkan load: memulai dari
    * nol berarti melupakan task yang sedang berjalan.
    */
-  async _adoptLegacyJsonIfPresent(db, userId, projectPath, sessionKey) {
+  async _adoptLegacyJsonIfPresent(db, userId, projectPath, sessionKey, { skipWrites = false } = {}) {
     const hasil = await readJsonStateFile(this.stateFile, this.fs);
 
     if (hasil.status === "missing") return null;
 
     if (hasil.status === "corrupt") {
+      if (skipWrites) {
+        throw new StateUnavailable(
+          `Berkas state "${this.stateFile}" rusak dan tidak bisa dibaca, ` +
+            `sehingga state sesi "${sessionKey}" tidak boleh dimulai dari kosong.`,
+        );
+      }
       const cadangan = await backupDamagedFile(this.stateFile, this.fs);
       throw new StateUnavailable(
         `Berkas state "${this.stateFile}" rusak dan tidak bisa dibaca, ` +
@@ -4245,10 +4358,14 @@ export class WorkflowState {
 
     const state = sanitize(migrateOwnerMetadata(hasil.data));
     if (!state || typeof state !== "object") return null;
+    if (skipWrites) {
+      return state;
+    }
 
     const performAdopt = async () => {
       try {
         await db.saveStateVersioned({ userId, projectPath, sessionKey, state, expectedVersion: null });
+        this._lastLoadCommittedSqlite = true;
         safeLog("info", `State sesi "${sessionKey}" diadopsi dari berkas JSON ke SQLite.`);
         return state;
       } catch {
@@ -4298,18 +4415,26 @@ export class WorkflowState {
    * dengan ratusan berkas itu memperlambat setiap panggilan pertama.
    */
   async _ensureMigrated(db, projectPath) {
-    // Penanda HARUS memuat proyek. Satu database bisa melayani beberapa proyek
-    // (jalur database dicari lewat package.json terdekat), dan penanda global
-    // membuat proyek pertama yang dimuat mematikan migrasi untuk semua proyek
-    // lain - diam-diam, karena barisnya tetap tercatat "selesai".
-    const marker = `legacy-json-v1:${projectPath}`;
+    const enforceScoped = Boolean(this.requireKernelMutex || this.boundKernelCapability);
+    const { key: sessionKey } = this._sessionKey();
+    const userId = getCurrentUserId(this.stateFile);
+    const scopedProjectDir = this.state?.projectDir || this._resolveCanonicalStateProjectDir?.() || "";
+    const allowedProjectSlug = scopedProjectDir
+      ? projectKey(canonicalProjectPath(scopedProjectDir) || scopedProjectDir)
+      : null;
+
+    // When kernel mutex enforcement is active, migration MUST stay strictly scoped
+    // to the verified session/user/project owned by the held capability.
+    const marker = enforceScoped
+      ? `legacy-json-v1:${projectPath}:${userId}:${sessionKey}:${allowedProjectSlug || "default"}`
+      : `legacy-json-v1:${projectPath}`;
 
     const done = db.db
       .prepare("SELECT name FROM migration_log WHERE name = ?")
       .get(marker);
     if (done) return null;
 
-    if ((this.requireKernelMutex || this.boundKernelCapability) && !this._resolveKernelCapability()) {
+    if (enforceScoped && !this._resolveKernelCapability()) {
       // Do not perform unfenced migration writes when kernel mutex enforcement is active without a held capability.
       return null;
     }
@@ -4317,7 +4442,21 @@ export class WorkflowState {
     const runMigration = async () => {
       const baseDir = path.join(projectPath, STATE_DIR);
       const { migrateLegacyJson } = await import("./db/migrate-legacy.js");
-      const result = await migrateLegacyJson(db, { baseDir });
+      const result = await migrateLegacyJson(
+        db,
+        enforceScoped
+          ? {
+              baseDir,
+              allowedSessionKey: sessionKey,
+              allowedUserId: userId,
+              allowedProjectSlug,
+            }
+          : { baseDir },
+      );
+
+      if (result.sessions > 0 || result.legacyFallback > 0) {
+        this._lastLoadCommittedSqlite = true;
+      }
 
       safeLog(
         "info",
@@ -4332,7 +4471,7 @@ export class WorkflowState {
       return result;
     };
 
-    if (this.requireKernelMutex || this.boundKernelCapability) {
+    if (enforceScoped) {
       return await this._withOwnershipFence("ensureMigrated", runMigration);
     }
     return await runMigration();

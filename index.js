@@ -248,62 +248,68 @@ export async function main() {
   //
   // Lokasinya juga harus di `.state` PROYEK, bukan di direktori user: direktori
   // user bisa berbeda antar proses, sehingga keduanya tidak saling melihat.
-  try {
-    workflowState.requireKernelMutex = true;
-    const lockDir = projectLockDir(workflowState.stateFile);
-    let startupProjectDir = workflowState.state?.projectDir || "";
-    if (!startupProjectDir) {
-      try {
-        startupProjectDir = resolveProjectDir({
-          env: process.env,
-          candidates: [process.cwd(), process.env.INIT_CWD],
-        }).dir;
-      } catch {
-        startupProjectDir = "";
-      }
+async function initStartupWorktreeMutex(state, { heartbeat = false } = {}) {
+  state.requireKernelMutex = true;
+  const lockDir = projectLockDir(state.stateFile);
+  let startupProjectDir = state.state?.projectDir || "";
+  if (!startupProjectDir) {
+    try {
+      startupProjectDir = resolveProjectDir({
+        env: process.env,
+        candidates: [process.cwd(), process.env.INIT_CWD],
+      }).dir;
+    } catch {
+      startupProjectDir = "";
     }
-    if (startupProjectDir) {
-      const legacy = findActiveLegacyWriter({ dir: lockDir });
-      if (legacy) {
-        safeLog('error', `Warning: active legacy (pre-Option-B) MCP process PID ${legacy.pid} detected in ${lockDir}.`);
-      } else {
-        const startupOwnerKey =
-          (typeof workflowState._sessionKey === "function" ? workflowState._sessionKey()?.key : "") ||
-          workflowState.sessionId ||
-          workflowState.stateFile ||
-          String(process.pid);
-        const acquired = await acquireWorktreeMutex({
-          projectDir: startupProjectDir,
-          ownerKey: startupOwnerKey,
+  }
+  if (startupProjectDir) {
+    const legacy = findActiveLegacyWriter({ dir: lockDir });
+    if (legacy) {
+      safeLog('error', `Warning: active legacy (pre-Option-B) MCP process PID ${legacy.pid} detected in ${lockDir}.`);
+    } else {
+      const startupOwnerKey =
+        (typeof state._sessionKey === "function" ? state._sessionKey()?.key : "") ||
+        state.sessionId ||
+        state.stateFile ||
+        String(process.pid);
+      const acquired = await acquireWorktreeMutex({
+        projectDir: startupProjectDir,
+        ownerKey: startupOwnerKey,
+      });
+      if (acquired.ok) {
+        state.bindKernelCapability(acquired.capability);
+        writeKernelLockMetadata({
+          dir: lockDir,
+          capability: acquired.capability,
+          projectDir: acquired.worktreeRoot,
+          expectedOwnerKey: startupOwnerKey,
         });
-        if (acquired.ok) {
-          workflowState.bindKernelCapability(acquired.capability);
-          writeKernelLockMetadata({
-            dir: lockDir,
-            capability: acquired.capability,
-            projectDir: acquired.worktreeRoot,
-            expectedOwnerKey: startupOwnerKey,
-          });
-        } else if (acquired.reason === "unsupported_platform") {
-          safeLog('error', acquired.message || `Unsupported kernel mutex platform: ${process.platform}`);
-        } else {
-          safeLog('error', `Warning: worktree mutex held by another process (${acquired.endpoint || startupProjectDir}).`);
-        }
+      } else if (acquired.reason === "unsupported_platform") {
+        safeLog('error', acquired.message || `Unsupported kernel mutex platform: ${process.platform}`);
+      } else {
+        safeLog('error', `Warning: worktree mutex held by another process (${acquired.endpoint || startupProjectDir}).`);
       }
     }
-    process.once('exit', () => releaseAllWorktreeMutexesSync());
+  }
+  process.once('exit', () => releaseAllWorktreeMutexesSync());
 
-    const heartbeat = setInterval(() => {
-      const cap = workflowState?.boundKernelCapability;
+  if (heartbeat) {
+    const hb = setInterval(() => {
+      const cap = state?.boundKernelCapability;
       if (cap && cap.active) {
         writeKernelLockMetadata({
-          dir: projectLockDir(workflowState.stateFile),
+          dir: projectLockDir(state.stateFile),
           capability: cap,
           projectDir: cap.worktreeRoot,
         });
       }
     }, HEARTBEAT_MS);
-    heartbeat.unref?.();
+    hb.unref?.();
+  }
+}
+
+  try {
+    await initStartupWorktreeMutex(workflowState, { heartbeat: true });
   } catch (lockError) {
     safeLog('error', 'Warning: could not record process lock:', lockError.message);
   }
@@ -374,11 +380,19 @@ async function cliMain(argv) {
   }
 
   try {
-    // Initialize workflow state similar to the server path
-    workflowState = new WorkflowState();
-    await workflowState.load();
-    await workflowState.ensurePrimaryFile();
+    // Initialize workflow state with kernel mutex enforcement enabled (Option B).
+    workflowState = new WorkflowState(undefined, { requireKernelMutex: true });
+    await workflowState.load({ skipWrites: true });
     setActiveProjectDir(workflowState.state.projectDir || "");
+    if (toolName !== "start_task") {
+      try {
+        await initStartupWorktreeMutex(workflowState, { heartbeat: false });
+      } catch (lockError) {
+        safeLog('error', 'Warning: could not record CLI process lock:', lockError.message);
+      }
+    } else {
+      process.once('exit', () => releaseAllWorktreeMutexesSync());
+    }
 
     const request = {
       params: {
