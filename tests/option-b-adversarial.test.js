@@ -2908,3 +2908,106 @@ test("adversarial 37: startup refuses before binding a kernel capability", async
     await rm(repo, { recursive: true, force: true });
   }
 });
+
+
+// ---------------------------------------------------------------- Cycle 24
+//
+// Regressions for the three findings of the Cycle 24 independent review.
+
+test("cycle 24: retiring a focus binding never deletes a session pointer at the flat path", async () => {
+  const { claimFocusBinding, retireFocusBinding, readSessionPointer } = await import("../workflow-state.js");
+  const base = await mkdtemp(path.join(tmpdir(), "c24-retire-"));
+  const repo = await mkdtemp(path.join(tmpdir(), "c24-retire-repo-"));
+  try {
+    const stateFile = path.join(base, "projects", "p", "users", "u", "workflow-state.json");
+    await mkdir(path.dirname(stateFile), { recursive: true });
+
+    // A session whose key is literally "focus-42" owns the flat path.
+    const sessions = path.join(base, "sessions");
+    await mkdir(sessions, { recursive: true });
+    await writeFile(
+      path.join(sessions, "focus-42.json"),
+      JSON.stringify({ ownerKey: "focus-42", projectDir: repo, focusId: 42 }),
+      "utf8",
+    );
+
+    const claimed = await claimFocusBinding({ stateFile, focusId: 42, projectDir: repo, repoKey: "repo-x" });
+    assert.equal(claimed.ok, true);
+
+    const retired = await retireFocusBinding({ stateFile, focusId: 42, projectDir: repo });
+    assert.equal(retired.ok, true);
+    assert.equal(retired.retired, true);
+
+    assert.ok(
+      readSessionPointer(base, "focus-42"),
+      "the session pointer at the flat path must survive retiring the focus binding",
+    );
+  } finally {
+    await rm(base, { recursive: true, force: true });
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("cycle 24: a legacy-only focus binding can be retired", async () => {
+  const { retireFocusBinding, readFocusBinding } = await import("../workflow-state.js");
+  const base = await mkdtemp(path.join(tmpdir(), "c24-legacy-"));
+  const repo = await mkdtemp(path.join(tmpdir(), "c24-legacy-repo-"));
+  try {
+    const stateFile = path.join(base, "projects", "p", "users", "u", "workflow-state.json");
+    await mkdir(path.dirname(stateFile), { recursive: true });
+
+    // Only the pre-upgrade flat record exists; there is no nested file.
+    const sessions = path.join(base, "sessions");
+    await mkdir(sessions, { recursive: true });
+    await writeFile(
+      path.join(sessions, "focus-77.json"),
+      JSON.stringify({ focusId: 77, projectDir: repo, repoKey: "repo-y", boundAt: new Date().toISOString() }),
+      "utf8",
+    );
+
+    assert.ok(readFocusBinding({ stateFile, focusId: 77 }), "the legacy binding must be readable");
+
+    const retired = await retireFocusBinding({ stateFile, focusId: 77, projectDir: repo });
+    assert.equal(retired.ok, true, "a legacy-only binding must be retirable");
+    assert.equal(retired.retired, true);
+    assert.equal(readFocusBinding({ stateFile, focusId: 77 }), null, "the legacy binding must be gone");
+  } finally {
+    await rm(base, { recursive: true, force: true });
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("cycle 24: startup scans the shared state root, not one project bucket", async () => {
+  const { initStartupWorktreeMutex } = await import("../index.js");
+  const base = await mkdtemp(path.join(tmpdir(), "c24-root-"));
+  const repo = await mkdtemp(path.join(tmpdir(), "c24-root-repo-"));
+  try {
+    const stateFile = path.join(base, "projects", "p", "users", "u", "workflow-state.json");
+    await mkdir(path.dirname(stateFile), { recursive: true });
+
+    // A live legacy writer in a SIBLING project bucket. Startup for project "p"
+    // must still refuse, because the fleet is not quiescent.
+    const siblingLockDir = path.join(base, "projects", "sibling");
+    await mkdir(siblingLockDir, { recursive: true });
+    await writeFile(
+      path.join(siblingLockDir, LOCK_FILENAME),
+      JSON.stringify({ pid: 999999, startedAt: new Date().toISOString(), protocolVersion: 1 }),
+      "utf8",
+    );
+
+    const bound = [];
+    const state = {
+      stateFile,
+      state: { projectDir: repo },
+      requireKernelMutex: false,
+      _hasExplicitStateFile: true,
+      bindKernelCapability: (capability) => bound.push(capability),
+    };
+
+    await initStartupWorktreeMutex(state, {});
+    assert.equal(bound.length, 0, "a sibling legacy writer must block capability binding");
+  } finally {
+    await rm(base, { recursive: true, force: true });
+    await rm(repo, { recursive: true, force: true });
+  }
+});
