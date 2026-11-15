@@ -2213,7 +2213,8 @@ test("Adversarial 32 (Cycle 14): retireFocusBinding fenced, pendingFocusCleanup 
     await mkdir(path.join(badGitRepo, ".git"), { recursive: true });
     await writeFile(path.join(badGitRepo, ".git", "HEAD"), `${"a".repeat(41)}\n`, "utf8");
     const badRoot = resolveCanonicalWorktreeRoot(badGitRepo);
-    assert.notEqual(badRoot.source, "git-dir", "41-char hex HEAD must not be accepted as valid git HEAD");
+    assert.equal(badRoot.ok, false, "41-char hex HEAD must be rejected");
+    assert.match(badRoot.error || "", /INVALID_PROJECT_DIR|INVALID_GIT/i, "41-char hex HEAD must fail with invalid project/git error");
 
     // 2. resolveStateFile({ skipMigrationWrites: true }) and resolveTargetProjectState({ skipWrites: true }) create no user-id
     const noWriteBase = path.join(base, "nowrite-c14");
@@ -2345,6 +2346,87 @@ test("Adversarial 32 (Cycle 14): retireFocusBinding fenced, pendingFocusCleanup 
     } finally {
       if (prevState5 === undefined) delete process.env.DEV_WORKFLOW_STATE_FILE;
       else process.env.DEV_WORKFLOW_STATE_FILE = prevState5;
+    }
+  });
+});
+
+test("Adversarial 33 (Cycle 15): same-repoKey different-worktree retire rejected, focus revalidates cap after lock wait, ordinary save persists pendingProjectionRepair", async () => {
+  await withTempWorkspace(async (base) => {
+    const repoA = await createRepo(base, "adv33-a");
+    const repoB = await createRepo(base, "adv33-b");
+    const stateBase = path.join(base, "state", ".state");
+    const { mkdir } = await import("node:fs/promises");
+    const { claimFocusBinding, retireFocusBinding, readFocusBinding } = await import("../workflow-state.js");
+    const { SqliteAdapter } = await import("../db/adapters/sqlite.js");
+    await mkdir(stateBase, { recursive: true });
+
+    // 1. Same repoKey across different worktree directories cannot retire another worktree's focus binding
+    const stateFileA = path.join(stateBase, "projects", "adv33a", "users", "u1", "workflow-state.ses_c15_f.json");
+    const acqA = await acquireWorktreeMutex({ projectDir: repoA, ownerKey: "ses_c15_f" });
+    const acqB = await acquireWorktreeMutex({ projectDir: repoB, ownerKey: "ses_c15_f" });
+    try {
+      const claim = await claimFocusBinding({
+        stateFile: stateFileA,
+        focusId: 93301,
+        projectDir: repoA,
+        repoKey: "shared-remote-key",
+        kernelCapability: acqA.capability,
+        requireKernelMutex: true,
+        expectedOwnerKey: "ses_c15_f",
+      });
+      assert.equal(claim.ok, true);
+
+      const crossDirRetire = await retireFocusBinding({
+        stateFile: stateFileA,
+        focusId: 93301,
+        projectDir: repoB,
+        repoKey: "shared-remote-key",
+        kernelCapability: acqB.capability,
+        requireKernelMutex: true,
+        expectedOwnerKey: "ses_c15_f",
+      });
+      assert.equal(crossDirRetire.ok, false);
+      assert.equal(crossDirRetire.reason, "FOCUS_BOUND_TO_ANOTHER_PROJECT");
+      assert.ok(readFocusBinding({ stateFile: stateFileA, focusId: 93301 }), "binding must remain intact");
+    } finally {
+      await releaseWorktreeMutex(acqA.capability);
+      await releaseWorktreeMutex(acqB.capability);
+    }
+
+    // 2. Ordinary save() persists pendingProjectionRepair to SQLite across restart when _exportJson() / writeHistoryFile() fails
+    const acqSave = await acquireWorktreeMutex({ projectDir: repoA, ownerKey: "ses_c15_proj" });
+    try {
+      const sf = path.join(stateBase, "projects", "adv33a", "users", "u1", "workflow-state.ses_c15_proj.json");
+      const db1 = new SqliteAdapter({ stateFile: sf });
+      await db1.connect();
+      const ws1 = new WorkflowState(sf, { sessionId: "ses_c15_proj", requireKernelMutex: true, db: db1 });
+      ws1.bindKernelCapability(acqSave.capability);
+      await ws1.load();
+      ws1.state.projectDir = repoA;
+      ws1._exportJson = async () => false;
+      ws1.writeHistoryFile = async () => {
+        throw new Error("C15_HIST_ERR");
+      };
+      await ws1.save();
+      assert.ok(ws1.state.pendingProjectionRepair, "ordinary save() must record pendingProjectionRepair");
+      await db1.close();
+
+      const db2 = new SqliteAdapter({ stateFile: sf });
+      await db2.connect();
+      const ws2 = new WorkflowState(sf, { sessionId: "ses_c15_proj", requireKernelMutex: true, db: db2 });
+      ws2.bindKernelCapability(acqSave.capability);
+      await ws2.load();
+      assert.ok(
+        ws2.state.pendingProjectionRepair &&
+          Array.isArray(ws2.state.pendingProjectionRepair.errors) &&
+          ws2.state.pendingProjectionRepair.errors.some((e) => e.includes("EXPORT_RETURNED_FALSE")),
+        "pendingProjectionRepair must survive SQLite reload/restart",
+      );
+      await ws2.save();
+      assert.equal(ws2.state.pendingProjectionRepair, undefined, "clean save() must clear pendingProjectionRepair");
+      await db2.close();
+    } finally {
+      await releaseWorktreeMutex(acqSave.capability);
     }
   });
 });

@@ -265,10 +265,12 @@ export async function initStartupWorktreeMutex(state, { heartbeat = false } = {}
       if (acquired.ok) {
         acquired.capability._isStartupPlaceholder = true;
         state.bindKernelCapability(acquired.capability);
-        const resolvedStateFile = resolveStateFile({ sessionId: state.sessionId, skipMigrationWrites: false });
-        if (!state._hasExplicitStateFile && resolvedStateFile && resolvedStateFile !== state.stateFile) {
-          state.stateFile = resolvedStateFile;
-          state.historyFile = resolveHistoryFile(resolvedStateFile);
+        if (!state._hasExplicitStateFile) {
+          const resolvedStateFile = resolveStateFile({ sessionId: state.sessionId, skipMigrationWrites: false });
+          if (resolvedStateFile && resolvedStateFile !== state.stateFile) {
+            state.stateFile = resolvedStateFile;
+            state.historyFile = resolveHistoryFile(resolvedStateFile);
+          }
         }
         writeKernelLockMetadata({
           dir: lockDir,

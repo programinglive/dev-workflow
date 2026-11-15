@@ -310,7 +310,7 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
     });
 
     if (!foreignTask && targetStateFile === workflowState.stateFile) {
-      const disk = await workflowState.readDiskState();
+      const disk = await workflowState.readDiskState({ skipWrites: true });
       if (disk) {
         const phase = typeof disk.currentPhase === "string" ? disk.currentPhase : "idle";
         const description = typeof disk.taskDescription === "string" ? disk.taskDescription.trim() : "";
@@ -654,6 +654,7 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
         focusId: requestedFocusId,
         stateFile: targetStateFile,
         projectDir: project.dir,
+        repoKey: requestedRepoKey,
         error: focusRollbackError,
         failedAt: new Date().toISOString(),
       };
@@ -698,11 +699,13 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
         const pendingCleanup = workflowState.state?.pendingFocusCleanup;
         if (pendingCleanup && Number.isSafeInteger(Number(pendingCleanup.focusId)) && Number(pendingCleanup.focusId) > 0) {
           try {
+            const pendingDir = pendingCleanup.projectDir || project.dir;
             const retiredPending = await retireFocusBinding({
               stateFile: pendingCleanup.stateFile || workflowState.stateFile,
               focusId: Number(pendingCleanup.focusId),
-              projectDir: project.dir,
-              kernelCapability: targetMutex.capability,
+              projectDir: pendingDir,
+              repoKey: pendingCleanup.repoKey || (pendingDir === project.dir ? requestedRepoKey : ""),
+              kernelCapability: pendingDir === project.dir ? targetMutex.capability : null,
               requireKernelMutex: true,
               expectedOwnerKey: sessionOwnerKey,
             });
