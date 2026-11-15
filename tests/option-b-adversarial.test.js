@@ -2574,13 +2574,23 @@ test("Adversarial 35 (Cycle 18): canonical hashed keys never re-hashed or collid
     const hashedKey = /^workflow-state\.(.+)\.json$/.exec(hashedFile)?.[1];
     assert.ok(hashedKey && /-h[0-9a-f]{32}$/.test(hashedKey), `expected 128-bit hashed key, got ${hashedKey}`);
 
-    // 1b. Former 40-bit prefix collision pair must remain distinct under 128-bit digest
+    // 1b. Former 40-bit prefix collision pair and lone UTF-16 surrogates must remain distinct under lossless 128-bit digest
     const { canonicalSessionKey } = await import("../db/session-key.js");
     assert.notEqual(
       canonicalSessionKey("x".repeat(51) + "/9790"),
       canonicalSessionKey("x".repeat(51) + "/215170"),
       "distinct raw session IDs must not collide on 128-bit canonicalSessionKey",
     );
+    const surA = resolveStateFile({ sessionId: "\ud800", stateDir: stateBase });
+    const surB = resolveStateFile({ sessionId: "\ud801", stateDir: stateBase });
+    assert.notEqual(path.basename(surA), path.basename(surB), "lone UTF-16 surrogates must not collide on state filename");
+    assert.notEqual(canonicalSessionKey("\ud800"), canonicalSessionKey("\ud801"), "lone UTF-16 surrogates must produce distinct canonical keys");
+
+    // 1c. Invalid symbolic HEAD target (ref: refs/heads/../main) must be rejected fail-closed
+    const { isValidGitHeadContent } = await import("../exec.js");
+    assert.equal(isValidGitHeadContent("ref: refs/heads/main\n"), true);
+    assert.equal(isValidGitHeadContent("ref: refs/heads/../main\n"), false);
+    assert.equal(isValidGitHeadContent("ref: invalid-no-refs-prefix\n"), false);
 
     // 1. Literal hashed-looking raw ID must not collide with routed hashed key
     const literalCollisionCandidate = resolveStateFile({ sessionId: hashedKey, stateDir: stateBase });

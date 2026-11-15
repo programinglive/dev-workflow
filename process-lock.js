@@ -82,13 +82,31 @@ function normalizeWorktreeString(targetPath, platform = process.platform) {
   return platform === "win32" ? normalized.toLowerCase() : normalized;
 }
 
+function isValidGitHeadContent(headContent) {
+  const trimmed = String(headContent || "").trim();
+  if (/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(trimmed)) return true;
+  const refMatch = /^ref:[ \t]*([^\s\r\n]+)$/.exec(trimmed);
+  if (!refMatch) return false;
+  const ref = refMatch[1];
+  if (!ref.startsWith("refs/")) return false;
+  if (ref.includes("..") || ref.includes("//") || ref.includes("@{") || ref.endsWith("/") || ref.endsWith(".")) {
+    return false;
+  }
+  if (/[ ~^:?*[\\]/.test(ref)) return false;
+  for (let i = 0; i < ref.length; i += 1) {
+    const code = ref.charCodeAt(i);
+    if (code <= 0x1f || code === 0x7f) return false;
+  }
+  const parts = ref.split("/");
+  return parts.length >= 2 && parts.every((part) => part.length > 0 && !part.startsWith(".") && !part.endsWith(".lock"));
+}
+
 function isValidGitHeadFile(headPath) {
   try {
     if (!existsSync(headPath)) return false;
     const headStat = statSync(headPath);
     if (!headStat.isFile()) return false;
-    const headContent = readFileSync(headPath, "utf8").trim();
-    return /^ref:[ \t]*[^\s\r\n]+$/.test(headContent) || /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(headContent);
+    return isValidGitHeadContent(readFileSync(headPath, "utf8"));
   } catch {
     return false;
   }
