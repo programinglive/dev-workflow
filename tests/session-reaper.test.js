@@ -12,6 +12,7 @@ import {
   verifyControllerRequest,
   verifyProcessIdentity,
 } from "../session-reaper.js";
+import { REAPER_SIGNATURE_HEADER, fetchReaperSessions, toReaperSession } from "../reaper-client.js";
 
 const NOW = 1_800_000_000_000;
 
@@ -311,4 +312,48 @@ test("controller request signatures are verified and tampering is rejected", () 
   assert.equal(verifyControllerRequest({ payload, signature }, "secret"), true);
   assert.equal(verifyControllerRequest({ payload: { ...payload, action: "stop" }, signature }, "secret"), false);
   assert.equal(verifyControllerRequest({ payload, signature }, "other-secret"), false);
+});
+
+test("reaper client signs the privileged request and returns sessions", async () => {
+  let seen = null;
+  const fetchImpl = async (url, init) => {
+    seen = { url, init };
+    return { ok: true, json: async () => ({ sessions: [{ session_key: "ses_a" }] }) };
+  };
+  const sessions = await fetchReaperSessions({ baseUrl: "http://monitor", secret: "s3cret", fetchImpl });
+  assert.equal(sessions.length, 1);
+  assert.match(seen.url, /\/api\/reaper\/sessions$/);
+  assert.equal(seen.init.method, "POST");
+  assert.ok(seen.init.headers[REAPER_SIGNATURE_HEADER]);
+  assert.equal(JSON.stringify(seen.init).includes("s3cret"), false, "the secret must not be sent");
+});
+
+test("reaper client rejects a non-OK response", async () => {
+  const fetchImpl = async () => ({ ok: false, status: 401, json: async () => ({}) });
+  await assert.rejects(
+    () => fetchReaperSessions({ baseUrl: "http://monitor", secret: "s3cret", fetchImpl }),
+    /HTTP 401/
+  );
+});
+
+test("toReaperSession maps owner and lease metadata", () => {
+  const mapped = toReaperSession({
+    session_key: "ses_a",
+    machine: "MMCH",
+    project_name: "demo",
+    phase: "coding",
+    state: "live",
+    updated_at: "2026-11-15T09:00:00Z",
+    owner_pid: 123,
+    owner_started_at: "2026-11-15T08:00:00Z",
+    owner_executable: "node",
+    lease_owner: "o1",
+    lease_generation: 4,
+    lease_fencing_token: "f4",
+  });
+  assert.equal(mapped.owner.pid, 123);
+  assert.equal(mapped.owner.startedAt, "2026-11-15T08:00:00Z");
+  assert.equal(mapped.owner.executable, "node");
+  assert.equal(mapped.lease.generation, 4);
+  assert.equal(mapped.lease.fencingToken, "f4");
 });
