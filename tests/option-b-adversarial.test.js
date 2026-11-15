@@ -1966,3 +1966,117 @@ test("Adversarial 29 (Cycle 11): early push/release-lock fencing, read-only exis
     assert.equal(rA3.summaryFailed, false, "project A repair succeeds once unblocked");
   });
 });
+
+test("Adversarial 30 (Cycle 12): projectDir override to repoB refused, pointer stores acquiredAt tuple, and summary repair survives restart", async () => {
+  await withTempWorkspace(async (base) => {
+    const repoA = await createRepo(base, "adv30-a");
+    const repoB = await createRepo(base, "adv30-b");
+    const stateBase = path.join(base, "state", ".state");
+    const { mkdir } = await import("node:fs/promises");
+    await mkdir(stateBase, { recursive: true });
+
+    // 1. commit_and_push({ projectDir: repoB }) on a task bound to repoA is refused before any git exec
+    const acqA = await acquireWorktreeMutex({ projectDir: repoA, ownerKey: "ses_c12_1" });
+    assert.equal(acqA.ok, true);
+    try {
+      const wsA = new WorkflowState(
+        path.join(stateBase, "users", "u1", "workflow-state.ses_c12_1.json"),
+        { sessionId: "ses_c12_1", requireKernelMutex: true },
+      );
+      wsA.bindKernelCapability(acqA.capability);
+      wsA.state.projectDir = repoA;
+      wsA.state.currentPhase = "commit";
+      wsA.state.readyToCommit = true;
+      wsA.state.readyCheckCompleted = true;
+      wsA.state.taskDescription = "C12-1 task";
+      wsA.state.definitionOfDone = [{ id: 1, text: "done", status: "done", evidence: "ok", revision: 1 }];
+      wsA.state.dodRevision = 1;
+      const { handleCommitAndPush } = await import("../tools/handler-modules/commit-handlers.js");
+      let execRan = false;
+      const res = await handleCommitAndPush(
+        { commitMessage: "cross-repo", projectDir: repoB },
+        {
+          workflowState: wsA,
+          exec: async () => {
+            execRan = true;
+            return { stdout: "", stderr: "" };
+          },
+          git: {
+            getPrimaryBranch: async () => "main",
+            getCurrentBranch: async () => "main",
+            hasWorkingChanges: async () => true,
+            getStatusOutput: async () => "M tests/file.test.js",
+            getToplevel: async () => repoB,
+          },
+          utils: {
+            createCommitMessageParts: () => ({ summary: "msg", body: "" }),
+            shellEscape: (s) => s,
+          },
+        },
+      );
+      assert.equal(execRan, false, "cross-repo projectDir override must be refused before git exec");
+      assert.match(res.content[0].text, /Refused|BERBEDA|dibatalkan/i);
+    } finally {
+      await releaseWorktreeMutex(acqA.capability);
+    }
+
+    // 2. pinSessionProject persists cap.acquiredAt as updatedAtMs (immune to wall-clock rollback)
+    const acqOld = await acquireWorktreeMutex({ projectDir: repoA, ownerKey: "ses_c12_2" });
+    const acqNew = await acquireWorktreeMutex({ projectDir: repoB, ownerKey: "ses_c12_2" });
+    const fixedMs = Date.now() + 50000;
+    acqOld.capability.acquiredAt = fixedMs;
+    acqOld.capability.acquireSeq = 1;
+    acqNew.capability.acquiredAt = fixedMs;
+    acqNew.capability.acquireSeq = 2;
+    try {
+      const fOld = path.join(stateBase, "projects", "a", "users", "u1", "workflow-state.ses_c12_2.json");
+      const fNew = path.join(stateBase, "projects", "b", "users", "u1", "workflow-state.ses_c12_2.json");
+      const pNew = pinSessionProject({
+        stateFile: fNew,
+        projectDir: repoB,
+        kernelCapability: acqNew.capability,
+        requireKernelMutex: true,
+        expectedOwnerKey: "ses_c12_2",
+      });
+      assert.equal(pNew.ok, true);
+      const pOld = pinSessionProject({
+        stateFile: fOld,
+        projectDir: repoA,
+        kernelCapability: acqOld.capability,
+        requireKernelMutex: true,
+        expectedOwnerKey: "ses_c12_2",
+      });
+      assert.equal(pOld.ok, false);
+      assert.equal(pOld.error, "superseded_by_newer_pointer");
+    } finally {
+      await releaseWorktreeMutex(acqOld.capability);
+      await releaseWorktreeMutex(acqNew.capability);
+    }
+
+    // 3. Summary repair persists via pendingProjectionRepair.repairErrors across fresh WorkflowState instance
+    const wsRestart = new WorkflowState(
+      path.join(stateBase, "users", "u1", "workflow-state.ses_c12_3.json"),
+      { sessionId: "ses_c12_3" },
+    );
+    wsRestart.state.history = [{ timestamp: new Date().toISOString(), taskDescription: "tRestart" }];
+    wsRestart.state.pendingProjectionRepair = {
+      failedAt: new Date().toISOString(),
+      triggerError: "post_commit",
+      repairErrors: ["syncHistorySummary:DISK_FULL"],
+    };
+    wsRestart._syncedHistoryCount = 1;
+    let retriedAfterRestart = false;
+    const restartRes = await wsRestart._syncHistoryToDatabase(
+      {
+        insertHistoryEntry: async () => {},
+        updateSummaryForUser: async () => {
+          retriedAfterRestart = true;
+        },
+      },
+      "u1",
+      repoA,
+    );
+    assert.equal(restartRes.sent, 0);
+    assert.equal(retriedAfterRestart, true, "persisted syncHistorySummary repairError must trigger retry even when sent === 0");
+  });
+});

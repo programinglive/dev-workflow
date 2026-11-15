@@ -29,9 +29,6 @@ import {
   lstatSync,
   readdirSync,
   realpathSync,
-  openSync,
-  closeSync,
-  constants as fsConstants,
 } from "fs";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { execFileSync } from "child_process";
@@ -416,26 +413,41 @@ function allocateCrossProcessAcquireStamp() {
   mkdirSync(seqDir, { recursive: true });
   const counterPath = path.join(seqDir, "dev-workflow-acquire-seq.json");
   const lockPath = path.join(seqDir, "dev-workflow-acquire-seq.lock");
+  const myToken = randomUUID();
+  const isAlive = currentIsAlive();
   const deadline = Date.now() + 2000;
-  let lockFd = -1;
+  let lockAcquired = false;
 
-  while (lockFd === -1) {
+  while (!lockAcquired) {
+    const tmpLockPath = `${lockPath}.${process.pid}.${randomUUID()}.tmp`;
+    writeFileSync(tmpLockPath, JSON.stringify({ pid: process.pid, token: myToken }), "utf8");
     try {
-      lockFd = openSync(
-        lockPath,
-        fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_RDWR,
-        0o600,
-      );
+      linkSync(tmpLockPath, lockPath);
+      lockAcquired = true;
     } catch (err) {
       if (err?.code === "EEXIST") {
         try {
-          const st = statSync(lockPath);
-          if (Date.now() - st.mtimeMs > 5000) {
-            unlinkSync(lockPath);
+          let holder = null;
+          try {
+            holder = JSON.parse(readFileSync(lockPath, "utf8"));
+          } catch {
+            holder = null;
+          }
+          const holderPid = Number(holder?.pid);
+          const holderAlive = Number.isFinite(holderPid) && holderPid > 0 ? isAlive(holderPid) : false;
+          if (holder && Number.isFinite(holderPid) && holderPid > 0 && !holderAlive) {
+            try { unlinkSync(lockPath); } catch {}
             continue;
           }
+          if (!holder) {
+            const st = statSync(lockPath);
+            if (Date.now() - st.mtimeMs > 5000) {
+              try { unlinkSync(lockPath); } catch {}
+              continue;
+            }
+          }
         } catch {
-          // Ignore race with lock owner unlinking
+          // Ignore race with lock holder unlinking
         }
         if (Date.now() >= deadline) {
           throw new Error(`Timed out waiting for acquire-seq lock: ${lockPath}`);
@@ -443,6 +455,8 @@ function allocateCrossProcessAcquireStamp() {
         continue;
       }
       throw err;
+    } finally {
+      try { unlinkSync(tmpLockPath); } catch {}
     }
   }
 
@@ -465,8 +479,14 @@ function allocateCrossProcessAcquireStamp() {
     renameSync(tmpPath, counterPath);
     return { acquiredAt: stampedMs, acquireSeq: nextSeq };
   } finally {
-    try { closeSync(lockFd); } catch {}
-    try { unlinkSync(lockPath); } catch {}
+    try {
+      const current = JSON.parse(readFileSync(lockPath, "utf8"));
+      if (current?.token === myToken) {
+        unlinkSync(lockPath);
+      }
+    } catch {
+      // Lock already absent or replaced
+    }
   }
 }
 
