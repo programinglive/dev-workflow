@@ -12,7 +12,9 @@ import {
   readBounded,
   revalidatePreflight,
   runPreflight,
+  summarizeInstructions,
 } from "../preflight.js";
+import { handleAcknowledgeInstructions } from "../tools/handler-modules/preflight-handlers.js";
 
 async function withProject(fn) {
   const root = await mkdtemp(path.join(tmpdir(), "devwf-preflight-"));
@@ -174,4 +176,67 @@ test("the preflight record contains no document bodies or command output", async
     assert.equal(serialized.includes("should-not-be-copied"), false);
     assert.equal(serialized.includes("TOKEN="), false);
   });
+});
+
+test("instruction summary is actionable and bounded", async () => {
+  await withProject(async (root) => {
+    await writeFile(path.join(root, "README.md"), "# Project\n\nA small service.\n");
+    await writeFile(path.join(root, "AGENTS.md"), "# Rules\n\n- MUST run tests before commit\n- NEVER edit production directly\n");
+    await writeFile(path.join(root, "package.json"), JSON.stringify({ scripts: { test: "node --test", build: "vite build", release: "npm run release" } }));
+    const summary = summarizeInstructions({ projectDir: root, taskDescription: "Add a health endpoint" });
+    assert.match(summary.purpose, /small service/i);
+    assert.ok(summary.rules.some((rule) => /MUST run tests/i.test(rule)));
+    assert.ok(summary.prohibited.some((rule) => /NEVER edit production/i.test(rule)));
+    assert.ok(summary.buildTestRelease.some((ref) => ref.invocation === "npm run test"));
+    assert.match(summary.taskScope, /health endpoint/i);
+    assert.ok(summary.documentation.some((file) => /README\.md$/.test(file)));
+    assert.ok(summary.text.length <= 2400);
+  });
+});
+
+test("acknowledgment accepts a matching fingerprint and scope", async () => {
+  await withProject(async (root) => {
+    await writeFile(path.join(root, "README.md"), "# Project\n");
+    const record = runPreflight({ projectDir: root });
+    const state = { state: { preflight: record, instructionAcknowledgment: null }, save: async () => {} };
+    const response = await handleAcknowledgeInstructions(
+      { fingerprint: record.readme.fingerprint, scope: record.projectRoot },
+      state
+    );
+    assert.match(response.content[0].text, /acknowledged/i);
+    assert.equal(state.state.instructionAcknowledgment.fingerprint, record.readme.fingerprint);
+  });
+});
+
+test("acknowledgment rejects a mismatched fingerprint", async () => {
+  await withProject(async (root) => {
+    await writeFile(path.join(root, "README.md"), "# Project\n");
+    const record = runPreflight({ projectDir: root });
+    const state = { state: { preflight: record, instructionAcknowledgment: null }, save: async () => {} };
+    const response = await handleAcknowledgeInstructions(
+      { fingerprint: "0".repeat(64), scope: record.projectRoot },
+      state
+    );
+    assert.match(response.content[0].text, /rejected/i);
+    assert.equal(state.state.instructionAcknowledgment, null);
+  });
+});
+
+test("acknowledgment rejects a mismatched scope", async () => {
+  await withProject(async (root) => {
+    await writeFile(path.join(root, "README.md"), "# Project\n");
+    const record = runPreflight({ projectDir: root });
+    const state = { state: { preflight: record, instructionAcknowledgment: null }, save: async () => {} };
+    const response = await handleAcknowledgeInstructions(
+      { fingerprint: record.readme.fingerprint, scope: "/somewhere/else" },
+      state
+    );
+    assert.match(response.content[0].text, /rejected/i);
+  });
+});
+
+test("acknowledgment requires a preflight record", async () => {
+  const state = { state: { preflight: null, instructionAcknowledgment: null }, save: async () => {} };
+  const response = await handleAcknowledgeInstructions({ fingerprint: "x", scope: "y" }, state);
+  assert.match(response.content[0].text, /No preflight record/i);
 });
