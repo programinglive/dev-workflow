@@ -28,12 +28,15 @@ test("the server keeps a previous-token path during rotation", () => {
   assert.match(dash, /if \(!WRITE_TOKEN_PREVIOUS\) return false;/);
 });
 
-test("all three write endpoints use the same check", () => {
+test("all write endpoints use the same check", () => {
   const calls = (dash.match(/if \(!writeAllowed\(req\)\)/g) || []).length;
-  // POST /api/session, POST /api/event, and POST /api/reaper/action. The reaper
-  // action can archive a card, so it must use the same write token as the
-  // report endpoints instead of a separate weaker check.
-  assert.equal(calls, 3, "POST /api/session, /api/event and /api/reaper/action must all be guarded");
+  // POST /api/session, POST /api/event, POST /api/reaper/action and
+  // POST /api/fleet/restart. The reaper action can archive a card and the
+  // restart endpoint can stop a process, so both must use the same write token
+  // as the report endpoints instead of a separate weaker check.
+  assert.equal(calls, 4, "every write endpoint must be guarded by writeAllowed");
+  const restart = dash.slice(dash.indexOf("'/api/fleet/restart'"));
+  assert.match(restart.slice(0, 1500), /if \(!writeAllowed\(req\)\)/, "the restart endpoint must be guarded");
 });
 
 test("the monitor env template documents the token without a real value", () => {
