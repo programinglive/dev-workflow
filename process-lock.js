@@ -88,7 +88,7 @@ function isValidGitHeadFile(headPath) {
     const headStat = statSync(headPath);
     if (!headStat.isFile()) return false;
     const headContent = readFileSync(headPath, "utf8").trim();
-    return headContent.startsWith("ref:") || /^[0-9a-f]{40,64}$/i.test(headContent);
+    return /^ref:\s*\S+/.test(headContent) || /^[0-9a-f]{40,64}$/i.test(headContent);
   } catch {
     return false;
   }
@@ -406,87 +406,34 @@ export async function useWorktreeCapability(
 
 let nextWorktreeAcquireSeq = 0;
 
-function allocateCrossProcessAcquireStamp() {
+async function allocateCrossProcessAcquireStamp() {
   const seqDir = (typeof process.env.DEVWF_ACQUIRE_SEQ_DIR === "string" && process.env.DEVWF_ACQUIRE_SEQ_DIR.trim())
     ? path.resolve(process.env.DEVWF_ACQUIRE_SEQ_DIR.trim())
     : os.tmpdir();
   mkdirSync(seqDir, { recursive: true });
-  const counterPath = path.join(seqDir, "dev-workflow-acquire-seq.json");
-  const lockPath = path.join(seqDir, "dev-workflow-acquire-seq.lock");
-  const myToken = randomUUID();
-  const isAlive = currentIsAlive();
-  const deadline = Date.now() + 2000;
-  let lockAcquired = false;
-
-  while (!lockAcquired) {
-    const tmpLockPath = `${lockPath}.${process.pid}.${randomUUID()}.tmp`;
-    writeFileSync(tmpLockPath, JSON.stringify({ pid: process.pid, token: myToken }), "utf8");
-    try {
-      linkSync(tmpLockPath, lockPath);
-      lockAcquired = true;
-    } catch (err) {
-      if (err?.code === "EEXIST") {
-        try {
-          let holder = null;
-          try {
-            holder = JSON.parse(readFileSync(lockPath, "utf8"));
-          } catch {
-            holder = null;
-          }
-          const holderPid = Number(holder?.pid);
-          const holderAlive = Number.isFinite(holderPid) && holderPid > 0 ? isAlive(holderPid) : false;
-          if (holder && Number.isFinite(holderPid) && holderPid > 0 && !holderAlive) {
-            try { unlinkSync(lockPath); } catch {}
-            continue;
-          }
-          if (!holder) {
-            const st = statSync(lockPath);
-            if (Date.now() - st.mtimeMs > 5000) {
-              try { unlinkSync(lockPath); } catch {}
-              continue;
-            }
-          }
-        } catch {
-          // Ignore race with lock holder unlinking
-        }
-        if (Date.now() >= deadline) {
-          throw new Error(`Timed out waiting for acquire-seq lock: ${lockPath}`);
-        }
-        continue;
-      }
-      throw err;
-    } finally {
-      try { unlinkSync(tmpLockPath); } catch {}
-    }
-  }
-
+  const dbPath = path.join(seqDir, "dev-workflow-acquire-seq.db");
+  const { default: Database } = await import("better-sqlite3");
+  const db = new Database(dbPath);
   try {
-    let lastMs = 0;
-    let lastSeq = 0;
-    try {
-      const parsed = JSON.parse(readFileSync(counterPath, "utf8"));
-      if (Number.isFinite(Number(parsed?.lastMs))) lastMs = Number(parsed.lastMs);
-      if (Number.isFinite(Number(parsed?.seq))) lastSeq = Number(parsed.seq);
-    } catch {
-      // Missing or uninitialized counter starts fresh
-    }
-    const nowMs = Date.now();
-    const stampedMs = nowMs > lastMs ? nowMs : lastMs;
-    const nextSeq = stampedMs === lastMs ? lastSeq + 1 : 1;
-    nextWorktreeAcquireSeq = Math.max(nextWorktreeAcquireSeq + 1, nextSeq);
-    const tmpPath = `${counterPath}.${process.pid}.${randomUUID()}.tmp`;
-    writeFileSync(tmpPath, JSON.stringify({ lastMs: stampedMs, seq: nextSeq }), "utf8");
-    renameSync(tmpPath, counterPath);
-    return { acquiredAt: stampedMs, acquireSeq: nextSeq };
+    db.pragma("busy_timeout = 5000");
+    db.exec(
+      "CREATE TABLE IF NOT EXISTS acquire_clock (id INTEGER PRIMARY KEY CHECK (id = 1), last_ms INTEGER NOT NULL, seq INTEGER NOT NULL);",
+    );
+    const allocateTx = db.transaction(() => {
+      db.prepare("INSERT OR IGNORE INTO acquire_clock (id, last_ms, seq) VALUES (1, 0, 0)").run();
+      const row = db.prepare("SELECT last_ms, seq FROM acquire_clock WHERE id = 1").get();
+      const lastMs = Number(row?.last_ms || 0);
+      const lastSeq = Number(row?.seq || 0);
+      const nowMs = Date.now();
+      const stampedMs = nowMs > lastMs ? nowMs : lastMs;
+      const nextSeq = stampedMs === lastMs ? lastSeq + 1 : 1;
+      db.prepare("UPDATE acquire_clock SET last_ms = ?, seq = ? WHERE id = 1").run(stampedMs, nextSeq);
+      nextWorktreeAcquireSeq = Math.max(nextWorktreeAcquireSeq + 1, nextSeq);
+      return { acquiredAt: stampedMs, acquireSeq: nextSeq };
+    });
+    return allocateTx.immediate();
   } finally {
-    try {
-      const current = JSON.parse(readFileSync(lockPath, "utf8"));
-      if (current?.token === myToken) {
-        unlinkSync(lockPath);
-      }
-    } catch {
-      // Lock already absent or replaced
-    }
+    try { db.close(); } catch {}
   }
 }
 
@@ -567,7 +514,7 @@ export async function acquireWorktreeMutex({
         server.once("error", reject);
         server.listen(listenTarget, resolve);
       });
-      const stamp = allocateCrossProcessAcquireStamp();
+      const stamp = await allocateCrossProcessAcquireStamp();
       const capability = {
         token: randomUUID(),
         pid,
