@@ -8,6 +8,7 @@ import {
   verifyReaperRequest,
 } from "../monitor-server/reaper-query.cjs";
 import { buildSessionUpsert } from "../monitor-server/session-upsert.cjs";
+import { fetchReaperSessions, REAPER_SIGNATURE_HEADER } from "../reaper-client.js";
 
 function sign(payload, secret) {
   return createHmac("sha256", secret).update(JSON.stringify(payload)).digest("hex");
@@ -53,6 +54,40 @@ test("reaper request rejects a missing secret", () => {
   const result = verifyReaperRequest({ payload, signature: "x", secret: "" });
   assert.equal(result.ok, false);
   assert.equal(result.reason, "REAPER_SECRET_MISSING");
+});
+
+test("the reaper client and the monitor verify with the same contract", async () => {
+  // The client is ESM and signs with signControllerRequest; the monitor is CJS
+  // and verifies with verifyReaperRequest. A drift between the two would make
+  // every privileged read fail with 401, so the contract is pinned here.
+  let received = null;
+  const fetchImpl = async (url, init) => {
+    assert.equal(url, "http://monitor/api/reaper/sessions");
+    assert.equal(init.method, "POST");
+    const payload = JSON.parse(init.body);
+    received = {
+      payload,
+      signature: init.headers[REAPER_SIGNATURE_HEADER],
+    };
+    return { ok: true, json: async () => ({ sessions: [{ session_key: "ses_a" }] }) };
+  };
+
+  await fetchReaperSessions({ baseUrl: "http://monitor", secret: "shared-secret", fetchImpl });
+  assert.ok(received, "the client must call the privileged endpoint");
+
+  const verdict = verifyReaperRequest({
+    payload: received.payload,
+    signature: received.signature,
+    secret: "shared-secret",
+  });
+  assert.equal(verdict.ok, true, "the monitor must accept the client signature");
+
+  const rejected = verifyReaperRequest({
+    payload: received.payload,
+    signature: received.signature,
+    secret: "another-secret",
+  });
+  assert.equal(rejected.ok, false, "a different credential must be refused");
 });
 
 test("session upsert persists owner and lease metadata", () => {
