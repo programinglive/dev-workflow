@@ -1007,6 +1007,13 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
           triggerError: transitionError?.message || String(transitionError),
           repairErrors,
         });
+        if (typeof workflowState.save === "function") {
+          try {
+            await workflowState.save({ operation: "persist_transition_projection_repair" });
+          } catch {
+            // Best-effort persistence when projections are degraded.
+          }
+        }
         warnings.push(
           `⚠️ Authoritative SQLite task commit succeeded and was preserved, but post-commit projection repair is PENDING ` +
             `(trigger: ${transitionError?.message || String(transitionError)}; repairErrors: ${repairErrors.join(", ")}).`
