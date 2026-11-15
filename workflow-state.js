@@ -1634,6 +1634,10 @@ export class WorkflowState {
       // Naik setiap ada perubahan kerja baru setelah commit tercatat, sehingga
       // bukti item `done` yang lama otomatis tidak lagi berlaku.
       dodRevision: 0,
+      // README-first preflight evidence: bounded discovery of README, AGENTS.md
+      // and documented CLI entrypoints, recorded at start_task and revalidated
+      // at resume_session. Null means the task predates the preflight.
+      preflight: null,
       // Urutan kerja yang sedang dijalankan. Terpisah dari `definitionOfDone`:
       // DoD adalah syarat selesai, ini adalah rencana langkahnya. Rencana tidak
       // menjadi gerbang - ia hanya membuat progres bisa dibaca.
@@ -1726,6 +1730,10 @@ export class WorkflowState {
       // Naik setiap ada perubahan kerja baru setelah commit tercatat, sehingga
       // bukti item `done` yang lama otomatis tidak lagi berlaku.
       dodRevision: 0,
+      // README-first preflight evidence: bounded discovery of README, AGENTS.md
+      // and documented CLI entrypoints, recorded at start_task and revalidated
+      // at resume_session. Null means the task predates the preflight.
+      preflight: null,
       // Urutan kerja yang sedang dijalankan. Terpisah dari `definitionOfDone`:
       // DoD adalah syarat selesai, ini adalah rencana langkahnya. Rencana tidak
       // menjadi gerbang - ia hanya membuat progres bisa dibaca.
@@ -3075,6 +3083,10 @@ export class WorkflowState {
       // Naik setiap ada perubahan kerja baru setelah commit tercatat, sehingga
       // bukti item `done` yang lama otomatis tidak lagi berlaku.
       dodRevision: 0,
+      // README-first preflight evidence: bounded discovery of README, AGENTS.md
+      // and documented CLI entrypoints, recorded at start_task and revalidated
+      // at resume_session. Null means the task predates the preflight.
+      preflight: null,
       // Urutan kerja yang sedang dijalankan. Terpisah dari `definitionOfDone`:
       // DoD adalah syarat selesai, ini adalah rencana langkahnya. Rencana tidak
       // menjadi gerbang - ia hanya membuat progres bisa dibaca.
