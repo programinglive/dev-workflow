@@ -29,7 +29,7 @@ import {
   createCommitMessageParts,
   determineReleaseTypeFromCommit,
 } from "./commit-helpers.js";
-import { WorkflowState, sessionKeyFromRequest, reportToMonitorSafe, resolveStateFile } from "./workflow-state.js";
+import { WorkflowState, sessionKeyFromRequest, reportToMonitorSafe, resolveStateFile, resolveHistoryFile } from "./workflow-state.js";
 import { resolveRequestSession } from "./session-scope.js";
 import { getToolList } from "./tools/definitions.js";
 import { WORKFLOW_INSTRUCTIONS, ENGLISH_IMPLEMENTATION_RULE } from './workflow-guidance.js';
@@ -265,7 +265,11 @@ export async function initStartupWorktreeMutex(state, { heartbeat = false } = {}
       if (acquired.ok) {
         acquired.capability._isStartupPlaceholder = true;
         state.bindKernelCapability(acquired.capability);
-        resolveStateFile({ sessionId: state.sessionId, skipMigrationWrites: false });
+        const resolvedStateFile = resolveStateFile({ sessionId: state.sessionId, skipMigrationWrites: false });
+        if (!state._hasExplicitStateFile && resolvedStateFile && resolvedStateFile !== state.stateFile) {
+          state.stateFile = resolvedStateFile;
+          state.historyFile = resolveHistoryFile(resolvedStateFile);
+        }
         writeKernelLockMetadata({
           dir: lockDir,
           capability: acquired.capability,

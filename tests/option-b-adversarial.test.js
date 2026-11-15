@@ -2190,3 +2190,161 @@ test("Adversarial 31 (Cycle 13): ref: without target rejected, skipWrites does n
     }
   });
 });
+
+test("Adversarial 32 (Cycle 14): retireFocusBinding fenced, pendingFocusCleanup preserved/persisted, skipWrites avoids user-id, preflight throw releases mutex, HEAD hex length exact", async () => {
+  await withTempWorkspace(async (base) => {
+    const repoA = await createRepo(base, "adv32-a");
+    const repoB = await createRepo(base, "adv32-b");
+    const stateBase = path.join(base, "state", ".state");
+    const { mkdir, writeFile, rm } = await import("node:fs/promises");
+    const { existsSync } = await import("node:fs");
+    const { resolveCanonicalWorktreeRoot } = await import("../process-lock.js");
+    const {
+      claimFocusBinding,
+      retireFocusBinding,
+      readFocusBinding,
+      resolveStateFile,
+      resolveTargetProjectState,
+    } = await import("../workflow-state.js");
+    await mkdir(stateBase, { recursive: true });
+
+    // 1. 41-char HEAD is rejected by resolveCanonicalWorktreeRoot
+    const badGitRepo = path.join(base, "bad-head-repo");
+    await mkdir(path.join(badGitRepo, ".git"), { recursive: true });
+    await writeFile(path.join(badGitRepo, ".git", "HEAD"), `${"a".repeat(41)}\n`, "utf8");
+    const badRoot = resolveCanonicalWorktreeRoot(badGitRepo);
+    assert.notEqual(badRoot.source, "git-dir", "41-char hex HEAD must not be accepted as valid git HEAD");
+
+    // 2. resolveStateFile({ skipMigrationWrites: true }) and resolveTargetProjectState({ skipWrites: true }) create no user-id
+    const noWriteBase = path.join(base, "nowrite-c14");
+    await mkdir(noWriteBase, { recursive: true });
+    const prevUserId = process.env.DEV_WORKFLOW_USER_ID;
+    const prevStateEnv = process.env.DEV_WORKFLOW_STATE_FILE;
+    delete process.env.DEV_WORKFLOW_USER_ID;
+    process.env.DEV_WORKFLOW_STATE_FILE = path.join(noWriteBase, "workflow-state.json");
+    try {
+      const resolvedFile = resolveStateFile({ skipMigrationWrites: true });
+      assert.equal(existsSync(path.join(noWriteBase, "user-id")), false, "resolveStateFile({ skipMigrationWrites: true }) must not create user-id");
+      resolveTargetProjectState({ stateFile: resolvedFile, projectDir: repoA, skipWrites: true });
+      assert.equal(existsSync(path.join(noWriteBase, "user-id")), false, "resolveTargetProjectState({ skipWrites: true }) must not create user-id");
+    } finally {
+      if (prevUserId !== undefined) process.env.DEV_WORKFLOW_USER_ID = prevUserId;
+      if (prevStateEnv === undefined) delete process.env.DEV_WORKFLOW_STATE_FILE;
+      else process.env.DEV_WORKFLOW_STATE_FILE = prevStateEnv;
+    }
+
+    // 3. retireFocusBinding enforces kernelCapability/requireKernelMutex and projectDir binding match
+    const stateFileA = path.join(stateBase, "projects", "adv32a", "users", "u1", "workflow-state.ses_c14_retire.json");
+    const acqA = await acquireWorktreeMutex({ projectDir: repoA, ownerKey: "ses_c14_retire" });
+    const acqB = await acquireWorktreeMutex({ projectDir: repoB, ownerKey: "ses_c14_retire" });
+    try {
+      const claimRes = await claimFocusBinding({
+        stateFile: stateFileA,
+        focusId: 93201,
+        projectDir: repoA,
+        kernelCapability: acqA.capability,
+        requireKernelMutex: true,
+        expectedOwnerKey: "ses_c14_retire",
+      });
+      assert.equal(claimRes.ok, true);
+
+      await assert.rejects(
+        () =>
+          retireFocusBinding({
+            stateFile: stateFileA,
+            focusId: 93201,
+            projectDir: repoA,
+            requireKernelMutex: true,
+            expectedOwnerKey: "wrong_owner",
+          }),
+        /capability|owner|mutex/i,
+        "retireFocusBinding must reject missing/mismatched capability when requireKernelMutex is true",
+      );
+
+      const wrongProjectRetire = await retireFocusBinding({
+        stateFile: stateFileA,
+        focusId: 93201,
+        projectDir: repoB,
+        kernelCapability: acqB.capability,
+        requireKernelMutex: true,
+        expectedOwnerKey: "ses_c14_retire",
+      });
+      assert.equal(wrongProjectRetire.ok, false);
+      assert.equal(wrongProjectRetire.reason, "FOCUS_BOUND_TO_ANOTHER_PROJECT");
+      assert.ok(readFocusBinding({ stateFile: stateFileA, focusId: 93201 }), "binding must remain intact");
+
+      const okRetire = await retireFocusBinding({
+        stateFile: stateFileA,
+        focusId: 93201,
+        projectDir: repoA,
+        kernelCapability: acqA.capability,
+        requireKernelMutex: true,
+        expectedOwnerKey: "ses_c14_retire",
+      });
+      assert.equal(okRetire.ok, true);
+      assert.equal(okRetire.retired, true);
+    } finally {
+      await releaseWorktreeMutex(acqA.capability);
+      await releaseWorktreeMutex(acqB.capability);
+    }
+
+    // 4. runPreflight throwing (e.g., README.md is a directory) must release targetMutex.capability
+    const readmeDir = path.join(repoA, "README.md");
+    await rm(readmeDir, { recursive: true, force: true });
+    await mkdir(readmeDir, { recursive: true });
+    const prevState4 = process.env.DEV_WORKFLOW_STATE_FILE;
+    process.env.DEV_WORKFLOW_STATE_FILE = path.join(stateBase, "workflow-state.json");
+    try {
+      const wsPreflight = new WorkflowState(
+        path.join(stateBase, "projects", "adv32a", "users", "u1", "workflow-state.ses_c14_preflight.json"),
+        { sessionId: "ses_c14_preflight", requireKernelMutex: true },
+      );
+      await wsPreflight.load();
+      const resPreflight = await handleStartTask(makeStartArgs(repoA, "preflight throw test"), wsPreflight);
+      assert.ok(resPreflight.content[0].text.includes("PREFLIGHT_ERROR") || resPreflight.content[0].text.includes("Task not started"));
+      const verifyUnlocked = await acquireWorktreeMutex({ projectDir: repoA, ownerKey: "ses_c14_other" });
+      assert.equal(verifyUnlocked.ok, true, "mutex must not leak if runPreflight throws");
+      await releaseWorktreeMutex(verifyUnlocked.capability);
+    } finally {
+      await rm(readmeDir, { recursive: true, force: true });
+      if (prevState4 === undefined) delete process.env.DEV_WORKFLOW_STATE_FILE;
+      else process.env.DEV_WORKFLOW_STATE_FILE = prevState4;
+    }
+
+    // 5. pendingFocusCleanup persists across rollback and survives reset() if retry fails
+    const prevState5 = process.env.DEV_WORKFLOW_STATE_FILE;
+    process.env.DEV_WORKFLOW_STATE_FILE = path.join(stateBase, "workflow-state.json");
+    try {
+      const wsCleanup = new WorkflowState(
+        path.join(stateBase, "projects", "adv32b", "users", "u1", "workflow-state.ses_c14_cleanup.json"),
+        { sessionId: "ses_c14_cleanup", requireKernelMutex: true },
+      );
+      await wsCleanup.load();
+      const acqCleanup = await acquireWorktreeMutex({ projectDir: repoB, ownerKey: "ses_c14_cleanup" });
+      wsCleanup.bindKernelCapability(acqCleanup.capability);
+      wsCleanup.state.pendingFocusCleanup = {
+        focusId: 93202,
+        stateFile: wsCleanup.stateFile,
+        projectDir: repoB,
+        error: "SIMULATED_PRIOR_CLEANUP_FAILURE",
+        failedAt: new Date().toISOString(),
+      };
+      await claimFocusBinding({
+        stateFile: wsCleanup.stateFile,
+        focusId: 93202,
+        projectDir: repoA,
+      });
+      await releaseWorktreeMutex(acqCleanup.capability);
+
+      const resCleanup = await handleStartTask(makeStartArgs(repoB, "retry cleanup survives reset"), wsCleanup);
+      assert.ok(!resCleanup.content[0].text.includes("Refused"), "task should start even if pending cleanup still blocked");
+      assert.ok(
+        wsCleanup.state.pendingFocusCleanup && wsCleanup.state.pendingFocusCleanup.focusId === 93202,
+        "pendingFocusCleanup must survive reset() when retry fails",
+      );
+    } finally {
+      if (prevState5 === undefined) delete process.env.DEV_WORKFLOW_STATE_FILE;
+      else process.env.DEV_WORKFLOW_STATE_FILE = prevState5;
+    }
+  });
+});

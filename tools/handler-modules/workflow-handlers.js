@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { classify } from '../../security/policy.js';
 import { sanitize } from '../../security/sanitizer.js';
 import { textResponse, isReleaseSatisfied, isErrorResponse, ensurePrdExists, loadDocGateInputs } from "./shared.js";
@@ -291,6 +292,7 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
   const targetResolution = resolveTargetProjectState({
     stateFile: workflowState.stateFile,
     projectDir: project.dir,
+    skipWrites: true,
   });
   const targetStateFile = targetResolution.stateFile;
   const targetLockDir = projectLockDir(targetStateFile);
@@ -520,34 +522,36 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
   const projectsParent = path.dirname(targetLockDir);
   if (path.basename(projectsParent) === "projects") {
     const stateBase = path.dirname(projectsParent);
-    const quiescence = verifyLegacyFleetQuiescence({
-      baseDir: stateBase,
-      isAlive: currentIsAlive(),
-    });
-    if (quiescence.inspectionErrors && quiescence.inspectionErrors.length > 0) {
-      if (!targetMutex.alreadyHeld) {
-        await releaseWorktreeMutex(targetMutex.capability);
+    if (existsSync(stateBase)) {
+      const quiescence = verifyLegacyFleetQuiescence({
+        baseDir: stateBase,
+        isAlive: currentIsAlive(),
+      });
+      if (quiescence.inspectionErrors && quiescence.inspectionErrors.length > 0) {
+        if (!targetMutex.alreadyHeld) {
+          await releaseWorktreeMutex(targetMutex.capability);
+        }
+        const errItem = quiescence.inspectionErrors[0];
+        return textResponse(
+          `⚠️ Dibatalkan: pemeriksaan quiescence gagal secara tertutup ` +
+            `(${errItem.reason || errItem.error || "QUIESCENCE_INSPECTION_FAILED"}).\n\n` +
+            `Direktori atau metadata kunci tidak dapat diperiksa secara utuh (fail-closed).\n` +
+            `Task BELUM dimulai; tidak ada state yang diubah.`
+        );
       }
-      const errItem = quiescence.inspectionErrors[0];
-      return textResponse(
-        `⚠️ Dibatalkan: pemeriksaan quiescence gagal secara tertutup ` +
-          `(${errItem.reason || errItem.error || "QUIESCENCE_INSPECTION_FAILED"}).\n\n` +
-          `Direktori atau metadata kunci tidak dapat diperiksa secara utuh (fail-closed).\n` +
-          `Task BELUM dimulai; tidak ada state yang diubah.`
-      );
-    }
-    if (quiescence.legacyWriters.length > 0) {
-      if (!targetMutex.alreadyHeld) {
-        await releaseWorktreeMutex(targetMutex.capability);
+      if (quiescence.legacyWriters.length > 0) {
+        if (!targetMutex.alreadyHeld) {
+          await releaseWorktreeMutex(targetMutex.capability);
+        }
+        const w = quiescence.legacyWriters[0];
+        return textResponse(
+          `⚠️ Dibatalkan: terdeteksi penulis protokol lama (legacy v1) yang masih hidup pada proyek ini ` +
+            `(PID ${w.pid || "tidak diketahui"}).\n\n` +
+            `Option B menolak bekerja berdampingan dengan proses lama yang belum memegang mutex kernel OS.\n` +
+            `Restart klien MCP lama terlebih dahulu sebelum memulai task di working tree ini.\n\n` +
+            `Task BELUM dimulai; tidak ada state yang diubah.`
+        );
       }
-      const w = quiescence.legacyWriters[0];
-      return textResponse(
-        `⚠️ Dibatalkan: terdeteksi penulis protokol lama (legacy v1) yang masih hidup pada proyek ini ` +
-          `(PID ${w.pid || "tidak diketahui"}).\n\n` +
-          `Option B menolak bekerja berdampingan dengan proses lama yang belum memegang mutex kernel OS.\n` +
-          `Restart klien MCP lama terlebih dahulu sebelum memulai task di working tree ini.\n\n` +
-          `Task BELUM dimulai; tidak ada state yang diubah.`
-      );
     }
   }
 
@@ -566,11 +570,21 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
   // own instructions and documented CLI entrypoints. The record is persisted
   // with the task so resume_session can revalidate it and the scope guard can
   // compare against it. Documents are untrusted content; nothing is executed.
-  const preflight = runPreflight({
-    projectDir: project.dir,
-    taskId: workflowState.state.workflowTaskId || "",
-    taskDescription: args.description,
-  });
+  let preflight;
+  try {
+    preflight = runPreflight({
+      projectDir: project.dir,
+      taskId: workflowState.state.workflowTaskId || "",
+      taskDescription: args.description,
+    });
+  } catch (err) {
+    if (!targetMutex.alreadyHeld) {
+      await releaseWorktreeMutex(targetMutex.capability);
+    }
+    return textResponse(
+      `⚠️ Task not started: PREFLIGHT_ERROR (${err?.message || String(err)}). The project directory could not be read as a repository root.`
+    );
+  }
   if (!preflight.ok) {
     if (!targetMutex.alreadyHeld) {
       await releaseWorktreeMutex(targetMutex.capability);
@@ -603,6 +617,68 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
   let claimedNewFocus = false;
   let sqliteCommitted = false;
   const warnings = [];
+
+  const rollbackPreCommit = async (reason) => {
+    let focusRollbackError = null;
+    if (claimedNewFocus && hasRequestedFocus) {
+      try {
+        const retireRes = await retireFocusBinding({
+          stateFile: targetStateFile,
+          focusId: requestedFocusId,
+          projectDir: project.dir,
+          repoKey: requestedRepoKey,
+          reason,
+          kernelCapability: targetMutex.capability,
+          requireKernelMutex: true,
+          expectedOwnerKey: sessionOwnerKey,
+        });
+        if (!retireRes || retireRes.ok === false) {
+          focusRollbackError = retireRes?.reason || retireRes?.error || "RETIRE_FOCUS_FAILED";
+        }
+      } catch (err) {
+        focusRollbackError = err?.message || String(err);
+      }
+    }
+    if (workflowState.stateFile !== priorStateFile && typeof workflowState.close === "function") {
+      try {
+        await workflowState.close();
+      } catch {}
+    }
+    workflowState.state = priorStateSnapshot;
+    workflowState.stateFile = priorStateFile;
+    workflowState.historyFile = priorHistoryFile;
+    workflowState.stateVersion = priorStateVersion;
+    workflowState.loadedTask = priorLoadedTask;
+    if (focusRollbackError) {
+      workflowState.state.pendingFocusCleanup = {
+        focusId: requestedFocusId,
+        stateFile: targetStateFile,
+        projectDir: project.dir,
+        error: focusRollbackError,
+        failedAt: new Date().toISOString(),
+      };
+      const rollbackCap = priorStateFile === targetStateFile ? targetMutex.capability : priorKernelCapability;
+      if (rollbackCap && typeof workflowState.save === "function") {
+        try {
+          if (typeof workflowState.bindKernelCapability === "function") {
+            workflowState.bindKernelCapability(rollbackCap);
+          }
+          await workflowState.save({ operation: "pending_focus_cleanup_persist" });
+        } catch {
+          // Best-effort persistence: in-memory pendingFocusCleanup remains set.
+        }
+      }
+    }
+    if (typeof workflowState.bindKernelCapability === "function") {
+      workflowState.bindKernelCapability(priorKernelCapability);
+    }
+    workflowState.requireKernelMutex = priorRequireKernelMutex;
+    setActiveProjectDir(priorActiveProjectDir);
+    if (!targetMutex.alreadyHeld) {
+      await releaseWorktreeMutex(targetMutex.capability);
+    }
+    return focusRollbackError;
+  };
 
   try {
     if (typeof workflowState.bindKernelCapability === "function") {
@@ -694,8 +770,12 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
           zettly: workflowState.state.zettly,
           taskOrigin: workflowState.state.taskOrigin,
         };
+        const remainingPendingFocusCleanup = workflowState.state?.pendingFocusCleanup || null;
         const resetResult = workflowState.reset({ archive: true });
         archivedTask = resetResult.archivedTask;
+        if (remainingPendingFocusCleanup) {
+          workflowState.state.pendingFocusCleanup = remainingPendingFocusCleanup;
+        }
 
         workflowState.state.currentPhase = "coding";
         workflowState.state.taskStartedAt = new Date().toISOString();
@@ -822,42 +902,7 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
     );
 
     if (committed?.refusedResponse) {
-      let focusRollbackError = null;
-      if (claimedNewFocus && hasRequestedFocus) {
-        try {
-          const retireRes = await retireFocusBinding({
-            stateFile: targetStateFile,
-            focusId: requestedFocusId,
-            reason: "rollback_on_transition_refusal",
-          });
-          if (!retireRes || retireRes.ok === false) {
-            focusRollbackError = retireRes?.reason || retireRes?.error || "RETIRE_FOCUS_FAILED";
-          }
-        } catch (err) {
-          focusRollbackError = err?.message || String(err);
-        }
-      }
-      workflowState.state = priorStateSnapshot;
-      if (focusRollbackError) {
-        workflowState.state.pendingFocusCleanup = {
-          focusId: requestedFocusId,
-          stateFile: targetStateFile,
-          error: focusRollbackError,
-          failedAt: new Date().toISOString(),
-        };
-      }
-      workflowState.stateFile = priorStateFile;
-      workflowState.historyFile = priorHistoryFile;
-      workflowState.stateVersion = priorStateVersion;
-      workflowState.loadedTask = priorLoadedTask;
-      if (typeof workflowState.bindKernelCapability === "function") {
-        workflowState.bindKernelCapability(priorKernelCapability);
-      }
-      workflowState.requireKernelMutex = priorRequireKernelMutex;
-      setActiveProjectDir(priorActiveProjectDir);
-      if (!targetMutex.alreadyHeld) {
-        await releaseWorktreeMutex(targetMutex.capability);
-      }
+      await rollbackPreCommit("rollback_on_transition_refusal");
       return committed.refusedResponse;
     }
 
@@ -972,47 +1017,7 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
       }
     } else {
       // Pre-commit failure: restore in-memory state cleanly; prior SQLite state & DoD evidence were not overwritten.
-      let focusRollbackError = null;
-      if (claimedNewFocus && hasRequestedFocus) {
-        try {
-          const retireRes = await retireFocusBinding({
-            stateFile: targetStateFile,
-            focusId: requestedFocusId,
-            reason: "rollback_on_transition_failure",
-          });
-          if (!retireRes || retireRes.ok === false) {
-            focusRollbackError = retireRes?.reason || retireRes?.error || "RETIRE_FOCUS_FAILED";
-          }
-        } catch (err) {
-          focusRollbackError = err?.message || String(err);
-        }
-      }
-      if (workflowState.stateFile !== priorStateFile && typeof workflowState.close === "function") {
-        try {
-          await workflowState.close();
-        } catch {}
-      }
-      workflowState.state = priorStateSnapshot;
-      if (focusRollbackError) {
-        workflowState.state.pendingFocusCleanup = {
-          focusId: requestedFocusId,
-          stateFile: targetStateFile,
-          error: focusRollbackError,
-          failedAt: new Date().toISOString(),
-        };
-      }
-      workflowState.stateFile = priorStateFile;
-      workflowState.historyFile = priorHistoryFile;
-      workflowState.stateVersion = priorStateVersion;
-      workflowState.loadedTask = priorLoadedTask;
-      if (typeof workflowState.bindKernelCapability === "function") {
-        workflowState.bindKernelCapability(priorKernelCapability);
-      }
-      workflowState.requireKernelMutex = priorRequireKernelMutex;
-      setActiveProjectDir(priorActiveProjectDir);
-      if (!targetMutex.alreadyHeld) {
-        await releaseWorktreeMutex(targetMutex.capability);
-      }
+      const focusRollbackError = await rollbackPreCommit("rollback_on_transition_failure");
 
       if (focusRollbackError) {
         return textResponse(
