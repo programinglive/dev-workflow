@@ -17,7 +17,7 @@ export async function handleAcknowledgeInstructions(args, workflowState) {
 
   const fingerprint = typeof args.fingerprint === "string" ? args.fingerprint.trim() : "";
   const scope = typeof args.scope === "string" ? args.scope.trim() : "";
-  const expectedFingerprint = record.readme?.fingerprint || "";
+  const expectedFingerprint = record.preflightFingerprint || record.readme?.fingerprint || "";
   const expectedScope = record.projectRoot || "";
 
   if (!fingerprint || fingerprint !== expectedFingerprint) {

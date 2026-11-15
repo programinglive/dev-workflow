@@ -697,7 +697,8 @@ export async function handleStartTask(args, workflowState, git, zettlyOptions = 
     const summary = record.instructionSummary?.text
       ? `\n\n   ${record.instructionSummary.text.split("\n").join("\n   ")}`
       : "";
-    return `\n\n📖 Preflight (bounded, read-only):\n   ${readme}\n   ${agents}\n   ${cli}${summary}\n   Evidence: ${record.preflightAt} · ${record.verification}`;
+    const fingerprint = record.preflightFingerprint || record.readme?.fingerprint || "n/a";
+    return `\n\n📖 Preflight (bounded, read-only):\n   ${readme}\n   ${agents}\n   ${cli}${summary}\n   Fingerprint: ${fingerprint}\n   Evidence: ${record.preflightAt} · ${record.verification}`;
   })();
 
   return textResponse(

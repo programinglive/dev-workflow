@@ -293,6 +293,15 @@ export function runPreflight({ projectDir, taskId = "", taskDescription = "" } =
     agentGuidanceMissing: agents.length === 0,
     cli: discoverCli(root),
     instructionSummary: summarizeInstructions({ projectDir: root, taskDescription }),
+    // Stable identity of the guidance this task was started with. It works even
+    // when the repository has no README, so acknowledgment is always possible.
+    preflightFingerprint: fingerprint(
+      JSON.stringify({
+        root,
+        readme: readmePath ? fingerprint(readmeDoc.text) : null,
+        agents: agents.map((agent) => agent.fingerprint),
+      })
+    ),
     preflightAt: new Date().toISOString(),
     verification: "PREFLIGHT_RECORDED",
   };

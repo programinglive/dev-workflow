@@ -291,10 +291,6 @@ async function handleRunFullWorkflow(args, { workflowState, exec, git, utils }) 
         {
           commitMessage: args.commitMessage,
           branch: requestedBranch,
-          // The single-call workflow is itself an explicit acknowledgment of
-          // the recorded instructions; the agent cannot interleave a separate
-          // acknowledge_instructions call inside it.
-          _fromFullWorkflow: true,
         },
         { workflowState, exec, git, utils },
       ]);
