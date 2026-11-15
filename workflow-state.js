@@ -720,14 +720,57 @@ async function ensureCompatibilityLinks(primaryPath) {
  * `CallToolRequest.params._meta["ai.opencode/sessionID"]`. Itu sumber utama
  * sekarang; env tetap dibaca sebagai cadangan untuk tes dan pemanggil lain.
  */
-export const SESSION_META_KEY = "ai.opencode/sessionID";
+/**
+ * The session-identity metadata key each real client sends.
+ *
+ * Captured from the installed clients, not guessed:
+ *   - OpenCode    `ai.opencode/sessionID`
+ *   - Codex       `sessionId` (with `threadId` as the same value)
+ *   - Antigravity `antigravity.google/conversation_id`
+ *
+ * A client that sends none of these is refused for a session-scoped tool. The
+ * keys are per client so one client's identity can never stand in for another's.
+ */
+export const SESSION_META_KEYS = {
+  opencode: ["ai.opencode/sessionID"],
+  codex: ["sessionId", "threadId"],
+  antigravity: ["antigravity.google/conversation_id", "antigravity.google/root_conversation_id"],
+};
 
-/** Mengambil identitas sesi dari request metadata MCP, atau null. */
-export function sessionKeyFromRequest(request) {
-  const value = request?.params?._meta?.[SESSION_META_KEY];
+// A session key becomes a file name and a database key, so it is restricted to
+// a conservative charset. Anything else is refused rather than sanitised: a
+// value that needs cleaning is not a value we should trust.
+const SESSION_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
+
+function normalizeSessionKey(value) {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
-  return trimmed === "" ? null : trimmed;
+  if (!SESSION_KEY_PATTERN.test(trimmed)) return null;
+  return trimmed;
+}
+
+/**
+ * The session identity a request carries, or null.
+ *
+ * `agent` scopes which keys are accepted. `device-entry.cjs` sets DEVWF_AGENT
+ * for each client, so a Codex server does not accept an Antigravity
+ * conversation id even if one is present. An unknown agent accepts any known
+ * key, which keeps a directly launched server working.
+ */
+export function sessionKeyFromRequest(request, { agent = process.env.DEVWF_AGENT } = {}) {
+  const meta = request?.params?._meta;
+  if (!meta || typeof meta !== "object") return null;
+  const scoped = SESSION_META_KEYS[String(agent || "").toLowerCase()];
+  const keys = scoped || [
+    ...SESSION_META_KEYS.opencode,
+    ...SESSION_META_KEYS.antigravity,
+    ...SESSION_META_KEYS.codex,
+  ];
+  for (const key of keys) {
+    const normalized = normalizeSessionKey(meta[key]);
+    if (normalized) return normalized;
+  }
+  return null;
 }
 
 /**

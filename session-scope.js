@@ -19,6 +19,8 @@
 
 import { sessionKeyFromRequest } from "./workflow-state.js";
 
+export { sessionKeyFromRequest };
+
 /**
  * Tools that are safe to run without a verified MCP session identity.
  *
