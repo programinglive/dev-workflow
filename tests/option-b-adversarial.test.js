@@ -866,7 +866,7 @@ test("Adversarial 16 (F1): pinSessionProject, writeKernelLockMetadata, and Workf
     const stateBase = path.join(base, "state");
     process.env.DEV_WORKFLOW_STATE_FILE = path.join(stateBase, "workflow-state.json");
     const makeStateFile = (r, sid) =>
-      path.join(stateBase, "projects", projectKey(canonicalProjectPath(r)), "users", sid, `workflow-state-${sid}.json`);
+      path.join(stateBase, "projects", projectKey(canonicalProjectPath(r)), "users", sid, `workflow-state.${sid}.json`);
     const stateFileA = makeStateFile(repoA, "ses_A");
     const stateFileB = makeStateFile(repoA, "ses_B");
     const keyA = resolveSessionKey(process.env, "ses_A");
@@ -973,7 +973,7 @@ test("Adversarial 17 (F2): overlapping rollbackTransitionJournal calls cannot sh
       projectKey(canonicalProjectPath(repo)),
       "users",
       "ses_rec_overlap",
-      "workflow-state-ses_rec_overlap.json",
+      "workflow-state.ses_rec_overlap.json",
     );
     const ws = new WorkflowState(stateFile, { sessionId: "ses_rec_overlap" });
     await ws.load();
@@ -1033,7 +1033,7 @@ test("Adversarial 18 (F3): post-commit _exportJson() === false is accounted as f
       projectKey(canonicalProjectPath(repo)),
       "users",
       "ses_proj_fail",
-      "workflow-state-ses_proj_fail.json",
+      "workflow-state.ses_proj_fail.json",
     );
     const ws = new WorkflowState(stateFile, { sessionId: "ses_proj_fail" });
     await ws.load();
@@ -1075,6 +1075,180 @@ test("Adversarial 18 (F3): post-commit _exportJson() === false is accounted as f
     assert.equal(ws.state.pendingProjectionRepair, null);
 
     await releaseWorktreeMutex(ws.boundKernelCapability);
+    await ws.close();
+  });
+});
+
+test("Adversarial 19 (R1): load() with legacy JSON and requireKernelMutex=true fails closed without live capability and fences adoption when held", async () => {
+  await withTempWorkspace(async (base) => {
+    const repo = await createRepo(base, "repo-r1");
+    const stateBase = path.join(base, "state");
+    process.env.DEV_WORKFLOW_STATE_FILE = path.join(stateBase, "workflow-state.json");
+
+    const { resolveSessionKey } = await import("../workflow-state.js");
+    const stateFile = path.join(
+      stateBase,
+      "projects",
+      projectKey(canonicalProjectPath(repo)),
+      "users",
+      "ses_r1",
+      "workflow-state.ses_r1.json",
+    );
+    await mkdir(path.dirname(stateFile), { recursive: true });
+    await writeFile(
+      stateFile,
+      JSON.stringify({
+        currentPhase: "coding",
+        taskDescription: "Legacy JSON task",
+        projectDir: repo,
+      }),
+      "utf8",
+    );
+
+    // When another session holds the worktree mutex, load() with legacy JSON must fail closed
+    const otherAcq = await acquireWorktreeMutex({
+      projectDir: repo,
+      ownerKey: resolveSessionKey(process.env, "ses_other_owner"),
+    });
+    assert.equal(otherAcq.ok, true);
+    const wsUnfenced = new WorkflowState(stateFile, { sessionId: "ses_r1" });
+    wsUnfenced.requireKernelMutex = true;
+    try {
+      await assert.rejects(
+        () => wsUnfenced.load(),
+        (err) => err instanceof ProjectOwnershipLostError || err?.code === "PROJECT_OWNERSHIP_LOST",
+      );
+    } finally {
+      await wsUnfenced.close();
+      await releaseWorktreeMutex(otherAcq.capability);
+    }
+
+    const acq = await acquireWorktreeMutex({
+      projectDir: repo,
+      ownerKey: resolveSessionKey(process.env, "ses_r1"),
+    });
+    assert.equal(acq.ok, true);
+    const wsFenced = new WorkflowState(stateFile, { sessionId: "ses_r1" });
+    wsFenced.bindKernelCapability(acq.capability);
+    try {
+      await wsFenced.load();
+      assert.equal(wsFenced.state.taskDescription, "Legacy JSON task");
+    } finally {
+      await wsFenced.close();
+      await releaseWorktreeMutex(acq.capability);
+    }
+  });
+});
+
+test("Adversarial 20 (R2): pinSessionProject rejects expectedOwnerKey override and newer pointer overwrite", async () => {
+  await withTempWorkspace(async (base) => {
+    const repo = await createRepo(base, "repo-r2");
+    const stateBase = path.join(base, "state");
+    process.env.DEV_WORKFLOW_STATE_FILE = path.join(stateBase, "workflow-state.json");
+
+    const { resolveSessionKey } = await import("../workflow-state.js");
+    const keyS1 = resolveSessionKey(process.env, "ses_s1");
+    const keyS2 = resolveSessionKey(process.env, "ses_s2");
+    const stateFileS2 = path.join(
+      stateBase,
+      "projects",
+      projectKey(canonicalProjectPath(repo)),
+      "users",
+      "ses_s2",
+      "workflow-state.ses_s2.json",
+    );
+
+    const acq1 = await acquireWorktreeMutex({ projectDir: repo, ownerKey: keyS1 });
+    assert.equal(acq1.ok, true);
+    try {
+      assert.throws(
+        () =>
+          pinSessionProject({
+            stateFile: stateFileS2,
+            projectDir: repo,
+            kernelCapability: acq1.capability,
+            requireKernelMutex: true,
+            expectedOwnerKey: keyS1,
+          }),
+        (err) => err instanceof ProjectOwnershipLostError || err?.code === "PROJECT_OWNERSHIP_LOST",
+      );
+    } finally {
+      await releaseWorktreeMutex(acq1.capability);
+    }
+
+    // Newer pointer protection: write pointer with newer capability, then older capability cannot overwrite it
+    const acqOld = await acquireWorktreeMutex({ projectDir: repo, ownerKey: keyS2 });
+    assert.equal(acqOld.ok, true);
+    acqOld.capability.acquiredAt = Date.now() - 60000;
+    const ptrDir = path.join(stateBase, "sessions");
+    await mkdir(ptrDir, { recursive: true });
+    await writeFile(
+      path.join(ptrDir, `${keyS2}.json`),
+      JSON.stringify({
+        projectDir: repo,
+        ownerKey: keyS2,
+        leaseId: "newer-lease-id",
+        updatedAtMs: Date.now() + 10000,
+      }),
+      "utf8",
+    );
+    try {
+      const staleRes = pinSessionProject({
+        stateFile: stateFileS2,
+        projectDir: repo,
+        kernelCapability: acqOld.capability,
+        requireKernelMutex: true,
+      });
+      assert.equal(staleRes.ok, false);
+      assert.equal(staleRes.error, "superseded_by_newer_pointer");
+    } finally {
+      await releaseWorktreeMutex(acqOld.capability);
+    }
+  });
+});
+
+test("Adversarial 21 (R3): pre-commit focus rollback failure records pendingFocusCleanup and reports incomplete rollback", async () => {
+  await withTempWorkspace(async (base) => {
+    const repo = await createRepo(base, "repo-r3");
+    const stateBase = path.join(base, "state");
+    process.env.DEV_WORKFLOW_STATE_FILE = path.join(stateBase, "workflow-state.json");
+
+    const stateFile = path.join(
+      stateBase,
+      "projects",
+      projectKey(canonicalProjectPath(repo)),
+      "users",
+      "ses_r3",
+      "workflow-state.ses_r3.json",
+    );
+    const ws = new WorkflowState(stateFile, { sessionId: "ses_r3" });
+    await ws.load();
+
+    // Hold focus-991.lock so retireFocusBinding fails when pre-commit transition throws
+    const lockDir = path.join(stateBase, "sessions");
+    await mkdir(lockDir, { recursive: true });
+    const res = await handleStartTask(
+      { ...makeStartArgs(repo, "Pre-commit focus rollback failure test"), focusId: 991 },
+      ws,
+      null,
+      {
+        transitionHooks: {
+          afterClaimFocus: async () => {
+            await writeFile(
+              path.join(lockDir, "focus-991.lock"),
+              JSON.stringify({ pid: process.pid, createdAt: Date.now() }),
+              "utf8",
+            );
+            throw new Error("SIMULATED_PRE_COMMIT_FAILURE");
+          },
+        },
+      },
+    );
+
+    const out = res?.content?.[0]?.text || "";
+    assert.match(out, /TIDAK LENGKAP|pendingFocusCleanup/i);
+    assert.ok(ws.state.pendingFocusCleanup, "pendingFocusCleanup must be recorded when retireFocusBinding fails");
+    assert.equal(ws.state.pendingFocusCleanup.focusId, 991);
     await ws.close();
   });
 });

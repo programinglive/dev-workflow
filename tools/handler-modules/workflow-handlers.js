@@ -1,4 +1,5 @@
 import { classify } from '../../security/policy.js';
+import { sanitize } from '../../security/sanitizer.js';
 import { textResponse, isReleaseSatisfied, isErrorResponse, ensurePrdExists, loadDocGateInputs } from "./shared.js";
 import { validateItemTexts } from "./dod.js";
 import {
@@ -641,6 +642,7 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
           }
           workflowState.stateFile = targetStateFile;
           workflowState.historyFile = resolveHistoryFile(targetStateFile);
+          workflowState.state.projectDir = project.dir;
           await workflowState.load();
         }
 
@@ -778,16 +780,30 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
     );
 
     if (committed?.refusedResponse) {
+      let focusRollbackError = null;
       if (claimedNewFocus && hasRequestedFocus) {
         try {
-          await retireFocusBinding({
+          const retireRes = await retireFocusBinding({
             stateFile: targetStateFile,
             focusId: requestedFocusId,
             reason: "rollback_on_transition_refusal",
           });
-        } catch {}
+          if (!retireRes || retireRes.ok === false) {
+            focusRollbackError = retireRes?.reason || retireRes?.error || "RETIRE_FOCUS_FAILED";
+          }
+        } catch (err) {
+          focusRollbackError = err?.message || String(err);
+        }
       }
       workflowState.state = priorStateSnapshot;
+      if (focusRollbackError) {
+        workflowState.state.pendingFocusCleanup = {
+          focusId: requestedFocusId,
+          stateFile: targetStateFile,
+          error: focusRollbackError,
+          failedAt: new Date().toISOString(),
+        };
+      }
       workflowState.stateFile = priorStateFile;
       workflowState.historyFile = priorHistoryFile;
       workflowState.stateVersion = priorStateVersion;
@@ -869,11 +885,11 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
         await releaseWorktreeMutex(priorKernelCapability);
       }
       if (repairErrors.length > 0) {
-        workflowState.state.pendingProjectionRepair = {
+        workflowState.state.pendingProjectionRepair = sanitize({
           failedAt: new Date().toISOString(),
           triggerError: transitionError?.message || String(transitionError),
           repairErrors,
-        };
+        });
         warnings.push(
           `⚠️ Authoritative SQLite task commit succeeded and was preserved, but post-commit projection repair is PENDING ` +
             `(trigger: ${transitionError?.message || String(transitionError)}; repairErrors: ${repairErrors.join(", ")}).`
@@ -887,14 +903,20 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
       }
     } else {
       // Pre-commit failure: restore in-memory state cleanly; prior SQLite state & DoD evidence were not overwritten.
+      let focusRollbackError = null;
       if (claimedNewFocus && hasRequestedFocus) {
         try {
-          await retireFocusBinding({
+          const retireRes = await retireFocusBinding({
             stateFile: targetStateFile,
             focusId: requestedFocusId,
             reason: "rollback_on_transition_failure",
           });
-        } catch {}
+          if (!retireRes || retireRes.ok === false) {
+            focusRollbackError = retireRes?.reason || retireRes?.error || "RETIRE_FOCUS_FAILED";
+          }
+        } catch (err) {
+          focusRollbackError = err?.message || String(err);
+        }
       }
       if (workflowState.stateFile !== priorStateFile && typeof workflowState.close === "function") {
         try {
@@ -902,6 +924,14 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
         } catch {}
       }
       workflowState.state = priorStateSnapshot;
+      if (focusRollbackError) {
+        workflowState.state.pendingFocusCleanup = {
+          focusId: requestedFocusId,
+          stateFile: targetStateFile,
+          error: focusRollbackError,
+          failedAt: new Date().toISOString(),
+        };
+      }
       workflowState.stateFile = priorStateFile;
       workflowState.historyFile = priorHistoryFile;
       workflowState.stateVersion = priorStateVersion;
@@ -913,6 +943,15 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
       setActiveProjectDir(priorActiveProjectDir);
       if (!targetMutex.alreadyHeld) {
         await releaseWorktreeMutex(targetMutex.capability);
+      }
+
+      if (focusRollbackError) {
+        return textResponse(
+          `⚠️ Dibatalkan sebelum komit SQLite (${transitionError?.message || String(transitionError)}), ` +
+            `namun pembersihan ikatan focus #${requestedFocusId} GAGAL (${focusRollbackError}) — rollback TIDAK LENGKAP.\n\n` +
+            `State workflow dan penunjuk sesi sebelumnya telah dipulihkan serta bukti pembersihan tertunda ` +
+            `(pendingFocusCleanup) telah dicatat.`
+        );
       }
 
       return textResponse(

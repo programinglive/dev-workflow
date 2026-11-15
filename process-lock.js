@@ -603,7 +603,7 @@ export function writeKernelLockMetadata({
           existingTs > capTs &&
           Number(existing.pid) > 0 &&
           Number(existing.pid) !== process.pid &&
-          isPidAlive(Number(existing.pid))
+          currentIsAlive()(Number(existing.pid))
         ) {
           return { ok: false, wrote: false, error: "superseded_by_newer_owner" };
         }
