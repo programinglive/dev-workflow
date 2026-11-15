@@ -239,19 +239,14 @@ Use 'check_ready_to_commit' to verify workflow completion.
 /**
  * The shared state root that contains `projects/` and `sessions/`.
  *
- * `projectLockDir()` returns `<state>/projects/<projectKey>`. A caller that
- * passed the bucket's parent instead would scan only one project and miss every
- * sibling lock plus the shared transition journals.
+ * `projectLockDir()` returns `<state>/projects/<projectKey>`, so only that
+ * exact shape identifies the root. A looser "any ancestor named projects" rule
+ * would resolve a checkout that happens to live under `D:\projects\...` to
+ * the drive root and scan the wrong tree.
  */
 function sharedStateRoot(lockDir) {
-  let probe = path.resolve(lockDir);
-  const { root } = path.parse(probe);
-  while (true) {
-    if (path.basename(probe) === "projects") return path.dirname(probe);
-    const parent = path.dirname(probe);
-    if (parent === probe || probe === root) return null;
-    probe = parent;
-  }
+  const parent = path.dirname(path.resolve(lockDir));
+  return path.basename(parent) === "projects" ? path.dirname(parent) : null;
 }
 
 export async function initStartupWorktreeMutex(state, { heartbeat = false } = {}) {

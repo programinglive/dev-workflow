@@ -1765,6 +1765,26 @@ export function pinSessionProject({
         return;
       }
 
+      // A session whose key looks like a focus id (`focus-42`) shares the
+      // legacy flat filename with Focus 42's pre-upgrade binding. Move that
+      // binding into the nested layout first, otherwise this pointer write
+      // would silently erase it and free the focus for another project.
+      const strandedBinding = readFocusBindingRecord(ptrFile);
+      if (strandedBinding) {
+        const nested = focusBindingPath(baseDir, strandedBinding.focusId ?? 0);
+        if (strandedBinding.focusId) {
+          mkdirSync(path.dirname(nested), { recursive: true });
+          try {
+            renameSync(ptrFile, nested);
+          } catch {
+            // If the move fails, refuse to overwrite the binding.
+            throw new Error("FOCUS_BINDING_MIGRATION_FAILED");
+          }
+        } else {
+          throw new Error("FOCUS_BINDING_MIGRATION_FAILED");
+        }
+      }
+
       const tmpFile = `${ptrFile}.tmp.${process.pid}.${nowMs}`;
       writeFileSync(tmpFile, JSON.stringify(payload, null, 2), "utf8");
       renameSync(tmpFile, ptrFile);
@@ -2152,8 +2172,21 @@ export async function retireFocusBinding({
       validateRetireCap();
       const target = focusBindingPath(baseDir, id);
       const legacyTarget = legacyFocusBindingPath(baseDir, id);
-      const existing =
-        readFocusBindingRecord(target) || readFocusBindingRecord(legacyTarget);
+      const nestedRecord = readFocusBindingRecord(target);
+      const legacyRecord = readFocusBindingRecord(legacyTarget);
+
+      // Two records for one focus that name different projects is a conflict,
+      // not a merge: acting on one of them would let the other project's claim
+      // be deleted by a retirement authorized only for this one.
+      if (nestedRecord && legacyRecord) {
+        const nestedKey = nestedRecord.repoKey || normalizeRepoPathForBinding(nestedRecord.projectDir);
+        const legacyKey = legacyRecord.repoKey || normalizeRepoPathForBinding(legacyRecord.projectDir);
+        if (nestedKey !== legacyKey) {
+          return { ok: false, existing: nestedRecord, reason: "FOCUS_BINDING_CONFLICT" };
+        }
+      }
+
+      const existing = nestedRecord || legacyRecord;
       if (!existing) return { ok: true, retired: false, reason: "NOT_BOUND" };
 
       const requestedDir = projectDir ? path.resolve(String(projectDir)) : "";
@@ -2197,6 +2230,11 @@ export async function retireFocusBinding({
           } catch {
             // already gone
           }
+        }
+        // Report honestly: a file that is still readable after the unlink
+        // attempts means the binding is still active.
+        if (readFocusBindingRecord(target) || readFocusBindingRecord(legacyTarget)) {
+          return { ok: false, existing, reason: "RETIRE_FAILED" };
         }
         return {
           ok: true,
