@@ -1,2 +1,10 @@
 #!/usr/bin/env sh
-# Pre-commit hook - tests are run only during release
+# Pre-commit hook.
+#
+# Tests run during release, but the English-only engineering policy is cheap and
+# deterministic, so it runs here too. The same command is the CI lint gate, so a
+# violation cannot reach main through a client that skips hooks.
+node scripts/check-english.mjs || {
+  echo "Commit blocked: Indonesian engineering text found. See the report above." >&2
+  exit 1
+}

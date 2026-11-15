@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm, mkdir } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -24,7 +25,8 @@ async function withState(callback) {
   await state.load();
   try {
     const repo = path.join(dir, "repo");
-    await mkdir(path.join(repo, ".git"), { recursive: true });
+    await mkdir(repo, { recursive: true });
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo, stdio: "ignore" });
     await callback(state, repo);
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -66,7 +68,7 @@ test("start_task tanpa drawing memberi tahu bahwa flow belum terlihat", async ()
     );
 
     const text = response.content[0].text;
-    assert.match(text, /FLOW BELUM TERLIHAT DI MONITOR/i);
+    assert.match(text, /FLOW NOT YET VISIBLE IN THE MONITOR/i);
     assert.match(text, /create_feature_flow/i);
   });
 });

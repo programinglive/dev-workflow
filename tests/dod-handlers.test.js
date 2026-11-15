@@ -640,6 +640,15 @@ const fullWorkflowArgs = {
   featureFlowDescription: "flow",
 };
 
+async function acknowledge(state) {
+  const record = state.state.preflight;
+  if (!record?.ok) return;
+  await call("acknowledge_instructions", {
+    fingerprint: record.preflightFingerprint,
+    scope: record.projectRoot,
+  }, state);
+}
+
 async function callFull(state, extra = {}) {
   const { state: gitState, git } = fullWorkflowGit();
   return handleToolCall({
@@ -704,6 +713,7 @@ test("run_full_workflow dengan dodEvidence menyelesaikan seluruh langkah", async
       type: "feature",
       definitionOfDone: ["build lulus", "tes hijau"],
     }, state);
+    await acknowledge(state);
 
     const response = await callFull(state, {
       dodEvidence: { "dod-1": "npm test -> 533 pass", "dod-2": "npm test hijau" },
@@ -725,6 +735,7 @@ test("item yang sudah dikecualikan tidak menahan run_full_workflow", async () =>
       type: "feature",
       definitionOfDone: ["build lulus", "deploy staging"],
     }, state);
+    await acknowledge(state);
     await call("waive_dod_item", { id: "dod-2", reason: "staging sedang maintenance" }, state);
 
     const response = await callFull(state, { dodEvidence: { "dod-1": "npm test -> 533 pass" } });

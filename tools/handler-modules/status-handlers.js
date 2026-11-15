@@ -3,6 +3,7 @@ import { handleCommitAndPush } from "./commit-handlers.js";
 import { openItems, renderChecklist, renderOutstanding, summarize } from "./dod.js";
 import { evaluateDocGate, isGateSatisfied, formatRelativeAge, renderDocGateFailure } from "./docs.js";
 import { existsSync, readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { STRANDED_TASK_FILENAME } from "../../workflow-state.js";
 import { renderPlanFull } from "./plan.js";
@@ -189,6 +190,26 @@ Next step: ${nextStep}${opsNote}${sharedWarning}${strandedNote}`
   );
 }
 
+/**
+ * English-only engineering policy, enforced at the governed preflight.
+ *
+ * The check is opt-in per repository: it only runs when the task's project
+ * directory contains `scripts/check-english.mjs`. A project without the script
+ * is not blocked, and a task without a pinned project directory is skipped so
+ * the check never guesses which tree to scan.
+ */
+export function evaluateEnglishPolicy(workflowState) {
+  const projectDir = workflowState?.state?.projectDir;
+  if (!projectDir) return { ok: true, skipped: true, report: "" };
+
+  const script = path.join(projectDir, "scripts", "check-english.mjs");
+  if (!existsSync(script)) return { ok: true, skipped: true, report: "" };
+
+  const result = spawnSync(process.execPath, [script], { cwd: projectDir, encoding: "utf8" });
+  const report = String(result.stderr || result.stdout || "").trim();
+  return { ok: result.status === 0, skipped: false, report };
+}
+
 export async function handleReadyCheck(workflowState, context = {}) {
   const status = workflowState.state;
   const testsCreatedDone = status.testsSkipped || status.testsCreated;
@@ -206,6 +227,7 @@ export async function handleReadyCheck(workflowState, context = {}) {
   // menutup langkah dokumentasi.
   const docGate = await evaluateDocumentationGate(workflowState, context);
   const docGateSatisfied = isGateSatisfied(docGate.status);
+  const englishGate = evaluateEnglishPolicy(workflowState);
 
   const checks = [
     { name: "Task started", done: status.currentPhase !== "idle" },
@@ -225,6 +247,7 @@ export async function handleReadyCheck(workflowState, context = {}) {
       done: Boolean(status.documentationCreated || status.documentationWaived),
     },
     { name: "Documentation updated for code changes", done: docGateSatisfied },
+    { name: "English-only engineering policy", done: englishGate.ok },
     { name: "Definition of done satisfied", done: dodSatisfied },
   ];
 
@@ -258,6 +281,13 @@ export async function handleReadyCheck(workflowState, context = {}) {
         readmePath: docGate.readmePath,
         readmeAge: docGate.readmeAge,
       }),
+    );
+  }
+
+  if (!englishGate.ok) {
+    hints.push(
+      "English-only engineering policy failed. Write comments, test descriptions, identifiers and " +
+        `assertion messages in English, or add \`language-allow: <reason>\` for localized product copy.\n${englishGate.report}`,
     );
   }
 

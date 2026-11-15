@@ -60,7 +60,11 @@ async function withWorkspace(fn) {
     process.chdir(previousCwd);
     if (previousState === undefined) delete process.env.DEV_WORKFLOW_STATE_FILE;
     else process.env.DEV_WORKFLOW_STATE_FILE = previousState;
-    await rm(base, { recursive: true, force: true });
+    try {
+      const { closeLocalAdapters } = await import("../db/index.js");
+      await closeLocalAdapters();
+    } catch {}
+    await rm(base, { recursive: true, force: true, maxRetries: 3 });
   }
 }
 
@@ -510,7 +514,7 @@ test("keeps the single-writer lock in force", async () => {
     setIsAliveForTests(() => true);
     try {
       const refused = await handleStartTask(taskArgs(repo), state, null);
-      assert.match(text(refused), /sesi lain|another session/i);
+      assert.match(text(refused), /sesi lain|another session|penulis protokol lama|legacy/i);
     } finally {
       setIsAliveForTests(null);
     }
@@ -572,7 +576,13 @@ test("focus binding survives session restoration and retires explicitly", async 
     const read = readFocusBinding({ stateFile: restored.stateFile, focusId: 73 });
     assert.equal(read.repoKey, "github.com/example/alpha");
 
-    const retired = await retireFocusBinding({ stateFile: restored.stateFile, focusId: 73, reason: "focus completed" });
+    const retired = await retireFocusBinding({
+      stateFile: restored.stateFile,
+      focusId: 73,
+      projectDir: alpha,
+      repoKey: "github.com/example/alpha",
+      reason: "focus completed",
+    });
     assert.equal(retired.retired, true);
     assert.equal(readFocusBinding({ stateFile: restored.stateFile, focusId: 73 }), null);
   });

@@ -60,3 +60,73 @@ Before taking any action or answering user requests regarding code changes, chec
 - Use `get_workflow_status` at any time to check what step is next.
 
 **Do not bypass these steps. The MCP server will block commits and releases if any required step is skipped.**
+
+### English-only engineering policy (enforced)
+
+Write new identifiers, comments, docstrings, test descriptions, developer
+documentation and commit messages in English. User conversation and explicitly
+localized product text may use the requested language.
+
+This is not advice only. `scripts/check-english.mjs` scans every source file and
+fails on new Indonesian engineering text. It runs in `npm run lint` (the CI
+`lint-command`), in `npm run ci:test`, and in `.husky/pre-commit`, so the rule is
+the same for Antigravity, Codex and OpenCode on MMCH, HELLOWORLD and Mac.
+
+- Localization paths (`locales`, `i18n`, `lang`, `translations`) and `*.id.*`
+  files are exempt: that is product text.
+- A line carrying `language-allow: <reason>` is exempt, and the reason is
+  required.
+- `scripts/english-policy-baseline.json` records violations that predate the
+  gate. They do not fail the build; any new violation does. The list may only
+  shrink.
+- The checker never rewrites code. It reports `file:line [kind] markers :: text`
+  and exits non-zero, so translation stays a human decision.
+
+### Stale-session reaper (server-enforced)
+
+`session-reaper.js` classifies sessions as `ACTIVE`, `IDLE`, `SUSPECTED_STALE`,
+`UNREACHABLE`, `TERMINATED`, `ORPHANED`, `RECOVERY_REQUIRED` or `ARCHIVED`.
+A PID is not proof of ownership: process creation time and executable identity
+are compared, and a mismatch is `RECOVERY_REQUIRED`. A disconnected machine is
+`UNREACHABLE`, never `TERMINATED`. A release lock, an active child, or
+uncommitted work keeps a session `ACTIVE`. Lease release is compare-and-swap on
+owner + generation + fencing token; if ownership changes during cleanup the
+plan aborts. Confirmed orphans are archived after the lease is released; idle
+sessions are stopped gracefully only when explicitly auto-disposable. Every
+action is audited and canonical checkpoints are never deleted.
+
+The Monitor (`monitor-server/`) is the only place that reads process ownership.
+`POST /api/reaper/sessions` is HMAC-signed with a per-machine credential
+(`DEVWF_REAPER_SECRETS`, a JSON map of machine to secret; `DEVWF_REAPER_SECRET`
+is the single-machine fallback) and a 60-second replay window; the public
+`/api/sessions` payload carries only `reaper_state`, `reaper_reason` and
+`reaper_actions`, never the owner PID, creation time, executable or fencing
+token. `reaper-scheduler.cjs` runs one idempotent cycle per interval, refuses to
+overlap itself, defaults to dry-run (`DEVWF_REAPER_DRY_RUN=0` enables archiving),
+and archives only a confirmed `ORPHANED` session. `reaper-actions.cjs` is the
+single authorization table the endpoint and the UI share. The machine-local
+controller (`session-controller-adapters.js`) verifies PID + creation time +
+executable before any stop and refuses a PID shared by more than one session; it
+never escalates to a force kill.
+
+CI verifies and never deploys. Production deployment is a separate authorized
+action: `docs/operations/monitor-deployment.md`.
+
+### README-first preflight (server-enforced)
+
+`start_task` records a bounded preflight automatically: the project root,
+`README.md`, root and nested `AGENTS.md`, and documented CLI entrypoints. The
+record contains paths and SHA-256 fingerprints, never document bodies or secret
+values. `start_task` also returns a bounded instruction summary: purpose, rules,
+build/test/release commands, prohibited operations, task scope and documentation
+paths. `resume_session` revalidates the fingerprints and reports
+`README_CHANGED` / `AGENTS_CHANGED`.
+
+`acknowledge_instructions` records the README fingerprint and task scope; the
+server validates both against the current preflight. `commit_and_push` requires
+that acknowledgment when a preflight exists. The same scope check applies to
+`perform_release` and `record_deployment`: a governed write must target the
+checkout the task preflight recorded (`SCOPE_MISMATCH`). Legacy tasks without a
+preflight remain governed by the repository identity contract. Discovered CLI
+references are advisory (`verified: false`) and are never executed
+automatically.

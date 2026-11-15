@@ -136,6 +136,10 @@ export function buildSnapshot({ state, sessionKey = "", projectPath = "", sessio
     dodTotal: dod.length,
     dodWaived,
     ownerPid: Number(s.owner && s.owner.pid) || null,
+    // Process identity for the reaper. The public monitor payload does not
+    // expose these; the privileged reaper API does.
+    ownerStartedAt: String(s.owner?.startedAt || ""),
+    ownerExecutable: String(s.owner?.executable || ""),
     startedAt: sessionStartedAt || "",
     // Judul percakapan OpenCode, bila bisa dibaca. Dipakai kartu di tablet
     // supaya orang tahu sesi mana yang dimaksud, bukan kode `ses_...`.

@@ -53,7 +53,7 @@ test("create_documentation menolak files[] yang tidak muncul di working tree", a
     );
     assert.match(text(r), /^⚠️/);
     assert.match(text(r), /README\.md/);
-    assert.match(text(r), /tidak muncul/);
+    assert.match(text(r), /do not appear/);
     assert.equal(state.state.documentationFiles.length, 0);
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -68,7 +68,7 @@ test("create_documentation menolak files[] yang bukan dokumentasi", async () => 
       state,
       ctx({ status: " M src/a.js", toplevel: dir }),
     );
-    assert.match(text(r), /bukan berkas dokumentasi/);
+    assert.match(text(r), /not documentation files/);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -98,7 +98,7 @@ test("create_documentation tanpa files tetap berhasil tetapi menyebut gerbang be
       ctx({ status: " M src/a.js", toplevel: dir }),
     );
     assert.match(text(r), /^✅/);
-    assert.match(text(r), /gerbang dokumentasi belum terpenuhi/i);
+    assert.match(text(r), /documentation gate is not satisfied/i);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
