@@ -516,7 +516,31 @@ says there is no baseline yet.
 
 ### Searching the active project
 
+### English-only engineering policy
+
 New implementation artifacts use English: identifiers, comments, docstrings, test descriptions, developer documentation and commit messages. MCP initialization, the workflow prompt and key tool responses deliver this rule to the AI. User conversation and explicitly localized product text can retain the requested language.
+
+The rule is also enforced deterministically, because a prompt is advice and advice is not a gate:
+
+```bash
+npm run check:english          # fail on new Indonesian engineering text
+node scripts/check-english.mjs --json
+node scripts/check-english.mjs --update-baseline
+```
+
+`scripts/check-english.mjs` splits every source file into comments, string literals and identifiers and scans each part for Indonesian marker words. A marker of five characters or more flags on its own; shorter, ambiguous markers need two different ones. It never rewrites anything: it reports `file:line [kind] markers :: text` and exits non-zero.
+
+The same command runs in three places, so every client on every machine is covered:
+
+- `npm run lint` (the CI `lint-command`), which is a required check;
+- `npm run ci:test`, the CI test job;
+- `.husky/pre-commit`, so a local commit is blocked before it is pushed.
+
+Exceptions are explicit and reviewable:
+
+- localization paths (`locales`, `i18n`, `lang`, `translations`) and `*.id.*` files are skipped: that is product text;
+- a line carrying `language-allow: <reason>` is skipped, and the reason is required;
+- `scripts/english-policy-baseline.json` records violations that predate the gate. They are reported as baselined and do not fail the build, but any new violation does. The list may only shrink.
 
 Zettly task tracking is automatic at task start, progress and successful completion. Use the existing owner account, not an unverified retired journal service credential. See [Zettly workflow tracking](docs/zettly-workflow.md) for protected credentials, deduplication, retry behavior and linked completion outcomes.
 
