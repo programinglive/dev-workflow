@@ -1769,7 +1769,15 @@ export function pinSessionProject({
       // legacy flat filename with Focus 42's pre-upgrade binding. Move that
       // binding into the nested layout first, otherwise this pointer write
       // would silently erase it and free the focus for another project.
-      const strandedBinding = readFocusBindingRecord(ptrFile);
+      //
+      // A file that exists but cannot be parsed is not "no binding": it may be
+      // a damaged focus binding, and overwriting it would destroy the evidence.
+      // Refuse the pointer write instead of guessing.
+      const strandedRead = readFocusBindingRecordDetailed(ptrFile);
+      if (strandedRead.status === "unreadable") {
+        throw new Error("FOCUS_BINDING_MIGRATION_FAILED");
+      }
+      const strandedBinding = strandedRead.record;
       if (strandedBinding) {
         if (!strandedBinding.focusId) {
           throw new Error("FOCUS_BINDING_MIGRATION_FAILED");
@@ -2123,6 +2131,16 @@ function claimFocusBindingUnderLock({ baseDir, focusId, projectDir, repoKey }) {
   const requestedKey = typeof repoKey === "string" ? repoKey.trim() : "";
 
   const bindingState = readFocusBindingState(baseDir, focusId);
+  // A damaged record is NOT "unbound". Overwriting it would destroy the only
+  // evidence of who owned the focus, and the write would silently steal it.
+  if (bindingState.unreadable) {
+    return {
+      ok: false,
+      reason: "FOCUS_BINDING_UNREADABLE",
+      unreadablePaths: bindingState.unreadablePaths,
+      error: bindingState.unreadableReason,
+    };
+  }
   if (bindingState.conflict) {
     return { ok: false, existing: bindingState.nested, reason: "FOCUS_BINDING_CONFLICT" };
   }
@@ -2214,6 +2232,16 @@ export async function retireFocusBinding({
       const target = focusBindingPath(baseDir, id);
       const legacyTarget = legacyFocusBindingPath(baseDir, id);
       const bindingState = readFocusBindingState(baseDir, id);
+      // Refuse to delete a record we could not read: retiring it would erase
+      // the damage instead of preserving it for inspection.
+      if (bindingState.unreadable) {
+        return {
+          ok: false,
+          reason: "FOCUS_BINDING_UNREADABLE",
+          unreadablePaths: bindingState.unreadablePaths,
+          error: bindingState.unreadableReason,
+        };
+      }
       if (bindingState.conflict) {
         return { ok: false, existing: bindingState.nested, reason: "FOCUS_BINDING_CONFLICT" };
       }
@@ -2296,6 +2324,14 @@ export function readFocusBinding({ stateFile, focusId } = {}) {
   );
 }
 
+/**
+ * Capture the current focus binding so a failed transition can be rolled back.
+ *
+ * `raw` is the file content, `raw: null` means "there was no binding". A file
+ * that exists but cannot be read is NOT the same as an absent one: recording it
+ * as `raw: null` would make the restore path delete a damaged but real record.
+ * That case is reported as unreadable and the caller must not roll back over it.
+ */
 export function captureFocusBindingSnapshot({ stateFile, focusId } = {}) {
   const id = Number(focusId);
   if (!Number.isSafeInteger(id) || id <= 0) {
@@ -2305,15 +2341,35 @@ export function captureFocusBindingSnapshot({ stateFile, focusId } = {}) {
   const file = focusBindingPath(baseDir, id);
   try {
     const raw = readFileSync(file, "utf8");
-    return { applicable: true, file, raw, focusId: id, baseDir };
-  } catch {
-    return { applicable: true, file, raw: null, focusId: id, baseDir };
+    try {
+      JSON.parse(raw);
+    } catch {
+      return { applicable: true, file, raw: null, focusId: id, baseDir, unreadable: "FOCUS_BINDING_MALFORMED" };
+    }
+    return { applicable: true, file, raw, focusId: id, baseDir, unreadable: null };
+  } catch (error) {
+    if (error && error.code === "ENOENT") {
+      return { applicable: true, file, raw: null, focusId: id, baseDir, unreadable: null };
+    }
+    return {
+      applicable: true,
+      file,
+      raw: null,
+      focusId: id,
+      baseDir,
+      unreadable: error?.code || "FOCUS_BINDING_UNREADABLE",
+    };
   }
 }
 
 export async function restoreFocusBindingSnapshot(snapshot, journal = null) {
   if (!snapshot || !snapshot.applicable || !snapshot.file || !snapshot.baseDir || !snapshot.focusId) {
     return { ok: true, notApplicable: true };
+  }
+  // A snapshot of a damaged record cannot be restored by deleting it: that
+  // would destroy the only evidence of who owned the focus.
+  if (snapshot.unreadable) {
+    return { ok: false, error: "FOCUS_BINDING_UNREADABLE", reason: snapshot.unreadable };
   }
   const lock = await acquireFocusLock({ baseDir: snapshot.baseDir, focusId: snapshot.focusId });
   if (!lock || !lock.ok) {
@@ -2445,6 +2501,9 @@ function restoreFileSnapshot(snap, journal = null, role = "source") {
 function restoreFocusBindingSnapshotSync(snapshot, journal = null) {
   if (!snapshot || !snapshot.applicable || !snapshot.file) {
     return { ok: true, notApplicable: true };
+  }
+  if (snapshot.unreadable) {
+    return { ok: false, error: "FOCUS_BINDING_UNREADABLE", reason: snapshot.unreadable };
   }
   let lockFile = null;
   if (snapshot.baseDir && snapshot.focusId) {
@@ -3300,27 +3359,85 @@ export async function reconcilePendingTransitionJournals({
   return reconciled;
 }
 
-function readFocusBindingRecord(file) {
+/**
+ * Read one focus binding file and report WHY it produced no record.
+ *
+ * A binding that cannot be read is not the same as a binding that does not
+ * exist. Treating them alike is silent ownership loss: a truncated or
+ * permission-denied record would read as "unbound", and the next claim would
+ * overwrite it with another project's claim, destroying the only evidence of
+ * who owned the focus.
+ *
+ * The three outcomes are therefore distinct:
+ *   - `absent`     - ENOENT, the focus genuinely has no binding here;
+ *   - `ok`         - the file parsed; `record` is the binding, or null when the
+ *                    file is a session pointer or not a binding at all;
+ *   - `unreadable` - the file exists but cannot be trusted (malformed JSON,
+ *                    EACCES, EISDIR, ...). Callers must fail closed.
+ *
+ * @returns {{status: "absent"|"ok"|"unreadable", record: object|null, error: string|null}}
+ */
+function readFocusBindingRecordDetailed(file) {
+  let raw;
   try {
-    const data = JSON.parse(readFileSync(file, "utf-8"));
-    // A session pointer is a different record type that can share the legacy
-    // `focus-<id>.json` name. Accepting it as a focus binding would let a
-    // session key masquerade as a focus claim.
-    if (data && typeof data === "object" && typeof data.ownerKey === "string" && data.ownerKey.trim()) {
-      return null;
+    raw = readFileSync(file, "utf-8");
+  } catch (error) {
+    if (error && error.code === "ENOENT") {
+      return { status: "absent", record: null, error: null };
     }
-    const boundRepoKey = typeof data?.repoKey === "string" ? data.repoKey.trim() : "";
-    const boundProjectDir = typeof data?.projectDir === "string" ? data.projectDir.trim() : "";
-    if (!boundRepoKey && !boundProjectDir) return null;
     return {
+      status: "unreadable",
+      record: null,
+      error: error?.code || "FOCUS_BINDING_UNREADABLE",
+    };
+  }
+
+  let data;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    return { status: "unreadable", record: null, error: "FOCUS_BINDING_MALFORMED" };
+  }
+
+  // A session pointer is a different record type that can share the legacy
+  // `focus-<id>.json` name. Accepting it as a focus binding would let a
+  // session key masquerade as a focus claim.
+  if (data && typeof data === "object" && typeof data.ownerKey === "string" && data.ownerKey.trim()) {
+    return { status: "ok", record: null, error: null };
+  }
+  // Anything that is not an object cannot be a binding. A parseable but
+  // structurally invalid payload is damage, not absence: treating it as
+  // "unbound" would let a claim overwrite the only record of who owned it.
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    return { status: "unreadable", record: null, error: "FOCUS_BINDING_INVALID" };
+  }
+  const boundRepoKey = typeof data?.repoKey === "string" ? data.repoKey.trim() : "";
+  const boundProjectDir = typeof data?.projectDir === "string" ? data.projectDir.trim() : "";
+  if (!boundRepoKey && !boundProjectDir) {
+    return { status: "unreadable", record: null, error: "FOCUS_BINDING_INVALID" };
+  }
+  return {
+    status: "ok",
+    record: {
       focusId: Number(data?.focusId) || null,
       repoKey: boundRepoKey,
       projectDir: boundProjectDir,
       boundAt: typeof data?.boundAt === "string" ? data.boundAt : "",
-    };
-  } catch {
-    return null;
-  }
+    },
+    error: null,
+  };
+}
+
+/**
+ * Backward-compatible reader: the binding record, or null.
+ *
+ * Callers that must distinguish "absent" from "unreadable" use
+ * `readFocusBindingRecordDetailed` instead. This wrapper is for paths where a
+ * null simply means "nothing to act on" and a damaged file is handled by the
+ * claim/retire gate that reads the detailed form.
+ */
+function readFocusBindingRecord(file) {
+  return readFocusBindingRecordDetailed(file).record;
 }
 
 /**
@@ -3330,11 +3447,38 @@ function readFocusBindingRecord(file) {
  * layout. Two records for one focus that name different projects is a conflict:
  * acting on either one would let one project delete or block the other's claim.
  *
- * @returns {{record: object|null, nested: object|null, legacy: object|null, conflict: boolean}}
+ * `unreadable` is true when either location exists but could not be parsed or
+ * read. That is not the same as unbound, and every mutating caller must refuse
+ * rather than treat the damaged record as absent.
+ *
+ * @returns {{
+ *   record: object|null,
+ *   nested: object|null,
+ *   legacy: object|null,
+ *   conflict: boolean,
+ *   unreadable: boolean,
+ *   unreadableReason: string|null,
+ *   unreadablePaths: string[]
+ * }}
  */
 function readFocusBindingState(baseDir, focusId) {
-  const nested = readFocusBindingRecord(focusBindingPath(baseDir, focusId));
-  const legacy = readFocusBindingRecord(legacyFocusBindingPath(baseDir, focusId));
+  const nestedPath = focusBindingPath(baseDir, focusId);
+  const legacyPath = legacyFocusBindingPath(baseDir, focusId);
+  const nestedRead = readFocusBindingRecordDetailed(nestedPath);
+  const legacyRead = readFocusBindingRecordDetailed(legacyPath);
+  const nested = nestedRead.record;
+  const legacy = legacyRead.record;
+
+  const unreadablePaths = [];
+  let unreadableReason = null;
+  if (nestedRead.status === "unreadable") {
+    unreadablePaths.push(nestedPath);
+    unreadableReason = nestedRead.error;
+  }
+  if (legacyRead.status === "unreadable") {
+    unreadablePaths.push(legacyPath);
+    unreadableReason = unreadableReason || legacyRead.error;
+  }
 
   let conflict = false;
   if (nested && legacy) {
@@ -3352,7 +3496,15 @@ function readFocusBindingState(baseDir, focusId) {
     conflict = !sameKey && !sameDir;
   }
 
-  return { record: nested || legacy, nested, legacy, conflict };
+  return {
+    record: nested || legacy,
+    nested,
+    legacy,
+    conflict,
+    unreadable: unreadablePaths.length > 0,
+    unreadableReason,
+    unreadablePaths,
+  };
 }
 
 function normalizeRepoPathForBinding(value) {

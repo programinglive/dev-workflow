@@ -47,15 +47,22 @@ function attestationRow(overrides = {}) {
   };
 }
 
-function makeDb({ sessions, attestations = [], archiveRowCount = 1, releaseRowCount = 1 }) {
+function makeDb({ sessions, attestations = [], archived = 1, released = 1, outcome }) {
   const calls = [];
   const query = async (sql, params) => {
     calls.push({ sql, params });
+    // The reconcile statement also mentions reaper_attestations, so it must be
+    // matched before the plain attestation read.
+    if (/WITH fresh AS/.test(sql)) {
+      const decided = outcome || (archived === 0
+        ? "identity_changed"
+        : released === 0
+          ? "archived_no_lease"
+          : "archived_and_released");
+      return { rows: [{ archived, released, outcome: decided }], rowCount: 1 };
+    }
     if (/FROM reaper_attestations/.test(sql)) return { rows: attestations };
     if (/FROM sessions/.test(sql)) return { rows: sessions };
-    if (/UPDATE sessions[\s\S]*SET phase = 'closed'/.test(sql)) return { rows: [], rowCount: archiveRowCount };
-    if (/lease_generation = lease_generation \+ 1/.test(sql)) return { rows: [], rowCount: releaseRowCount };
-    if (/UPDATE reaper_attestations/.test(sql)) return { rows: [], rowCount: 1 };
     return { rows: [], rowCount: 0 };
   };
   return { query, calls };
@@ -89,8 +96,10 @@ test("a valid attestation archives and releases the lease", async () => {
   assert.equal(result.applied.length, 1);
   assert.equal(result.applied[0].archived, true);
   assert.equal(result.applied[0].leaseReleased, true);
-  assert.equal(calls.filter((c) => /SET phase = 'closed'/.test(c.sql)).length, 1);
-  assert.equal(calls.filter((c) => /lease_generation = lease_generation \+ 1/.test(c.sql)).length, 1);
+  assert.equal(result.applied[0].outcome, "archived_and_released");
+  // One statement carries archive, release and consumption together.
+  assert.equal(calls.filter((c) => /WITH fresh AS/.test(c.sql)).length, 1);
+  assert.equal(calls.filter((c) => /UPDATE sessions[\s\S]*UPDATE reaper_attestations/.test(c.sql)).length, 1);
 });
 
 test("a changed lease generation rejects the attestation and holds", async () => {
@@ -115,41 +124,49 @@ test("a changed PID rejects the attestation", async () => {
 });
 
 test("a lost archive race archives nothing and releases nothing", async () => {
-  const { query, calls } = makeDb({
+  const { query } = makeDb({
     sessions: [sessionRow()],
     attestations: [attestationRow()],
-    archiveRowCount: 0,
+    archived: 0,
+    released: 0,
   });
   const scheduler = createReaperScheduler({ query, reaper, dryRun: false });
   const result = await scheduler.runOnce();
   assert.equal(result.applied[0].archived, false);
-  assert.equal(result.applied[0].reason, "IDENTITY_CHANGED");
-  assert.equal(calls.filter((c) => /lease_generation = lease_generation \+ 1/.test(c.sql)).length, 0);
+  assert.equal(result.applied[0].leaseReleased, false);
+  assert.equal(result.applied[0].outcome, "identity_changed");
 });
 
-test("a lost lease race archives but reports the lease unresolved", async () => {
+test("a lease mismatch archives nothing, because archive and release are one write", async () => {
+  // The archive predicate includes the lease triple, so a lease that moved
+  // means the whole UPDATE matches no row. There is no state where a session is
+  // archived but its lease is left behind.
   const { query } = makeDb({
     sessions: [sessionRow()],
     attestations: [attestationRow()],
-    releaseRowCount: 0,
+    archived: 0,
+    released: 0,
   });
   const scheduler = createReaperScheduler({ query, reaper, dryRun: false });
   const result = await scheduler.runOnce();
-  assert.equal(result.applied[0].archived, true);
+  assert.equal(result.applied[0].archived, false);
   assert.equal(result.applied[0].leaseReleased, false);
-  assert.equal(result.applied[0].leaseReason, "LEASE_OWNERSHIP_CHANGED");
+  assert.equal(result.applied[0].outcome, "identity_changed");
 });
 
 test("a session without a lease archives without a release attempt", async () => {
-  const { query, calls } = makeDb({
+  const { query } = makeDb({
     sessions: [sessionRow({ lease_owner: "", lease_generation: 0, lease_fencing_token: "" })],
     attestations: [attestationRow({ lease_owner: "", lease_generation: 0, lease_fencing_token: "" })],
+    archived: 1,
+    released: 0,
+    outcome: "archived_no_lease",
   });
   const scheduler = createReaperScheduler({ query, reaper, dryRun: false });
   const result = await scheduler.runOnce();
   assert.equal(result.applied[0].archived, true);
   assert.equal(result.applied[0].leaseReason, "NO_LEASE");
-  assert.equal(calls.filter((c) => /lease_generation = lease_generation \+ 1/.test(c.sql)).length, 0);
+  assert.equal(result.applied[0].outcome, "archived_no_lease");
 });
 
 test("a missing attestation table does not break the cycle", async () => {

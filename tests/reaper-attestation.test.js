@@ -5,6 +5,7 @@ import {
   ATTESTATION_TTL_MS,
   buildArchiveQuery,
   buildLeaseReleaseQuery,
+  buildReconcileQuery,
   parseAttestation,
   revalidateAttestation,
 } from "../monitor-server/reaper-attestation.cjs";
@@ -22,7 +23,10 @@ import {
  * stored row.
  */
 
-const NOW = 1_800_000_000_000;
+// The fixture clock follows the real clock so a call site that omits `now`
+// (and therefore uses Date.now()) still sees a fresh attestation. A fixed
+// future timestamp would make every such call fail as ATTESTATION_FROM_FUTURE.
+const NOW = Date.now();
 
 function payload(overrides = {}) {
   return {
@@ -192,6 +196,81 @@ test("lease release is a compare-and-swap that bumps the generation", () => {
 test("a session with no lease has nothing to release", () => {
   const parsed = parseAttestation(payload({ leaseOwner: "", leaseGeneration: 0, leaseFencingToken: "" }), { now: NOW });
   assert.equal(buildLeaseReleaseQuery(parsed.value), null);
+});
+
+// ------------------------------------------------------- atomic arbitration
+
+test("archive and lease release are a single UPDATE on sessions", () => {
+  const parsed = parseAttestation(payload(), { now: NOW });
+  const { sql } = buildReconcileQuery(parsed.value);
+
+  // PostgreSQL does not support updating the same row twice in one statement:
+  // "Only one of the modifications takes place, but it is not easy to reliably
+  // predict which one." Archive and release must therefore be one UPDATE.
+  assert.equal(
+    (sql.match(/UPDATE sessions/g) || []).length,
+    1,
+    "sessions must be updated exactly once",
+  );
+  assert.match(sql, /lease_generation = CASE WHEN \$7 <> '' THEN lease_generation \+ 1/);
+  assert.match(sql, /lease_owner = CASE WHEN \$7 <> '' THEN '' ELSE lease_owner END/);
+});
+
+test("the archive is gated on the attestation being unconsumed", () => {
+  const parsed = parseAttestation(payload(), { now: NOW });
+  const { sql } = buildReconcileQuery(parsed.value);
+
+  // A consumed attestation must not archive a reopened session. The archive
+  // reads the unconsumed set, so a replay finds it empty and does nothing.
+  assert.match(sql, /EXISTS \(SELECT 1 FROM fresh\)/);
+  assert.match(sql, /consumed_at IS NULL/);
+});
+
+test("the write uses the statement clock, not the transaction clock", () => {
+  const parsed = parseAttestation(payload(), { now: NOW });
+  const { sql } = buildReconcileQuery(parsed.value);
+
+  // `now()` is fixed at transaction start, so a row lock wait past the TTL
+  // would still see a fresh attestation. `clock_timestamp()` advances.
+  assert.equal(/now\(\)/.test(sql.replace(/clock_timestamp\(\)/g, "")), false,
+    "freshness must not rely on the transaction-start clock");
+  assert.match(sql, /clock_timestamp\(\)/);
+});
+
+test("the archive refuses a session touched after the attestation", () => {
+  const parsed = parseAttestation(payload(), { now: NOW });
+  const { sql, params } = buildReconcileQuery(parsed.value);
+
+  // A session re-registered after the attestation was produced is live again;
+  // the old evidence must not archive it.
+  assert.match(sql, /updated_at <= \$12::timestamptz/);
+  assert.equal(params[11], parsed.value.verifiedAt);
+});
+
+test("the attestation is always consumed, even when nothing was archived", () => {
+  const parsed = parseAttestation(payload(), { now: NOW });
+  const { sql } = buildReconcileQuery(parsed.value);
+  assert.match(sql, /ELSE 'identity_changed'/);
+  assert.match(sql, /consumed_at = clock_timestamp\(\)/);
+});
+
+test("a session with no lease releases nothing", () => {
+  const parsed = parseAttestation(payload({ leaseOwner: "", leaseGeneration: 0, leaseFencingToken: "" }), { now: NOW });
+  const { sql } = buildReconcileQuery(parsed.value);
+  assert.match(sql, /CASE WHEN \$7 <> '' THEN \(SELECT count\(\*\) FROM archived\)::int ELSE 0 END AS released/);
+});
+
+test("reconciliation reports the outcome it actually achieved", () => {
+  const parsed = parseAttestation(payload(), { now: NOW });
+  const { sql } = buildReconcileQuery(parsed.value);
+  for (const outcome of [
+    "identity_changed",
+    "archived_no_lease",
+    "archived_and_released",
+  ]) {
+    assert.ok(sql.includes(outcome), `${outcome} must be a possible recorded outcome`);
+  }
+  assert.match(sql, /SELECT \(SELECT count\(\*\) FROM archived\)::int AS archived/);
 });
 
 // ------------------------------------------------------------- attestation rows

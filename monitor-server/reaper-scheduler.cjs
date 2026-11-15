@@ -12,8 +12,7 @@
 
 const { buildReaperSessionsQuery } = require('./reaper-query.cjs');
 const {
-  buildArchiveQuery,
-  buildLeaseReleaseQuery,
+  buildReconcileQuery,
   revalidateAttestation,
 } = require('./reaper-attestation.cjs');
 
@@ -156,7 +155,9 @@ function createReaperScheduler({
       const plans = rows.rows.map((row) => {
         const attestation = attestations.get(row.session_key);
         if (attestation) {
-          const verdict = revalidateAttestation(attestation, row);
+          // Revalidate against the current row AND the current clock: a stored
+          // attestation older than the TTL is not evidence of anything now.
+          const verdict = revalidateAttestation(attestation, row, { now: now() });
           if (verdict.ok) {
             // Verified by the machine that owns the process. This is the only
             // path that can produce ORPHANED, because the monitor cannot see
@@ -200,38 +201,24 @@ function createReaperScheduler({
           const attestation = plan.attestation;
           if (!attestation) continue;
 
-          // Archive first, conditionally. Zero rows means the row changed since
-          // the read, so nothing is archived and nothing is released.
-          const archive = buildArchiveQuery(attestation);
-          const archived = await query(archive.sql, archive.params);
-          if (!archived || archived.rowCount === 0) {
-            applied.push({ sessionKey: plan.sessionKey, archived: false, reason: 'IDENTITY_CHANGED' });
-            continue;
-          }
-
-          // Lease release is a separate compare-and-swap. It only runs when the
-          // session actually holds a lease, and it only succeeds when owner,
-          // generation and fencing token still match.
-          let leaseReleased = false;
-          let leaseReason = 'NO_LEASE';
-          const release = buildLeaseReleaseQuery(attestation);
-          if (release) {
-            const released = await query(release.sql, release.params);
-            leaseReleased = Boolean(released && released.rowCount > 0);
-            leaseReason = leaseReleased ? 'RELEASED' : 'LEASE_OWNERSHIP_CHANGED';
-          }
-
-          await query(
-            `UPDATE reaper_attestations SET consumed_at = now(), outcome = $2
-              WHERE machine = $1 AND nonce = $3`,
-            [attestation.machine, leaseReleased ? 'archived_and_released' : 'archived_lease_unresolved', attestation.nonce],
-          );
+          // One statement: archive, lease release and attestation consumption
+          // happen in a single transaction. The outcome is read back rather
+          // than assumed, so a lost compare-and-swap is reported honestly and
+          // the attestation is always consumed.
+          const reconcile = buildReconcileQuery(attestation);
+          const result = await query(reconcile.sql, reconcile.params);
+          const row = Array.isArray(result?.rows) ? result.rows[0] : null;
 
           applied.push({
             sessionKey: plan.sessionKey,
-            archived: true,
-            leaseReleased,
-            leaseReason,
+            archived: Number(row?.archived || 0) > 0,
+            leaseReleased: Number(row?.released || 0) > 0,
+            leaseReason: !attestation.leaseOwner
+              ? 'NO_LEASE'
+              : Number(row?.released || 0) > 0
+                ? 'RELEASED'
+                : 'NOT_RELEASED',
+            outcome: String(row?.outcome || 'unknown'),
           });
         }
       }

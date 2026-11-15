@@ -96,11 +96,21 @@ function parseAttestation(payload, { now = Date.now() } = {}) {
  * Every mismatch is a distinct reason, because the operator needs to know
  * whether the process came back, the PID was reused, or the lease moved.
  *
+ * Freshness is checked here as well as at the endpoint. The endpoint checks the
+ * TTL when the report arrives; the scheduler reads the stored row later, and
+ * without this check a stored attestation would stay actionable forever. A
+ * process that was absent an hour ago may have had its PID reused since.
+ *
  * @returns {{ok: boolean, reason?: string}}
  */
-function revalidateAttestation(attestation, row) {
+function revalidateAttestation(attestation, row, { now = Date.now() } = {}) {
   if (!attestation) return { ok: false, reason: 'ATTESTATION_MISSING' };
   if (!row) return { ok: false, reason: 'SESSION_MISSING' };
+
+  const verifiedAt = Date.parse(attestation.verifiedAt);
+  if (!Number.isFinite(verifiedAt)) return { ok: false, reason: 'ATTESTATION_TIMESTAMP_INVALID' };
+  if (verifiedAt - now > 60_000) return { ok: false, reason: 'ATTESTATION_FROM_FUTURE' };
+  if (now - verifiedAt > ATTESTATION_TTL_MS) return { ok: false, reason: 'ATTESTATION_EXPIRED' };
 
   if (String(row.machine || '') !== attestation.machine) {
     return { ok: false, reason: 'MACHINE_CHANGED' };
@@ -200,11 +210,135 @@ function buildLeaseReleaseQuery(attestation) {
   };
 }
 
+/**
+ * Build one atomic reconciliation statement for a single attested session.
+ *
+ * ARCHIVE, LEASE RELEASE AND CONSUMPTION MUST NOT BE SEPARATE WRITES
+ * ------------------------------------------------------------------
+ * Running them as three statements leaves recoverable-but-wrong states:
+ *
+ *   - crash after archive, before release -> session archived, lease still
+ *     held by a dead process, and the attestation is never consumed;
+ *   - archive loses the compare-and-swap -> the attestation stays unconsumed,
+ *     so the next cycle re-plans the same session forever;
+ *   - two schedulers interleave -> one archives, the other releases, and both
+ *     write a consumption outcome that contradicts the other.
+ *
+ * WHY ONE UPDATE ON `sessions`, NOT TWO
+ * -------------------------------------
+ * PostgreSQL does not support updating the same row twice in one statement:
+ * "Only one of the modifications takes place, but it is not easy (and sometimes
+ * not possible) to reliably predict which one." Archiving and releasing the
+ * lease are therefore a single UPDATE with conditional column expressions, not
+ * two data-modifying CTEs.
+ *
+ * WHY THE ARCHIVE READS `fresh` AND CHECKS `updated_at`
+ * ----------------------------------------------------
+ * The archive is gated on the attestation still being unconsumed and still
+ * fresh, and on the session not having been touched since that attestation was
+ * produced (`updated_at <= verified_at`). A session re-registered after the
+ * evidence was gathered is live again, so the old evidence must not archive it.
+ *
+ * Freshness uses `clock_timestamp()`, not `now()`: `now()` is fixed at
+ * transaction start, so a statement that waits on a row lock past the TTL would
+ * still see the attestation as fresh.
+ *
+ * WHY THE WHOLE SESSION IS ARCHIVED, SCOPED BY PROCESS IDENTITY
+ * --------------------------------------------------------------
+ * `sessions` is keyed by `(session_key, task_id)`, so one session can own
+ * several cards. The attestation is about the *process*, not about one card:
+ * when that process is confirmed gone, every card it owns is orphaned too.
+ * Archiving only the card the scheduler happened to read first would leave the
+ * rest of the dead session open forever.
+ *
+ * That is safe because the predicate is a full process-identity match -
+ * machine, owner_pid, owner_started_at, owner_executable and the lease triple.
+ * A card belonging to a different process cannot match, and a reused PID has a
+ * different `owner_started_at`, so a live session cannot be archived this way.
+ *
+ * @returns {{sql: string, params: Array}}
+ */
+function buildReconcileQuery(attestation) {
+  const params = [
+    attestation.sessionKey,
+    attestation.machine,
+    attestation.projectName,
+    attestation.pid,
+    attestation.startedAt,
+    attestation.executable,
+    attestation.leaseOwner,
+    attestation.leaseGeneration,
+    attestation.leaseFencingToken,
+    attestation.nonce,
+    ATTESTATION_TTL_MS,
+    attestation.verifiedAt,
+  ];
+
+  return {
+    sql: `WITH fresh AS (
+             SELECT 1
+               FROM reaper_attestations
+              WHERE machine = $2
+                AND nonce = $10
+                AND consumed_at IS NULL
+                AND verified_at > clock_timestamp() - ($11::bigint * interval '1 millisecond')
+                AND verified_at <= clock_timestamp() + interval '60 seconds'
+           ),
+           stale AS (
+             SELECT 1
+               FROM reaper_attestations
+              WHERE machine = $2
+                AND nonce = $10
+                AND consumed_at IS NULL
+                AND (verified_at <= clock_timestamp() - ($11::bigint * interval '1 millisecond')
+                     OR verified_at > clock_timestamp() + interval '60 seconds')
+           ),
+           archived AS (
+             UPDATE sessions
+                SET phase = 'closed',
+                    updated_at = clock_timestamp(),
+                    lease_owner = CASE WHEN $7 <> '' THEN '' ELSE lease_owner END,
+                    lease_generation = CASE WHEN $7 <> '' THEN lease_generation + 1 ELSE lease_generation END,
+                    lease_fencing_token = CASE WHEN $7 <> '' THEN '' ELSE lease_fencing_token END
+              WHERE session_key = $1
+                AND machine = $2
+                AND project_name = $3
+                AND owner_pid = $4
+                AND owner_started_at = $5
+                AND owner_executable = $6
+                AND lease_owner = $7
+                AND lease_generation = $8
+                AND lease_fencing_token = $9
+                AND phase NOT IN ('closed', 'done', 'cancelled', 'handed-off')
+                AND updated_at <= $12::timestamptz
+                AND EXISTS (SELECT 1 FROM fresh)
+              RETURNING session_key
+           ),
+           consumed AS (
+             UPDATE reaper_attestations
+                SET consumed_at = clock_timestamp(),
+                    outcome = CASE
+                      WHEN (SELECT count(*) FROM archived) > 0 AND $7 = '' THEN 'archived_no_lease'
+                      WHEN (SELECT count(*) FROM archived) > 0 THEN 'archived_and_released'
+                      WHEN EXISTS (SELECT 1 FROM stale) THEN 'attestation_expired'
+                      ELSE 'identity_changed'
+                    END
+              WHERE machine = $2 AND nonce = $10 AND consumed_at IS NULL
+              RETURNING outcome
+           )
+           SELECT (SELECT count(*) FROM archived)::int AS archived,
+                  CASE WHEN $7 <> '' THEN (SELECT count(*) FROM archived)::int ELSE 0 END AS released,
+                  COALESCE((SELECT outcome FROM consumed), 'already_consumed') AS outcome`,
+    params,
+  };
+}
+
 module.exports = {
   ATTESTATION_TTL_MS,
   REQUIRED_FIELDS,
   buildArchiveQuery,
   buildLeaseReleaseQuery,
+  buildReconcileQuery,
   parseAttestation,
   revalidateAttestation,
 };
