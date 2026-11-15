@@ -2447,11 +2447,17 @@ test("Adversarial 34 (Cycle 16): sessionKey collision-free, multi-line HEAD reje
     const { SqliteAdapter } = await import("../db/adapters/sqlite.js");
     await mkdir(stateBase, { recursive: true });
 
-    // 1. F6: session/a vs session?a must not collide
+    // 1. F6: session/a vs session?a and derived key vs raw key must not collide
+    const keySlash = canonicalSessionKey("session/a");
     assert.notEqual(
-      canonicalSessionKey("session/a"),
+      keySlash,
       canonicalSessionKey("session?a"),
       "distinct punctuation session keys must not collide",
+    );
+    assert.notEqual(
+      keySlash,
+      canonicalSessionKey(keySlash),
+      "raw identity equal to a hashed output must not collide with the hashed identity",
     );
     assert.notEqual(
       resolveSessionKeyWithSource({}, "session/a").key,
@@ -2460,12 +2466,14 @@ test("Adversarial 34 (Cycle 16): sessionKey collision-free, multi-line HEAD reje
     );
     assert.equal(canonicalSessionKey("ses_plain-1"), "ses_plain-1", "safe <=64-char keys stay unchanged");
 
-    // 2. F8: multi-line HEAD rejected
+    // 2. F8: multi-line HEAD (both trailing line and ref:\nrefs/...) rejected
     const badHeadRepo = path.join(base, "bad-multiline-head");
     await mkdir(path.join(badHeadRepo, ".git"), { recursive: true });
     await writeFile(path.join(badHeadRepo, ".git", "HEAD"), "ref: refs/heads/main\nextra line\n", "utf8");
     const badRes = resolveCanonicalWorktreeRoot(badHeadRepo);
     assert.equal(badRes.ok, false, "multi-line HEAD must be rejected fail-closed");
+    await writeFile(path.join(badHeadRepo, ".git", "HEAD"), "ref:\nrefs/heads/main\n", "utf8");
+    assert.equal(resolveCanonicalWorktreeRoot(badHeadRepo).ok, false, "ref:\\nrefs/... must be rejected fail-closed");
 
     // 3. F2 & F4: retire without projectDir/repoKey rejected when fenced; save() preserves transition repairErrors
     const acq = await acquireWorktreeMutex({ projectDir: repoA, ownerKey: "ses_c16" });

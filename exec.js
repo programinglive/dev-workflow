@@ -75,7 +75,7 @@ function isValidGitHead(headPath) {
     if (!existsSync(headPath)) return false;
     if (!statSync(headPath).isFile()) return false;
     const headContent = readFileSync(headPath, "utf8").trim();
-    return /^ref:\s*\S+$/.test(headContent) || /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(headContent);
+    return /^ref:[ \t]*[^\s\r\n]+$/.test(headContent) || /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(headContent);
   } catch {
     return false;
   }
