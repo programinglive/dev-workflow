@@ -12,8 +12,76 @@ approved Dev Workflow MCP releases.
 | `publish.cjs` | Runs in the repository. Builds the archive and writes `current.json`. |
 | `release-server.cjs` | Runs on build-host.example as `devwf-managed.service`, serving `/v1/current` and `/v1/releases/:sha256.tar.gz`. |
 | `device-entry.cjs` | Thin per-client entry point that calls the launcher. |
+| `admission.cjs` | Maintenance admission gate and its operator CLI. |
 | `install-device.py` | Installs the bootstrap into a device's `%LOCALAPPDATA%\ProgramingLive\ManagedMCP`. |
 | `devwf-managed.service` | systemd unit for the release server. |
+
+## Maintenance admission
+
+A fleet cutover replaces the release every managed client runs. Without a gate,
+a client that starts mid-cutover can resolve a half-installed release or pin a
+revision the operator is about to replace. `admission.cjs` is that gate.
+
+The marker is `maintenance-admission.json` in the managed cache root
+(`%LOCALAPPDATA%\ProgramingLive\ManagedMCP` on Windows). `DEVWF_MANAGED_ROOTS`
+adds more roots, and `DEVWF_MAINTENANCE_ADMISSION` names one explicit file.
+
+```json
+{ "schemaVersion": 1, "mode": "draining", "reason": "fleet cutover",
+  "startedAt": "2026-11-16T00:00:00Z", "expiresAt": "2026-11-16T02:00:00Z" }
+```
+
+| Mode | Effect |
+|---|---|
+| `open` | Launches are admitted. |
+| `draining` | New launches are refused; running sessions are left alone. |
+| `cutover` | New launches are refused outright. Reopen with `open` or `clear` once the swap is verified. |
+
+Operator CLI:
+
+```bash
+node managed/admission.cjs status
+node managed/admission.cjs drain --reason "fleet cutover" --expires 2026-11-16T02:00:00Z
+node managed/admission.cjs cutover --reason "swap to <rev>"
+node managed/admission.cjs open
+node managed/admission.cjs clear
+```
+
+Rules that matter:
+
+- **Fail closed.** A marker that exists but cannot be read, parsed or understood
+  is treated as maintenance, never as permission. A damaged marker blocks the
+  fleet until an operator clears it. A dangling symlink at the marker path
+  counts as "exists but unreadable", not as absent.
+- **Expiry is not permission.** An expired window reports `ADMISSION_STALE` and
+  keeps refusing. The clock never reopens the fleet on its own.
+- **Cutover is a hard stop.** `cutover` refuses every new launch. It is not
+  "allow the target revision": the device entry cannot prove which revision it
+  is about to run, so any revision exception would be unreachable through the
+  configured entry point and would only create a bypass. Reopen with `open` or
+  `clear` after the swap is verified.
+- **Race-safe selection.** The launcher fingerprints the marker before and after
+  release selection. If it moved, the launch is abandoned (`ADMISSION_CHANGED`)
+  instead of racing the cutover.
+- **Spawn-race guard.** A window can still open in the gap between the final
+  check and process creation. The launcher re-checks immediately after spawn and
+  stops the child it just started. Only a child this launcher created is ever
+  stopped; running sessions are untouched.
+- **Cached launchers are covered as far as code can cover them.** `device-entry.cjs`
+  checks admission before it starts `launcher.cjs`, and re-checks after the
+  spawn, stopping the launcher it just started if a window opened in the gap.
+  `install-device.py` points credential wrappers at `device-entry.cjs` and ships
+  `admission.cjs` beside it, so the installed entry always has the gate.
+  `resolveRelease` checks again for any other caller.
+  The residual limit is physical: a launcher copy older than this gate, invoked
+  directly by a hand-edited client config, cannot be made to check anything.
+  Reinstall the device, or fix that client to point at `device-entry.cjs`.
+- **What it cannot do.** It cannot stop an unmodified legacy client that runs
+  `index.js` directly, and it cannot terminate a running process. It only
+  refuses new launches.
+
+Rollback: `clear` the marker, or set `mode: "open"`. Both restore launches
+immediately.
 
 ## Restarting the fleet
 

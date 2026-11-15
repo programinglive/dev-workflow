@@ -4,12 +4,12 @@
 const fs=require('node:fs/promises');
 const fsSync=require('node:fs');
 const path=require('node:path');
-const os=require('node:os');
 const net=require('node:net');
 const {createHash,randomUUID}=require('node:crypto');
 const {spawn,execFile}=require('node:child_process');
 const {promisify}=require('node:util');
 const {validateManifest,validateArchiveEntries,MAX_ARCHIVE_BYTES,tarExecutable}=require('./protocol.cjs');
+const {assertAdmission,evaluateAdmission,admissionFingerprint,managedCacheRoot}=require('./admission.cjs');
 const execFileAsync=promisify(execFile);
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const runtimeKey=()=>[process.platform,process.arch,process.versions.modules].join('-');
@@ -83,11 +83,21 @@ async function installDependencies(root) {
   } catch {throw new Error('Managed release dependency installation failed; prior release retained');}
 }
 
-async function resolveRelease({url,token,cacheRoot,fetchImpl=fetch,install=installDependencies,warn=message=>console.error(message)}) {
+async function resolveRelease({url,token,cacheRoot,fetchImpl=fetch,install=installDependencies,warn=message=>console.error(message),env=process.env,now=Date.now}) {
   if(!url||!token) throw new Error('Managed MCP URL and authentication are required');
+  // Maintenance admission is checked here as well as at the entry point, so a
+  // cached copy of this module that is launched some other way is still gated.
+  // The revision is not known yet, so a cutover is deferred to the check before
+  // the return.
+  assertAdmission({cacheRoot,env,now:now()});
   const origin=new URL(url);
   if(!['http:','https:'].includes(origin.protocol)||origin.username||origin.password||origin.search||origin.hash) throw new Error('Invalid managed MCP service URL');
   url=origin.href.replace(/\/+$/,'');
+  // Race guard. Release selection takes network time, so a maintenance window
+  // can open while this launch is mid-flight. The fingerprint is taken before
+  // selection and re-checked after: if it moved, this launch is abandoned
+  // rather than racing the cutover it was never admitted to.
+  const admissionBefore=admissionFingerprint({cacheRoot,env});
   await fs.mkdir(path.join(cacheRoot,'releases'),{recursive:true});
   let manifest;
   try {
@@ -102,6 +112,7 @@ async function resolveRelease({url,token,cacheRoot,fetchImpl=fetch,install=insta
     const runtimeRoot=releaseRoot(cacheRoot,manifest);
     if(!await installed(runtimeRoot,manifest)) throw error;
     warn('dev-workflow: central service unavailable; using verified cached release '+manifest.revision.slice(0,12));
+    assertAdmission({cacheRoot,env,now:now()});
     return {...manifest,runtimeRoot,offline:true};
   }
   const runtimeRoot=releaseRoot(cacheRoot,manifest);
@@ -131,27 +142,79 @@ async function resolveRelease({url,token,cacheRoot,fetchImpl=fetch,install=insta
       await fs.rename(stage,runtimeRoot);stage=null;
     }
     await atomicJson(path.join(cacheRoot,'last-good.json'),manifest);
+    const admissionAfter=admissionFingerprint({cacheRoot,env});
+    if(admissionAfter!==admissionBefore) {
+      const changed=new Error('Managed launch refused: maintenance state changed during release selection');
+      changed.code='ADMISSION_CHANGED';
+      throw changed;
+    }
+    assertAdmission({cacheRoot,env,now:now()});
     return {...manifest,runtimeRoot,offline:false};
   } finally {
     if(stage) await fs.rm(stage,{recursive:true,force:true});
     await releaseLock();
   }
 }
-async function main() {
-  const cacheRoot=process.env.DEVWF_MANAGED_CACHE||path.join(process.env.LOCALAPPDATA||path.join(os.homedir(),'.local','share'),'ProgramingLive','ManagedMCP');
-  const release=await resolveRelease({url:process.env.DEVWF_RELEASE_URL||'http://127.0.0.1:3101',token:process.env.DEVWF_MONITOR_TOKEN,cacheRoot});
-  if(process.argv.includes('--resolve-only')) {console.log(JSON.stringify({revision:release.revision,version:release.version??null,runtimeRoot:release.runtimeRoot,offline:release.offline}));return;}
-  console.error('dev-workflow: managed release '+release.revision.slice(0,12)+(release.version?' ('+release.version+')':''));
-  const child=spawn(process.execPath,[path.join(release.runtimeRoot,'index.js')],{
+/**
+ * Admit, resolve and spawn one managed release.
+ *
+ * Returns a decision instead of throwing so a test and a launcher can both use
+ * it: `{ok:false, code, message}` means the launch was refused and nothing was
+ * spawned, `{ok:true, release, child}` means a child is running.
+ */
+async function launchManaged({
+  env=process.env,
+  cacheRoot=managedCacheRoot(env),
+  spawnImpl=spawn,
+  resolveReleaseImpl=resolveRelease,
+  now=Date.now,
+  warn=message=>console.error(message),
+  argv=process.argv,
+}={}) {
+  // Gate 1: refuse before touching the release cache or the network. The
+  // revision is not known yet, so a cutover is deferred to Gate 2.
+  try { assertAdmission({cacheRoot,env,now:now()}); }
+  catch(error) { return {ok:false,code:error.code||'ADMISSION_REFUSED',message:error.message}; }
+
+  const admissionBefore=admissionFingerprint({cacheRoot,env});
+  let release;
+  try {
+    release=await resolveReleaseImpl({
+      url:env.DEVWF_RELEASE_URL||'http://127.0.0.1:3101',
+      token:env.DEVWF_MONITOR_TOKEN,
+      cacheRoot,
+      env,
+      now,
+      warn,
+    });
+  } catch(error) {
+    return {ok:false,code:error.code||'RELEASE_RESOLUTION_FAILED',message:error.message};
+  }
+
+  // Gate 2: the window must not have moved while the release was chosen, and
+  // the chosen revision must be the admitted one during a cutover.
+  const admissionAfter=admissionFingerprint({cacheRoot,env});
+  if(admissionAfter!==admissionBefore) {
+    return {ok:false,code:'ADMISSION_CHANGED',message:'Managed launch refused: maintenance state changed during release selection'};
+  }
+  const decision=evaluateAdmission({cacheRoot,env,now:now()});
+  if(!decision.ok) return {ok:false,code:decision.code,message:decision.message};
+
+  if(argv.includes('--resolve-only')) {
+    return {ok:true,resolveOnly:true,release};
+  }
+
+  warn('dev-workflow: managed release '+release.revision.slice(0,12)+(release.version?' ('+release.version+')':''));
+  const child=spawnImpl(process.execPath,[path.join(release.runtimeRoot,'index.js')],{
     cwd:process.cwd(),
     env:{
-      ...process.env,
-      PATH:path.dirname(process.execPath)+path.delimiter+(process.env.PATH||''),
+      ...env,
+      PATH:path.dirname(process.execPath)+path.delimiter+(env.PATH||''),
       DEVWF_RELEASE_REVISION:release.revision,
       // Fleet standard: every build, test suite and pipeline runs on the
       // build-host.example runner. Default the reported build host to it so a monitor
       // card never names the workstation that merely started the session.
-      DEVWF_BUILD_HOST:process.env.DEVWF_BUILD_HOST||'build-host.example',
+      DEVWF_BUILD_HOST:env.DEVWF_BUILD_HOST||'build-host.example',
       // Handed to the server so it can report its own version to the monitor.
       // Without this, "connected" cannot distinguish a current build from an
       // old one, and finding out needs an SSH session per device.
@@ -161,9 +224,45 @@ async function main() {
     stdio:'inherit',
     windowsHide:true,
   });
+
+  // Handlers are attached immediately: a spawn can fail and emit `error`
+  // before the admission re-check runs, and an unhandled `error` event would
+  // crash the launcher instead of reporting the refusal.
   child.on('error',()=>{console.error('dev-workflow: managed executor failed to start');process.exitCode=1;});
   child.on('exit',(code,signal)=>{process.exitCode=code??(signal?1:0);});
+
+  // Gate 3: close the spawn race. A window can open in the gap between the
+  // final check and this spawn. The child is one we just started - not an
+  // existing session - so stopping it is safe and is the only way to honour the
+  // window without holding a lock across process creation.
+  const decisionAfterSpawn=evaluateAdmission({cacheRoot,env,now:now()});
+  if(!decisionAfterSpawn.ok) {
+    let stopped=false;
+    try { stopped=child.kill(); } catch {}
+    // `kill()` returns false when the child already exited. Either way no live
+    // child is left, so the refusal stands; the code is recorded for the log.
+    return {
+      ok:false,
+      code:decisionAfterSpawn.code,
+      message:decisionAfterSpawn.message,
+      childStopped:stopped,
+    };
+  }
+
   for(const signal of ['SIGINT','SIGTERM']) process.on(signal,()=>child.kill(signal));
+  return {ok:true,release,child};
+}
+
+async function main() {
+  const result=await launchManaged();
+  if(!result.ok) {
+    console.error(result.message);
+    process.exitCode=1;
+    return;
+  }
+  if(result.resolveOnly) {
+    console.log(JSON.stringify({revision:result.release.revision,version:result.release.version??null,runtimeRoot:result.release.runtimeRoot,offline:result.release.offline}));
+  }
 }
 if(require.main===module) main().catch(error=>{console.error(error.message);process.exitCode=1;});
-module.exports={resolveRelease,validateManifest,validateArchiveEntries,acquireInstallLock};
+module.exports={resolveRelease,validateManifest,validateArchiveEntries,acquireInstallLock,launchManaged};

@@ -145,7 +145,7 @@ def install(home,source,node=None,verify=True):
     local=pathlib.Path(os.environ.get('LOCALAPPDATA',str(home/'AppData/Local'))) if os.name=='nt' else home/'.local/share'
     target=local/'ProgramingLive/ManagedMCP/bootstrap'
     target.mkdir(parents=True,exist_ok=True)
-    for name in ('launcher.cjs','protocol.cjs','device-entry.cjs'):
+    for name in ('launcher.cjs','protocol.cjs','device-entry.cjs','admission.cjs'):
         shutil.copy2(pathlib.Path(source)/name,target/name)
     configurations=[]
     skipped=[]
@@ -180,15 +180,19 @@ def install(home,source,node=None,verify=True):
         if result.returncode:raise RuntimeError('Managed runtime prewarm failed: '+result.stderr[-1500:])
         resolved=json.loads(result.stdout)
     # Preserve workstation credential-loading wrappers, changing only their target.
+    # The target is device-entry.cjs, not launcher.cjs: a wrapper on disk may be
+    # an older copy of the launcher that predates maintenance admission, so
+    # routing through the entry point keeps the gate in front of it. The entry
+    # point is copied fresh by this install.
     wrappers=[home/'DevWorkflowMCP/launch.cjs',home/'AppData/Local/DevWorkflowMCP/launch.cjs'] if os.name=='nt' else []
     wrapper=None
     for file in wrappers:
         if not file.exists():continue
         text=file.read_text(encoding='utf-8')
         if 'const serverPath = path.join(globalModules,' in text:
-            updated=re.sub(r'(?m)^const serverPath = .*?;$',lambda _:'const serverPath = '+json.dumps(str(target/'launcher.cjs'))+';',text,count=1)
+            updated=re.sub(r'(?m)^const serverPath = .*?;$',lambda _:'const serverPath = '+json.dumps(str(target/'device-entry.cjs'))+';',text,count=1)
         elif '[path.join(serverRoot, "index.js")]' in text:
-            updated=text.replace('[path.join(serverRoot, "index.js")]','['+json.dumps(str(target/'launcher.cjs'))+']',1)
+            updated=text.replace('[path.join(serverRoot, "index.js")]','['+json.dumps(str(target/'device-entry.cjs'))+']',1)
         else:continue
         backup_write(file,updated);wrapper=file;break
     changed=[]
