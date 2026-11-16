@@ -21,10 +21,10 @@ function defaultIsAlive(pid) {
 
 async function pollExit(isAlive, pid, { attempts = 10, delayMs = 500 } = {}) {
   for (let i = 0; i < attempts; i += 1) {
-    if (!isAlive(pid)) return { ok: true };
+    if (!isAlive(pid)) return { ok: true, exited: true };
     await new Promise((resolve) => setTimeout(resolve, delayMs));
   }
-  return { ok: false, reason: "PROCESS_DID_NOT_EXIT" };
+  return { ok: false, exited: false, reason: "PROCESS_DID_NOT_EXIT" };
 }
 
 /** Windows: CIM (wmic fallback) for identity and taskkill for a graceful stop. */

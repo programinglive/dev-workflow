@@ -13,6 +13,7 @@ import {
   buildCommandsTableSql,
   buildEnqueueQuery,
   buildPendingQuery,
+  buildClaimQuery,
   buildCompleteQuery,
   validateEnqueue,
 } from '../monitor-server/restart-commands.cjs';
@@ -21,7 +22,7 @@ test('the table has a unique open command per machine, session and mode', () => 
   const sql = buildCommandsTableSql();
   assert.match(sql, /CREATE TABLE IF NOT EXISTS restart_commands/);
   assert.match(sql, /CREATE UNIQUE INDEX IF NOT EXISTS restart_commands_open_unique/);
-  assert.match(sql, /WHERE status = 'pending'/);
+  assert.match(sql, /WHERE status IN \('pending', 'claimed'\)/);
   assert.match(sql, /status text NOT NULL DEFAULT 'pending'/);
 });
 
@@ -76,10 +77,22 @@ test('buildPendingQuery caps the limit', () => {
   assert.equal(buildPendingQuery({ machine: 'MMCH', limit: 0 }).params[1], 20);
 });
 
+test('buildClaimQuery is a compare-and-swap on the owning machine', () => {
+  const q = buildClaimQuery({ id: 9, machine: 'MMCH' });
+  assert.match(q.sql, /SET status = 'claimed', claimed_at = now\(\)/);
+  assert.match(q.sql, /WHERE id = \$1/);
+  assert.match(q.sql, /AND machine = \$2/);
+  assert.match(q.sql, /status = 'pending'/);
+  assert.match(q.sql, /claimed_at < now\(\)/);
+  assert.equal(q.params[0], 9);
+  assert.equal(q.params[1], 'MMCH');
+  assert.ok(q.params[2] >= 60_000, 'the stale claim window has a floor');
+});
+
 test('buildCompleteQuery is idempotent and scoped to the owning machine', () => {
   const q = buildCompleteQuery({ id: 7, machine: 'MMCH', status: 'done', code: 'RESTARTED', detail: { steps: 3 } });
   assert.match(q.sql, /UPDATE restart_commands/);
-  assert.match(q.sql, /WHERE id = \$1 AND machine = \$2 AND status = 'pending'/);
+  assert.match(q.sql, /WHERE id = \$1 AND machine = \$2 AND status IN \('pending', 'claimed'\)/);
   assert.match(q.sql, /RETURNING id/);
   assert.deepEqual(q.params, [7, 'MMCH', 'done', 'RESTARTED', JSON.stringify({ steps: 3 })]);
 });
@@ -89,7 +102,7 @@ test('buildCompleteQuery refuses a non-terminal status', () => {
 });
 
 test('the command statuses are the ones the queue understands', () => {
-  assert.deepEqual(Object.keys(RESTART_COMMAND_STATUS).sort(), ['done', 'failed', 'pending']);
+  assert.deepEqual(Object.keys(RESTART_COMMAND_STATUS).sort(), ['claimed', 'done', 'failed', 'pending']);
 });
 
 // ------------------------------------------------------------ controller client

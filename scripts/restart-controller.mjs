@@ -34,7 +34,7 @@ import fs from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 
 import { createLocalAdapters } from '../session-controller-adapters.js';
-import { fetchReaperSessions, fetchRestartCommands, reportRestartResult, toReaperSession } from '../reaper-client.js';
+import { fetchReaperSessions, fetchRestartCommands, claimRestartCommand, reportRestartResult } from '../reaper-client.js';
 import {
   planRestartOne,
   executeRestartOne,
@@ -78,6 +78,13 @@ function runCommand(command, timeoutMs = 60_000) {
  * Returns the result the Monitor should record. It never throws: a failure is a
  * result, because a command that silently disappears is worse than one that
  * reports why it could not run.
+ *
+ * TWO RULES THAT KEEP THIS SAFE
+ * -----------------------------
+ * 1. The target must be verified locally before anything is stopped.
+ * 2. The checkpoint and relaunch adapters must exist BEFORE the stop. A restart
+ *    that stops a process and only then discovers it cannot start it again is a
+ *    half restart, which is worse than no restart.
  */
 async function executeCommand({ command, sessions, adapters, config, dryRun }) {
   const row = sessions.find((candidate) => candidate.session_key === command.sessionKey);
@@ -100,17 +107,20 @@ async function executeCommand({ command, sessions, adapters, config, dryRun }) {
   const plan = planRestartOne({ session, mode: command.mode });
   if (!plan.ok) return { status: 'failed', code: plan.code };
 
+  // Fail before the stop, not after it.
+  if (!config.checkpointCommand) return { status: 'failed', code: 'CHECKPOINT_ADAPTER_REQUIRED' };
+  if (!config.relaunchCommand) return { status: 'failed', code: 'RELAUNCH_ADAPTER_REQUIRED' };
+
   if (dryRun) return { status: 'done', code: 'DRY_RUN_PLANNED', detail: { steps: plan.steps } };
 
-  const relaunch = config.relaunchCommand
-    ? async () => runCommand(config.relaunchCommand)
-    : async () => ({ ok: false, code: 'RELAUNCH_ADAPTER_REQUIRED' });
+  const checkpoint = async () => runCommand(config.checkpointCommand);
+  const relaunch = async () => runCommand(config.relaunchCommand);
 
   const result = await executeRestartOne({
     plan,
     session,
     adapters,
-    checkpoint: async () => ({ ok: true }),
+    checkpoint,
     relaunch,
     verify: async () => ({ ok: true }),
   });
@@ -134,6 +144,19 @@ async function main() {
     const sessions = await fetchReaperSessions({ baseUrl: config.monitor, secret: config.secret, machine: config.machine });
     const commands = await fetchRestartCommands({ baseUrl: config.monitor, secret: config.secret, machine: config.machine });
     for (const command of commands) {
+      // Claim before executing: two controllers must never run one command, and
+      // a controller that restarts after executing but before reporting must not
+      // run it again.
+      const claim = await claimRestartCommand({
+        baseUrl: config.monitor,
+        secret: config.secret,
+        machine: config.machine,
+        id: command.id,
+      });
+      if (!claim.claimed) {
+        console.log(JSON.stringify({ command: command.id, sessionKey: command.sessionKey, skipped: 'ALREADY_CLAIMED' }));
+        continue;
+      }
       const outcome = await executeCommand({
         command,
         sessions,
