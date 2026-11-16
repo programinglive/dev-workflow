@@ -217,7 +217,12 @@ export async function handleResumeSession(args, workflowState) {
   delete resumed.owner;
 
   writeFileSync(target, JSON.stringify(resumed, null, 2), "utf8");
-  await workflowState.load();
+  // `load()` performs a legacy-state migration write, which requires the
+  // worktree mutex. A successor does not hold it yet - the mutex is acquired on
+  // the next guarded mutation - so that write is refused ("capability_not_held")
+  // and the whole adoption appeared to fail after it had already committed.
+  // Read-only reload is exactly what the request path uses.
+  await workflowState.load({ skipWrites: true });
 
   // Revalidate the README-first preflight against the current working tree.
   // Documentation edits are reported, not treated as failures; the caller
@@ -247,20 +252,33 @@ export async function handleResumeSession(args, workflowState) {
       preflightNote = `\n\nℹ️ Preflight recorded for this resumed task.`;
     }
   }
-  await workflowState.save();
+
+  // The adoption commit point is the state file above: it was written and
+  // reloaded, so this session owns the task. This final save only persists the
+  // preflight note, and it runs before the successor has acquired the worktree
+  // mutex, so it can legitimately be refused. A refusal here must not turn a
+  // successful adoption into an error the caller cannot interpret — it is
+  // reported as a warning and never as failure.
+  let saveNote = "";
+  try {
+    await workflowState.save();
+  } catch (error) {
+    saveNote = `\n\nℹ️ Preflight note was not persisted: ${error?.message || error}`;
+  }
 
   const dod = summarizeDod(workflowState.state.definitionOfDone, workflowState.state.dodRevision);
   const outstanding = dod.open > 0 ? `\n\nDoD yang belum terpenuhi:\n${renderOutstanding(workflowState.state.definitionOfDone, workflowState.state.dodRevision)}` : "";
 
   return textResponse(
-    `✅ Disambung ke state sesi "${chosen.sessionKey}".\n\n` +
+    `✅ Adopted the state of session "${chosen.sessionKey}".\n\n` +
       `Task      : ${workflowState.state.taskDescription}\n` +
-      `Fase      : ${workflowState.state.currentPhase}\n` +
-      `DoD       : ${dod.done}/${dod.total} terbukti, ${dod.open} terbuka\n` +
-      `Rencana   : ${planProgress(workflowState.state.plan).done}/${planProgress(workflowState.state.plan).total}\n` +
-      `Berkas asli tetap di: ${chosen.file}\n` +
+      `Phase     : ${workflowState.state.currentPhase}\n` +
+      `DoD       : ${dod.done}/${dod.total} proven, ${dod.open} open\n` +
+      `Plan      : ${planProgress(workflowState.state.plan).done}/${planProgress(workflowState.state.plan).total}\n` +
+      `Source file kept at: ${chosen.file}\n` +
       outstanding +
       preflightNote +
-      `\n\nLanjutkan dengan 'continue_workflow' atau 'get_workflow_status'.`
+      saveNote +
+      `\n\nContinue with 'continue_workflow' or 'get_workflow_status'.`
   );
 }
