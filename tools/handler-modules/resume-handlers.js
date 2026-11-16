@@ -243,6 +243,27 @@ export async function handleResumeSession(args, workflowState) {
           `Nothing was changed.`
       );
     }
+    // The sidecar must describe the very state being copied. A misplaced or
+    // stale sidecar plus its claim must not authorize a different session's task.
+    const h = handshake.record?.handover || {};
+    if (h.sessionKey !== chosen.sessionKey) {
+      return textResponse(
+        `⚠️ Adoption refused: the handover names session "${h.sessionKey}", not "${chosen.sessionKey}". ` +
+          `Nothing was changed.`
+      );
+    }
+    if (h.stateFile && path.resolve(String(h.stateFile)) !== path.resolve(String(chosen.file))) {
+      return textResponse(
+        `⚠️ Adoption refused: the handover points at a different state file than the one being copied. ` +
+          `Nothing was changed.`
+      );
+    }
+    if (h.todoId && source.zettly?.todoId && Number(h.todoId) !== Number(source.zettly.todoId)) {
+      return textResponse(
+        `⚠️ Adoption refused: the handover names Todo #${h.todoId}, but the source state is Todo ` +
+          `#${source.zettly.todoId}. Nothing was changed.`
+      );
+    }
     const claim = readClaim(handoverSidecar);
     if (!claim) {
       return textResponse(
@@ -409,7 +430,13 @@ export async function handleResumeSession(args, workflowState) {
   // held, so it should succeed. If it does not, the adoption is not durable and
   // must not be reported as success or marked adopted.
   try {
-    await workflowState.save();
+    const saved = await workflowState.save();
+    if (saved && (saved.verified === false || saved.conflict)) {
+      return await abandon(
+        `⚠️ Adoption is not durable: the final save reported a conflict, so another writer's state ` +
+          `was kept. The claim was NOT marked adopted. The worktree mutex was released.`
+      );
+    }
   } catch (error) {
     return await abandon(
       `⚠️ Adoption is not durable: the state was copied but the final save failed ` +

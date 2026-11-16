@@ -4623,9 +4623,24 @@ export class WorkflowState {
         const { key: sessionKey } = this._sessionKey();
         const userId = getCurrentUserId(this.stateFile);
         const projectPath = this._projectPath();
-        const state = await this._adoptLegacyJsonIfPresent(db, userId, projectPath, sessionKey, {
-          skipWrites: false,
-        });
+        const read = await readJsonStateFile(this.stateFile, this.fs);
+        if (read.status !== "ok") {
+          throw new StateUnavailable(
+            `State file "${this.stateFile}" could not be read for adoption (${read.status}).`,
+          );
+        }
+        const state = sanitize(migrateOwnerMetadata(read.data));
+        if (!state || typeof state !== "object") {
+          throw new StateUnavailable(`State file "${this.stateFile}" did not contain a usable state.`);
+        }
+        // Replace, not insert-if-absent: a successor that already has a row must
+        // still end up with the adopted task, and the worktree mutex is held.
+        if (typeof db.replaceState === "function") {
+          await db.replaceState({ userId, projectPath, sessionKey, state });
+        } else {
+          await db.saveStateVersioned({ userId, projectPath, sessionKey, state, expectedVersion: null });
+        }
+        this._lastLoadCommittedSqlite = true;
         return state;
       });
     });

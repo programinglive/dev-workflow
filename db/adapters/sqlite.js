@@ -186,6 +186,38 @@ export class SqliteAdapter extends DbAdapter {
      * tidak, ada penulis lain yang lebih dulu dan pemanggil harus membaca ulang.
      * Ini yang mengubah "yang terakhir menang" menjadi "yang basi ditolak".
      */
+    /**
+     * Replace a session's stored state unconditionally.
+     *
+     * Adoption must make the copied state authoritative even when the successor
+     * already has a row. `saveStateVersioned` refuses that case on purpose (a
+     * stale writer must not win), so adoption uses this explicit replace under
+     * the worktree mutex instead.
+     */
+    async replaceState({ userId, projectPath, sessionKey, state }) {
+        await this.connect();
+        const normalizedPath = normalizeProjectPath(projectPath);
+        const json = JSON.stringify(state);
+        return this.db.transaction(() => {
+            this.db
+                .prepare(
+                    `INSERT INTO workflow_state (user_id, project_path, session_key, state_json, version, updated_at)
+                     VALUES (?, ?, ?, ?, 1, datetime('now'))
+                     ON CONFLICT(user_id, project_path, session_key)
+                     DO UPDATE SET state_json = excluded.state_json,
+                                   version = workflow_state.version + 1,
+                                   updated_at = datetime('now')`,
+                )
+                .run(userId, normalizedPath, sessionKey, json);
+            const current = this.db
+                .prepare(
+                    "SELECT version FROM workflow_state WHERE user_id = ? AND project_path = ? AND session_key = ?",
+                )
+                .get(userId, normalizedPath, sessionKey);
+            return { version: current?.version ?? 1 };
+        })();
+    }
+
     async saveStateVersioned({ userId, projectPath, sessionKey, state, expectedVersion = null }) {
         await this.connect();
         const normalizedPath = normalizeProjectPath(projectPath);

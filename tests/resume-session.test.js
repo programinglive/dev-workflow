@@ -245,3 +245,31 @@ test("adoption is refused when the claim belongs to another process", async () =
     assert.equal(state.state.currentPhase, "idle");
   });
 });
+
+test("adoption replaces an existing successor row instead of reloading it", async () => {
+  await withProject(async ({ state }) => {
+    // The successor already has its own stored state. Adoption must replace it,
+    // not silently reload the old row and report success.
+    state.state.currentPhase = "idle";
+    state.state.taskDescription = "Old successor task";
+    await state.save();
+
+    const r = await handleResumeSession({ adopt: "ses_OTHER" }, state);
+    assert.match(text(r), /^✅/);
+    assert.equal(state.state.taskDescription, "Task yang tertinggal");
+    assert.equal(state.state.currentPhase, "documentation");
+  });
+});
+
+test("adoption refuses a sidecar that names a different session", async () => {
+  await withHandover(async ({ state, sidecar }) => {
+    tryClaimHandshake(sidecar, { sessionKey: "ses_CURRENT", at: Date.now(), pid: process.pid, generation: 1 });
+    const { readHandshake, writeHandshake } = await import("../monitor-server/restart-handshake-store.cjs");
+    const rec = readHandshake(sidecar).record;
+    writeHandshake(sidecar, { ...rec, handover: { ...rec.handover, sessionKey: "ses_SOMETHING_ELSE" } });
+    const r = await handleResumeSession({ adopt: "ses_OTHER" }, state);
+    assert.match(text(r), /^⚠️/);
+    assert.match(text(r), /ses_SOMETHING_ELSE/);
+    assert.equal(state.state.currentPhase, "idle");
+  });
+});
