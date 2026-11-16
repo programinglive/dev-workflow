@@ -13,6 +13,7 @@ import { cleanupWorkBranches } from "../../branch-cleanup.js";
 import { assertPreflightScope } from "../../preflight.js";
 import { evaluateGovernanceGate } from "../../governance/engine.js";
 import { collectGitContext } from "../../governance/ci-validator.js";
+import { validateForceOverrideAuthorization } from "../../governance/exceptions.js";
 
 /**
  * Tutup task Factory yang di-claim saat workflow berakhir, supaya board tidak
@@ -845,6 +846,8 @@ export async function handleForceCompleteTask(args, workflowState, context = {})
 
   let governanceBypassed = false;
   let governanceViolations = [];
+  let approvedBy = "";
+  let approvalTicket = "";
   if (workflowState.state.governance && !context?.skipGovernanceGate) {
     const projectDir = workflowState.state.projectDir || getActiveProjectDir() || "";
     const govInput = context?.governanceInput || (projectDir ? collectGitContext(projectDir) : {});
@@ -869,7 +872,18 @@ export async function handleForceCompleteTask(args, workflowState, context = {})
           `⚠️ POLICY_FORCE_REASON_REQUIRED: Governance violations (${codes}) require an explicit force reason (>= 15 characters). Task NOT closed.`
         );
       }
+      const auth = validateForceOverrideAuthorization({
+        approvedBy: args.approvedBy,
+        approvalTicket: args.approvalTicket,
+        overrideToken: args.overrideToken,
+        actor: context?.actor || process.env.DEVWF_AGENT || "",
+      });
+      if (!auth.ok) {
+        return textResponse(`⚠️ ${auth.code}: ${auth.reason} Task NOT closed.`);
+      }
       governanceBypassed = true;
+      approvedBy = auth.approvedBy;
+      approvalTicket = auth.approvalTicket;
       governanceViolations = govCheck.violations.map((v) => ({ policyId: v.policyId, code: v.code, reason: v.reason }));
     }
   }
@@ -881,6 +895,8 @@ export async function handleForceCompleteTask(args, workflowState, context = {})
     forced: true,
     forceReason: reason,
     governanceBypassed,
+    approvedBy,
+    approvalTicket,
     governanceViolations,
     definitionOfDoneSummary: summarize(
       Array.isArray(workflowState.state.definitionOfDone) ? workflowState.state.definitionOfDone : [],

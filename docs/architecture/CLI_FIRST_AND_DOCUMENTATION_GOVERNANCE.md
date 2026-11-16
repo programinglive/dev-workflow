@@ -73,9 +73,13 @@ Exit codes:
 - `0`: Gate passed (`gateResult: "PASS"`).
 - `1`: One or more policy violations detected (`gateResult: "FAIL"`).
 
-## 7. Exception Approval
+## 7. Exception Approval & Emergency Override Authorization
 
 `governance/exceptions.js` (`validatePolicyException`) requires `policyId`, `repository`, `justification`, `scope`, `risk`, `owner`, a distinct `approver` (separation of duties; self-approval is rejected), and a valid non-expired `expiresAt`. Exceptions can never bypass CI or security checks.
+
+`force_complete_task` cannot silently bypass enforced governance policies with a reason string alone:
+- When enforced governance violations exist, `force_complete_task` requires `reason` (`>= 15` chars), a distinct human/owner `approvedBy` (rejecting self-approval or agent names), `approvalTicket` (`>= 6` chars), and `overrideToken` when `DEVWF_GOVERNANCE_OVERRIDE_TOKEN` is configured (`POLICY_OVERRIDE_UNAUTHORIZED` otherwise).
+- `DOCUMENTATION_SECURITY_VIOLATION` can never be bypassed (`POLICY_SECURITY_BLOCKED`).
 
 ## 8. Legacy Migration
 
