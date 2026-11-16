@@ -276,11 +276,11 @@ test('verify_exit treats a reused PID as an exited owner', async () => {
   // The handover records the owner's real creation time; a live PID with a
   // different one is a different process.
   const rec = readHandshake(f.ws.stateFile).record;
-  writeHs(f.ws.stateFile, { ...rec, handover: { ...rec.handover, owner: { ...owner, startedAt: 'OLD' } } });
+  writeHs(f.ws.stateFile, { ...rec, handover: { ...rec.handover, owner: { ...owner, startedAt: '2026-01-01T00:00:00Z' } } });
   const result = await handleRestartHandshake(
     { action: 'verify_exit', handover: f.ws.stateFile },
     { state: { projectDir: '/tmp/project', machine: 'CANARY' } },
-    { isAlive: () => true, processInfo: () => ({ pid: owner.pid, startedAt: 'NEW', executable: owner.executable }) }
+    { isAlive: () => true, processInfo: () => ({ pid: owner.pid, startedAt: '2026-01-02T00:00:00Z', executable: owner.executable }) }
   );
   assert.equal(result.ok, true);
   assert.equal(result.state, STATES.PROCESS_EXIT_VERIFIED);
