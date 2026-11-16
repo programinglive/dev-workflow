@@ -95,9 +95,10 @@ export function preflight(args) {
     return checked;
   }
 
-  if (command === "drop" || command === "complete") {
+  if (command === "drop" || command === "complete" || command === "checkpoint") {
     checked.session = requireSession(args, command);
     checked.nextSteps = Array.isArray(args.nextSteps) ? args.nextSteps : [];
+    checked.summary = typeof args.summary === "string" ? args.summary.trim() : "";
     if (command === "drop") {
       checked.reason = requireValue(args.reason, "--reason <r>", "drop");
     }
@@ -669,7 +670,7 @@ export async function runCommand({
     return { ok: true };
   }
 
-  if (command === "drop" || command === "complete") {
+  if (command === "drop" || command === "complete" || command === "checkpoint") {
     // Already validated by preflight, before any dependency was constructed.
     const session = safe.session;
     const reason = command === "drop" ? safe.reason : "";
@@ -681,7 +682,9 @@ export async function runCommand({
       const what =
         command === "drop"
           ? `would drop "${found.state.taskDescription || "the task"}" (${session}) with reason "${reason}".`
-          : `would complete "${found.state.taskDescription || "the task"}" (${session}).`;
+          : command === "checkpoint"
+            ? `would checkpoint "${found.state.taskDescription || "the task"}" (${session}) and verify the read-back.`
+            : `would complete "${found.state.taskDescription || "the task"}" (${session}).`;
       reportDryRun(out, what);
       return { ok: true, dryRun: true };
     }
@@ -689,12 +692,25 @@ export async function runCommand({
     const outcome =
       command === "drop"
         ? await handlers.drop({ session, file: found.file, reason })
-        : await handlers.complete({ session, file: found.file, nextSteps });
+        : command === "checkpoint"
+          ? await handlers.checkpoint({ session, file: found.file, summary: safe.summary })
+          : await handlers.complete({ session, file: found.file, nextSteps });
+
+    // A checkpoint is only trustworthy when the read-back matched. `confirmed`
+    // is optional for drop/complete, but a checkpoint must prove itself: the
+    // restart controller treats exit 0 as permission to stop a process.
+    if (command === "checkpoint" && outcome?.confirmed !== true) {
+      const text = responseText(outcome?.response ?? outcome);
+      if (text) out.write(text);
+      throw new CliError(
+        `Checkpoint for session ${session} was not confirmed; the process must not be stopped.`
+      );
+    }
 
     // Adapters report `settled`; a stub without it is trusted. A handler that
     // answered with prose but did not settle the task (open DoD items, missing
     // DoD) must fail the command, so shell scripts cannot read it as success.
-    const settled = outcome?.settled !== false;
+    const settled = command === "checkpoint" ? true : outcome?.settled !== false;
     const text = responseText(outcome?.response ?? outcome);
     if (text) out.write(text);
     if (!settled) {
