@@ -316,6 +316,12 @@ export function getToolList() {
             type: "string",
             description: "Optional checkpoint summary recorded with the task.",
           },
+          handover: {
+            type: "string",
+            description:
+              "For action=claim: absolute path to the previous owner's handover record (the restart sidecar " +
+              "of its state file). Required, because a fresh successor has no state file of its own to read.",
+          },
         },
         required: ["action"],
       },

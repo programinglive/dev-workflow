@@ -53,7 +53,9 @@ function samePath(a, b) {
 export async function handleRestartHandshake(args = {}, workflowState = null, options = {}) {
   const action = String(args.action || "status");
   if (!workflowState?.state) return { ok: false, code: "NO_STATE", note: "No session state is loaded." };
-  if (!stateFileOf(workflowState, options)) {
+  // The claim names the previous owner's handover explicitly, so the caller
+  // does not need its own state file to start the claim.
+  if (action !== "claim" && !stateFileOf(workflowState, options)) {
     return { ok: false, code: "NO_STATE_FILE", note: "This session has no state file to record the handshake in." };
   }
 
@@ -198,38 +200,52 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
 
   if (action === "claim") {
     // Successor-side. The new agent reads the previous owner's durable handover
-    // and takes it over. It never touches the old process: that one is already
-    // released and stopped. Adoption itself is performed by the existing
-    // guarded `resume_session { adopt }`; this step authorizes and fences it.
-    const handoverFile = options.stateFile || workflowState.stateFile || null;
+    // and takes it over. It never touches the old process.
+    //
+    // The handover to claim is named explicitly: a fresh successor has its own
+    // state file, so reading its own would find nothing. The path comes from the
+    // controller, which got it from the release receipt.
+    const handoverFile = args.handover || options.stateFile || null;
+    if (!handoverFile) {
+      return { ok: false, code: "HANDOVER_REQUIRED", note: "claim needs the previous owner's handover path" };
+    }
     const read = readHandshake(handoverFile);
     if (read.status !== "ok") {
       return { ok: false, code: "HANDOVER_NOT_FOUND", note: `no readable handover at ${handoverFile}` };
     }
     const prior = read.record;
 
-    if (prior.claimedBy) {
+    const existing = readClaim(handoverFile);
+    if (existing || prior.claimedBy) {
+      const holder = existing || prior.claimedBy;
       return {
         ok: false,
         code: "ALREADY_CLAIMED",
-        note: `the handover was already claimed by ${prior.claimedBy.sessionKey} at ${prior.claimedBy.at}`,
+        note: `the handover was already claimed by ${holder.sessionKey} at ${holder.at}`,
       };
     }
-    if (prior.state !== STATES.OWNER_RELEASED) {
+
+    // The owner releasing the mutex does NOT prove its process exited. A live
+    // owner must never be claimed, so the controller has to have recorded that
+    // the old process is gone.
+    if (prior.state !== STATES.PROCESS_EXIT_VERIFIED && prior.state !== STATES.RELAUNCHED) {
       return {
         ok: false,
-        code: "OWNER_NOT_RELEASED",
-        note: `the handover is at ${prior.state}; a successor may only claim after OWNER_RELEASED`,
+        code: "OWNER_NOT_EXITED",
+        note: `the handover is at ${prior.state}; a successor may only claim after ${STATES.PROCESS_EXIT_VERIFIED}`,
       };
     }
     if (!prior.handover || !prior.handover.sessionKey) {
       return { ok: false, code: "HANDOVER_INCOMPLETE", note: "the handover does not name its session" };
     }
 
-    // Same machine and same repository only: a handover must never let a
-    // different project or host take the task.
+    // Same machine and same repository only, and both sides must actually say
+    // so: an absent value must never be read as "matches".
     const machine = workflowState.state.machine || null;
-    if (prior.handover.machine && machine && prior.handover.machine !== machine) {
+    if (!machine || !prior.handover.machine) {
+      return { ok: false, code: "MACHINE_UNVERIFIED", note: "the handover and this session must both name a machine" };
+    }
+    if (prior.handover.machine !== machine) {
       return {
         ok: false,
         code: "MACHINE_MISMATCH",
@@ -237,7 +253,10 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
       };
     }
     const projectDir = workflowState.state.projectDir || null;
-    if (prior.handover.projectDir && projectDir && !samePath(prior.handover.projectDir, projectDir)) {
+    if (!projectDir || !prior.handover.projectDir) {
+      return { ok: false, code: "PROJECT_UNVERIFIED", note: "the handover and this session must both name a project" };
+    }
+    if (!samePath(prior.handover.projectDir, projectDir)) {
       return {
         ok: false,
         code: "PROJECT_MISMATCH",
@@ -264,20 +283,12 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
       return { ok: false, code: "CLAIM_WRITE_FAILED", note: String(won.code) };
     }
 
-    const claimed = {
-      ...prior,
-      state: STATES.SESSION_RECOVERED,
-      claimedBy: claim,
-      history: [
-        ...(prior.history || []),
-        { state: STATES.SESSION_RECOVERED, actor: "successor", at: claim.at, detail: { claimant } },
-      ],
-    };
-    writeHandshake(handoverFile, claimed);
-
+    // The handover record itself is NOT rewritten: the claim file is the single
+    // authoritative winner, and mutating the handover here would race the owner
+    // and could report success while the record still says something else.
     return {
       ok: true,
-      state: claimed.state,
+      state: STATES.SESSION_RECOVERED,
       adoptSessionKey: prior.handover.sessionKey,
       todoId: prior.handover.todoId,
       taskDescription: prior.handover.taskDescription,
