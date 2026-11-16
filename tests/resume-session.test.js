@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -22,6 +23,9 @@ async function withProject(fn) {
   const projectDir = path.join(root, "projects", "demo-abc123");
   const userDir = path.join(projectDir, "users", "user-1");
   await mkdir(userDir, { recursive: true });
+  // Adoption acquires the worktree mutex, which is keyed by canonical Git
+  // working-tree identity, so the fixture project must be a real worktree.
+  execFileSync("git", ["init", "-q", projectDir], { windowsHide: true });
 
   const currentFile = path.join(userDir, "workflow-state.ses_CURRENT.json");
   const otherFile = path.join(userDir, "workflow-state.ses_OTHER.json");
@@ -31,7 +35,9 @@ async function withProject(fn) {
   await write(otherFile, {
     currentPhase: "documentation",
     taskDescription: "Task yang tertinggal",
-    projectDir: "D:\\code\\demo",
+    // A real worktree path: adoption now acquires the worktree mutex, and a
+    // recorded projectDir that does not exist cannot be owned.
+    projectDir,
     definitionOfDone: [
       { id: "dod-1", text: "build lulus", status: "done", evidence: "npm test -> 10 pass", revision: 0 },
       { id: "dod-2", text: "README diperbarui", status: "open", evidence: "", revision: 0 },
@@ -137,5 +143,34 @@ test("findResumableCandidates mengabaikan state menganggur dan sesi ini sendiri"
 
     const candidates = findResumableCandidates({ stateFile: state.stateFile });
     assert.deepEqual(candidates.map((c) => c.sessionKey), ["ses_OTHER"]);
+  });
+});
+
+test("adoption binds the worktree mutex so the new owner can save", async () => {
+  await withProject(async ({ state }) => {
+    const r = await handleResumeSession({ adopt: "ses_OTHER" }, state);
+    assert.match(text(r), /^✅/);
+    assert.ok(state.boundKernelCapability, "adoption must bind the worktree capability");
+    // A guarded write after adoption must succeed: this is what a checkpoint does.
+    state.state.taskDescription = "Task yang tertinggal";
+    await assert.doesNotReject(() => state.save());
+  });
+});
+
+test("adoption is refused while another owner still holds the worktree", async () => {
+  const { acquireWorktreeMutex, releaseWorktreeMutex } = await import("../process-lock.js");
+  await withProject(async ({ state, projectDir, otherFile }) => {
+    const held = await acquireWorktreeMutex({ projectDir, ownerKey: "other-live-owner" });
+    assert.equal(held.ok, true);
+    try {
+      const r = await handleResumeSession({ adopt: "ses_OTHER" }, state);
+      assert.match(text(r), /^⚠️/);
+      assert.match(text(r), /refus/i);
+      // Nothing changed: the current session did not inherit the task.
+      assert.equal(state.state.currentPhase, "idle");
+      assert.ok(existsSync(otherFile));
+    } finally {
+      await releaseWorktreeMutex(held.capability);
+    }
   });
 });

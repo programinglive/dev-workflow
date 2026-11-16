@@ -3,7 +3,7 @@ import path from "node:path";
 import { textResponse } from "./shared.js";
 import { summarize as summarizeDod, renderOutstanding } from "./dod.js";
 import { planProgress } from "./plan.js";
-import { DEFAULT_LOCK_STALE_MS } from "../../process-lock.js";
+import { DEFAULT_LOCK_STALE_MS, acquireWorktreeMutex } from "../../process-lock.js";
 import { revalidatePreflight, runPreflight } from "../../preflight.js";
 
 /**
@@ -208,6 +208,30 @@ export async function handleResumeSession(args, workflowState) {
   const target = workflowState.stateFile;
   mkdirSync(path.dirname(target), { recursive: true });
 
+  // Adoption makes this session the owner of the task, so it must also become
+  // the owner of the worktree. The startup placeholder capability is released
+  // when the real session is established, and only `start_task` re-acquires it;
+  // a successor never calls `start_task`, so without this it adopts a task it
+  // can never checkpoint. Acquire BEFORE the state write: if another live owner
+  // still holds the worktree, the adoption is refused and nothing changes.
+  const adoptProjectDir = source.projectDir || workflowState.state.projectDir || "";
+  // The capability owner key is the resolved state-file path: `_capabilityMatchesSession`
+  // accepts it directly, and unlike the derived session key it cannot change when
+  // the state is reloaded.
+  const adoptOwnerKey = path.resolve(String(target));
+  const adoptMutex = await acquireWorktreeMutex({
+    projectDir: adoptProjectDir,
+    ownerKey: adoptOwnerKey,
+  });
+  if (!adoptMutex.ok) {
+    return textResponse(
+      `⚠️ Adoption refused: the worktree mutex for "${adoptProjectDir}" could not be acquired ` +
+        `(${adoptMutex.reason || "MUTEX_ERROR"}).\n\n` +
+        `Another live session may still own this working tree. Nothing was changed; the source ` +
+        `state is untouched.`
+    );
+  }
+
   const resumed = {
     ...source,
     owner: undefined,
@@ -218,11 +242,13 @@ export async function handleResumeSession(args, workflowState) {
 
   writeFileSync(target, JSON.stringify(resumed, null, 2), "utf8");
   // `load()` performs a legacy-state migration write, which requires the
-  // worktree mutex. A successor does not hold it yet - the mutex is acquired on
-  // the next guarded mutation - so that write is refused ("capability_not_held")
-  // and the whole adoption appeared to fail after it had already committed.
-  // Read-only reload is exactly what the request path uses.
+  // worktree mutex. The capability is bound below, so the read-only reload is
+  // used here to keep the commit point explicit: the state file write plus a
+  // verified reload.
   await workflowState.load({ skipWrites: true });
+  if (typeof workflowState.bindKernelCapability === "function") {
+    workflowState.bindKernelCapability(adoptMutex.capability);
+  }
 
   // Revalidate the README-first preflight against the current working tree.
   // Documentation edits are reported, not treated as failures; the caller
