@@ -34,9 +34,18 @@ const STATE_FILE_PATTERN = /^workflow-state\.(.+)\.json$/;
 function projectDirFromStateFile(stateFile) {
   const resolved = path.resolve(stateFile);
   const segments = resolved.split(path.sep);
-  const index = segments.lastIndexOf("projects");
-  if (index >= 0 && segments.length > index + 2) {
-    return segments.slice(0, index + 2).join(path.sep);
+  const projectsIndex = segments.lastIndexOf("projects");
+  if (projectsIndex >= 0 && segments.length > projectsIndex + 2) {
+    return segments.slice(0, projectsIndex + 2).join(path.sep);
+  }
+  // Per-project layout without a `projects` segment:
+  //   <base>/users/<user>/workflow-state.<key>.json
+  // Falling back to dirname() here pointed the scan at
+  // `<base>/users/<user>/users`, which never exists, so no candidate was ever
+  // found and an adoption of a handover in this layout failed.
+  const usersIndex = segments.lastIndexOf("users");
+  if (usersIndex > 0) {
+    return segments.slice(0, usersIndex).join(path.sep);
   }
   return path.dirname(resolved);
 }
