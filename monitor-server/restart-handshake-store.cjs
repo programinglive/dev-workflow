@@ -120,6 +120,9 @@ function tryClaimHandshake(stateFile, claim) {
   try {
     // link(2) fails with EEXIST when another process already created the claim.
     fs.linkSync(tmp, file);
+    if (Number.isFinite(Number(claim?.generation))) {
+      writeGeneration(stateFile, Number(claim.generation));
+    }
     return { ok: true, file };
   } catch (error) {
     if (error && error.code === 'EEXIST') {
@@ -164,7 +167,42 @@ function claimGeneration(stateFile) {
   if (current && Number.isFinite(Number(current.generation))) {
     max = Math.max(max, Number(current.generation));
   }
+  // A durable counter survives cleanup of both the claim and its retired files.
+  const durable = readGeneration(stateFile);
+  if (Number.isFinite(durable)) max = Math.max(max, durable);
   return max + 1;
+}
+
+function generationPath(stateFile) {
+  const file = claimPath(stateFile);
+  return file ? `${file}.generation` : null;
+}
+
+function readGeneration(stateFile) {
+  const file = generationPath(stateFile);
+  if (!file) return null;
+  try {
+    const value = Number(fs.readFileSync(file, 'utf8').trim());
+    return Number.isFinite(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeGeneration(stateFile, generation) {
+  const file = generationPath(stateFile);
+  if (!file) return { ok: false, code: 'NO_STATE_FILE' };
+  const value = Number(generation);
+  if (!Number.isFinite(value) || value <= 0) return { ok: false, code: 'INVALID_GENERATION' };
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    fs.writeFileSync(tmp, String(value), { mode: 0o600 });
+    fs.renameSync(tmp, file);
+    return { ok: true };
+  } catch (error) {
+    try { fs.unlinkSync(tmp); } catch {}
+    return { ok: false, code: error?.code || 'WRITE_FAILED' };
+  }
 }
 
 /**
@@ -219,8 +257,16 @@ function withRecoveryLock(file, fn) {
       }
     }
     if (!ownerAlive) {
-      try { fs.unlinkSync(lock); } catch {}
-      acquired = tryLink();
+      // Rename, not unlink: only one process can move a given path, so two
+      // recoverers cannot both reclaim and then unlink each other's live lock.
+      const stale = `${lock}.stale.${ownerPid}.${Date.now()}`;
+      try {
+        fs.renameSync(lock, stale);
+        try { fs.unlinkSync(stale); } catch {}
+        acquired = tryLink();
+      } catch (error) {
+        if (error?.code === 'ENOENT') acquired = tryLink();
+      }
     }
   }
   if (!acquired.ok) {
@@ -292,6 +338,7 @@ function retireClaim(stateFile, { generation, expectedSessionKey = null, verify 
     const retired = `${file}.retired.${Number(current.generation)}.${Date.now()}`;
     try {
       fs.renameSync(file, retired);
+      writeGeneration(stateFile, Number(current.generation));
       return { ok: true, retired, claim: current };
     } catch (error) {
       return { ok: false, code: error?.code || 'RETIRE_FAILED' };

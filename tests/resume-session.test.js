@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -189,7 +189,7 @@ async function withHandover(fn) {
     writeHandshake(otherFile, {
       state: "PROCESS_EXIT_VERIFIED",
       history: [],
-      handover: { sessionKey: "ses_OTHER", machine: "CANARY", projectDir: ctx.projectDir, todoId: 1 },
+      handover: { sessionKey: "ses_OTHER", machine: "CANARY", projectDir: ctx.projectDir, todoId: 1, snapshot: { taskDescription: "Task yang tertinggal", workflowTaskId: null, todoId: 1, phase: "documentation", dodRevision: 0 } },
     });
     return fn({ ...ctx, sidecar });
   });
@@ -270,6 +270,20 @@ test("adoption refuses a sidecar that names a different session", async () => {
     const r = await handleResumeSession({ adopt: "ses_OTHER" }, state);
     assert.match(text(r), /^⚠️/);
     assert.match(text(r), /ses_SOMETHING_ELSE/);
+    assert.equal(state.state.currentPhase, "idle");
+  });
+});
+
+test("adoption refuses a source state that no longer matches the checkpointed snapshot", async () => {
+  await withHandover(async ({ state, sidecar, otherFile }) => {
+    tryClaimHandshake(sidecar, { sessionKey: "ses_CURRENT", at: Date.now(), pid: process.pid, generation: 1 });
+    // The source file changed after the owner checkpointed it.
+    const src = JSON.parse(await readFile(otherFile, "utf8"));
+    src.taskDescription = "A different task";
+    await writeFile(otherFile, JSON.stringify(src, null, 2));
+    const r = await handleResumeSession({ adopt: "ses_OTHER" }, state);
+    assert.match(text(r), /^⚠️/);
+    assert.match(text(r), /snapshot/i);
     assert.equal(state.state.currentPhase, "idle");
   });
 });

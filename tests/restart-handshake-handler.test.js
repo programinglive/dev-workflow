@@ -21,6 +21,8 @@ function fixture(overrides = {}) {
     ws: {
       sessionId: 'ses_prev',
       stateFile: path.join(dir, 'workflow-state.ses_x.json'),
+      // A real session holds a worktree capability; release requires its own.
+      boundKernelCapability: { fake: true, ownerKey: 'ses_prev' },
       state: { projectDir: '/tmp/project', taskDescription: 'a task', machine: 'CANARY', ...overrides },
     },
   };
@@ -506,4 +508,41 @@ test('a recovery lock left by a dead process is reclaimed', async () => {
   );
   assert.equal(result.ok, true);
   assert.equal(result.retiredGeneration, 1);
+});
+
+test('verify_exit ignores a caller-supplied machine name', async () => {
+  const f = await releasedFixture();
+  const result = await handleRestartHandshake(
+    { action: 'verify_exit', handover: f.ws.stateFile, machine: 'CANARY' },
+    { state: { projectDir: '/tmp/project', machine: 'OTHER-MACHINE' } },
+    { isAlive: () => false }
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'MACHINE_MISMATCH');
+});
+
+test('release refuses when the session holds no capability', async () => {
+  const f = fixture();
+  f.ws.boundKernelCapability = null;
+  await handleRestartHandshake({ action: 'checkpoint' }, f.ws, { runCheckpoint: confirmed });
+  const result = await handleRestartHandshake({ action: 'release' }, f.ws, { releaseMutex: async () => true });
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'NO_CAPABILITY');
+});
+
+test('claim generation survives cleanup of retired files', async () => {
+  const f = await exitedFixture();
+  writeStaleClaim(f);
+  const { claimPath } = await import("../monitor-server/restart-handshake-store.cjs");
+  const retired = await handleRestartHandshake(
+    { action: 'recover_claim', handover: f.ws.stateFile, generation: 1 },
+    { state: { machine: 'CANARY', projectDir: '/tmp/project' } },
+    { isAlive: () => false }
+  );
+  assert.equal(retired.ok, true);
+  // Remove the retirement trail; the durable counter must still advance.
+  fs.rmSync(retired.retiredFile, { force: true });
+  const claim = await handleRestartHandshake({ action: 'claim', handover: f.ws.stateFile }, successor(f, 'ses_b2'));
+  assert.equal(claim.ok, true);
+  assert.equal(claim.generation, 2);
 });
