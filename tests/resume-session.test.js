@@ -8,6 +8,7 @@ import path from "node:path";
 
 import { WorkflowState } from "../workflow-state.js";
 import { handleResumeSession, findResumableCandidates } from "../tools/handler-modules/resume-handlers.js";
+import { writeHandshake, tryClaimHandshake, markClaimAdopted } from "../monitor-server/restart-handshake-store.cjs";
 
 const text = (r) => r.content[0].text;
 
@@ -172,5 +173,65 @@ test("adoption is refused while another owner still holds the worktree", async (
     } finally {
       await releaseWorktreeMutex(held.capability);
     }
+  });
+});
+
+/**
+ * A handover is a fenced transfer, not a generic left-behind session. Only the
+ * winning claimant may adopt it, and only after the controller proved the old
+ * owner exited.
+ */
+async function withHandover(fn) {
+  return withProject(async (ctx) => {
+    const { state, otherFile } = ctx;
+    state.sessionId = "ses_CURRENT";
+    const sidecar = `${otherFile}.restart-handshake.json`;
+    writeHandshake(otherFile, {
+      state: "PROCESS_EXIT_VERIFIED",
+      history: [],
+      handover: { sessionKey: "ses_OTHER", machine: "CANARY", projectDir: ctx.projectDir, todoId: 1 },
+    });
+    return fn({ ...ctx, sidecar });
+  });
+}
+
+test("adoption of a handover is refused without a claim", async () => {
+  await withHandover(async ({ state }) => {
+    const r = await handleResumeSession({ adopt: "ses_OTHER" }, state);
+    assert.match(text(r), /^⚠️/);
+    assert.match(text(r), /no claim/i);
+    assert.equal(state.state.currentPhase, "idle");
+  });
+});
+
+test("adoption of a handover is refused for a session that did not win the claim", async () => {
+  await withHandover(async ({ state, sidecar }) => {
+    tryClaimHandshake(sidecar, { sessionKey: "ses_WINNER", at: Date.now(), pid: 1, generation: 1 });
+    const r = await handleResumeSession({ adopt: "ses_OTHER" }, state);
+    assert.match(text(r), /^⚠️/);
+    assert.match(text(r), /ses_WINNER/);
+    assert.equal(state.state.currentPhase, "idle");
+  });
+});
+
+test("adoption of an already adopted handover is refused", async () => {
+  await withHandover(async ({ state, sidecar }) => {
+    tryClaimHandshake(sidecar, { sessionKey: "ses_CURRENT", at: Date.now(), pid: 1, generation: 1 });
+    markClaimAdopted(sidecar, { sessionKey: "ses_CURRENT" });
+    const r = await handleResumeSession({ adopt: "ses_OTHER" }, state);
+    assert.match(text(r), /^⚠️/);
+    assert.match(text(r), /already adopted/i);
+    assert.equal(state.state.currentPhase, "idle");
+  });
+});
+
+test("the winning claimant adopts the handover and the claim is marked adopted", async () => {
+  await withHandover(async ({ state, sidecar }) => {
+    tryClaimHandshake(sidecar, { sessionKey: "ses_CURRENT", at: Date.now(), pid: 1, generation: 1 });
+    const r = await handleResumeSession({ adopt: "ses_OTHER" }, state);
+    assert.match(text(r), /^✅/);
+    assert.equal(state.state.taskDescription, "Task yang tertinggal");
+    const { readClaim } = await import("../monitor-server/restart-handshake-store.cjs");
+    assert.ok(readClaim(sidecar).adoptedAt, "the claim is marked adopted");
   });
 });
