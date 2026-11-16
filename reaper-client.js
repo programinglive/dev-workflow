@@ -107,6 +107,99 @@ export async function attestOrphan({ baseUrl, secret, machine, attestation, fetc
 }
 
 /**
+ * Poll this machine's pending restart commands.
+ *
+ * Pull-based on purpose: no inbound access to a machine is needed, and the
+ * signed credential stays the only authority. The Monitor filters by machine,
+ * so one controller never sees another machine's commands.
+ */
+export async function fetchRestartCommands({ baseUrl, secret, machine, limit, fetchImpl = fetch } = {}) {
+  if (!baseUrl) throw new Error("baseUrl is required");
+  if (!secret) throw new Error("secret is required");
+  if (!machine) throw new Error("machine is required");
+
+  const payload = { action: "commands", at: new Date().toISOString(), machine: String(machine) };
+  if (Number.isFinite(Number(limit))) payload.limit = Number(limit);
+  const signature = signControllerRequest(payload, secret);
+
+  const response = await fetchImpl(`${String(baseUrl).replace(/\/$/, "")}/api/reaper/commands`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      [REAPER_SIGNATURE_HEADER]: signature,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) throw new Error(`restart command API returned HTTP ${response.status}`);
+  const data = await response.json();
+  return Array.isArray(data?.commands) ? data.commands : [];
+}
+
+/**
+ * Claim a restart command before executing it. Returns `claimed: false` when
+ * another controller already owns it, in which case this controller must not
+ * execute it.
+ */
+export async function claimRestartCommand({ baseUrl, secret, machine, id, fetchImpl = fetch } = {}) {
+  if (!baseUrl) throw new Error("baseUrl is required");
+  if (!secret) throw new Error("secret is required");
+  if (!machine) throw new Error("machine is required");
+  if (!Number.isSafeInteger(Number(id))) throw new Error("a numeric command id is required");
+
+  const payload = { action: "claim", at: new Date().toISOString(), machine: String(machine), id: Number(id) };
+  const signature = signControllerRequest(payload, secret);
+  const response = await fetchImpl(`${String(baseUrl).replace(/\/$/, "")}/api/reaper/commands/claim`, {
+    method: "POST",
+    headers: { "content-type": "application/json", [REAPER_SIGNATURE_HEADER]: signature },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) throw new Error(`restart claim API returned HTTP ${response.status}`);
+  const data = await response.json().catch(() => ({}));
+  return { claimed: Boolean(data?.claimed) };
+}
+
+/**
+ * Report the outcome of one restart command.
+ *
+ * The Monitor only applies the update while the command is still pending, so a
+ * replayed report is a no-op rather than an overwrite.
+ */
+export async function reportRestartResult({ baseUrl, secret, machine, id, status, code, detail, fetchImpl = fetch } = {}) {
+  if (!baseUrl) throw new Error("baseUrl is required");
+  if (!secret) throw new Error("secret is required");
+  if (!machine) throw new Error("machine is required");
+  if (!Number.isSafeInteger(Number(id))) throw new Error("a numeric command id is required");
+
+  const payload = {
+    action: "result",
+    at: new Date().toISOString(),
+    machine: String(machine),
+    id: Number(id),
+    status: String(status),
+    code: String(code || ""),
+    detail: detail ?? null,
+  };
+  const signature = signControllerRequest(payload, secret);
+
+  const response = await fetchImpl(`${String(baseUrl).replace(/\/$/, "")}/api/reaper/commands/result`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      [REAPER_SIGNATURE_HEADER]: signature,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (response.ok) {
+    const data = await response.json().catch(() => ({}));
+    return { ok: true, status: response.status, applied: Boolean(data?.applied) };
+  }
+  const data = await response.json().catch(() => ({}));
+  return { ok: false, status: response.status, error: String(data?.error || `HTTP ${response.status}`) };
+}
+
+/**
  * Map a privileged reaper row to the shape `session-reaper.js` expects.
  */
 export function toReaperSession(row) {

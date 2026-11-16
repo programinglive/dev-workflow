@@ -61,9 +61,10 @@ test("the privileged fields never reach the browser", () => {
 });
 
 test("the reaper secret is read from the environment only", () => {
-  // Two privileged endpoints read it: the session list and the attestation.
+  // Every privileged endpoint reads it: the session list, the attestation, and
+  // the restart command poll, claim and result.
   const hits = dash.match(/DEVWF_REAPER_SECRET\b/g) || [];
-  assert.equal(hits.length, 2, "the single-machine secret is read server-side by both privileged endpoints");
+  assert.equal(hits.length, 5, "the single-machine secret is read server-side by each privileged endpoint");
   assert.match(dash, /secret: process\.env\.DEVWF_REAPER_SECRET \|\| ''/);
   assert.match(dash, /secrets: parseReaperSecrets\(process\.env\.DEVWF_REAPER_SECRETS\)/);
   assert.equal(/DEVWF_REAPER_SECRET[^\n]*\+/.test(dash), false, "the secret must not be concatenated into HTML");

@@ -161,10 +161,23 @@ function planRestartAll({ machines = [], sessions = [], inactive = [], admission
 
 /**
  * Verify that the process about to be stopped is the one the session recorded.
- * Reuses the reaper's identity check so there is one definition of "same
- * process".
+ *
+ * Stricter than the reaper's check on purpose: a restart stops a live process,
+ * so a missing creation time or executable is a refusal, not a partial match.
+ * "PID 4242 looks like node" is not enough evidence to kill something.
  */
 function verifyRestartTarget({ session, isAlive, processInfo } = {}) {
+  const owner = session?.owner;
+  if (!owner || !Number.isFinite(Number(owner.pid))) {
+    return { ok: false, code: 'OWNER_MISSING', reason: 'session has no recorded owner PID' };
+  }
+  if (!owner.startedAt || !owner.executable) {
+    return {
+      ok: false,
+      code: 'IDENTITY_INCOMPLETE',
+      reason: 'a restart requires the recorded process creation time and executable',
+    };
+  }
   return verifyProcessIdentity(session, { isAlive, processInfo });
 }
 

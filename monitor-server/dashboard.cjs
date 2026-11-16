@@ -21,6 +21,15 @@ const {
   planRestartAll,
   createRestartController,
 } = require('./restart-orchestrator.cjs');
+const {
+  RESTART_COMMAND_STATUS,
+  validateEnqueue,
+  buildCommandsTableSql,
+  buildEnqueueQuery,
+  buildPendingQuery,
+  buildClaimQuery,
+  buildCompleteQuery,
+} = require('./restart-commands.cjs');
 
 // One control plane, one fleet lock. A second Monitor is a deployment error,
 // not a supported topology, so an in-process lock is the right scope.
@@ -2843,6 +2852,140 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(202, { 'content-type': 'application/json' });
       return res.end(JSON.stringify({ ok: true, accepted: true, machine: attestation.machine, sessionKey: attestation.sessionKey }));
     }
+    if (url.pathname === '/api/reaper/commands' && req.method === 'POST') {
+      // Signed controller poll. One machine sees only its own pending commands,
+      // so a credential for MMCH cannot read or claim a Mac command.
+      const body = bacaJson(await readBody(req), res);
+      if (body === null) return undefined;
+      if (String(body.action || '') !== 'commands') {
+        res.writeHead(400, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: 'ACTION_MISMATCH' }));
+      }
+      const check = verifyReaperRequest({
+        payload: body,
+        signature: req.headers['x-devwf-reaper-signature'],
+        secret: process.env.DEVWF_REAPER_SECRET || '',
+        secrets: parseReaperSecrets(process.env.DEVWF_REAPER_SECRETS),
+      });
+      if (!check.ok) {
+        res.writeHead(401, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: check.reason }));
+      }
+      const machine = String(body.machine || '');
+      if (!machine || (check.machine && check.machine !== machine)) {
+        res.writeHead(403, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: 'MACHINE_MISMATCH' }));
+      }
+
+      try {
+        const q = buildPendingQuery({ machine, limit: body.limit });
+        const rows = await query(q.sql, q.params);
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+        return res.end(JSON.stringify({
+          ok: true,
+          machine,
+          commands: (rows.rows || []).map((row) => ({
+            id: Number(row.id),
+            machine: row.machine,
+            sessionKey: row.session_key,
+            mode: row.mode,
+            createdAt: row.created_at,
+          })),
+        }));
+      } catch (error) {
+        res.writeHead(500, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: 'COMMAND_QUERY_FAILED' }));
+      }
+    }
+    if (url.pathname === '/api/reaper/commands/claim' && req.method === 'POST') {
+      // Claim before executing. Without this, two controllers could run the same
+      // command, and a controller that dies after executing but before reporting
+      // would run it again on the next poll.
+      const body = bacaJson(await readBody(req), res);
+      if (body === null) return undefined;
+      const checkClaim = verifyReaperRequest({
+        payload: body,
+        signature: req.headers['x-devwf-reaper-signature'],
+        secret: process.env.DEVWF_REAPER_SECRET || '',
+        secrets: parseReaperSecrets(process.env.DEVWF_REAPER_SECRETS),
+      });
+      if (!checkClaim.ok) {
+        res.writeHead(401, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: checkClaim.reason }));
+      }
+      if (String(body.action || '') !== 'claim') {
+        res.writeHead(400, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: 'ACTION_MISMATCH' }));
+      }
+      const machine = String(body.machine || '');
+      if (!machine || (checkClaim.machine && checkClaim.machine !== machine)) {
+        res.writeHead(403, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: 'MACHINE_MISMATCH' }));
+      }
+      const claimId = Number(body.id);
+      if (!Number.isSafeInteger(claimId) || claimId <= 0) {
+        res.writeHead(400, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: 'INVALID_COMMAND_ID' }));
+      }
+      try {
+        const q = buildClaimQuery({ id: claimId, machine });
+        const claimed = await query(q.sql, q.params);
+        const applied = Boolean(claimed && claimed.rowCount > 0);
+        res.writeHead(200, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true, id: claimId, claimed: applied, alreadyClaimed: !applied }));
+      } catch (error) {
+        res.writeHead(500, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: 'COMMAND_CLAIM_FAILED' }));
+      }
+    }
+    if (url.pathname === '/api/reaper/commands/result' && req.method === 'POST') {
+      // Signed controller report. Idempotent: the update only applies while the
+      // command is open, so a replayed report cannot overwrite a result.
+      const body = bacaJson(await readBody(req), res);
+      if (body === null) return undefined;
+      if (String(body.action || '') !== 'result') {
+        res.writeHead(400, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: 'ACTION_MISMATCH' }));
+      }
+
+      const check = verifyReaperRequest({
+        payload: body,
+        signature: req.headers['x-devwf-reaper-signature'],
+        secret: process.env.DEVWF_REAPER_SECRET || '',
+        secrets: parseReaperSecrets(process.env.DEVWF_REAPER_SECRETS),
+      });
+      if (!check.ok) {
+        res.writeHead(401, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: check.reason }));
+      }
+      const machine = String(body.machine || '');
+      if (!machine || (check.machine && check.machine !== machine)) {
+        res.writeHead(403, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: 'MACHINE_MISMATCH' }));
+      }
+      const id = Number(body.id);
+      const status = String(body.status || '');
+      if (!Number.isSafeInteger(id) || id <= 0) {
+        res.writeHead(400, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: 'INVALID_COMMAND_ID' }));
+      }
+      if (status !== RESTART_COMMAND_STATUS.done && status !== RESTART_COMMAND_STATUS.failed) {
+        res.writeHead(400, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: 'INVALID_STATUS' }));
+      }
+
+      try {
+        const q = buildCompleteQuery({ id, machine, status, code: body.code, detail: body.detail });
+        const updated = await query(q.sql, q.params);
+        const applied = Boolean(updated && updated.rowCount > 0);
+        restartController.record({ kind: 'command-result', id, machine, status, code: String(body.code || ''), applied });
+        res.writeHead(200, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true, id, applied, alreadyCompleted: !applied }));
+      } catch (error) {
+        res.writeHead(500, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: 'COMMAND_UPDATE_FAILED' }));
+      }
+    }
     if (url.pathname === '/api/reaper/action' && req.method === 'POST') {
       if (!writeAllowed(req)) return denyWrite(res);
       const body = bacaJson(await readBody(req), res);
@@ -2934,17 +3077,47 @@ const server = http.createServer(async (req, res) => {
           res.writeHead(409, { 'content-type': 'application/json' });
           return res.end(JSON.stringify({ ok: false, error: begun.code, reason: begun.reason }));
         }
-        const sessions = rr.rows.map(toPlanSession);
-        const machines = [...new Set(sessions.map((s) => s.machine))].map((name) => ({ name, online: true }));
-        const plan = planRestartAll({ machines, sessions, admission: null });
-        restartController.record({ kind: 'restart-all', plan: { order: plan.order, blocked: plan.blocked } });
-        res.writeHead(200, { 'content-type': 'application/json' });
-        return res.end(JSON.stringify({
-          ok: plan.ok,
-          mode,
-          plan,
-          note: 'Each machine controller executes its own entries; the Monitor never stops a remote process.',
-        }));
+        // The lock is released in `finally`: an unexpected exception must not
+        // leave the fleet permanently reporting RESTART_IN_PROGRESS.
+        try {
+          const sessions = rr.rows.map(toPlanSession);
+          const machines = [...new Set(sessions.map((s) => s.machine))].map((name) => ({ name, online: true }));
+          const plan = planRestartAll({ machines, sessions, admission: null });
+          // Enqueue one durable command per target so the machine controllers can
+          // pick them up. A repeated request cannot queue the same target twice.
+          let enqueued = [];
+          if (plan.ok && plan.order.length > 0) {
+            const targets = plan.order.map((entry) => ({
+              machine: entry.machine,
+              sessionKey: entry.sessionKey,
+              mode: entry.mode,
+            }));
+            const valid = validateEnqueue(targets);
+            if (!valid.ok) {
+              res.writeHead(400, { 'content-type': 'application/json' });
+              return res.end(JSON.stringify({ ok: false, error: valid.code, reason: valid.reason }));
+            }
+            try {
+              const q = buildEnqueueQuery(targets);
+              const rows = await query(q.sql, q.params);
+              enqueued = rows.rows || [];
+            } catch (error) {
+              res.writeHead(500, { 'content-type': 'application/json' });
+              return res.end(JSON.stringify({ ok: false, error: 'ENQUEUE_FAILED', reason: String((error && error.message) || error) }));
+            }
+          }
+          restartController.record({ kind: 'restart-all', plan: { order: plan.order, blocked: plan.blocked }, enqueued: enqueued.length });
+          res.writeHead(200, { 'content-type': 'application/json' });
+          return res.end(JSON.stringify({
+            ok: plan.ok,
+            mode,
+            plan,
+            enqueued: enqueued.map((row) => ({ id: row.id, machine: row.machine, sessionKey: row.session_key, mode: row.mode })),
+            note: 'Each machine controller polls its own commands and executes them locally; the Monitor never stops a remote process.',
+          }));
+        } finally {
+          restartController.end();
+        }
       }
 
       const sessionKey = String(body.sessionKey || '');
@@ -3070,6 +3243,13 @@ server.listen(PORT, HOST, () => {
     } catch (error) {
       console.error('GAGAL menyiapkan kolom repository:', String((error && error.message) || error));
       console.error('Jalankan sekali sebagai user database aplikasi:\n' + ensureSessionRepositoryColumnsSql);
+    }
+    // The restart command queue is additive; migration 007 also ships it for an
+    // operator who prefers to apply it by hand.
+    try {
+      await query(buildCommandsTableSql());
+    } catch (error) {
+      console.error('FAILED to prepare restart_commands:', String((error && error.message) || error));
     }
   })();
   // Session reaper: one idempotent reconciliation cycle. Dry-run by default;
