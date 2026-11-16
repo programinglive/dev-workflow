@@ -15,6 +15,7 @@ import {
   verifyLegacyFleetQuiescence,
 } from "../process-lock.js";
 import { handleDropTask, handleCompleteTask } from "../tools/handler-modules/commit-handlers.js";
+import { handleCheckpointTask } from "../tools/handler-modules/checkpoint-handlers.js";
 import { findSession, listSessions } from "./sessions.js";
 
 /**
@@ -141,6 +142,18 @@ export function createHandlers({ out }) {
         const args = nextSteps && nextSteps.length ? { nextSteps } : {};
         const response = await handleCompleteTask(args, workflowState, {});
         return { response, settled: isSettled(workflowState) };
+      } finally {
+        await releaseWorktreeMutex(capability);
+      }
+    },
+    async checkpoint({ file, summary }) {
+      const { workflowState, capability } = await openSessionState({ file });
+      try {
+        const args = summary ? { summary } : {};
+        const response = await handleCheckpointTask(args, { workflowState });
+        // Only `confirmed` means the write landed AND the read-back matched.
+        // ok:true with confirmed:false is a claim, not proof.
+        return { response, confirmed: response?.confirmed === true, settled: isSettled(workflowState) };
       } finally {
         await releaseWorktreeMutex(capability);
       }

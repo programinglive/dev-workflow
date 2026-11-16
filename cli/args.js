@@ -14,7 +14,7 @@
  * only `list` runs without one.
  */
 
-const COMMANDS = ["list", "close", "share", "drop", "complete", "help", "version", "doctor", "pair", "fleet", "identity", "setup", "zettly"];
+const COMMANDS = ["list", "close", "share", "drop", "complete", "checkpoint", "help", "version", "doctor", "pair", "fleet", "identity", "setup", "zettly"];
 const FLEET_VERBS = ["status", "check", "plan", "stage", "activate", "verify", "rollback", "doctor", "upgrade"];
 const ZETTLY_VERBS = ["status", "skip", "connect", "switch", "disconnect", "doctor"];
 
@@ -44,6 +44,8 @@ Usage:
                                                Drop a task without completing it
   devwf complete --session <key> [--next-steps <s>]... [--dry-run]
                                                Complete a task whose DoD is proven
+  devwf checkpoint --session <key> [--summary <s>] [--dry-run]
+                                               Write and verify a task checkpoint before a restart
   devwf identity --dir <path> [--against <path>] [--json]
                                                Print the repository identity contract and
                                                whether <path> may start a task against --against
@@ -68,6 +70,7 @@ const FLAGS_WITH_VALUE = new Set([
   "--reason",
   "--token",
   "--next-steps",
+  "--summary",
   "--url",
   "--mode",
   "--dir",
@@ -162,6 +165,7 @@ export function parseArgs(argv = []) {
       else if (word === "--dir") args.dir = value;
       else if (word === "--against") args.against = value;
       else if (word === "--next-steps") args.nextSteps.push(value);
+      else if (word === "--summary") args.summary = value;
       continue;
     }
 

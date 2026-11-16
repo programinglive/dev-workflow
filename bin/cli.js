@@ -54,7 +54,7 @@ async function main(argv) {
   const monitor = needsMonitor ? createMonitorClient({ env: process.env }) : null;
 
   const sessions = args.command === "list" ? null : createSessions({ env: process.env });
-  const handlers = ["drop", "complete"].includes(args.command)
+  const handlers = ["drop", "complete", "checkpoint"].includes(args.command)
     ? createHandlers({ out })
     : null;
 
