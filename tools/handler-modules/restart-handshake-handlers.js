@@ -23,6 +23,7 @@ import {
   STATES,
   applyTransition,
   restartReadiness,
+  stateFingerprint,
 } from "../../monitor-server/restart-handshake.cjs";
 import { readHandshake, writeHandshake, tryClaimHandshake, readClaim, claimGeneration, retireClaim } from "../../monitor-server/restart-handshake-store.cjs";
 
@@ -254,17 +255,22 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
   }
 
   if (action === "release") {
-    if (record.state !== STATES.CHECKPOINT_CONFIRMED) {
+    // A release that failed after QUIESCED was persisted must be retryable;
+    // otherwise a transient lock or write failure strands the handover.
+    let quiesced;
+    if (record.state === STATES.QUIESCED) {
+      quiesced = { ok: true, record };
+    } else if (record.state === STATES.CHECKPOINT_CONFIRMED) {
+      quiesced = applyTransition(record, { next: STATES.QUIESCED, actor: "owner" });
+      if (!quiesced.ok) return { ok: false, code: quiesced.code, note: quiesced.reason };
+      save(workflowState, options, quiesced.record);
+    } else {
       return {
         ok: false,
         code: "CHECKPOINT_REQUIRED",
         note: `ownership can only be released after a confirmed checkpoint; the handshake is at ${record.state}.`,
       };
     }
-
-    const quiesced = applyTransition(record, { next: STATES.QUIESCED, actor: "owner" });
-    if (!quiesced.ok) return { ok: false, code: quiesced.code, note: quiesced.reason };
-    save(workflowState, options, quiesced.record);
 
     const projectDir = workflowState.state.projectDir || "";
     const releaseMutex = options.releaseMutex || releaseWorktreeMutex;
@@ -332,6 +338,7 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
           todoId: Number(workflowState.state.zettly?.todoId) || null,
           phase: workflowState.state.currentPhase || null,
           dodRevision: Number(workflowState.state.dodRevision) || 0,
+          fingerprint: stateFingerprint(workflowState.state),
         },
       },
       claimedBy: null,
@@ -386,7 +393,7 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
     // The machine must come from the process environment, never from the
     // caller: a caller on another machine could otherwise name the handover's
     // machine and have a local PID check certify a live remote owner.
-    const callerMachine = workflowState.state.machine || process.env.DEVWF_MACHINE || null;
+    const callerMachine = process.env.DEVWF_MACHINE || null;
     if (!callerMachine || !prior.handover?.machine) {
       return { ok: false, code: "MACHINE_UNVERIFIED", note: "the handover and this controller must both name a machine" };
     }
@@ -496,7 +503,7 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
 
     // A fresh successor has no task yet, so its identity comes from the
     // environment the client launched it with, not from task state.
-    const machine = workflowState.state.machine || process.env.DEVWF_MACHINE || null;
+    const machine = process.env.DEVWF_MACHINE || null;
     if (!machine || !prior.handover.machine) {
       return { ok: false, code: "MACHINE_UNVERIFIED", note: "the handover and this session must both name a machine" };
     }
@@ -642,7 +649,7 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
 
     // Same machine and project contract as claiming: recovery must not move a
     // task across a boundary the claim itself could not cross.
-    const machine = workflowState.state.machine || process.env.DEVWF_MACHINE || null;
+    const machine = process.env.DEVWF_MACHINE || null;
     if (!machine || !prior.handover?.machine) {
       return { ok: false, code: "MACHINE_UNVERIFIED", note: "the handover and this session must both name a machine" };
     }

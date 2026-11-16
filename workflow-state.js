@@ -4646,6 +4646,23 @@ export class WorkflowState {
     });
   }
 
+  async restoreStateIntoStore(state) {
+    return await this.runSerialized(async () => {
+      return await this._withOwnershipFence("restoreStateIntoStore", async () => {
+        const db = await this._db();
+        const { key: sessionKey } = this._sessionKey();
+        const userId = getCurrentUserId(this.stateFile);
+        const projectPath = this._projectPath();
+        if (typeof db.replaceState === "function") {
+          await db.replaceState({ userId, projectPath, sessionKey, state });
+        } else {
+          await db.saveStateVersioned({ userId, projectPath, sessionKey, state, expectedVersion: null });
+        }
+        return true;
+      });
+    });
+  }
+
   async save(options = {}) {
     return await this.runSerialized(async () => {
       return await this._withOwnershipFence("save", async () => {
