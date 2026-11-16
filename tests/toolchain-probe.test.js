@@ -158,3 +158,16 @@ test("the shipped manifest pins a version for every required tool", () => {
   assert.match(String(manifest.managedMcp.version), /^\d+\.\d+\.\d+$/);
   assert.match(String(manifest.managedMcp.revision), /^[0-9a-f]{40}$/);
 });
+
+test("target-platform quoting uses cmd double quotes for win32 .bat/.cmd even on POSIX hosts", async () => {
+  const { shellEscape } = await import("../utils.js");
+  assert.equal(
+    shellEscape("C:\\Program Files\\Google\\Cloud SDK\\gcloud.bat", { platform: "win32" }),
+    '"C:\\Program Files\\Google\\Cloud SDK\\gcloud.bat"'
+  );
+  assert.equal(
+    shellEscape("/usr/local/bin/glab", { platform: "linux" }),
+    "'/usr/local/bin/glab'"
+  );
+  assert.throws(() => shellEscape("bad%var%", { platform: "win32" }), /Unsafe Windows shell argument/);
+});
