@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { classifyTask } from "./classifier.js";
@@ -10,40 +10,57 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const POLICIES_PATH = path.join(here, "policies.json");
 
 let cachedPolicyBundle = null;
+let cachedPolicyStamp = "";
 
 export function loadPolicies() {
-  if (cachedPolicyBundle) return cachedPolicyBundle;
+  const st = statSync(POLICIES_PATH);
+  const stamp = `${st.mtimeMs}:${st.size}`;
+  if (cachedPolicyBundle && cachedPolicyStamp === stamp) return cachedPolicyBundle;
   const raw = readFileSync(POLICIES_PATH, "utf8");
   const parsed = JSON.parse(raw);
   const digest = crypto.createHash("sha256").update(JSON.stringify(parsed.policies)).digest("hex").slice(0, 16);
   cachedPolicyBundle = { ...parsed, digest };
+  cachedPolicyStamp = stamp;
   return cachedPolicyBundle;
 }
 
 export function normalizeRepoSlug(repo = "") {
-  const s = String(repo || "").trim().toLowerCase();
+  const s = String(repo || "").trim().replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
   if (!s) return "";
+  // Keep local filesystem paths normalized as path-basename or posix-normalized slug,
+  // while extracting org/repo from SSH/HTTPS git remotes.
+  if (/^[a-z]:\//.test(s) || s.startsWith("/")) {
+    return path.posix.basename(s);
+  }
   const sshMatch = s.match(/[:/]([^/:]+\/[^/]+?)(?:\.git)?$/);
   if (sshMatch) return sshMatch[1];
   return s.replace(/\.git$/, "");
 }
 
+const MODE_RANK = Object.freeze({ audit: 0, warn: 1, enforce: 2 });
+
 export function resolveEffectiveMode({ repository = "", governanceMode = "", env = process.env } = {}) {
-  const explicit = String(governanceMode || env.DEVWF_GOVERNANCE_MODE || "").trim().toLowerCase();
-  if (["enforce", "warn", "audit"].includes(explicit)) {
-    return explicit;
-  }
   const bundle = loadPolicies();
   const isTestRuntime = Boolean(env.NODE_TEST_CONTEXT) || env.NODE_ENV === "test";
-  if (isTestRuntime) {
-    return bundle.rollout?.defaultMode || "warn";
-  }
   const slug = normalizeRepoSlug(repository);
   const pilots = (bundle.rollout?.pilotRepositories || []).map((r) => normalizeRepoSlug(r));
-  if (slug && pilots.includes(slug)) {
-    return "enforce";
+  let baseMode = bundle.rollout?.defaultMode || "warn";
+  if (!isTestRuntime && slug && pilots.includes(slug)) {
+    baseMode = "enforce";
   }
-  return bundle.rollout?.defaultMode || "warn";
+
+  const explicit = String(env.DEVWF_GOVERNANCE_MODE || governanceMode || "").trim().toLowerCase();
+  if (["enforce", "warn", "audit"].includes(explicit)) {
+    // Allow raising strictness (e.g. warn -> enforce), never downgrading below baseMode
+    // unless explicitly requested via server env DEVWF_GOVERNANCE_MODE.
+    if (env.DEVWF_GOVERNANCE_MODE && ["enforce", "warn", "audit"].includes(String(env.DEVWF_GOVERNANCE_MODE).trim().toLowerCase())) {
+      return String(env.DEVWF_GOVERNANCE_MODE).trim().toLowerCase();
+    }
+    if (MODE_RANK[explicit] >= MODE_RANK[baseMode]) {
+      return explicit;
+    }
+  }
+  return baseMode;
 }
 
 export function resolveInitialGovernance({
@@ -90,13 +107,43 @@ export function evaluateGovernanceGate({
   const bundle = loadPolicies();
   const gov = state?.governance;
 
-  // Legacy tasks started before central governance existed remain compatible
-  if (!gov || gov.legacyExempt === true) {
+  // Legacy tasks started before central governance existed remain compatible,
+  // unless explicitly flagged or started without governance after rollout.
+  if (gov?.legacyExempt === true) {
     return {
       ok: true,
       mode: "legacy",
       violations: [],
-      warnings: ["Task started without central governance metadata; legacy compatibility applied."],
+      warnings: ["Task explicitly marked legacyExempt; legacy compatibility applied."],
+    };
+  }
+  if (!gov) {
+    const effectiveAt = Date.parse(bundle.rollout?.effectiveAt || "");
+    const startedAt = Date.parse(state?.taskStartedAt || "");
+    const isPreRollout = !Number.isFinite(startedAt) || (Number.isFinite(effectiveAt) && startedAt < effectiveAt);
+    if (isPreRollout) {
+      return {
+        ok: true,
+        mode: "legacy",
+        violations: [],
+        warnings: ["Task started without central governance metadata; legacy compatibility applied."],
+      };
+    }
+    const repo = normalizeRepoSlug(currentRepo || state?.identityContract?.remote || state?.repository?.remote || state?.projectDir || "");
+    const mode = resolveEffectiveMode({ repository: repo, env });
+    const missingViolation = {
+      policyId: "governance.metadata",
+      code: "GOVERNANCE_METADATA_MISSING",
+      reason: "Post-rollout task is missing governance metadata; re-resolve governance before completion.",
+    };
+    if (mode === "enforce") {
+      return { ok: false, mode, violations: [missingViolation], warnings: [] };
+    }
+    return {
+      ok: true,
+      mode,
+      violations: mode === "audit" ? [] : [missingViolation],
+      warnings: [`[${mode.toUpperCase()}] ${missingViolation.code}: ${missingViolation.reason}`],
     };
   }
 

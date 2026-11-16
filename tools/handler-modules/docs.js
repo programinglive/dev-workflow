@@ -15,7 +15,7 @@
  * menyalakan server.
  */
 
-export const MIN_WAIVER_REASON = 5;
+export const MIN_WAIVER_REASON = 15;
 export const MAX_WAIVER_REASON = 500;
 
 /** Ekstensi yang dianggap source code. */

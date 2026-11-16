@@ -831,7 +831,7 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
           repository: requestedIdentity.remote || project.dir,
           taskType: args.type,
           description: workflowState.state.taskDescription || args.description || "",
-          governanceMode: typeof args.governanceMode === "string" ? args.governanceMode : "",
+          governanceMode: "",
         });
 
         workflowState.state.dirtyAtStart = await captureDirtyAtStart(git);

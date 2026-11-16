@@ -50,6 +50,9 @@ Usage:
   devwf identity --dir <path> [--against <path>] [--json]
                                                Print the repository identity contract and
                                                whether <path> may start a task against --against
+  devwf governance validate [--policy all] [--base <ref>] [--state <path>] [--json]
+                                               Run headless CLI-First & Documentation governance gate
+  devwf governance policies [--json]           Print central governance policies and digest
   devwf --help | --version
 
 Environment:
@@ -78,6 +81,7 @@ const FLAGS_WITH_VALUE = new Set([
   "--against",
   "--policy",
   "--base",
+  "--state",
   "--task-type",
   "--description",
 ]);
@@ -180,6 +184,7 @@ export function parseArgs(argv = []) {
       else if (word === "--against") args.against = value;
       else if (word === "--policy") args.policy = value;
       else if (word === "--base") args.base = value;
+      else if (word === "--state") args.state = value;
       else if (word === "--task-type") args.taskType = value;
       else if (word === "--description") args.description = value;
       else if (word === "--next-steps") args.nextSteps.push(value);

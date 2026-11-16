@@ -742,6 +742,7 @@ export async function runCommand({
       projectDir: args.dir || process.cwd(),
       policy: args.policy || "all",
       baseRef: args.base || "",
+      statePath: args.state || "",
       taskType: args.taskType || "feature",
       description: args.description || "",
     });

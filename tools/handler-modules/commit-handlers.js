@@ -11,7 +11,7 @@ import fs from "fs";
 import { updateTaskStatus, isConfigured, readFactoryConfig } from "../../factory-client.js";
 import { cleanupWorkBranches } from "../../branch-cleanup.js";
 import { assertPreflightScope } from "../../preflight.js";
-import { evaluateGovernanceGate } from "../../governance/engine.js";
+import { evaluateGovernanceGate, loadPolicies } from "../../governance/engine.js";
 import { collectGitContext } from "../../governance/ci-validator.js";
 import { validateForceOverrideAuthorization } from "../../governance/exceptions.js";
 
@@ -846,6 +846,7 @@ export async function handleForceCompleteTask(args, workflowState, context = {})
 
   let governanceBypassed = false;
   let governanceViolations = [];
+  let governanceWarnings = [];
   let approvedBy = "";
   let approvalTicket = "";
   if (workflowState.state.governance && !context?.skipGovernanceGate) {
@@ -859,11 +860,22 @@ export async function handleForceCompleteTask(args, workflowState, context = {})
       currentRevision: govInput.revision !== undefined ? govInput.revision : Number(workflowState.state.dodRevision) || 0,
       ciStatus: context?.ciStatus || govInput.ciStatus || null,
     });
+    if (Array.isArray(govCheck.violations) && govCheck.violations.length > 0) {
+      governanceViolations = govCheck.violations.map((v) => ({ policyId: v.policyId, code: v.code, reason: v.reason }));
+    }
+    if (Array.isArray(govCheck.warnings) && govCheck.warnings.length > 0) {
+      governanceWarnings = govCheck.warnings;
+    }
     if (!govCheck.ok) {
-      const hasSecurityViolation = govCheck.violations.some((v) => v.code === "DOCUMENTATION_SECURITY_VIOLATION");
-      if (hasSecurityViolation) {
+      const policies = loadPolicies();
+      const nonOverridable = new Set(
+        policies.rollout?.nonOverridableViolations || ["DOCUMENTATION_SECURITY_VIOLATION", "REQUIRED_CI_FAILED"]
+      );
+      const blockedViolations = govCheck.violations.filter((v) => nonOverridable.has(v.code));
+      if (blockedViolations.length > 0) {
+        const codes = blockedViolations.map((v) => v.code).join(", ");
         return textResponse(
-          `⚠️ POLICY_SECURITY_BLOCKED: force_complete_task cannot bypass credential/security violations in documentation.`
+          `⚠️ POLICY_SECURITY_BLOCKED: force_complete_task cannot bypass non-overridable violations (${codes}).`
         );
       }
       if (reason.length < 15) {
@@ -876,7 +888,7 @@ export async function handleForceCompleteTask(args, workflowState, context = {})
         approvedBy: args.approvedBy,
         approvalTicket: args.approvalTicket,
         overrideToken: args.overrideToken,
-        actor: context?.actor || process.env.DEVWF_AGENT || "",
+        actor: context?.actor || process.env.DEVWF_AGENT || "agent",
       });
       if (!auth.ok) {
         return textResponse(`⚠️ ${auth.code}: ${auth.reason} Task NOT closed.`);
@@ -884,7 +896,6 @@ export async function handleForceCompleteTask(args, workflowState, context = {})
       governanceBypassed = true;
       approvedBy = auth.approvedBy;
       approvalTicket = auth.approvalTicket;
-      governanceViolations = govCheck.violations.map((v) => ({ policyId: v.policyId, code: v.code, reason: v.reason }));
     }
   }
 
@@ -898,6 +909,7 @@ export async function handleForceCompleteTask(args, workflowState, context = {})
     approvedBy,
     approvalTicket,
     governanceViolations,
+    governanceWarnings,
     definitionOfDoneSummary: summarize(
       Array.isArray(workflowState.state.definitionOfDone) ? workflowState.state.definitionOfDone : [],
       workflowState.state.dodRevision,

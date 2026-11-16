@@ -1,4 +1,5 @@
 import { isDocumentationFile } from "./classifier.js";
+import { classify as classifySecurity } from "../security/policy.js";
 
 /**
  * Governance evidence integrity, revision binding, and documentation quality validator.
@@ -10,20 +11,26 @@ const CREDENTIAL_PATTERNS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
   /\bghp_[A-Za-z0-9]{20,}\b/,
   /\bglpat-[A-Za-z0-9_-]{20,}\b/,
-  /\bsk-[A-Za-z0-9]{20,}\b/,
+  /\bsk-(?:live_|test_)?[A-Za-z0-9_-]{20,}\b/,
+  /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/,
+  /\bAIza[0-9A-Za-z_-]{30,}\b/,
   /\bAKIA[0-9A-Z]{16}\b/,
+  /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/,
   /\b(?:api[_-]?key|secret[_-]?key|password|access[_-]?token)\s*[:=]\s*["']?[A-Za-z0-9/+=._-]{12,}["']?/i,
 ];
 
 const PLACEHOLDER_ONLY_RE = /^(?:\s|#.*|\*.*|-\s*(?:TODO|TBD|FIXME|WIP|\.\.\.)\s*|<[^>]+>)*$/i;
 
-const MEANINGFUL_CLI_EVIDENCE_RE = /(?:test|paratest|phpunit|pytest|node\s+--test|npm\s+test|cargo\s+test|artisan\s+|cli|headless|service|contract|pass(?:ed|ing)?|\d+\s+assertions?)/i;
+const MEANINGFUL_CLI_EVIDENCE_RE = /(?:npm\s+(?:test|run\s+test)|node\s+--test|vendor\/bin\/(?:paratest|phpunit)|paratest|phpunit|pytest|cargo\s+test|php\s+artisan\s+[a-z0-9:_-]+|artisan\s+[a-z0-9:_-]+|devwf\s+[a-z0-9:_-]+|\d+\/\d+\s+(?:pass|passed|tests?)|exit\s+code\s+0|headless\s+(?:test|execution|cli|integration))/i;
 
 const GENERIC_RATIONALE_RE = /^(not\s+needed|no\s+changes?|none|n\/?a|skip|skipped|internal\s+only|done)\.?$/i;
 
 export function containsCredentials(text) {
   const content = String(text || "");
-  return CREDENTIAL_PATTERNS.some((re) => re.test(content));
+  if (!content) return false;
+  if (CREDENTIAL_PATTERNS.some((re) => re.test(content))) return true;
+  const sec = classifySecurity({ text: content });
+  return sec?.blocked === true || (Array.isArray(sec?.findings) && sec.findings.some((f) => f.severity === "critical" || f.severity === "high"));
 }
 
 export function isPlaceholderOrEmptyDoc(text) {
@@ -132,6 +139,13 @@ export function validateCliFirstEvidence({
   }
 
   const summary = String(evidence.summary || evidence.proof || "").trim();
+  if (containsCredentials(summary)) {
+    return {
+      ok: false,
+      code: "DOCUMENTATION_SECURITY_VIOLATION",
+      reason: "CLI-First evidence contains credential or secret material.",
+    };
+  }
   if (!summary || summary.length < 10 || FAKE_EVIDENCE_RE.test(summary)) {
     return {
       ok: false,
@@ -265,6 +279,13 @@ export function validateDocumentationEvidence({
   let combinedContent = "";
   for (const file of files) {
     if (Object.prototype.hasOwnProperty.call(docContents, file)) {
+      if (docContents[file] === null) {
+        return {
+          ok: false,
+          code: "DOCUMENTATION_EVIDENCE_INVALID",
+          reason: `Declared documentation file "${file}" was deleted or does not exist on disk.`,
+        };
+      }
       const content = String(docContents[file] ?? "");
       if (containsCredentials(content)) {
         return {

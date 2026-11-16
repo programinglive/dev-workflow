@@ -3,6 +3,11 @@
   "rollout": {
     "stage": "PILOT_BLOCKING",
     "defaultMode": "warn",
+    "effectiveAt": "2026-11-16T00:00:00Z",
+    "nonOverridableViolations": [
+      "DOCUMENTATION_SECURITY_VIOLATION",
+      "REQUIRED_CI_FAILED"
+    ],
     "pilotRepositories": [
       "programinglive/dev-workflow-mcp-server",
       "beautyworld_repository/clinic"

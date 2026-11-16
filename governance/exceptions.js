@@ -46,17 +46,23 @@ export function validateForceOverrideAuthorization({
   }
 
   const expectedToken = String(env.DEVWF_GOVERNANCE_OVERRIDE_TOKEN || "").trim();
-  if (expectedToken) {
-    const provided = String(overrideToken || "").trim();
-    const a = Buffer.from(provided, "utf8");
-    const b = Buffer.from(expectedToken, "utf8");
-    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
-      return {
-        ok: false,
-        code: "POLICY_OVERRIDE_UNAUTHORIZED",
-        reason: "Invalid or missing 'overrideToken' for configured DEVWF_GOVERNANCE_OVERRIDE_TOKEN.",
-      };
-    }
+  if (!expectedToken) {
+    return {
+      ok: false,
+      code: "POLICY_OVERRIDE_UNAUTHORIZED",
+      reason: "Privileged governance override is disabled: DEVWF_GOVERNANCE_OVERRIDE_TOKEN is not configured on the MCP server.",
+    };
+  }
+
+  const provided = String(overrideToken || "").trim();
+  const a = Buffer.from(provided, "utf8");
+  const b = Buffer.from(expectedToken, "utf8");
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    return {
+      ok: false,
+      code: "POLICY_OVERRIDE_UNAUTHORIZED",
+      reason: "Invalid or missing 'overrideToken' for configured DEVWF_GOVERNANCE_OVERRIDE_TOKEN.",
+    };
   }
 
   return { ok: true, approvedBy: approver, approvalTicket: ticket };
