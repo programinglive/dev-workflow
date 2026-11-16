@@ -184,8 +184,19 @@ function verifyOwnerExit({ pid, startedAt, executable } = {}, { isAlive, process
   if (recordedExe && !liveExe) {
     return { exited: false, code: "PROCESS_UNVERIFIABLE", reason: `PID ${target} executable could not be read`, pid: target };
   }
-  if (recordedStart && liveStart && recordedStart !== liveStart) {
-    return { exited: true, code: "PID_REUSED", pid: target };
+
+  // Creation time is compared as an instant, not as a string: the Windows CIM
+  // and WMIC providers format the same instant differently, and a string
+  // mismatch would otherwise certify a live owner as a reused PID.
+  if (recordedStart && liveStart) {
+    const a = parseProcessStart(recordedStart);
+    const b = parseProcessStart(liveStart);
+    if (a !== null && b !== null) {
+      if (a !== b) return { exited: true, code: "PID_REUSED", pid: target };
+    } else if (recordedStart !== liveStart) {
+      // One side could not be parsed, so the difference is not decisive.
+      return { exited: false, code: "PROCESS_UNVERIFIABLE", reason: `PID ${target} creation time could not be compared`, pid: target };
+    }
   }
   if (recordedExe && liveExe && recordedExe !== liveExe) {
     return { exited: true, code: "PID_REUSED", pid: target };
@@ -197,6 +208,32 @@ function verifyOwnerExit({ pid, startedAt, executable } = {}, { isAlive, process
     reason: `PID ${target} is still running; a handover may only be verified after the owner has exited`,
     pid: target,
   };
+}
+
+/**
+ * Parse a process creation time to epoch milliseconds.
+ *
+ * Accepts the DMTF form CIM returns (`20261116123456.123456+000`) and ISO 8601
+ * (with or without a timezone). Returns null when the value is not a time, so
+ * the caller can refuse instead of guessing.
+ */
+function parseProcessStart(value) {
+  const text = String(value || "").trim();
+  if (!text) return null;
+  const dmtf = /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})(?:\.(\d+))?([+-]\d{3})?$/.exec(text);
+  if (dmtf) {
+    const [, y, mo, d, h, mi, s, frac, offset] = dmtf;
+    const ms = frac ? Number(`0.${frac}`) * 1000 : 0;
+    let epoch = Date.UTC(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(s), Math.round(ms));
+    if (offset) {
+      const sign = offset[0] === "-" ? -1 : 1;
+      const minutes = Number(offset.slice(1, 3)) * 60 + Number(offset.slice(3, 5));
+      epoch -= sign * minutes * 60_000;
+    }
+    return Number.isFinite(epoch) ? epoch : null;
+  }
+  const parsed = Date.parse(text);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 /**
@@ -361,8 +398,15 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
           sessionKey: key || workflowState.sessionId || null,
         };
         await workflowState.save();
-      } catch {
-        // The sidecar still records the handover; this marker is defense in depth.
+      } catch (error) {
+        // Without the marker a lost sidecar would downgrade the handover to the
+        // generic path, so the release must not proceed.
+        return {
+          ok: false,
+          code: "RELEASE_MARKER_NOT_PERSISTED",
+          note: `the handover marker could not be saved (${error?.message || error}); ownership is still held.`,
+          state: quiesced.record.state,
+        };
       }
     }
 
@@ -478,9 +522,10 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
     }
 
     // The controller must name the project it is acting on, and it must be the
-    // handover's project. Without this a caller could advance a sidecar that
-    // belongs to another project it happens to be able to reach.
-    const callerProject = workflowState.state.projectDir || args.projectDir || null;
+    // handover's project. The project comes from the session's own state, never
+    // from the request: a fresh session with no project could otherwise declare
+    // another project and act on its sidecar.
+    const callerProject = workflowState.state.projectDir || null;
     if (!callerProject) {
       return { ok: false, code: "PROJECT_UNVERIFIED", note: "verify_exit needs the project it is acting on" };
     }
