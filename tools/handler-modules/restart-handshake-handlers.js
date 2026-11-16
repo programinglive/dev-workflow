@@ -16,6 +16,7 @@
  * atomically, so a fresh process reads exactly what the owner recorded.
  */
 import { releaseWorktreeMutex } from "../../process-lock.js";
+import { readFileSync } from "node:fs";
 import { createLocalAdapters } from "../../session-controller-adapters.js";
 import { handleCheckpointTask } from "./checkpoint-handlers.js";
 import {
@@ -210,6 +211,30 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
     });
     if (!confirmed.ok) return { ok: false, code: confirmed.code, note: confirmed.reason };
 
+    // Persist the local state the successor will copy. A checkpoint that landed
+    // in Zettly but not in the local state file would hand over an older task
+    // than the one that was checkpointed.
+    if (typeof workflowState.save === "function") {
+      try {
+        const saved = await workflowState.save();
+        if (saved && (saved.verified === false || saved.conflict)) {
+          return {
+            ok: false,
+            code: "CHECKPOINT_STATE_NOT_PERSISTED",
+            note: "The checkpoint landed in Zettly but the local state reported a conflict; the controller must not proceed.",
+            state: acknowledged.record.state,
+          };
+        }
+      } catch (error) {
+        return {
+          ok: false,
+          code: "CHECKPOINT_STATE_NOT_PERSISTED",
+          note: `The checkpoint landed in Zettly but the local state could not be saved (${error?.message || error}).`,
+          state: acknowledged.record.state,
+        };
+      }
+    }
+
     const next = {
       ...confirmed.record,
       checkpointConfirmedAt: Number(args.at) || Date.now(),
@@ -243,11 +268,19 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
 
     const projectDir = workflowState.state.projectDir || "";
     const releaseMutex = options.releaseMutex || releaseWorktreeMutex;
-    // Release this session's own capability, not "whatever the process holds
-    // for this worktree": one process can serve several sessions, and releasing
-    // by path could drop another session's mutex.
+    // Release this session's own capability. Releasing by path would resolve to
+    // whichever capability the process holds for the worktree, which could be
+    // another session's mutex in a multi-session process.
     const ownCapability = workflowState.boundKernelCapability || null;
-    const released = await releaseMutex(ownCapability || projectDir);
+    if (!ownCapability) {
+      return {
+        ok: false,
+        code: "NO_CAPABILITY",
+        note: "this session holds no worktree capability to release; ownership cannot be confirmed.",
+        state: quiesced.record.state,
+      };
+    }
+    const released = await releaseMutex(ownCapability);
     if (!released) {
       save(workflowState, options, { ...quiesced.record, lastReleaseError: "releaseWorktreeMutex returned false" });
       return {
@@ -290,6 +323,16 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
         // The owner's own process identity, captured here so the controller can
         // prove this exact process exited. Never a credential.
         owner: captureProcessIdentity(options.adapters),
+        // The task snapshot the successor must adopt. Binding it here means a
+        // changed or stale JSON file with the same session key cannot supply a
+        // different task than the one that was checkpointed.
+        snapshot: {
+          taskDescription: workflowState.state.taskDescription || null,
+          workflowTaskId: workflowState.state.workflowTaskId || null,
+          todoId: Number(workflowState.state.zettly?.todoId) || null,
+          phase: workflowState.state.currentPhase || null,
+          dodRevision: Number(workflowState.state.dodRevision) || 0,
+        },
       },
       claimedBy: null,
     };
@@ -340,7 +383,10 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
         note: `the handover belongs to ${prior.handover?.projectDir || "(unknown)"}, not ${callerProject}`,
       };
     }
-    const callerMachine = workflowState.state.machine || args.machine || process.env.DEVWF_MACHINE || null;
+    // The machine must come from the process environment, never from the
+    // caller: a caller on another machine could otherwise name the handover's
+    // machine and have a local PID check certify a live remote owner.
+    const callerMachine = workflowState.state.machine || process.env.DEVWF_MACHINE || null;
     if (!callerMachine || !prior.handover?.machine) {
       return { ok: false, code: "MACHINE_UNVERIFIED", note: "the handover and this controller must both name a machine" };
     }
@@ -495,6 +541,14 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
       executable: self.executable,
       machine,
       generation,
+      // The claimant's own state file and the task it is about to adopt, so a
+      // crash between the durable adoption and the adopted marker can still be
+      // detected by recovery.
+      stateFile: workflowState.stateFile || null,
+      adoptedTask: {
+        taskDescription: prior.handover.taskDescription || null,
+        todoId: prior.handover.todoId || null,
+      },
     };
     const won = tryClaimHandshake(handoverFile, claim);
     if (!won.ok) {
@@ -550,6 +604,23 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
         code: "CLAIM_ALREADY_ADOPTED",
         note: `the claim was adopted by ${claim.sessionKey} at ${claim.adoptedAt}; its progress must not be discarded`,
       };
+    }
+    // A crash between the durable adoption and the adopted marker leaves an
+    // unmarked claim. The claimant's own state file proves the task was already
+    // adopted, so recovery must not hand it to a second successor.
+    if (claim.stateFile && claim.adoptedTask?.taskDescription) {
+      try {
+        const claimantState = JSON.parse(readFileSync(claim.stateFile, "utf8"));
+        if ((claimantState.taskDescription || "") === claim.adoptedTask.taskDescription) {
+          return {
+            ok: false,
+            code: "CLAIM_ALREADY_ADOPTED",
+            note: `the claimant's state already holds the adopted task; recovery would discard its progress`,
+          };
+        }
+      } catch {
+        // No readable claimant state: fall through to the liveness proof.
+      }
     }
     if (!Number.isFinite(Number(claim.pid))) {
       return {

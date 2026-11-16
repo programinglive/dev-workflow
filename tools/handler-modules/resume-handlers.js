@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import { textResponse } from "./shared.js";
 import { summarize as summarizeDod, renderOutstanding } from "./dod.js";
@@ -264,6 +264,23 @@ export async function handleResumeSession(args, workflowState) {
           `#${source.zettly.todoId}. Nothing was changed.`
       );
     }
+    // The source JSON must still be the task the owner checkpointed. A changed
+    // or stale file with the same session key must not supply a different task.
+    const snap = h.snapshot;
+    if (snap) {
+      const mismatch =
+        (snap.taskDescription || "") !== (source.taskDescription || "") ||
+        (snap.workflowTaskId || "") !== (source.workflowTaskId || "") ||
+        (snap.phase || "idle") !== (source.currentPhase || "idle") ||
+        Number(snap.dodRevision || 0) !== Number(source.dodRevision || 0) ||
+        (snap.todoId && source.zettly?.todoId && Number(snap.todoId) !== Number(source.zettly.todoId));
+      if (mismatch) {
+        return textResponse(
+          `⚠️ Adoption refused: the source state no longer matches the task snapshot the owner ` +
+            `checkpointed. Nothing was changed.`
+        );
+      }
+    }
     const claim = readClaim(handoverSidecar);
     if (!claim) {
       return textResponse(
@@ -335,6 +352,18 @@ export async function handleResumeSession(args, workflowState) {
           `worktree ("${sessionProjectDir}"). A task cannot be adopted across projects. Nothing was changed.`
       );
     }
+    // The state file being written must live under the worktree the mutex
+    // covers. Otherwise the check and the mutex could cover one worktree while
+    // the write targets another.
+    const targetPath = path.resolve(String(target));
+    const rootPath = path.resolve(String(sessionRoot.worktreeRoot));
+    const underRoot = targetPath === rootPath || targetPath.startsWith(rootPath + path.sep);
+    if (!underRoot) {
+      return textResponse(
+        `⚠️ Adoption refused: the state file "${targetPath}" is outside the worktree "${rootPath}". ` +
+          `Nothing was changed.`
+      );
+    }
   }
   // The capability owner key is the resolved state-file path: `_capabilityMatchesSession`
   // accepts it directly, and unlike the derived session key it cannot change when
@@ -361,7 +390,43 @@ export async function handleResumeSession(args, workflowState) {
   };
   delete resumed.owner;
 
-  writeFileSync(target, JSON.stringify(resumed, null, 2), "utf8");
+  // Keep the previous target so a failed adoption can be rolled back instead of
+  // leaving the copied task on disk with ownership released.
+  let previousTarget = null;
+  try {
+    previousTarget = readFileSync(target, "utf8");
+  } catch {
+    previousTarget = null;
+  }
+
+  const abandon = async (message) => {
+    // Restore the target file so a later load cannot expose a task that was
+    // never durably adopted.
+    try {
+      if (previousTarget === null) {
+        if (existsSync(target)) rmSync(target, { force: true });
+      } else {
+        writeFileSync(target, previousTarget, "utf8");
+      }
+    } catch {
+      // Best effort; the message still reports the failure.
+    }
+    try {
+      await releaseWorktreeMutex(adoptMutex.capability);
+    } catch {
+      // The process still exits eventually; the message is the important part.
+    }
+    return textResponse(message);
+  };
+
+  try {
+    writeFileSync(target, JSON.stringify(resumed, null, 2), "utf8");
+  } catch (error) {
+    return await abandon(
+      `⚠️ Adoption did not commit: the state file could not be written (${error?.message || error}). ` +
+        `The worktree mutex was released; nothing was adopted.`
+    );
+  }
   if (typeof workflowState.bindKernelCapability === "function") {
     workflowState.bindKernelCapability(adoptMutex.capability);
   }
@@ -371,15 +436,6 @@ export async function handleResumeSession(args, workflowState) {
   // that already had a row would otherwise be told "adopted" while its old
   // state was reloaded. Write the copied state into the store first, then
   // reload and verify the whole task identity, not just its description.
-  const abandon = async (message) => {
-    try {
-      await releaseWorktreeMutex(adoptMutex.capability);
-    } catch {
-      // The process still exits eventually; the message is the important part.
-    }
-    return textResponse(message);
-  };
-
   try {
     await workflowState.adoptJsonIntoStore();
   } catch (error) {
