@@ -22,7 +22,7 @@ import {
   applyTransition,
   restartReadiness,
 } from "../../monitor-server/restart-handshake.cjs";
-import { readHandshake, writeHandshake } from "../../monitor-server/restart-handshake-store.cjs";
+import { readHandshake, writeHandshake, tryClaimHandshake, readClaim } from "../../monitor-server/restart-handshake-store.cjs";
 
 function stateFileOf(workflowState, options = {}) {
   return options.stateFile || workflowState?.stateFile || null;
@@ -248,22 +248,32 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
     const claimant = String(workflowState.sessionId || "");
     if (!claimant) return { ok: false, code: "NO_SESSION_IDENTITY", note: "this session has no identity to record" };
 
-    // Atomic fence: re-read and write, and refuse if someone claimed in between.
-    const again = readHandshake(handoverFile);
-    if (again.status !== "ok" || again.record.claimedBy) {
-      return { ok: false, code: "ALREADY_CLAIMED", note: "another successor claimed the handover first" };
+    // True cross-process single winner: an OS-exclusive link, not a read then
+    // replace. The loser gets ALREADY_CLAIMED and never touches the task.
+    const claim = { sessionKey: claimant, at: Date.now(), todoId: prior.handover.todoId || null };
+    const won = tryClaimHandshake(handoverFile, claim);
+    if (!won.ok) {
+      if (won.code === "ALREADY_CLAIMED") {
+        const holder = readClaim(handoverFile);
+        return {
+          ok: false,
+          code: "ALREADY_CLAIMED",
+          note: holder ? `the handover was claimed by ${holder.sessionKey} at ${holder.at}` : "another successor claimed the handover first",
+        };
+      }
+      return { ok: false, code: "CLAIM_WRITE_FAILED", note: String(won.code) };
     }
+
     const claimed = {
-      ...again.record,
+      ...prior,
       state: STATES.SESSION_RECOVERED,
-      claimedBy: { sessionKey: claimant, at: Date.now() },
+      claimedBy: claim,
       history: [
-        ...(again.record.history || []),
-        { state: STATES.SESSION_RECOVERED, actor: "successor", at: Date.now(), detail: { claimant } },
+        ...(prior.history || []),
+        { state: STATES.SESSION_RECOVERED, actor: "successor", at: claim.at, detail: { claimant } },
       ],
     };
-    const written = writeHandshake(handoverFile, claimed);
-    if (!written.ok) return { ok: false, code: "CLAIM_WRITE_FAILED", note: String(written.code) };
+    writeHandshake(handoverFile, claimed);
 
     return {
       ok: true,

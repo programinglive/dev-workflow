@@ -77,4 +77,63 @@ function clearHandshake(stateFile) {
   }
 }
 
-module.exports = { SUFFIX, handshakePath, readHandshake, writeHandshake, clearHandshake };
+/**
+ * Claim a handover with true cross-process single-winner semantics.
+ *
+ * A read followed by an atomic rename is NOT a compare-and-swap: two processes
+ * can both read "unclaimed" and both rename, and the second silently wins.
+ * `link(2)` is the primitive the OS guarantees exactly one creator for: the
+ * loser gets EEXIST and no claim file exists for it.
+ *
+ * The claim lives in its own file (`.claim`) next to the handover, so the
+ * handover record itself is never rewritten by the race.
+ */
+function claimPath(stateFile) {
+  if (!stateFile) return null;
+  return `${path.resolve(String(stateFile))}${SUFFIX}.claim`;
+}
+
+function readClaim(stateFile) {
+  const file = claimPath(stateFile);
+  if (!file) return null;
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function tryClaimHandshake(stateFile, claim) {
+  const file = claimPath(stateFile);
+  if (!file) return { ok: false, code: 'NO_STATE_FILE' };
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(claim, null, 2), { mode: 0o600 });
+  } catch (error) {
+    return { ok: false, code: error?.code || 'WRITE_FAILED' };
+  }
+  try {
+    // link(2) fails with EEXIST when another process already created the claim.
+    fs.linkSync(tmp, file);
+    return { ok: true, file };
+  } catch (error) {
+    if (error && error.code === 'EEXIST') {
+      return { ok: false, code: 'ALREADY_CLAIMED', file };
+    }
+    return { ok: false, code: error?.code || 'LINK_FAILED' };
+  } finally {
+    try { fs.unlinkSync(tmp); } catch {}
+  }
+}
+
+module.exports = {
+  SUFFIX,
+  handshakePath,
+  claimPath,
+  readHandshake,
+  writeHandshake,
+  clearHandshake,
+  readClaim,
+  tryClaimHandshake,
+};
