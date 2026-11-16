@@ -9,7 +9,8 @@ import { handleStartTask, handleCreateDocumentation, handleWaiveDocumentation } 
 import { handleMarkDodItem } from "../tools/handler-modules/dod-handlers.js";
 import { handleCompleteTask, handleForceCompleteTask } from "../tools/handler-modules/commit-handlers.js";
 import { classifyTask } from "../governance/classifier.js";
-import { evaluateGovernanceGate, loadPolicies } from "../governance/engine.js";
+import { evaluateGovernanceGate, loadPolicies, resolveEffectiveMode } from "../governance/engine.js";
+import { validateCliFirstEvidence, validateDocumentationEvidence } from "../governance/evidence-validator.js";
 import { validatePolicyException } from "../governance/exceptions.js";
 import { runCiGovernanceValidation } from "../governance/ci-validator.js";
 
@@ -420,6 +421,9 @@ test("Workflow Governance 15-25: exceptions, repo/commit binding, CI failure, ve
   assert.equal(scopeExpanded.cliFirstApplicability, "REQUIRED");
   assert.equal(scopeExpanded.documentationApplicability, "REQUIRED");
 
+  const prevGovMode = process.env.DEVWF_GOVERNANCE_MODE;
+  process.env.DEVWF_GOVERNANCE_MODE = "enforce";
+  try {
   // End-to-end MCP handler integration test: start_task -> mark_dod_item -> complete_task refuses missing -> create_documentation -> complete_task succeeds
   const repoDir = makeTempGitRepo();
   const ws = makeWorkflowState(repoDir);
@@ -431,7 +435,7 @@ test("Workflow Governance 15-25: exceptions, repo/commit binding, CI failure, ve
       definitionOfDone: ["CLI-First headless service tests pass", "Documentation updated"],
       plan: ["Implement service", "Document and test"],
       mermaidFlow: "flowchart TD\nA[Start] --> B[Done]",
-      governanceMode: "enforce",
+      governanceMode: "audit", // Must be ignored (caller cannot downgrade)
     },
     ws,
     null
@@ -585,28 +589,147 @@ test("Workflow Governance 15-25: exceptions, repo/commit binding, CI failure, ve
   );
   assert.ok(selfApprovedForce.content[0].text.includes("POLICY_OVERRIDE_UNAUTHORIZED"));
 
-  // Privileged owner authorization succeeds and records audit trail
-  const auditedForce = await handleForceCompleteTask(
-    {
-      commitMessage: "wip",
-      reason: "Emergency rollback; remediation tracked in Todo #900",
-      approvedBy: "mahar",
-      approvalTicket: "OWNER-INC-900",
-    },
-    ws2,
-    {
-      governanceInput: {
-        changedPaths: ["bin/cli.js"],
-        docContents: {},
-        repository: "programinglive/dev-workflow-mcp-server",
-        revision: 0,
+  // Privileged owner authorization FAILS CLOSED when DEVWF_GOVERNANCE_OVERRIDE_TOKEN is not configured
+  const prevOverrideToken = process.env.DEVWF_GOVERNANCE_OVERRIDE_TOKEN;
+  delete process.env.DEVWF_GOVERNANCE_OVERRIDE_TOKEN;
+  try {
+    const unconfiguredForce = await handleForceCompleteTask(
+      {
+        commitMessage: "wip",
+        reason: "Emergency rollback; remediation tracked in Todo #900",
+        approvedBy: "mahar",
+        approvalTicket: "OWNER-INC-900",
       },
-    }
+      ws2,
+      {
+        governanceInput: {
+          changedPaths: ["bin/cli.js"],
+          docContents: {},
+          repository: "programinglive/dev-workflow-mcp-server",
+          revision: 0,
+        },
+      }
+    );
+    assert.ok(unconfiguredForce.content[0].text.includes("POLICY_OVERRIDE_UNAUTHORIZED"));
+
+    // With DEVWF_GOVERNANCE_OVERRIDE_TOKEN configured, wrong token is rejected
+    process.env.DEVWF_GOVERNANCE_OVERRIDE_TOKEN = "server-secret-override-token-2026";
+    const badTokenForce = await handleForceCompleteTask(
+      {
+        commitMessage: "wip",
+        reason: "Emergency rollback; remediation tracked in Todo #900",
+        approvedBy: "mahar",
+        approvalTicket: "OWNER-INC-900",
+        overrideToken: "wrong-token",
+      },
+      ws2,
+      {
+        governanceInput: {
+          changedPaths: ["bin/cli.js"],
+          docContents: {},
+          repository: "programinglive/dev-workflow-mcp-server",
+          revision: 0,
+        },
+      }
+    );
+    assert.ok(badTokenForce.content[0].text.includes("POLICY_OVERRIDE_UNAUTHORIZED"));
+
+    // Valid server-configured overrideToken + distinct approver + ticket succeeds and records audit trail
+    const auditedForce = await handleForceCompleteTask(
+      {
+        commitMessage: "wip",
+        reason: "Emergency rollback; remediation tracked in Todo #900",
+        approvedBy: "mahar",
+        approvalTicket: "OWNER-INC-900",
+        overrideToken: "server-secret-override-token-2026",
+      },
+      ws2,
+      {
+        governanceInput: {
+          changedPaths: ["bin/cli.js"],
+          docContents: {},
+          repository: "programinglive/dev-workflow-mcp-server",
+          revision: 0,
+        },
+      }
+    );
+    assert.ok(auditedForce.content[0].text.includes("force-completed"));
+    const lastHistory = ws2.state.history.at(-1);
+    assert.equal(lastHistory.governanceBypassed, true);
+    assert.equal(lastHistory.approvedBy, "mahar");
+    assert.equal(lastHistory.approvalTicket, "OWNER-INC-900");
+    assert.ok(lastHistory.governanceViolations.length >= 1);
+  } finally {
+    if (prevOverrideToken === undefined) delete process.env.DEVWF_GOVERNANCE_OVERRIDE_TOKEN;
+    else process.env.DEVWF_GOVERNANCE_OVERRIDE_TOKEN = prevOverrideToken;
+  }
+  } finally {
+    if (prevGovMode === undefined) delete process.env.DEVWF_GOVERNANCE_MODE;
+    else process.env.DEVWF_GOVERNANCE_MODE = prevGovMode;
+  }
+});
+
+test("Security regressions: governanceMode cannot downgrade, deleted docs fail, rerun_workflow preserves governance, and CI gate can PASS", async () => {
+  // 1. Caller cannot downgrade pilot repo via governanceMode: "audit"
+  assert.equal(
+    resolveEffectiveMode({ repository: "programinglive/dev-workflow-mcp-server", governanceMode: "audit", env: {} }),
+    "enforce"
   );
-  assert.ok(auditedForce.content[0].text.includes("force-completed"));
-  const lastHistory = ws2.state.history.at(-1);
-  assert.equal(lastHistory.governanceBypassed, true);
-  assert.equal(lastHistory.approvedBy, "mahar");
-  assert.equal(lastHistory.approvalTicket, "OWNER-INC-900");
-  assert.ok(lastHistory.governanceViolations.length >= 1);
+
+  // 2. Deleted documentation file (null content) is rejected
+  const policies = loadPolicies();
+  const deletedDocRes = validateDocumentationEvidence({
+    applicability: "REQUIRED",
+    evidence: {
+      status: "UPDATED",
+      files: ["docs/FEATURE.md"],
+      repository: "programinglive/dev-workflow-mcp-server",
+      revision: 0,
+      policyVersion: policies.policies["engineering.documentation_required"].version,
+      policyDigest: policies.digest,
+    },
+    changedPaths: ["docs/FEATURE.md"],
+    docContents: { "docs/FEATURE.md": null },
+    currentRepo: "programinglive/dev-workflow-mcp-server",
+    currentRevision: 0,
+    expectedPolicyVersion: policies.policies["engineering.documentation_required"].version,
+    expectedPolicyDigest: policies.digest,
+  });
+  assert.equal(deletedDocRes.ok, false);
+  assert.equal(deletedDocRes.code, "DOCUMENTATION_EVIDENCE_INVALID");
+
+  // 3. Bare "all good, tests passed" prose is rejected as CLI-First evidence
+  const bareProseRes = validateCliFirstEvidence({
+    applicability: "REQUIRED",
+    evidence: {
+      summary: "all good, tests passed",
+      headlessTestsPassed: false,
+      repository: "programinglive/dev-workflow-mcp-server",
+      revision: 0,
+      policyVersion: policies.policies["architecture.cli_first"].version,
+      policyDigest: policies.digest,
+    },
+    currentRepo: "programinglive/dev-workflow-mcp-server",
+    currentRevision: 0,
+    expectedPolicyVersion: policies.policies["architecture.cli_first"].version,
+    expectedPolicyDigest: policies.digest,
+  });
+  assert.equal(bareProseRes.ok, false);
+  assert.equal(bareProseRes.code, "CLI_FIRST_EVIDENCE_INVALID");
+
+  // 4. Standalone CI gate returns PASS (exitCode 0) when diff has CLI + test + valid doc
+  const ciRepo = makeTempGitRepo();
+  mkdirSync(path.join(ciRepo, "cli"), { recursive: true });
+  mkdirSync(path.join(ciRepo, "tests"), { recursive: true });
+  mkdirSync(path.join(ciRepo, "docs"), { recursive: true });
+  writeFileSync(path.join(ciRepo, "cli/cmd.js"), "export function run() {}\n");
+  writeFileSync(path.join(ciRepo, "tests/cmd.test.js"), "import test from 'node:test';\n");
+  writeFileSync(
+    path.join(ciRepo, "docs/CLI.md"),
+    "# CLI Command\n\nUsage: `devwf governance validate --policy all`\nOptions: `--json`\nExit code: 0 on pass, 1 on fail.\n"
+  );
+  const ciPass = runCiGovernanceValidation({ projectDir: ciRepo, policy: "all" });
+  assert.equal(ciPass.ok, true, JSON.stringify(ciPass.violations));
+  assert.equal(ciPass.exitCode, 0);
+  assert.equal(ciPass.gateResult, "PASS");
 });
