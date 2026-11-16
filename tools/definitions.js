@@ -303,13 +303,16 @@ export function getToolList() {
         "action=release records QUIESCED, releases the owned worktree mutex through the official path, " +
         "and records OWNER_RELEASED only when the lock mechanism confirms it. " +
         "action=cancel stops the restart before the process is touched. " +
+        "action=claim takes over a handover after the controller verified the old process exited; " +
+        "action=recover_claim retires a claim whose successor died before adopting, using the observed " +
+        "generation and proof that the claimant process is gone, so the task is never stranded. " +
         "The owner can never record the controller's steps (process exit, relaunch, recovery).",
       inputSchema: {
         type: "object",
         properties: {
           action: {
             type: "string",
-            enum: ["status", "checkpoint", "release", "cancel", "claim"],
+            enum: ["status", "checkpoint", "release", "cancel", "claim", "verify_exit", "recover_claim"],
             description: "Which owner-side handshake step to perform.",
           },
           summary: {
@@ -321,6 +324,18 @@ export function getToolList() {
             description:
               "For action=claim: absolute path to the previous owner's handover record (the restart sidecar " +
               "of its state file). Required, because a fresh successor has no state file of its own to read.",
+          },
+          pid: {
+            type: "number",
+            description:
+              "For action=verify_exit or recover_claim: the recorded owner/claimant process ID. The handler " +
+              "checks the OS itself and refuses while that process is still alive.",
+          },
+          generation: {
+            type: "number",
+            description:
+              "For action=recover_claim: the claim generation the caller observed. Recovery is refused when it " +
+              "does not match, so two recoverers cannot both retire the same claim.",
           },
         },
         required: ["action"],

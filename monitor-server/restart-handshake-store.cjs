@@ -15,9 +15,12 @@ const path = require('node:path');
 
 const SUFFIX = '.restart-handshake.json';
 
+// Accept either the session state file or the sidecar path itself, so a
+// controller holding a handover path does not have to know the convention.
 function handshakePath(stateFile) {
   if (!stateFile) return null;
-  return `${path.resolve(String(stateFile))}${SUFFIX}`;
+  const resolved = path.resolve(String(stateFile));
+  return resolved.endsWith(SUFFIX) ? resolved : `${resolved}${SUFFIX}`;
 }
 
 /**
@@ -90,7 +93,8 @@ function clearHandshake(stateFile) {
  */
 function claimPath(stateFile) {
   if (!stateFile) return null;
-  return `${path.resolve(String(stateFile))}${SUFFIX}.claim`;
+  const resolved = path.resolve(String(stateFile));
+  return resolved.endsWith(SUFFIX) ? `${resolved}.claim` : `${resolved}${SUFFIX}.claim`;
 }
 
 function readClaim(stateFile) {
@@ -116,6 +120,14 @@ function tryClaimHandshake(stateFile, claim) {
   try {
     // link(2) fails with EEXIST when another process already created the claim.
     fs.linkSync(tmp, file);
+    if (Number.isFinite(Number(claim?.generation))) {
+      const written = writeGeneration(stateFile, Number(claim.generation));
+      if (!written.ok) {
+        // A claim without a durable generation would let the fence reset.
+        try { fs.unlinkSync(file); } catch {}
+        return { ok: false, code: 'GENERATION_WRITE_FAILED' };
+      }
+    }
     return { ok: true, file };
   } catch (error) {
     if (error && error.code === 'EEXIST') {
@@ -127,6 +139,239 @@ function tryClaimHandshake(stateFile, claim) {
   }
 }
 
+/**
+ * The next claim generation for this handover.
+ *
+ * Derived from the durable audit trail instead of the handover record, because
+ * that record is immutable: the `.claim` file is the authoritative winner and a
+ * retired claim is kept, never deleted, so the maximum only grows. Returns null
+ * when the trail cannot be read, so a caller fails closed instead of silently
+ * restarting at generation 1.
+ */
+function claimGeneration(stateFile) {
+  const file = claimPath(stateFile);
+  if (!file) return null;
+  const dir = path.dirname(file);
+  const base = path.basename(file);
+  let names;
+  try {
+    names = fs.readdirSync(dir);
+  } catch (error) {
+    if (error && error.code === 'ENOENT') return 1;
+    return null;
+  }
+  let max = 0;
+  const pattern = new RegExp(`^${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.retired\\.(\\d+)\\.`);
+  for (const name of names) {
+    const match = pattern.exec(name);
+    if (match) max = Math.max(max, Number(match[1]) || 0);
+  }
+  // The live claim counts too: if the retirement trail is cleaned up while a
+  // claim remains, the next generation must still move forward.
+  const current = readClaim(stateFile);
+  if (current && Number.isFinite(Number(current.generation))) {
+    max = Math.max(max, Number(current.generation));
+  }
+  // A durable counter survives cleanup of both the claim and its retired files.
+  const durable = readGeneration(stateFile);
+  if (durable === null) return null;
+  max = Math.max(max, durable);
+  return max + 1;
+}
+
+function generationPath(stateFile) {
+  const file = claimPath(stateFile);
+  return file ? `${file}.generation` : null;
+}
+
+function readGeneration(stateFile) {
+  const file = generationPath(stateFile);
+  if (!file) return null;
+  let raw;
+  try {
+    raw = fs.readFileSync(file, 'utf8');
+  } catch (error) {
+    // No counter yet is fine; an unreadable counter is not, because treating it
+    // as absent would let the generation reset.
+    return error?.code === 'ENOENT' ? 0 : null;
+  }
+  const value = Number(String(raw).trim());
+  return Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+function writeGeneration(stateFile, generation) {
+  const file = generationPath(stateFile);
+  if (!file) return { ok: false, code: 'NO_STATE_FILE' };
+  const value = Number(generation);
+  if (!Number.isFinite(value) || value <= 0) return { ok: false, code: 'INVALID_GENERATION' };
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    fs.writeFileSync(tmp, String(value), { mode: 0o600 });
+    fs.renameSync(tmp, file);
+    return { ok: true };
+  } catch (error) {
+    try { fs.unlinkSync(tmp); } catch {}
+    return { ok: false, code: error?.code || 'WRITE_FAILED' };
+  }
+}
+
+/**
+ * Run `fn` while holding the handover's recovery lock.
+ *
+ * Adoption marking and claim retirement both mutate the same `.claim` path, so
+ * they must serialize on the same OS-exclusive lock. Without it, recovery can
+ * read an unadopted claim and rename it after adoption has replaced it, which
+ * would retire an adopted claim and let a second successor take the task.
+ */
+function withRecoveryLock(file, fn) {
+  const lock = `${file}.recovery`;
+  const writeTmp = () => {
+    const tmp = `${lock}.${process.pid}.${Date.now()}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify({ pid: process.pid, at: Date.now() }), { mode: 0o600 });
+    return tmp;
+  };
+  const tryLink = () => {
+    let tmp = null;
+    try {
+      tmp = writeTmp();
+      fs.linkSync(tmp, lock);
+      return { ok: true };
+    } catch (error) {
+      if (error && error.code === 'EEXIST') return { ok: false, code: 'EEXIST' };
+      return { ok: false, code: error?.code || 'LINK_FAILED' };
+    } finally {
+      if (tmp) {
+        try { fs.unlinkSync(tmp); } catch {}
+      }
+    }
+  };
+
+  let acquired = tryLink();
+  if (!acquired.ok && acquired.code === 'EEXIST') {
+    // A recoverer that died while holding the lock must not block recovery
+    // forever. The lock records its owner's PID; reclaim it only when that
+    // process is provably gone. An unreadable lock is treated as live.
+    let ownerPid = null;
+    let originalRaw = null;
+    try {
+      originalRaw = fs.readFileSync(lock, 'utf8');
+      ownerPid = Number(JSON.parse(originalRaw).pid);
+    } catch {
+      ownerPid = null;
+    }
+    let ownerAlive = true;
+    if (Number.isFinite(ownerPid) && ownerPid > 0) {
+      try {
+        process.kill(ownerPid, 0);
+        ownerAlive = true;
+      } catch (error) {
+        ownerAlive = error?.code === 'EPERM';
+      }
+    }
+    if (!ownerAlive) {
+      // Rename, not unlink: only one process can move a given path. After the
+      // move, confirm the file we moved is the one we inspected; if another
+      // recoverer already replaced the lock, put it back and stand down.
+      const stale = `${lock}.stale.${ownerPid}.${Date.now()}`;
+      try {
+        fs.renameSync(lock, stale);
+        let movedRaw = null;
+        try {
+          movedRaw = fs.readFileSync(stale, 'utf8');
+        } catch {
+          movedRaw = null;
+        }
+        if (originalRaw !== null && movedRaw !== null && movedRaw !== originalRaw) {
+          try { fs.renameSync(stale, lock); } catch {}
+          return { ok: false, code: 'RECOVERY_IN_PROGRESS' };
+        }
+        try { fs.unlinkSync(stale); } catch {}
+        acquired = tryLink();
+      } catch (error) {
+        if (error?.code === 'ENOENT') acquired = tryLink();
+      }
+    }
+  }
+  if (!acquired.ok) {
+    return { ok: false, code: acquired.code === 'EEXIST' ? 'RECOVERY_IN_PROGRESS' : acquired.code };
+  }
+  try {
+    return fn();
+  } finally {
+    try { fs.unlinkSync(lock); } catch {}
+  }
+}
+
+/**
+ * Mark a claim as adopted so recovery can never discard a successor's progress.
+ *
+ * The claim stays in place as the audit record of who won; only the marker is
+ * added. Written atomically under the recovery lock so a concurrent retirement
+ * cannot rename the claim between the read and the replace.
+ */
+function markClaimAdopted(stateFile, { sessionKey, at = Date.now() } = {}) {
+  const file = claimPath(stateFile);
+  if (!file) return { ok: false, code: 'NO_STATE_FILE' };
+  return withRecoveryLock(file, () => {
+    const current = readClaim(stateFile);
+    if (!current) return { ok: false, code: 'NO_CLAIM' };
+    if (sessionKey && current.sessionKey !== sessionKey) {
+      return { ok: false, code: 'CLAIMANT_MISMATCH' };
+    }
+    const next = { ...current, adoptedAt: at, adoptedBy: current.sessionKey };
+    const tmp = `${file}.${process.pid}.${Date.now()}.adopt.tmp`;
+    try {
+      fs.writeFileSync(tmp, JSON.stringify(next, null, 2), { mode: 0o600 });
+      fs.renameSync(tmp, file);
+      return { ok: true, claim: next };
+    } catch (error) {
+      try { fs.unlinkSync(tmp); } catch {}
+      return { ok: false, code: error?.code || 'WRITE_FAILED' };
+    }
+  });
+}
+
+/**
+ * Retire a stale claim so a crashed successor cannot strand the task forever.
+ *
+ * This is the only path that removes a `.claim`, and it is deliberately narrow:
+ * the caller must present the exact generation it observed, the claimant must
+ * be proven dead by the controller, and the retirement is serialized by an
+ * OS-exclusive lock so two recoverers cannot both act. The retired claim is
+ * renamed, not deleted, so the audit trail survives.
+ */
+function retireClaim(stateFile, { generation, expectedSessionKey = null, verify = null } = {}) {
+  const file = claimPath(stateFile);
+  if (!file) return { ok: false, code: 'NO_STATE_FILE' };
+  return withRecoveryLock(file, () => {
+    const current = readClaim(stateFile);
+    if (!current) return { ok: false, code: 'NO_CLAIM' };
+    if (Number(current.generation) !== Number(generation)) {
+      return { ok: false, code: 'GENERATION_MISMATCH', currentGeneration: current.generation };
+    }
+    if (expectedSessionKey && current.sessionKey !== expectedSessionKey) {
+      return { ok: false, code: 'CLAIMANT_MISMATCH' };
+    }
+    if (typeof verify === 'function') {
+      const verdict = verify(current);
+      if (!verdict || verdict.ok !== true) {
+        return { ok: false, code: verdict?.code || 'VERIFY_FAILED' };
+      }
+    }
+    const retired = `${file}.retired.${Number(current.generation)}.${Date.now()}`;
+    try {
+      // Persist the generation before moving the claim: if the counter cannot
+      // be written, the fence would reset after cleanup, so abort instead.
+      const written = writeGeneration(stateFile, Number(current.generation));
+      if (!written.ok) return { ok: false, code: 'GENERATION_WRITE_FAILED' };
+      fs.renameSync(file, retired);
+      return { ok: true, retired, claim: current };
+    } catch (error) {
+      return { ok: false, code: error?.code || 'RETIRE_FAILED' };
+    }
+  });
+}
+
 module.exports = {
   SUFFIX,
   handshakePath,
@@ -136,4 +381,7 @@ module.exports = {
   clearHandshake,
   readClaim,
   tryClaimHandshake,
+  claimGeneration,
+  markClaimAdopted,
+  retireClaim,
 };

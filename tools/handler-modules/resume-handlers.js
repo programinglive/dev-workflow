@@ -1,9 +1,13 @@
-import { readdirSync, readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import { textResponse } from "./shared.js";
 import { summarize as summarizeDod, renderOutstanding } from "./dod.js";
 import { planProgress } from "./plan.js";
-import { DEFAULT_LOCK_STALE_MS } from "../../process-lock.js";
+import { DEFAULT_LOCK_STALE_MS, acquireWorktreeMutex, releaseWorktreeMutex, resolveCanonicalWorktreeRoot } from "../../process-lock.js";
+import { readHandshake, readClaim, markClaimAdopted } from "../../monitor-server/restart-handshake-store.cjs";
+import { createLocalAdapters } from "../../session-controller-adapters.js";
+import { resolveProjectDir } from "../../exec.js";
+import { stateFingerprint } from "../../monitor-server/restart-handshake.cjs";
 import { revalidatePreflight, runPreflight } from "../../preflight.js";
 
 /**
@@ -34,9 +38,18 @@ const STATE_FILE_PATTERN = /^workflow-state\.(.+)\.json$/;
 function projectDirFromStateFile(stateFile) {
   const resolved = path.resolve(stateFile);
   const segments = resolved.split(path.sep);
-  const index = segments.lastIndexOf("projects");
-  if (index >= 0 && segments.length > index + 2) {
-    return segments.slice(0, index + 2).join(path.sep);
+  const projectsIndex = segments.lastIndexOf("projects");
+  if (projectsIndex >= 0 && segments.length > projectsIndex + 2) {
+    return segments.slice(0, projectsIndex + 2).join(path.sep);
+  }
+  // Per-project layout without a `projects` segment:
+  //   <base>/users/<user>/workflow-state.<key>.json
+  // Falling back to dirname() here pointed the scan at
+  // `<base>/users/<user>/users`, which never exists, so no candidate was ever
+  // found and an adoption of a handover in this layout failed.
+  const usersIndex = segments.lastIndexOf("users");
+  if (usersIndex > 0) {
+    return segments.slice(0, usersIndex).join(path.sep);
   }
   return path.dirname(resolved);
 }
@@ -47,6 +60,22 @@ function readState(file) {
   } catch {
     return null;
   }
+}
+
+/**
+ * Whether a reloaded state is the task that was adopted.
+ *
+ * A matching description alone is not enough: two different tasks can share a
+ * description, and the point of the check is to prove the store holds the
+ * adopted task, not a leftover row that happens to read the same.
+ */
+function sameAdoptedState(loaded, source) {
+  if (!loaded || !source) return false;
+  if ((loaded.taskDescription || "") !== (source.taskDescription || "")) return false;
+  if ((loaded.currentPhase || "idle") !== (source.currentPhase || "idle")) return false;
+  if ((loaded.workflowTaskId || "") !== (source.workflowTaskId || "")) return false;
+  if (Number(loaded.dodRevision || 0) !== Number(source.dodRevision || 0)) return false;
+  return true;
 }
 
 /** Semua state sesi lain di proyek ini yang masih punya task berjalan. */
@@ -195,9 +224,167 @@ export async function handleResumeSession(args, workflowState) {
     return textResponse("⚠️ Berkas state itu tidak bisa dibaca. Tidak ada yang diubah.");
   }
 
+  // A handover is not a generic left-behind session: it is a fenced transfer.
+  // When the source carries a handover sidecar, only the session that won the
+  // exclusive claim may adopt it, and only after the controller proved the old
+  // owner exited. Without this the single-winner claim would not fence adoption
+  // at all: a loser could copy the task whenever it got the worktree mutex.
+  const handoverSidecar = `${chosen.file}.restart-handshake.json`;
+  const hasHandover = existsSync(handoverSidecar);
+  if (!hasHandover && source.handover) {
+    return textResponse(
+      `⚠️ Adoption refused: this state was handed over, but its handover record is missing. ` +
+        `A fenced handover cannot be adopted without its record. Nothing was changed.`
+    );
+  }
+  if (hasHandover) {
+    const handshake = readHandshake(handoverSidecar);
+    if (handshake.status !== "ok") {
+      return textResponse(
+        `⚠️ Adoption refused: the handover record at "${handoverSidecar}" is not readable. Nothing was changed.`
+      );
+    }
+    const state = handshake.record?.state;
+    if (state !== "PROCESS_EXIT_VERIFIED" && state !== "RELAUNCHED") {
+      return textResponse(
+        `⚠️ Adoption refused: the handover is at ${state}; a successor may only adopt after PROCESS_EXIT_VERIFIED. ` +
+          `Nothing was changed.`
+      );
+    }
+    // The sidecar must describe the very state being copied. A misplaced or
+    // stale sidecar plus its claim must not authorize a different session's task.
+    const h = handshake.record?.handover || {};
+    if (h.sessionKey !== chosen.sessionKey) {
+      return textResponse(
+        `⚠️ Adoption refused: the handover names session "${h.sessionKey}", not "${chosen.sessionKey}". ` +
+          `Nothing was changed.`
+      );
+    }
+    if (h.stateFile && path.resolve(String(h.stateFile)) !== path.resolve(String(chosen.file))) {
+      return textResponse(
+        `⚠️ Adoption refused: the handover points at a different state file than the one being copied. ` +
+          `Nothing was changed.`
+      );
+    }
+    if (h.todoId && source.zettly?.todoId && Number(h.todoId) !== Number(source.zettly.todoId)) {
+      return textResponse(
+        `⚠️ Adoption refused: the handover names Todo #${h.todoId}, but the source state is Todo ` +
+          `#${source.zettly.todoId}. Nothing was changed.`
+      );
+    }
+    // The source JSON must still be the task the owner checkpointed. A changed
+    // or stale file with the same session key must not supply a different task.
+    const snap = h.snapshot;
+    if (snap) {
+      const mismatch = snap.fingerprint
+        ? stateFingerprint(source) !== snap.fingerprint
+        : (snap.taskDescription || "") !== (source.taskDescription || "");
+      if (mismatch) {
+        return textResponse(
+          `⚠️ Adoption refused: the source state no longer matches the task snapshot the owner ` +
+            `checkpointed. Nothing was changed.`
+        );
+      }
+    }
+    const claim = readClaim(handoverSidecar);
+    if (!claim) {
+      return textResponse(
+        `⚠️ Adoption refused: this handover has no claim. Claim it first with restart_handshake { action: "claim" }. ` +
+          `Nothing was changed.`
+      );
+    }
+    if (claim.adoptedAt) {
+      return textResponse(
+        `⚠️ Adoption refused: the handover was already adopted by ${claim.sessionKey} at ${claim.adoptedAt}. ` +
+          `Adopting it again would discard that successor's progress.`
+      );
+    }
+    const self = String(workflowState.sessionId || "");
+    if (!self || claim.sessionKey !== self) {
+      return textResponse(
+        `⚠️ Adoption refused: the claim belongs to ${claim.sessionKey}, not this session. ` +
+          `Only the winning successor may adopt the handover. Nothing was changed.`
+      );
+    }
+    // The claim must belong to this process, not merely to a reused session
+    // string. A fresh process that happens to reuse the id must go through
+    // recovery, which proves the previous claimant is gone.
+    if (Number(claim.pid) !== process.pid) {
+      return textResponse(
+        `⚠️ Adoption refused: the claim was made by PID ${claim.pid}, not this process (${process.pid}). ` +
+          `A different process must recover the claim first. Nothing was changed.`
+      );
+    }
+    if (claim.startedAt || claim.executable) {
+      let info = null;
+      try {
+        info = createLocalAdapters().processInfo(process.pid);
+      } catch {
+        info = null;
+      }
+      const startMismatch = claim.startedAt && info?.startedAt && String(claim.startedAt) !== String(info.startedAt);
+      const exeMismatch = claim.executable && info?.executable && String(claim.executable) !== String(info.executable);
+      if (startMismatch || exeMismatch) {
+        return textResponse(
+          `⚠️ Adoption refused: the claim's recorded process identity does not match this process. ` +
+            `Nothing was changed.`
+        );
+      }
+    }
+  }
+
   // Salin ke berkas sesi ini, pertahankan isi apa adanya.
   const target = workflowState.stateFile;
   mkdirSync(path.dirname(target), { recursive: true });
+
+  // Adoption makes this session the owner of the task, so it must also become
+  // the owner of the worktree. The startup placeholder capability is released
+  // when the real session is established, and only `start_task` re-acquires it;
+  // a successor never calls `start_task`, so without this it adopts a task it
+  // can never checkpoint. Acquire BEFORE the state write: if another live owner
+  // still holds the worktree, the adoption is refused and nothing changes.
+  const adoptProjectDir = source.projectDir || workflowState.state.projectDir || "";
+  // The mutex must be for the worktree this session actually operates in. The
+  // state file itself lives in a separate state bucket, so the comparison is
+  // between the source's recorded worktree and this session's runtime project,
+  // not between the state file and the worktree.
+  let sessionProjectDir = workflowState.state.projectDir || "";
+  if (!sessionProjectDir) {
+    try {
+      sessionProjectDir = resolveProjectDir({
+        env: process.env,
+        candidates: [process.cwd(), process.env.INIT_CWD],
+      }).dir;
+    } catch {
+      sessionProjectDir = "";
+    }
+  }
+  if (adoptProjectDir && sessionProjectDir) {
+    const sourceRoot = resolveCanonicalWorktreeRoot(adoptProjectDir);
+    const sessionRoot = resolveCanonicalWorktreeRoot(sessionProjectDir);
+    if (!sourceRoot.ok || !sessionRoot.ok || sourceRoot.canonicalKey !== sessionRoot.canonicalKey) {
+      return textResponse(
+        `⚠️ Adoption refused: the source state belongs to "${adoptProjectDir}", which is not this session's ` +
+          `worktree ("${sessionProjectDir}"). A task cannot be adopted across projects. Nothing was changed.`
+      );
+    }
+  }
+  // The capability owner key is the resolved state-file path: `_capabilityMatchesSession`
+  // accepts it directly, and unlike the derived session key it cannot change when
+  // the state is reloaded.
+  const adoptOwnerKey = path.resolve(String(target));
+  const adoptMutex = await acquireWorktreeMutex({
+    projectDir: adoptProjectDir,
+    ownerKey: adoptOwnerKey,
+  });
+  if (!adoptMutex.ok) {
+    return textResponse(
+      `⚠️ Adoption refused: the worktree mutex for "${adoptProjectDir}" could not be acquired ` +
+        `(${adoptMutex.reason || "MUTEX_ERROR"}).\n\n` +
+        `Another live session may still own this working tree. Nothing was changed; the source ` +
+        `state is untouched.`
+    );
+  }
 
   const resumed = {
     ...source,
@@ -207,8 +394,89 @@ export async function handleResumeSession(args, workflowState) {
   };
   delete resumed.owner;
 
-  writeFileSync(target, JSON.stringify(resumed, null, 2), "utf8");
-  await workflowState.load();
+  // Keep the previous target and the previous stored state so a failed adoption
+  // can be rolled back instead of leaving the copied task on disk or in SQLite
+  // with ownership released.
+  let previousTarget = null;
+  try {
+    previousTarget = readFileSync(target, "utf8");
+  } catch {
+    previousTarget = null;
+  }
+  const previousState = workflowState.state ? JSON.parse(JSON.stringify(workflowState.state)) : null;
+
+  const abandon = async (message) => {
+    // Restore the target file and the stored row so a later load cannot expose
+    // a task that was never durably adopted.
+    try {
+      if (previousTarget === null) {
+        if (existsSync(target)) rmSync(target, { force: true });
+      } else {
+        writeFileSync(target, previousTarget, "utf8");
+      }
+    } catch {
+      // Best effort; the message still reports the failure.
+    }
+    try {
+      if (previousState && typeof workflowState.restoreStateIntoStore === "function") {
+        await workflowState.restoreStateIntoStore(previousState);
+      }
+    } catch {
+      // Best effort; the claim stays unadopted so recovery can reconcile.
+    }
+    try {
+      workflowState.boundKernelCapability = null;
+      if (previousState) workflowState.state = previousState;
+    } catch {
+      // In-memory cleanup is best effort.
+    }
+    try {
+      await releaseWorktreeMutex(adoptMutex.capability);
+    } catch {
+      // The process still exits eventually; the message is the important part.
+    }
+    return textResponse(message);
+  };
+
+  try {
+    writeFileSync(target, JSON.stringify(resumed, null, 2), "utf8");
+  } catch (error) {
+    return await abandon(
+      `⚠️ Adoption did not commit: the state file could not be written (${error?.message || error}). ` +
+        `The worktree mutex was released; nothing was adopted.`
+    );
+  }
+  if (typeof workflowState.bindKernelCapability === "function") {
+    workflowState.bindKernelCapability(adoptMutex.capability);
+  }
+
+  // The reload must actually reflect the adopted task. `load()` prefers an
+  // existing SQLite row for this session over the JSON file, so a successor
+  // that already had a row would otherwise be told "adopted" while its old
+  // state was reloaded. Write the copied state into the store first, then
+  // reload and verify the whole task identity, not just its description.
+  try {
+    await workflowState.adoptJsonIntoStore();
+  } catch (error) {
+    return await abandon(
+      `⚠️ Adoption did not commit: the copied state could not be written to the store ` +
+        `(${error?.message || error}). The worktree mutex was released; retry when the store is writable.`
+    );
+  }
+  try {
+    await workflowState.load({ skipWrites: true });
+  } catch (error) {
+    return await abandon(
+      `⚠️ Adoption did not commit: the copied state could not be reloaded (${error?.message || error}). ` +
+        `The worktree mutex was released; nothing was adopted.`
+    );
+  }
+  if (!sameAdoptedState(workflowState.state, source)) {
+    return await abandon(
+      `⚠️ Adoption did not commit: the reloaded state does not match the source task ` +
+        `("${source.taskDescription || ""}"). The worktree mutex was released; nothing was adopted.`
+    );
+  }
 
   // Revalidate the README-first preflight against the current working tree.
   // Documentation edits are reported, not treated as failures; the caller
@@ -238,20 +506,53 @@ export async function handleResumeSession(args, workflowState) {
       preflightNote = `\n\nℹ️ Preflight recorded for this resumed task.`;
     }
   }
-  await workflowState.save();
+
+  // The adoption commit point is the state file plus the verified store reload
+  // above. This final save persists the preflight note; the worktree mutex is
+  // held, so it should succeed. If it does not, the adoption is not durable and
+  // must not be reported as success or marked adopted.
+  try {
+    const saved = await workflowState.save();
+    if (saved && (saved.verified === false || saved.conflict)) {
+      return await abandon(
+        `⚠️ Adoption is not durable: the final save reported a conflict, so another writer's state ` +
+          `was kept. The claim was NOT marked adopted. The worktree mutex was released.`
+      );
+    }
+  } catch (error) {
+    return await abandon(
+      `⚠️ Adoption is not durable: the state was copied but the final save failed ` +
+        `(${error?.message || error}). The claim was NOT marked adopted, so recovery can still ` +
+        `reconcile it. The worktree mutex was released.`
+    );
+  }
+
+  // Finalize the claim only after the adoption is durable. If the marker cannot
+  // be written, recovery could later mistake this adopted claim for a stale one,
+  // so the adoption is reported as recovery-required rather than complete.
+  if (hasHandover) {
+    const marked = markClaimAdopted(handoverSidecar, { sessionKey: String(workflowState.sessionId || "") });
+    if (!marked.ok) {
+      return textResponse(
+        `⚠️ The task was adopted durably, but the claim could not be marked adopted (${marked.code}). ` +
+          `Recovery is not fenced for this claim: do not hand this task to another successor until the ` +
+          `marker is written. The worktree mutex is still held by this session.`
+      );
+    }
+  }
 
   const dod = summarizeDod(workflowState.state.definitionOfDone, workflowState.state.dodRevision);
   const outstanding = dod.open > 0 ? `\n\nDoD yang belum terpenuhi:\n${renderOutstanding(workflowState.state.definitionOfDone, workflowState.state.dodRevision)}` : "";
 
   return textResponse(
-    `✅ Disambung ke state sesi "${chosen.sessionKey}".\n\n` +
+    `✅ Adopted the state of session "${chosen.sessionKey}".\n\n` +
       `Task      : ${workflowState.state.taskDescription}\n` +
-      `Fase      : ${workflowState.state.currentPhase}\n` +
-      `DoD       : ${dod.done}/${dod.total} terbukti, ${dod.open} terbuka\n` +
-      `Rencana   : ${planProgress(workflowState.state.plan).done}/${planProgress(workflowState.state.plan).total}\n` +
-      `Berkas asli tetap di: ${chosen.file}\n` +
+      `Phase     : ${workflowState.state.currentPhase}\n` +
+      `DoD       : ${dod.done}/${dod.total} proven, ${dod.open} open\n` +
+      `Plan      : ${planProgress(workflowState.state.plan).done}/${planProgress(workflowState.state.plan).total}\n` +
+      `Source file kept at: ${chosen.file}\n` +
       outstanding +
       preflightNote +
-      `\n\nLanjutkan dengan 'continue_workflow' atau 'get_workflow_status'.`
+      `\n\nContinue with 'continue_workflow' or 'get_workflow_status'.`
   );
 }
