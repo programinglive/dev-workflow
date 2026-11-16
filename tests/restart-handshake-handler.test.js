@@ -573,3 +573,14 @@ test('claim generation survives cleanup of retired files', async () => {
   assert.equal(claim.ok, true);
   assert.equal(claim.generation, 2);
 });
+
+test('a damaged generation counter blocks a new claim', async () => {
+  const f = await exitedFixture();
+  const { claimPath } = await import("../monitor-server/restart-handshake-store.cjs");
+  // A malformed counter must not be read as "no counter", which would reset the fence.
+  fs.writeFileSync(`${claimPath(f.ws.stateFile)}.generation`, "not-a-number");
+  const result = await handleRestartHandshake({ action: 'claim', handover: f.ws.stateFile }, successor(f, 'ses_b2'));
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'GENERATION_UNAVAILABLE');
+  assert.equal(readClaim(f.ws.stateFile), null);
+});

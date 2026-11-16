@@ -174,7 +174,8 @@ function claimGeneration(stateFile) {
   }
   // A durable counter survives cleanup of both the claim and its retired files.
   const durable = readGeneration(stateFile);
-  if (Number.isFinite(durable)) max = Math.max(max, durable);
+  if (durable === null) return null;
+  max = Math.max(max, durable);
   return max + 1;
 }
 
@@ -186,12 +187,16 @@ function generationPath(stateFile) {
 function readGeneration(stateFile) {
   const file = generationPath(stateFile);
   if (!file) return null;
+  let raw;
   try {
-    const value = Number(fs.readFileSync(file, 'utf8').trim());
-    return Number.isFinite(value) ? value : null;
-  } catch {
-    return null;
+    raw = fs.readFileSync(file, 'utf8');
+  } catch (error) {
+    // No counter yet is fine; an unreadable counter is not, because treating it
+    // as absent would let the generation reset.
+    return error?.code === 'ENOENT' ? 0 : null;
   }
+  const value = Number(String(raw).trim());
+  return Number.isFinite(value) && value >= 0 ? value : null;
 }
 
 function writeGeneration(stateFile, generation) {

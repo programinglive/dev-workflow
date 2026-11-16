@@ -457,7 +457,14 @@ export async function handleResumeSession(args, workflowState) {
         `(${error?.message || error}). The worktree mutex was released; retry when the store is writable.`
     );
   }
-  await workflowState.load({ skipWrites: true });
+  try {
+    await workflowState.load({ skipWrites: true });
+  } catch (error) {
+    return await abandon(
+      `⚠️ Adoption did not commit: the copied state could not be reloaded (${error?.message || error}). ` +
+        `The worktree mutex was released; nothing was adopted.`
+    );
+  }
   if (!sameAdoptedState(workflowState.state, source)) {
     return await abandon(
       `⚠️ Adoption did not commit: the reloaded state does not match the source task ` +
