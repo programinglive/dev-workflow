@@ -550,8 +550,49 @@ test("Workflow Governance 15-25: exceptions, repo/commit binding, CI failure, ve
   );
   assert.ok(silentForce.content[0].text.includes("POLICY_FORCE_REASON_REQUIRED"));
 
+  // Reason alone without privileged authorization is rejected (POLICY_OVERRIDE_UNAUTHORIZED)
+  const reasonOnlyForce = await handleForceCompleteTask(
+    { commitMessage: "wip", reason: "Long enough reason string without approval" },
+    ws2,
+    {
+      governanceInput: {
+        changedPaths: ["bin/cli.js"],
+        docContents: {},
+        repository: "programinglive/dev-workflow-mcp-server",
+        revision: 0,
+      },
+    }
+  );
+  assert.ok(reasonOnlyForce.content[0].text.includes("POLICY_OVERRIDE_UNAUTHORIZED"));
+
+  // Self-approval by an agent is rejected
+  const selfApprovedForce = await handleForceCompleteTask(
+    {
+      commitMessage: "wip",
+      reason: "Emergency rollback; remediation tracked in Todo #900",
+      approvedBy: "codex",
+      approvalTicket: "INC-900",
+    },
+    ws2,
+    {
+      governanceInput: {
+        changedPaths: ["bin/cli.js"],
+        docContents: {},
+        repository: "programinglive/dev-workflow-mcp-server",
+        revision: 0,
+      },
+    }
+  );
+  assert.ok(selfApprovedForce.content[0].text.includes("POLICY_OVERRIDE_UNAUTHORIZED"));
+
+  // Privileged owner authorization succeeds and records audit trail
   const auditedForce = await handleForceCompleteTask(
-    { commitMessage: "wip", reason: "Emergency rollback; remediation tracked in Todo #900" },
+    {
+      commitMessage: "wip",
+      reason: "Emergency rollback; remediation tracked in Todo #900",
+      approvedBy: "mahar",
+      approvalTicket: "OWNER-INC-900",
+    },
     ws2,
     {
       governanceInput: {
@@ -565,5 +606,7 @@ test("Workflow Governance 15-25: exceptions, repo/commit binding, CI failure, ve
   assert.ok(auditedForce.content[0].text.includes("force-completed"));
   const lastHistory = ws2.state.history.at(-1);
   assert.equal(lastHistory.governanceBypassed, true);
+  assert.equal(lastHistory.approvedBy, "mahar");
+  assert.equal(lastHistory.approvalTicket, "OWNER-INC-900");
   assert.ok(lastHistory.governanceViolations.length >= 1);
 });

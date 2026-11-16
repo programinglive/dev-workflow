@@ -1,3 +1,5 @@
+import crypto from "node:crypto";
+
 /**
  * Controlled policy exception validation.
  *
@@ -5,6 +7,60 @@
  * owner, distinct approver (separation of duties), and non-expired timestamp.
  * Exceptions can never bypass CI or security checks.
  */
+
+const AGENT_IDENTITIES = new Set(["codex", "antigravity", "opencode", "agent", "assistant", "bot", "ai"]);
+
+export function validateForceOverrideAuthorization({
+  approvedBy = "",
+  approvalTicket = "",
+  overrideToken = "",
+  actor = "",
+  env = process.env,
+} = {}) {
+  const approver = String(approvedBy || "").trim();
+  const ticket = String(approvalTicket || "").trim();
+  const actorNorm = String(actor || "").trim().toLowerCase();
+
+  if (approver.length < 3) {
+    return {
+      ok: false,
+      code: "POLICY_OVERRIDE_UNAUTHORIZED",
+      reason: "Privileged override requires 'approvedBy' naming a human/owner approver (>= 3 chars); a reason alone is not authorization.",
+    };
+  }
+
+  if (AGENT_IDENTITIES.has(approver.toLowerCase()) || (actorNorm && approver.toLowerCase() === actorNorm)) {
+    return {
+      ok: false,
+      code: "POLICY_OVERRIDE_UNAUTHORIZED",
+      reason: `Agent or self-approval ("${approver}") is not permitted for governance policy overrides.`,
+    };
+  }
+
+  if (ticket.length < 6) {
+    return {
+      ok: false,
+      code: "POLICY_OVERRIDE_UNAUTHORIZED",
+      reason: "Privileged override requires 'approvalTicket' (>= 6 chars, e.g. owner approval reference or incident ticket).",
+    };
+  }
+
+  const expectedToken = String(env.DEVWF_GOVERNANCE_OVERRIDE_TOKEN || "").trim();
+  if (expectedToken) {
+    const provided = String(overrideToken || "").trim();
+    const a = Buffer.from(provided, "utf8");
+    const b = Buffer.from(expectedToken, "utf8");
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+      return {
+        ok: false,
+        code: "POLICY_OVERRIDE_UNAUTHORIZED",
+        reason: "Invalid or missing 'overrideToken' for configured DEVWF_GOVERNANCE_OVERRIDE_TOKEN.",
+      };
+    }
+  }
+
+  return { ok: true, approvedBy: approver, approvalTicket: ticket };
+}
 
 export function validatePolicyException(exception, { policyId, repository, now = new Date() } = {}) {
   if (!exception || typeof exception !== "object") {
