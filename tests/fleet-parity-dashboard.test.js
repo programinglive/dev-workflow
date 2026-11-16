@@ -23,7 +23,12 @@ test("the machines query carries the parity inputs from the newest row", () => {
 
 test("the dashboard computes parity from the rows it displays", () => {
   assert.match(DASHBOARD, /require\('\.\/fleet-parity\.cjs'\)/);
-  assert.match(DASHBOARD, /const fleet = buildFleetParity\(machines\)/);
+  assert.match(DASHBOARD, /require\('\.\/approved-release\.cjs'\)/);
+  assert.match(DASHBOARD, /const fleet = buildFleetParity\(machines, \{/);
+  // The target must come from the approved release and the pinned manifest when
+  // the monitor can read them; a bare majority is only the fallback.
+  assert.match(DASHBOARD, /approvedRelease: loadApprovedRelease\(\)/);
+  assert.match(DASHBOARD, /fleetManifest: loadFleetManifestSnapshot\(\)/);
 });
 
 test("the payload sent to the page carries the parity result", () => {
