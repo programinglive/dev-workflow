@@ -20,10 +20,11 @@ CREATE TABLE IF NOT EXISTS restart_commands (
 );
 
 -- One open command per (machine, session, mode): a repeated Restart All cannot
--- queue the same target twice while the first is still pending.
+-- queue the same target twice while the first is still open (pending or
+-- claimed by a controller).
 CREATE UNIQUE INDEX IF NOT EXISTS restart_commands_open_unique
   ON restart_commands (machine, session_key, mode)
-  WHERE status = 'pending';
+  WHERE status IN ('pending', 'claimed');
 
 -- The controller polls this direction.
 CREATE INDEX IF NOT EXISTS restart_commands_pending

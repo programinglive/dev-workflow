@@ -137,6 +137,29 @@ export async function fetchRestartCommands({ baseUrl, secret, machine, limit, fe
 }
 
 /**
+ * Claim a restart command before executing it. Returns `claimed: false` when
+ * another controller already owns it, in which case this controller must not
+ * execute it.
+ */
+export async function claimRestartCommand({ baseUrl, secret, machine, id, fetchImpl = fetch } = {}) {
+  if (!baseUrl) throw new Error("baseUrl is required");
+  if (!secret) throw new Error("secret is required");
+  if (!machine) throw new Error("machine is required");
+  if (!Number.isSafeInteger(Number(id))) throw new Error("a numeric command id is required");
+
+  const payload = { action: "claim", at: new Date().toISOString(), machine: String(machine), id: Number(id) };
+  const signature = signControllerRequest(payload, secret);
+  const response = await fetchImpl(`${String(baseUrl).replace(/\/$/, "")}/api/reaper/commands/claim`, {
+    method: "POST",
+    headers: { "content-type": "application/json", [REAPER_SIGNATURE_HEADER]: signature },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) throw new Error(`restart claim API returned HTTP ${response.status}`);
+  const data = await response.json().catch(() => ({}));
+  return { claimed: Boolean(data?.claimed) };
+}
+
+/**
  * Report the outcome of one restart command.
  *
  * The Monitor only applies the update while the command is still pending, so a

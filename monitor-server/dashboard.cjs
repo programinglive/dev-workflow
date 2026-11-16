@@ -27,6 +27,7 @@ const {
   buildCommandsTableSql,
   buildEnqueueQuery,
   buildPendingQuery,
+  buildClaimQuery,
   buildCompleteQuery,
 } = require('./restart-commands.cjs');
 
@@ -2856,7 +2857,10 @@ const server = http.createServer(async (req, res) => {
       // so a credential for MMCH cannot read or claim a Mac command.
       const body = bacaJson(await readBody(req), res);
       if (body === null) return undefined;
-
+      if (String(body.action || '') !== 'commands') {
+        res.writeHead(400, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: 'ACTION_MISMATCH' }));
+      }
       const check = verifyReaperRequest({
         payload: body,
         signature: req.headers['x-devwf-reaper-signature'],
@@ -2893,11 +2897,56 @@ const server = http.createServer(async (req, res) => {
         return res.end(JSON.stringify({ ok: false, error: 'COMMAND_QUERY_FAILED' }));
       }
     }
-    if (url.pathname === '/api/reaper/commands/result' && req.method === 'POST') {
-      // Signed controller report. Idempotent: the update only applies while the
-      // command is still pending, so a replayed report cannot overwrite a result.
+    if (url.pathname === '/api/reaper/commands/claim' && req.method === 'POST') {
+      // Claim before executing. Without this, two controllers could run the same
+      // command, and a controller that dies after executing but before reporting
+      // would run it again on the next poll.
       const body = bacaJson(await readBody(req), res);
       if (body === null) return undefined;
+      const checkClaim = verifyReaperRequest({
+        payload: body,
+        signature: req.headers['x-devwf-reaper-signature'],
+        secret: process.env.DEVWF_REAPER_SECRET || '',
+        secrets: parseReaperSecrets(process.env.DEVWF_REAPER_SECRETS),
+      });
+      if (!checkClaim.ok) {
+        res.writeHead(401, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: checkClaim.reason }));
+      }
+      if (String(body.action || '') !== 'claim') {
+        res.writeHead(400, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: 'ACTION_MISMATCH' }));
+      }
+      const machine = String(body.machine || '');
+      if (!machine || (checkClaim.machine && checkClaim.machine !== machine)) {
+        res.writeHead(403, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: 'MACHINE_MISMATCH' }));
+      }
+      const claimId = Number(body.id);
+      if (!Number.isSafeInteger(claimId) || claimId <= 0) {
+        res.writeHead(400, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: 'INVALID_COMMAND_ID' }));
+      }
+      try {
+        const q = buildClaimQuery({ id: claimId, machine });
+        const claimed = await query(q.sql, q.params);
+        const applied = Boolean(claimed && claimed.rowCount > 0);
+        res.writeHead(200, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true, id: claimId, claimed: applied, alreadyClaimed: !applied }));
+      } catch (error) {
+        res.writeHead(500, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: 'COMMAND_CLAIM_FAILED' }));
+      }
+    }
+    if (url.pathname === '/api/reaper/commands/result' && req.method === 'POST') {
+      // Signed controller report. Idempotent: the update only applies while the
+      // command is open, so a replayed report cannot overwrite a result.
+      const body = bacaJson(await readBody(req), res);
+      if (body === null) return undefined;
+      if (String(body.action || '') !== 'result') {
+        res.writeHead(400, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: 'ACTION_MISMATCH' }));
+      }
 
       const check = verifyReaperRequest({
         payload: body,
@@ -3028,48 +3077,47 @@ const server = http.createServer(async (req, res) => {
           res.writeHead(409, { 'content-type': 'application/json' });
           return res.end(JSON.stringify({ ok: false, error: begun.code, reason: begun.reason }));
         }
-        const sessions = rr.rows.map(toPlanSession);
-        const machines = [...new Set(sessions.map((s) => s.machine))].map((name) => ({ name, online: true }));
-        const plan = planRestartAll({ machines, sessions, admission: null });
-        // Enqueue one durable command per target so the machine controllers can
-        // pick them up. A repeated request cannot queue the same target twice.
-        let enqueued = [];
-        if (plan.ok && plan.order.length > 0) {
-          const targets = plan.order.map((entry) => ({
-            machine: entry.machine,
-            sessionKey: entry.sessionKey,
-            mode: entry.mode,
-          }));
-          const valid = validateEnqueue(targets);
-          if (valid.ok) {
+        // The lock is released in `finally`: an unexpected exception must not
+        // leave the fleet permanently reporting RESTART_IN_PROGRESS.
+        try {
+          const sessions = rr.rows.map(toPlanSession);
+          const machines = [...new Set(sessions.map((s) => s.machine))].map((name) => ({ name, online: true }));
+          const plan = planRestartAll({ machines, sessions, admission: null });
+          // Enqueue one durable command per target so the machine controllers can
+          // pick them up. A repeated request cannot queue the same target twice.
+          let enqueued = [];
+          if (plan.ok && plan.order.length > 0) {
+            const targets = plan.order.map((entry) => ({
+              machine: entry.machine,
+              sessionKey: entry.sessionKey,
+              mode: entry.mode,
+            }));
+            const valid = validateEnqueue(targets);
+            if (!valid.ok) {
+              res.writeHead(400, { 'content-type': 'application/json' });
+              return res.end(JSON.stringify({ ok: false, error: valid.code, reason: valid.reason }));
+            }
             try {
               const q = buildEnqueueQuery(targets);
               const rows = await query(q.sql, q.params);
               enqueued = rows.rows || [];
             } catch (error) {
-              restartController.end();
               res.writeHead(500, { 'content-type': 'application/json' });
               return res.end(JSON.stringify({ ok: false, error: 'ENQUEUE_FAILED', reason: String((error && error.message) || error) }));
             }
-          } else {
-            restartController.end();
-            res.writeHead(400, { 'content-type': 'application/json' });
-            return res.end(JSON.stringify({ ok: false, error: valid.code, reason: valid.reason }));
           }
+          restartController.record({ kind: 'restart-all', plan: { order: plan.order, blocked: plan.blocked }, enqueued: enqueued.length });
+          res.writeHead(200, { 'content-type': 'application/json' });
+          return res.end(JSON.stringify({
+            ok: plan.ok,
+            mode,
+            plan,
+            enqueued: enqueued.map((row) => ({ id: row.id, machine: row.machine, sessionKey: row.session_key, mode: row.mode })),
+            note: 'Each machine controller polls its own commands and executes them locally; the Monitor never stops a remote process.',
+          }));
+        } finally {
+          restartController.end();
         }
-        restartController.record({ kind: 'restart-all', plan: { order: plan.order, blocked: plan.blocked }, enqueued: enqueued.length });
-        // The planning phase is done; execution now belongs to the controllers.
-        // Releasing the lock here keeps a later Restart All possible, while the
-        // unique pending index still prevents a duplicate command per target.
-        restartController.end();
-        res.writeHead(200, { 'content-type': 'application/json' });
-        return res.end(JSON.stringify({
-          ok: plan.ok,
-          mode,
-          plan,
-          enqueued: enqueued.map((row) => ({ id: row.id, machine: row.machine, sessionKey: row.session_key, mode: row.mode })),
-          note: 'Each machine controller polls its own commands and executes them locally; the Monitor never stops a remote process.',
-        }));
       }
 
       const sessionKey = String(body.sessionKey || '');

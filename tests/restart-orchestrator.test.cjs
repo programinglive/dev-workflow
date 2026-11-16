@@ -146,8 +146,24 @@ test('a changed executable is refused', () => {
   assert.equal(verdict.code, 'EXECUTABLE_MISMATCH');
 });
 
-test('a PID shared by two sessions is refused', () => {
-  const verdict = assertNoSharedPid({
+test('an incomplete recorded identity is refused before any stop', () => {
+  // "PID 4242 looks like node" is not enough evidence to kill a process; the
+  // restart path requires the recorded creation time and executable.
+  for (const owner of [
+    { pid: 4242, startedAt: '', executable: 'node.exe' },
+    { pid: 4242, startedAt: '2026-11-15T08:00:00Z', executable: '' },
+  ]) {
+    const verdict = verifyRestartTarget({
+      session: session({ owner }),
+      isAlive: () => true,
+      processInfo: () => ({ pid: 4242, startedAt: '2026-11-15T08:00:00Z', executable: 'node.exe' }),
+    });
+    assert.equal(verdict.ok, false);
+    assert.equal(verdict.code, 'IDENTITY_INCOMPLETE');
+  }
+});
+
+test('a PID shared by two sessions is refused', () => {  const verdict = assertNoSharedPid({
     sessions: [session({ sessionKey: 'ses_a' }), session({ sessionKey: 'ses_b' })],
     pid: 4242,
   });

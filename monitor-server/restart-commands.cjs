@@ -11,9 +11,15 @@
 // runs on the machine, because only that machine can verify its own process.
 const RESTART_COMMAND_STATUS = Object.freeze({
   pending: 'pending',
+  claimed: 'claimed',
   done: 'done',
   failed: 'failed',
 });
+
+// A claim older than this is considered abandoned and may be taken again. Long
+// enough for one restart, short enough that a crashed controller does not block
+// the target forever.
+const CLAIM_STALE_MS = 15 * 60 * 1000;
 
 const MODES = new Set(['graceful', 'force']);
 const MAX_PENDING = 100;
@@ -63,7 +69,7 @@ function buildCommandsTableSql() {
   );
   CREATE UNIQUE INDEX IF NOT EXISTS restart_commands_open_unique
     ON restart_commands (machine, session_key, mode)
-    WHERE status = 'pending';
+    WHERE status IN ('pending', 'claimed');
   CREATE INDEX IF NOT EXISTS restart_commands_pending
     ON restart_commands (machine, status, created_at);
   CREATE INDEX IF NOT EXISTS restart_commands_session
@@ -108,11 +114,35 @@ function buildPendingQuery({ machine, limit = 20 } = {}) {
 }
 
 /**
+ * Claim one command before executing it.
+ *
+ * The poll only lists `pending` rows; without a claim two controllers (or one
+ * controller that restarts after executing but before reporting) would run the
+ * same command twice. The claim is a compare-and-swap: a row can be claimed
+ * only while it is pending, or while a previous claim is stale because that
+ * controller died. `RETURNING id` being empty means someone else owns it.
+ */
+function buildClaimQuery({ id, machine, staleMs = CLAIM_STALE_MS } = {}) {
+  const stale = Math.max(60_000, Number(staleMs) || CLAIM_STALE_MS);
+  return {
+    sql: `UPDATE restart_commands
+             SET status = 'claimed', claimed_at = now()
+           WHERE id = $1
+             AND machine = $2
+             AND (status = 'pending'
+                  OR (status = 'claimed' AND claimed_at < now() - ($3::bigint * interval '1 millisecond')))
+           RETURNING id`,
+    params: [Number(id), String(machine), stale],
+  };
+}
+
+/**
  * Record the outcome of one command.
  *
- * The update only applies while the row is still `pending`, so a replayed
- * report is a no-op instead of overwriting a result. The `machine` predicate
- * means one controller cannot report another machine's command.
+ * The update applies while the row is `pending` or `claimed`, so a resumed
+ * controller can still report, but never twice: after the first report the row
+ * is terminal and a replay is a no-op. The `machine` predicate means one
+ * controller cannot report another machine's command.
  */
 function buildCompleteQuery({ id, machine, status, code, detail } = {}) {
   const terminal = status === RESTART_COMMAND_STATUS.done || status === RESTART_COMMAND_STATUS.failed;
@@ -123,7 +153,7 @@ function buildCompleteQuery({ id, machine, status, code, detail } = {}) {
                  completed_at = now(),
                  result_code = $4,
                  result_detail = $5::jsonb
-           WHERE id = $1 AND machine = $2 AND status = 'pending'
+           WHERE id = $1 AND machine = $2 AND status IN ('pending', 'claimed')
            RETURNING id`,
     params: [
       Number(id),
@@ -142,5 +172,7 @@ module.exports = {
   buildCommandsTableSql,
   buildEnqueueQuery,
   buildPendingQuery,
+  buildClaimQuery,
   buildCompleteQuery,
+  CLAIM_STALE_MS,
 };
