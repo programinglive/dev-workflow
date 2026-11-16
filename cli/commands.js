@@ -29,6 +29,8 @@ import {
   switchZettlyAccount,
 } from "./onboarding.js";
 import { captureRepositoryIdentity, evaluateProjectSwitch, parseRemoteIdentity } from "../repository-identity.js";
+import { runCiGovernanceValidation } from "../governance/ci-validator.js";
+import { loadPolicies } from "../governance/engine.js";
 import { createRequire } from "node:module";
 import os from "node:os";
 
@@ -717,6 +719,46 @@ export async function runCommand({
       throw new CliError(
         `"${command}" was refused for session ${session}; the task was not ${command === "drop" ? "dropped" : "completed"}.`
       );
+    }
+    return { ok: true };
+  }
+
+  if (command === "governance") {
+    const verb = args.governanceVerb || "validate";
+    if (verb === "policies") {
+      const bundle = loadPolicies();
+      if (args.json) {
+        out.write(JSON.stringify(bundle, null, 2));
+      } else {
+        out.write(`Schema ${bundle.schemaVersion} (digest ${bundle.digest}) | Rollout: ${bundle.rollout?.stage}`);
+        for (const [id, p] of Object.entries(bundle.policies)) {
+          out.write(`- ${id} v${p.version}: ${p.title}`);
+        }
+      }
+      return { ok: true };
+    }
+
+    const report = runCiGovernanceValidation({
+      projectDir: args.dir || process.cwd(),
+      policy: args.policy || "all",
+      baseRef: args.base || "",
+      statePath: args.state || "",
+      taskType: args.taskType || "feature",
+      description: args.description || "",
+    });
+    if (args.json) {
+      out.write(JSON.stringify(report, null, 2));
+    } else {
+      out.write(`Governance [${report.gateResult}] repo=${report.repository} commit=${report.commit.slice(0, 8)} class=${report.applicability.classification}`);
+      for (const v of report.violations) {
+        out.write(`  FAIL [${v.code}] (${v.policyId}): ${v.reason}`);
+      }
+      for (const w of report.warnings) {
+        out.write(`  WARN ${w}`);
+      }
+    }
+    if (!report.ok) {
+      throw new CliError(`Governance validation failed (${report.violations.length} violation(s)).`, 1);
     }
     return { ok: true };
   }

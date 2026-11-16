@@ -1,4 +1,5 @@
 import { textResponse } from "./shared.js";
+import { resolveInitialGovernance } from "../../governance/engine.js";
 import { parseFactoryChecklist } from "./dod.js";
 import { startKeeping, stopKeeping } from "../../session-keeper.js";
 import {assignWorkflowIdentity} from '../../zettly-workflow.js';
@@ -194,6 +195,11 @@ export async function handleClaimFactoryTask(args = {}, { workflowState } = {}) 
       workflowState.state.taskType = "other";
       workflowState.state.projectDir = resolvedDir || derivedProjectName;
       if (resolvedDir) setActiveProjectDir(resolvedDir);
+      workflowState.state.governance = resolveInitialGovernance({
+        repository: resolvedDir || derivedProjectName,
+        taskType: "other",
+        description: workflowState.state.taskDescription,
+      });
       workflowState.state.definitionOfDone = importedDod.items.map((text, index) => ({
         id: `dod-${index + 1}`,
         text,
