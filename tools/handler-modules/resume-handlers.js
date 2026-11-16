@@ -521,14 +521,17 @@ export async function handleResumeSession(args, workflowState) {
     );
   }
 
-  // Finalize the claim only after the adoption is durable, so recovery can never
-  // discard this successor's progress. The claim stays as the audit record of
-  // who won; only the adopted marker is added.
-  let claimNote = "";
+  // Finalize the claim only after the adoption is durable. If the marker cannot
+  // be written, recovery could later mistake this adopted claim for a stale one,
+  // so the adoption is reported as recovery-required rather than complete.
   if (hasHandover) {
     const marked = markClaimAdopted(handoverSidecar, { sessionKey: String(workflowState.sessionId || "") });
     if (!marked.ok) {
-      claimNote = `\n\nℹ️ The claim could not be marked adopted (${marked.code}); recovery may need manual review.`;
+      return textResponse(
+        `⚠️ The task was adopted durably, but the claim could not be marked adopted (${marked.code}). ` +
+          `Recovery is not fenced for this claim: do not hand this task to another successor until the ` +
+          `marker is written. The worktree mutex is still held by this session.`
+      );
     }
   }
 
@@ -544,7 +547,6 @@ export async function handleResumeSession(args, workflowState) {
       `Source file kept at: ${chosen.file}\n` +
       outstanding +
       preflightNote +
-      claimNote +
       `\n\nContinue with 'continue_workflow' or 'get_workflow_status'.`
   );
 }
