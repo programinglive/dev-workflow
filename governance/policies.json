@@ -1,0 +1,79 @@
+{
+  "schemaVersion": "1.0.0",
+  "rollout": {
+    "stage": "PILOT_BLOCKING",
+    "defaultMode": "warn",
+    "pilotRepositories": [
+      "programinglive/dev-workflow-mcp-server",
+      "beautyworld_repository/clinic"
+    ]
+  },
+  "policies": {
+    "architecture.cli_first": {
+      "id": "architecture.cli_first",
+      "version": "1.0.0",
+      "title": "CLI-First & Headless Architecture",
+      "mandatoryPrinciples": [
+        "Business logic must not be locked inside UI, Livewire, controller, or view layers.",
+        "Domain and application services must be reusable across CLI, API, UI, and background workers.",
+        "Core operations must be headless-testable without UI.",
+        "CLI and UI must share consistent business behavior and transaction boundaries.",
+        "CLI output and exit codes must be machine-readable where automation applies."
+      ],
+      "applicableClasses": [
+        "NEW_FEATURE",
+        "BUG_FIX",
+        "REFACTOR",
+        "INTEGRATION",
+        "INFRASTRUCTURE",
+        "SECURITY_FIX"
+      ],
+      "exemptClasses": [
+        "PRESENTATION_ONLY",
+        "DOCUMENTATION_ONLY"
+      ]
+    },
+    "engineering.documentation_required": {
+      "id": "engineering.documentation_required",
+      "version": "1.0.0",
+      "title": "Documentation-as-Code",
+      "mandatoryCategories": {
+        "NEW_FEATURE": [
+          "feature_purpose",
+          "supported_behavior",
+          "workflow_or_usage",
+          "inputs_outputs",
+          "business_rules_or_validation"
+        ],
+        "NEW_CLI_COMMAND": [
+          "command_name",
+          "purpose",
+          "arguments_and_options",
+          "usage_examples",
+          "exit_codes_and_errors"
+        ],
+        "API_CHANGE": [
+          "endpoint_and_method",
+          "auth_and_authorization",
+          "request_and_response_schema",
+          "error_responses"
+        ],
+        "DATABASE_MIGRATION": [
+          "schema_changes",
+          "backward_compatibility",
+          "rollback_or_operations"
+        ],
+        "INFRASTRUCTURE": [
+          "deployment_or_runbook",
+          "monitoring_or_rollback"
+        ]
+      },
+      "qualityChecks": {
+        "rejectEmptyOrPlaceholder": true,
+        "scanCredentials": true,
+        "requireRevisionBinding": true,
+        "requireChangedFilesInRepo": true
+      }
+    }
+  }
+}

@@ -11,6 +11,8 @@ import fs from "fs";
 import { updateTaskStatus, isConfigured, readFactoryConfig } from "../../factory-client.js";
 import { cleanupWorkBranches } from "../../branch-cleanup.js";
 import { assertPreflightScope } from "../../preflight.js";
+import { evaluateGovernanceGate } from "../../governance/engine.js";
+import { collectGitContext } from "../../governance/ci-validator.js";
 
 /**
  * Tutup task Factory yang di-claim saat workflow berakhir, supaya board tidak
@@ -669,6 +671,26 @@ export async function handleCompleteTask(args, workflowState, context = {}) {
           `  3. catat tag yang benar-benar live: 'record_deployment' { tag, pipelineId, sites, evidence }\n\n` +
           `Task BELUM ditutup.\n` +
           `Kalau task ini memang tidak perlu rilis, pakai 'skip_release' dengan alasan tertulis.`
+      );
+    }
+  }
+
+  // Central governance gate: enforce CLI-First and Documentation-as-Code policies.
+  if (dodState.governance && !context?.skipGovernanceGate) {
+    const govInput = context?.governanceInput || (deploymentGateProjectDir ? collectGitContext(deploymentGateProjectDir) : {});
+    const govCheck = evaluateGovernanceGate({
+      state: dodState,
+      changedPaths: govInput.changedPaths || [],
+      docContents: govInput.docContents || {},
+      currentRepo: govInput.repository || dodState.governance.repository || "",
+      currentRevision: govInput.revision !== undefined ? govInput.revision : Number(dodState.dodRevision) || 0,
+      ciStatus: context?.ciStatus || govInput.ciStatus || null,
+    });
+    if (!govCheck.ok) {
+      const lines = govCheck.violations.map((v) => `  • [${v.code}] (${v.policyId}): ${v.reason}`).join("\n");
+      return textResponse(
+        `⚠️ Governance policy gate refused task completion:\n\n${lines}\n\n` +
+          `Task NOT closed; provide verified CLI-First and Documentation-as-Code evidence or an approved policy exception.`
       );
     }
   }
