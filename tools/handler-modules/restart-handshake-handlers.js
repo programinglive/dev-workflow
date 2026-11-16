@@ -226,6 +226,25 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
             state: acknowledged.record.state,
           };
         }
+        // The successor copies the JSON file, so a save that only updated the
+        // store is not enough: the file must match the checkpointed state.
+        const stateFile = stateFileOf(workflowState, options);
+        if (stateFile) {
+          let onDisk = null;
+          try {
+            onDisk = JSON.parse(readFileSync(stateFile, "utf8"));
+          } catch {
+            onDisk = null;
+          }
+          if (!onDisk || stateFingerprint(onDisk) !== stateFingerprint(workflowState.state)) {
+            return {
+              ok: false,
+              code: "CHECKPOINT_STATE_NOT_PERSISTED",
+              note: "The checkpoint landed in Zettly but the local state file does not match it; the controller must not proceed.",
+              state: acknowledged.record.state,
+            };
+          }
+        }
       } catch (error) {
         return {
           ok: false,
@@ -555,6 +574,7 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
       adoptedTask: {
         taskDescription: prior.handover.taskDescription || null,
         todoId: prior.handover.todoId || null,
+        fingerprint: prior.handover.snapshot?.fingerprint || null,
       },
     };
     const won = tryClaimHandshake(handoverFile, claim);
@@ -618,7 +638,10 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
     if (claim.stateFile && claim.adoptedTask?.taskDescription) {
       try {
         const claimantState = JSON.parse(readFileSync(claim.stateFile, "utf8"));
-        if ((claimantState.taskDescription || "") === claim.adoptedTask.taskDescription) {
+        const sameTask = claim.adoptedTask.fingerprint
+          ? stateFingerprint(claimantState) === claim.adoptedTask.fingerprint
+          : (claimantState.taskDescription || "") === claim.adoptedTask.taskDescription;
+        if (sameTask) {
           return {
             ok: false,
             code: "CLAIM_ALREADY_ADOPTED",
