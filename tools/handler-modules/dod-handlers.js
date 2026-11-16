@@ -6,6 +6,8 @@
  * ikut masuk ke sini, ia hanya bisa diuji lewat MCP penuh.
  */
 import { textResponse } from "./shared.js";
+import { validateCliFirstEvidence } from "../../governance/evidence-validator.js";
+import { loadPolicies, normalizeRepoSlug } from "../../governance/engine.js";
 import {
   MAX_ITEMS,
   MAX_EVIDENCE,
@@ -147,6 +149,39 @@ export async function handleMarkDodItem(args, workflowState) {
         `contoh: "npm test → 482 pass".\n` +
         `Bukti adalah yang membuat item ini berbeda dari sekadar klaim.`,
     );
+  }
+
+  const isCliFirstItem =
+    args.governanceType === "cli_first" ||
+    /\b(cli[- ]?first|headless|shared\s+service|artisan\s+|devwf\s+)\b/i.test(item.text);
+
+  if (state.governance && isCliFirstItem) {
+    const policies = loadPolicies();
+    const cliPolicy = policies.policies["architecture.cli_first"];
+    const repo = state.governance.repository || normalizeRepoSlug(state.identityContract?.remote || "");
+    const candidateEvidence = {
+      summary: evidence,
+      headlessTestsPassed: Boolean(state.testsPassed),
+      repository: repo,
+      revision: Number(state.dodRevision) || 0,
+      policyVersion: cliPolicy.version,
+      policyDigest: policies.digest,
+      recordedAt: new Date().toISOString(),
+    };
+    const check = validateCliFirstEvidence({
+      applicability: state.governance.cliFirstApplicability || "REQUIRED",
+      evidence: candidateEvidence,
+      currentRepo: repo,
+      currentRevision: Number(state.dodRevision) || 0,
+      expectedPolicyVersion: cliPolicy.version,
+      expectedPolicyDigest: policies.digest,
+    });
+    if (!check.ok && state.governance.effectiveMode === "enforce") {
+      return textResponse(`⚠️ ${check.code}: ${check.reason}`);
+    }
+    if (check.ok) {
+      state.governance.cliFirstEvidence = candidateEvidence;
+    }
   }
 
   item.status = "done";

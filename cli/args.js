@@ -14,9 +14,10 @@
  * only `list` runs without one.
  */
 
-const COMMANDS = ["list", "close", "share", "drop", "complete", "checkpoint", "help", "version", "doctor", "pair", "fleet", "identity", "setup", "zettly"];
+const COMMANDS = ["list", "close", "share", "drop", "complete", "checkpoint", "help", "version", "doctor", "pair", "fleet", "identity", "setup", "zettly", "governance"];
 const FLEET_VERBS = ["status", "check", "plan", "stage", "activate", "verify", "rollback", "doctor", "upgrade"];
 const ZETTLY_VERBS = ["status", "skip", "connect", "switch", "disconnect", "doctor"];
+const GOVERNANCE_VERBS = ["validate", "policies"];
 
 /** A refusal the CLI reports to the user and turns into a non-zero exit. */
 export class CliError extends Error {
@@ -49,6 +50,9 @@ Usage:
   devwf identity --dir <path> [--against <path>] [--json]
                                                Print the repository identity contract and
                                                whether <path> may start a task against --against
+  devwf governance validate [--policy all] [--base <ref>] [--state <path>] [--json]
+                                               Run headless CLI-First & Documentation governance gate
+  devwf governance policies [--json]           Print central governance policies and digest
   devwf --help | --version
 
 Environment:
@@ -75,6 +79,11 @@ const FLAGS_WITH_VALUE = new Set([
   "--mode",
   "--dir",
   "--against",
+  "--policy",
+  "--base",
+  "--state",
+  "--task-type",
+  "--description",
 ]);
 const BOOLEAN_FLAGS = new Set(["--dry-run", "--orphans", "--help", "--version", "--json", "--authorize", "--all", "--resume", "--force", "--skip-zettly", "--confirm", "--token-stdin"]);
 
@@ -130,6 +139,15 @@ export function parseArgs(argv = []) {
     }
     args.zettlyVerb = verb;
     index = words[1] && !words[1].startsWith("--") ? 2 : 1;
+  } else if (command === "governance") {
+    const verb = words[1] && !words[1].startsWith("--") ? words[1] : "validate";
+    if (!GOVERNANCE_VERBS.includes(verb)) {
+      throw new CliError(
+        `"governance" needs a valid verb: ${GOVERNANCE_VERBS.join(", ")}.`
+      );
+    }
+    args.governanceVerb = verb;
+    index = words[1] && !words[1].startsWith("--") ? 2 : 1;
   }
 
   for (; index < words.length; index += 1) {
@@ -164,6 +182,11 @@ export function parseArgs(argv = []) {
       else if (word === "--mode") args.mode = value;
       else if (word === "--dir") args.dir = value;
       else if (word === "--against") args.against = value;
+      else if (word === "--policy") args.policy = value;
+      else if (word === "--base") args.base = value;
+      else if (word === "--state") args.state = value;
+      else if (word === "--task-type") args.taskType = value;
+      else if (word === "--description") args.description = value;
       else if (word === "--next-steps") args.nextSteps.push(value);
       else if (word === "--summary") args.summary = value;
       continue;

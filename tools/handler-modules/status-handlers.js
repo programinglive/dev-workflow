@@ -1,4 +1,5 @@
 import { textResponse, formatChecklist, isReleaseSatisfied, getContinueGuidance, resetToCommitIfWorkingChanges, loadDocGateInputs } from "./shared.js";
+import { resolveInitialGovernance } from "../../governance/engine.js";
 import { handleCommitAndPush } from "./commit-handlers.js";
 import { openItems, renderChecklist, renderOutstanding, summarize } from "./dod.js";
 import { evaluateDocGate, isGateSatisfied, formatRelativeAge, renderDocGateFailure } from "./docs.js";
@@ -393,11 +394,22 @@ export async function handleRerunWorkflow(workflowState) {
     return textResponse("⚠️ No active task to rerun. Use 'start_task' to begin a new workflow.");
   }
 
+  const previousGovernance = workflowState.state.governance;
+  const previousProjectDir = workflowState.state.projectDir || "";
+  const previousRepo = previousGovernance?.repository || workflowState.state.identityContract?.remote || workflowState.state.repository?.remote || previousProjectDir;
+
   workflowState.reset();
 
   workflowState.state.currentPhase = "coding";
+  workflowState.state.taskStartedAt = new Date().toISOString();
   workflowState.state.taskDescription = currentDescription;
   workflowState.state.taskType = currentType;
+  workflowState.state.projectDir = previousProjectDir;
+  workflowState.state.governance = resolveInitialGovernance({
+    repository: previousRepo,
+    taskType: currentType,
+    description: currentDescription,
+  });
   Object.assign(workflowState.state, dod);
   await workflowState.save();
 

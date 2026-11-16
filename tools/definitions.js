@@ -831,6 +831,18 @@ export function getToolList() {
             type: "string",
             description: "Why the task was force completed",
           },
+          approvedBy: {
+            type: "string",
+            description: "Distinct human/owner approver required when bypassing enforced governance policies",
+          },
+          approvalTicket: {
+            type: "string",
+            description: "Owner approval reference or incident ticket (>= 6 chars) when bypassing enforced governance policies",
+          },
+          overrideToken: {
+            type: "string",
+            description: "Privileged override token when DEVWF_GOVERNANCE_OVERRIDE_TOKEN is configured",
+          },
         },
       },
     },

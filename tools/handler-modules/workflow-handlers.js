@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { classify } from '../../security/policy.js';
 import { sanitize } from '../../security/sanitizer.js';
+import { resolveInitialGovernance, loadPolicies, normalizeRepoSlug } from "../../governance/engine.js";
 import { textResponse, isReleaseSatisfied, isErrorResponse, ensurePrdExists, loadDocGateInputs } from "./shared.js";
 import { validateItemTexts } from "./dod.js";
 import {
@@ -826,6 +827,13 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
           allowedOperations: ["read", "write", "commit", "push"],
         });
 
+        workflowState.state.governance = resolveInitialGovernance({
+          repository: requestedIdentity.remote || project.dir,
+          taskType: args.type,
+          description: workflowState.state.taskDescription || args.description || "",
+          governanceMode: "",
+        });
+
         workflowState.state.dirtyAtStart = await captureDirtyAtStart(git);
         assignWorkflowIdentity(workflowState.state, previousTaskIdentity, args);
 
@@ -1559,6 +1567,21 @@ export async function handleCreateDocumentation(args, workflowState, context = {
   if (requested.length > 0) {
     workflowState.state.documentationFiles = requested;
   }
+  if (workflowState.state.governance) {
+    const policies = loadPolicies();
+    const docPolicy = policies.policies["engineering.documentation_required"];
+    const effectiveFiles = requested.length > 0 ? requested : (workflowState.state.documentationFiles || []);
+    workflowState.state.governance.documentationEvidence = {
+      status: "UPDATED",
+      files: effectiveFiles,
+      summary: args.summary || "",
+      repository: workflowState.state.governance.repository || normalizeRepoSlug(workflowState.state.identityContract?.remote || ""),
+      revision: Number(workflowState.state.dodRevision) || 0,
+      policyVersion: docPolicy.version,
+      policyDigest: policies.digest,
+      recordedAt: new Date().toISOString(),
+    };
+  }
   workflowState.state.currentPhase = "ready";
   workflowState.state.readyToCommit = true;
   workflowState.state.readyCheckCompleted = false;
@@ -1634,6 +1657,19 @@ export async function handleWaiveDocumentation(args, workflowState) {
   workflowState.state.documentationWaived = true;
   workflowState.state.documentationWaiverReason = reason;
   workflowState.state.readyCheckCompleted = false;
+  if (workflowState.state.governance) {
+    const policies = loadPolicies();
+    const docPolicy = policies.policies["engineering.documentation_required"];
+    workflowState.state.governance.documentationEvidence = {
+      status: "NOT_REQUIRED_WITH_REASON",
+      rationale: reason,
+      repository: workflowState.state.governance.repository || normalizeRepoSlug(workflowState.state.identityContract?.remote || ""),
+      revision: Number(workflowState.state.dodRevision) || 0,
+      policyVersion: docPolicy.version,
+      policyDigest: policies.digest,
+      recordedAt: new Date().toISOString(),
+    };
+  }
   await workflowState.save();
 
   return textResponse(
