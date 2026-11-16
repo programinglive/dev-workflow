@@ -8,8 +8,12 @@
  * mutation on purpose. So the owner performs its half here, and the controller
  * performs the half that needs an independent process.
  *
- * The owner may only advance its own states. It cannot record that the process
- * exited or that the runtime recovered, because it cannot see that honestly.
+ * WHERE THE RECORD LIVES
+ * ----------------------
+ * Not in workflow state. Workflow state is loaded from SQLite, and once the
+ * mutex is released the normal save path correctly refuses. The handshake
+ * therefore keeps its own durable record beside the session state file, written
+ * atomically, so a fresh process reads exactly what the owner recorded.
  */
 import { releaseWorktreeMutex } from "../../process-lock.js";
 import { handleCheckpointTask } from "./checkpoint-handlers.js";
@@ -18,20 +22,21 @@ import {
   applyTransition,
   restartReadiness,
 } from "../../monitor-server/restart-handshake.cjs";
+import { readHandshake, writeHandshake } from "../../monitor-server/restart-handshake-store.cjs";
 
-function current(workflowState) {
-  const record = workflowState?.state?.restartHandshake;
-  return record && typeof record === "object" ? record : { state: STATES.REQUESTED, history: [] };
+function stateFileOf(workflowState, options = {}) {
+  return options.stateFile || workflowState?.stateFile || null;
 }
 
-async function persist(workflowState, record) {
-  if (!workflowState?.state) return false;
-  workflowState.state.restartHandshake = record;
-  if (typeof workflowState.save === "function") {
-    await workflowState.save();
-    return true;
-  }
-  return false;
+function loadRecord(workflowState, options = {}) {
+  const read = readHandshake(stateFileOf(workflowState, options));
+  if (read.status === 'ok') return { record: read.record, corrupt: false };
+  if (read.status === 'corrupt') return { record: { state: STATES.REQUESTED, history: [] }, corrupt: true };
+  return { record: { state: STATES.REQUESTED, history: [] }, corrupt: false };
+}
+
+function save(workflowState, options, record) {
+  return writeHandshake(stateFileOf(workflowState, options), record);
 }
 
 /**
@@ -39,19 +44,21 @@ async function persist(workflowState, record) {
  *
  * @param {object} args
  * @param {string} args.action status|checkpoint|release|cancel
- * @returns {Promise<object>}
  */
 export async function handleRestartHandshake(args = {}, workflowState = null, options = {}) {
-  const action = String(args.action || "status");
-  const state = workflowState?.state;
-  if (!state) return { ok: false, code: 'NO_STATE', note: 'No session state is loaded.' };
+  const action = String(args.action || 'status');
+  if (!workflowState?.state) return { ok: false, code: 'NO_STATE', note: 'No session state is loaded.' };
+  if (!stateFileOf(workflowState, options)) {
+    return { ok: false, code: 'NO_STATE_FILE', note: 'This session has no state file to record the handshake in.' };
+  }
 
-  const record = current(workflowState);
+  const { record, corrupt } = loadRecord(workflowState, options);
 
   if (action === 'status') {
     return {
       ok: true,
       state: record.state,
+      corrupt,
       checkpointConfirmedAt: record.checkpointConfirmedAt || null,
       ownerReleasedAt: record.ownerReleasedAt || null,
       readiness: restartReadiness(record),
@@ -62,15 +69,14 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
   if (action === 'cancel') {
     const result = applyTransition(record, { next: STATES.CANCELLED, actor: 'owner' });
     if (!result.ok) return { ok: false, code: result.code, note: result.reason };
-    await persist(workflowState, result.record);
+    save(workflowState, options, result.record);
     return { ok: true, state: result.record.state, note: 'Restart cancelled by the owner.' };
   }
 
   if (action === 'checkpoint') {
-    // Acknowledge first, so the record shows the owner engaged even if the
-    // checkpoint itself fails. Failure is durable and auditable.
     const acknowledged = applyTransition(record, { next: STATES.OWNER_ACKNOWLEDGED, actor: 'owner' });
     if (!acknowledged.ok) return { ok: false, code: acknowledged.code, note: acknowledged.reason };
+    save(workflowState, options, acknowledged.record);
 
     const runCheckpoint = options.runCheckpoint || handleCheckpointTask;
     const checkpoint = await runCheckpoint(
@@ -79,8 +85,7 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
     );
 
     if (checkpoint?.confirmed !== true) {
-      // Do not record CHECKPOINT_CONFIRMED. The restart must abort here.
-      await persist(workflowState, {
+      save(workflowState, options, {
         ...acknowledged.record,
         lastCheckpointError: checkpoint?.note || 'checkpoint not confirmed',
       });
@@ -105,8 +110,13 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
       checkpointConfirmedAt: Number(args.at) || Date.now(),
       checkpointNote: checkpoint.note,
     };
-    await persist(workflowState, next);
-    return { ok: true, state: next.state, checkpointNote: checkpoint.note };
+    const written = save(workflowState, options, next);
+    return {
+      ok: true,
+      state: next.state,
+      persisted: Boolean(written.ok),
+      checkpointNote: checkpoint.note,
+    };
   }
 
   if (action === 'release') {
@@ -120,18 +130,13 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
 
     const quiesced = applyTransition(record, { next: STATES.QUIESCED, actor: 'owner' });
     if (!quiesced.ok) return { ok: false, code: quiesced.code, note: quiesced.reason };
-    await persist(workflowState, quiesced.record);
+    save(workflowState, options, quiesced.record);
 
-    // Release through the official path. It returns false when this process
-    // does not hold the mutex, which must not be recorded as released.
-    const projectDir = state.projectDir || '';
+    const projectDir = workflowState.state.projectDir || '';
     const releaseMutex = options.releaseMutex || releaseWorktreeMutex;
     const released = await releaseMutex(projectDir);
     if (!released) {
-      await persist(workflowState, {
-        ...quiesced.record,
-        lastReleaseError: 'releaseWorktreeMutex returned false',
-      });
+      save(workflowState, options, { ...quiesced.record, lastReleaseError: 'releaseWorktreeMutex returned false' });
       return {
         ok: false,
         code: 'RELEASE_NOT_CONFIRMED',
@@ -148,11 +153,20 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
     if (!released2.ok) return { ok: false, code: released2.code, note: released2.reason };
 
     const next = { ...released2.record, ownerReleasedAt: Number(args.at) || Date.now() };
-    await persist(workflowState, next);
+    // The mutex is gone, so the record must be written by the store, not by
+    // workflowState.save(). `persisted` is reported only when that write
+    // actually succeeded and can be read back.
+    const written = save(workflowState, options, next);
+    const readBack = written.ok ? readHandshake(stateFileOf(workflowState, options)) : { status: 'absent' };
+    const persisted = readBack.status === 'ok' && readBack.record?.state === STATES.OWNER_RELEASED;
+
     return {
       ok: true,
       state: next.state,
-      note: 'Checkpoint confirmed and ownership released. The controller may now stop this process.',
+      persisted,
+      note: persisted
+        ? 'Checkpoint confirmed and ownership released. The controller may now stop this process.'
+        : 'Ownership released in memory but the record could not be verified on disk; the controller must not proceed.',
       readiness: restartReadiness(next),
     };
   }
