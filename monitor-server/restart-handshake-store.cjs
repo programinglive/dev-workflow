@@ -131,6 +131,77 @@ function tryClaimHandshake(stateFile, claim) {
   }
 }
 
+/**
+ * How many claims have already been retired for this handover.
+ *
+ * The generation is derived from the durable audit trail instead of being
+ * written into the handover record, because that record is immutable: the
+ * `.claim` file is the authoritative winner and a retired claim is kept, never
+ * deleted, so the count only grows.
+ */
+function retiredClaimCount(stateFile) {
+  const file = claimPath(stateFile);
+  if (!file) return 0;
+  const dir = path.dirname(file);
+  const base = path.basename(file);
+  try {
+    return fs.readdirSync(dir).filter((name) => name.startsWith(`${base}.retired.`)).length;
+  } catch {
+    return 0;
+  }
+}
+
+function claimGeneration(stateFile) {
+  return retiredClaimCount(stateFile) + 1;
+}
+
+/**
+ * Retire a stale claim so a crashed successor cannot strand the task forever.
+ *
+ * This is the only path that removes a `.claim`, and it is deliberately narrow:
+ * the caller must present the exact generation it observed, the claimant must
+ * be proven dead by the controller, and the retirement is serialized by an
+ * OS-exclusive lock so two recoverers cannot both act. The retired claim is
+ * renamed, not deleted, so the audit trail survives.
+ */
+function retireClaim(stateFile, { generation, expectedSessionKey = null } = {}) {
+  const file = claimPath(stateFile);
+  if (!file) return { ok: false, code: 'NO_STATE_FILE' };
+  const lock = `${file}.recovery`;
+  const tmp = `${lock}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    fs.writeFileSync(tmp, JSON.stringify({ pid: process.pid, at: Date.now() }), { mode: 0o600 });
+  } catch (error) {
+    return { ok: false, code: error?.code || 'WRITE_FAILED' };
+  }
+  try {
+    fs.linkSync(tmp, lock);
+  } catch (error) {
+    if (error && error.code === 'EEXIST') return { ok: false, code: 'RECOVERY_IN_PROGRESS' };
+    return { ok: false, code: error?.code || 'LINK_FAILED' };
+  } finally {
+    try { fs.unlinkSync(tmp); } catch {}
+  }
+
+  try {
+    const current = readClaim(stateFile);
+    if (!current) return { ok: false, code: 'NO_CLAIM' };
+    if (Number(current.generation) !== Number(generation)) {
+      return { ok: false, code: 'GENERATION_MISMATCH', currentGeneration: current.generation };
+    }
+    if (expectedSessionKey && current.sessionKey !== expectedSessionKey) {
+      return { ok: false, code: 'CLAIMANT_MISMATCH' };
+    }
+    const retired = `${file}.retired.${Number(current.generation)}.${Date.now()}`;
+    fs.renameSync(file, retired);
+    return { ok: true, retired, claim: current };
+  } catch (error) {
+    return { ok: false, code: error?.code || 'RETIRE_FAILED' };
+  } finally {
+    try { fs.unlinkSync(lock); } catch {}
+  }
+}
+
 module.exports = {
   SUFFIX,
   handshakePath,
@@ -140,4 +211,6 @@ module.exports = {
   clearHandshake,
   readClaim,
   tryClaimHandshake,
+  claimGeneration,
+  retireClaim,
 };

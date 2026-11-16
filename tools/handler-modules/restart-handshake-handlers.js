@@ -16,13 +16,14 @@
  * atomically, so a fresh process reads exactly what the owner recorded.
  */
 import { releaseWorktreeMutex } from "../../process-lock.js";
+import { createLocalAdapters } from "../../session-controller-adapters.js";
 import { handleCheckpointTask } from "./checkpoint-handlers.js";
 import {
   STATES,
   applyTransition,
   restartReadiness,
 } from "../../monitor-server/restart-handshake.cjs";
-import { readHandshake, writeHandshake, tryClaimHandshake, readClaim } from "../../monitor-server/restart-handshake-store.cjs";
+import { readHandshake, writeHandshake, tryClaimHandshake, readClaim, claimGeneration, retireClaim } from "../../monitor-server/restart-handshake-store.cjs";
 
 function stateFileOf(workflowState, options = {}) {
   return options.stateFile || workflowState?.stateFile || null;
@@ -45,6 +46,59 @@ function samePath(a, b) {
 }
 
 /**
+ * Decide whether the recorded owner process is genuinely gone.
+ *
+ * The controller asserts the exit, but an assertion is not proof: recording
+ * PROCESS_EXIT_VERIFIED for a process that is still running lets a successor
+ * claim a handover while the old owner may still write, which is exactly the
+ * two-writers condition the handover exists to prevent. The handler therefore
+ * inspects the OS itself instead of trusting the caller's claim.
+ *
+ * A live PID is not automatically a live owner: PID reuse is real. When the
+ * caller supplies the recorded creation time or executable and the live process
+ * does not match it, the original owner is gone and the PID now belongs to an
+ * unrelated process.
+ *
+ * @returns {{exited: boolean, code?: string, reason?: string, pid: number}}
+ */
+function verifyOwnerExit({ pid, startedAt, executable } = {}, { isAlive, processInfo } = {}) {
+  const target = Number(pid);
+  if (!Number.isFinite(target) || target <= 0) {
+    return { exited: false, code: "PID_REQUIRED", reason: "verify_exit needs the recorded owner PID", pid: target };
+  }
+
+  if (typeof isAlive !== "function" || !isAlive(target)) {
+    return { exited: true, pid: target };
+  }
+
+  let info = null;
+  if (typeof processInfo === "function") {
+    try {
+      info = processInfo(target);
+    } catch {
+      info = null;
+    }
+  }
+
+  // The live process is not the recorded owner when its identity differs.
+  if (info) {
+    if (startedAt && info.startedAt && String(startedAt) !== String(info.startedAt)) {
+      return { exited: true, code: "PID_REUSED", pid: target };
+    }
+    if (executable && info.executable && String(executable) !== String(info.executable)) {
+      return { exited: true, code: "PID_REUSED", pid: target };
+    }
+  }
+
+  return {
+    exited: false,
+    code: "PROCESS_STILL_ALIVE",
+    reason: `PID ${target} is still running; a handover may only be verified after the owner has exited`,
+    pid: target,
+  };
+}
+
+/**
  * Advance the handshake.
  *
  * @param {object} args
@@ -53,9 +107,9 @@ function samePath(a, b) {
 export async function handleRestartHandshake(args = {}, workflowState = null, options = {}) {
   const action = String(args.action || "status");
   if (!workflowState?.state) return { ok: false, code: "NO_STATE", note: "No session state is loaded." };
-  // The claim names the previous owner's handover explicitly, so the caller
-  // does not need its own state file to start the claim.
-  if (action !== "claim" && action !== "verify_exit" && !stateFileOf(workflowState, options)) {
+  // The claim and the controller-side steps name the previous owner's handover
+  // explicitly, so the caller does not need its own state file to start them.
+  if (action !== "claim" && action !== "verify_exit" && action !== "recover_claim" && !stateFileOf(workflowState, options)) {
     return { ok: false, code: "NO_STATE_FILE", note: "This session has no state file to record the handshake in." };
   }
 
@@ -217,11 +271,33 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
     if (prior.state === STATES.PROCESS_EXIT_VERIFIED || prior.state === STATES.RELAUNCHED) {
       return { ok: true, state: prior.state, alreadyVerified: true };
     }
+
+    // Prove the owner is gone before recording anything. Without this a caller
+    // can mark a live process as exited and hand its task to a second writer.
+    let adapters = null;
+    if (typeof options.isAlive !== "function") {
+      try {
+        adapters = createLocalAdapters();
+      } catch {
+        adapters = null;
+      }
+    }
+    const exit = verifyOwnerExit(
+      { pid: args.pid, startedAt: args.startedAt, executable: args.executable },
+      {
+        isAlive: options.isAlive || adapters?.isAlive,
+        processInfo: options.processInfo || adapters?.processInfo,
+      }
+    );
+    if (!exit.exited) {
+      return { ok: false, code: exit.code, note: exit.reason, pid: exit.pid };
+    }
+
     const step = applyTransition(prior, {
       next: STATES.PROCESS_EXIT_VERIFIED,
       actor: "controller",
       at: Number(args.at) || Date.now(),
-      detail: args.pid ? { pid: Number(args.pid) } : null,
+      detail: args.pid ? { pid: Number(args.pid), identity: exit.code || "PROCESS_EXITED" } : null,
     });
     if (!step.ok) return { ok: false, code: step.code, note: step.reason };
     const written = writeHandshake(handoverFile, step.record);
@@ -302,7 +378,17 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
 
     // True cross-process single winner: an OS-exclusive link, not a read then
     // replace. The loser gets ALREADY_CLAIMED and never touches the task.
-    const claim = { sessionKey: claimant, at: Date.now(), todoId: prior.handover.todoId || null };
+    const generation = claimGeneration(handoverFile);
+    const claim = {
+      sessionKey: claimant,
+      at: Date.now(),
+      todoId: prior.handover.todoId || null,
+      // Identity of the claiming process, so a crashed successor can later be
+      // proven dead before its claim is retired. Never a credential.
+      pid: process.pid,
+      machine,
+      generation,
+    };
     const won = tryClaimHandshake(handoverFile, claim);
     if (!won.ok) {
       if (won.code === "ALREADY_CLAIMED") {
@@ -325,8 +411,94 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
       adoptSessionKey: prior.handover.sessionKey,
       todoId: prior.handover.todoId,
       taskDescription: prior.handover.taskDescription,
+      generation,
       note: "Handover claimed. Adopt the task with resume_session { adopt: adoptSessionKey }.",
       adoptionRequired: true,
+    };
+  }
+
+  if (action === "recover_claim") {
+    // Controller-side recovery for a successor that claimed the handover and
+    // then died before adopting it. Without this a crashed claim strands the
+    // task forever, because the claim is immutable and must never be deleted
+    // just because it looks old.
+    //
+    // The recovery is generation-fenced: the caller must present the exact
+    // generation it observed, and the claimant must be proven dead. A live
+    // claimant is never displaced, so two writers can never overlap.
+    const handoverFile = args.handover || options.stateFile || null;
+    if (!handoverFile) return { ok: false, code: "HANDOVER_REQUIRED", note: "recover_claim needs the handover path" };
+    const read = readHandshake(handoverFile);
+    if (read.status !== "ok") return { ok: false, code: "HANDOVER_NOT_FOUND", note: `no readable handover at ${handoverFile}` };
+    const prior = read.record;
+    if (prior.state !== STATES.PROCESS_EXIT_VERIFIED && prior.state !== STATES.RELAUNCHED) {
+      return { ok: false, code: "OWNER_NOT_EXITED", note: `the handover is at ${prior.state}; recovery needs ${STATES.PROCESS_EXIT_VERIFIED}` };
+    }
+
+    const claim = readClaim(handoverFile);
+    if (!claim) return { ok: false, code: "NO_CLAIM", note: "the handover has no claim to recover" };
+
+    const expectedGeneration = Number(args.generation);
+    if (!Number.isFinite(expectedGeneration) || expectedGeneration !== Number(claim.generation)) {
+      return {
+        ok: false,
+        code: "GENERATION_MISMATCH",
+        note: `the claim is at generation ${claim.generation}, not ${args.generation}`,
+        currentGeneration: claim.generation,
+      };
+    }
+
+    // Same machine and project contract as claiming: recovery must not move a
+    // task across a boundary the claim itself could not cross.
+    const machine = workflowState.state.machine || process.env.DEVWF_MACHINE || null;
+    if (!machine || !prior.handover?.machine) {
+      return { ok: false, code: "MACHINE_UNVERIFIED", note: "the handover and this session must both name a machine" };
+    }
+    if (prior.handover.machine !== machine) {
+      return { ok: false, code: "MACHINE_MISMATCH", note: `handover belongs to ${prior.handover.machine}, this session is ${machine}` };
+    }
+    const projectDir = workflowState.state.projectDir || process.cwd() || null;
+    if (!projectDir || !prior.handover.projectDir || !samePath(prior.handover.projectDir, projectDir)) {
+      return { ok: false, code: "PROJECT_MISMATCH", note: "recovery must run in the handover's project" };
+    }
+
+    // Prove the claimant is gone. A live claimant keeps its claim however old
+    // the record looks.
+    let adapters = null;
+    if (typeof options.isAlive !== "function") {
+      try {
+        adapters = createLocalAdapters();
+      } catch {
+        adapters = null;
+      }
+    }
+    const exit = verifyOwnerExit(
+      { pid: claim.pid ?? args.pid, startedAt: args.startedAt, executable: args.executable },
+      {
+        isAlive: options.isAlive || adapters?.isAlive,
+        processInfo: options.processInfo || adapters?.processInfo,
+      }
+    );
+    if (!exit.exited) {
+      return { ok: false, code: "CLAIMANT_STILL_ALIVE", note: exit.reason, pid: exit.pid };
+    }
+
+    const retired = retireClaim(handoverFile, {
+      generation: expectedGeneration,
+      expectedSessionKey: claim.sessionKey,
+    });
+    if (!retired.ok) {
+      return { ok: false, code: retired.code, note: `claim recovery failed: ${retired.code}`, currentGeneration: retired.currentGeneration };
+    }
+
+    return {
+      ok: true,
+      state: STATES.PROCESS_EXIT_VERIFIED,
+      retiredGeneration: expectedGeneration,
+      nextGeneration: expectedGeneration + 1,
+      retiredClaimant: claim.sessionKey,
+      retiredFile: retired.retired,
+      note: "Stale claim retired. A fresh successor may now claim the handover.",
     };
   }
 
