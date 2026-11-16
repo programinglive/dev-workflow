@@ -19,8 +19,9 @@ function fixture(overrides = {}) {
   return {
     dir,
     ws: {
+      sessionId: 'ses_prev',
       stateFile: path.join(dir, 'workflow-state.ses_x.json'),
-      state: { projectDir: '/tmp/project', taskDescription: 'a task', ...overrides },
+      state: { projectDir: '/tmp/project', taskDescription: 'a task', machine: 'CANARY', ...overrides },
     },
   };
 }
@@ -124,4 +125,91 @@ test('an unknown action is refused', async () => {
   const result = await handleRestartHandshake({ action: 'explode' }, ws);
   assert.equal(result.ok, false);
   assert.equal(result.code, 'UNKNOWN_ACTION');
+});
+
+// ------------------------------------------------------------ successor claim
+
+const { writeHandshake: writeHs, readClaim } = await import("../monitor-server/restart-handshake-store.cjs");
+
+async function exitedFixture() {
+  const f = fixture();
+  await handleRestartHandshake({ action: 'checkpoint' }, f.ws, { runCheckpoint: confirmed });
+  await handleRestartHandshake({ action: 'release' }, f.ws, { releaseMutex: async () => true });
+  // The controller records that the old process is gone. Claim requires it.
+  const rec = readHandshake(f.ws.stateFile).record;
+  writeHs(f.ws.stateFile, { ...rec, state: STATES.PROCESS_EXIT_VERIFIED });
+  return { ...f, record: rec };
+}
+
+function successor(f, sessionId = 'ses_b1') {
+  return { sessionId, state: { machine: 'CANARY', projectDir: '/tmp/project' } };
+}
+
+test('claim is refused before the old process is verified gone', async () => {
+  const f = fixture();
+  await handleRestartHandshake({ action: 'checkpoint' }, f.ws, { runCheckpoint: confirmed });
+  await handleRestartHandshake({ action: 'release' }, f.ws, { releaseMutex: async () => true });
+  const result = await handleRestartHandshake({ action: 'claim', handover: f.ws.stateFile }, successor(f));
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'OWNER_NOT_EXITED');
+});
+
+test('claim needs the handover path explicitly', async () => {
+  const f = await exitedFixture();
+  const result = await handleRestartHandshake({ action: 'claim' }, successor(f));
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'HANDOVER_REQUIRED');
+});
+
+test('claim succeeds once and fences out a second successor', async () => {
+  const f = await exitedFixture();
+  const first = await handleRestartHandshake({ action: 'claim', handover: f.ws.stateFile }, successor(f, 'ses_b1'));
+  assert.equal(first.ok, true);
+  assert.equal(first.adoptSessionKey, f.record.handover.sessionKey);
+
+  const second = await handleRestartHandshake({ action: 'claim', handover: f.ws.stateFile }, successor(f, 'ses_b2'));
+  assert.equal(second.ok, false);
+  assert.equal(second.code, 'ALREADY_CLAIMED');
+  assert.equal(readClaim(f.ws.stateFile).sessionKey, 'ses_b1');
+});
+
+test('claim refuses a different machine', async () => {
+  const f = await exitedFixture();
+  const result = await handleRestartHandshake({ action: 'claim', handover: f.ws.stateFile }, {
+    sessionId: 'ses_b', state: { machine: 'OTHER', projectDir: '/tmp/project' },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'MACHINE_MISMATCH');
+});
+
+test('claim refuses a missing machine rather than reading it as a match', async () => {
+  const f = await exitedFixture();
+  const result = await handleRestartHandshake({ action: 'claim', handover: f.ws.stateFile }, {
+    sessionId: 'ses_b', state: { projectDir: '/tmp/project' },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'MACHINE_UNVERIFIED');
+});
+
+test('claim refuses a different project', async () => {
+  const f = await exitedFixture();
+  const result = await handleRestartHandshake({ action: 'claim', handover: f.ws.stateFile }, {
+    sessionId: 'ses_b', state: { machine: 'CANARY', projectDir: '/tmp/other' },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'PROJECT_MISMATCH');
+});
+
+test('claim refuses a handover with no readable record', async () => {
+  const f = fixture();
+  const result = await handleRestartHandshake({ action: 'claim', handover: f.ws.stateFile }, successor(f));
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'HANDOVER_NOT_FOUND');
+});
+
+test('the release record carries the handover a successor needs', async () => {
+  const f = await exitedFixture();
+  assert.ok(f.record.handover.sessionKey);
+  assert.ok(f.record.handover.stateFile);
+  assert.equal(f.record.handover.machine, 'CANARY');
 });

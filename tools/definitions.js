@@ -309,12 +309,18 @@ export function getToolList() {
         properties: {
           action: {
             type: "string",
-            enum: ["status", "checkpoint", "release", "cancel"],
+            enum: ["status", "checkpoint", "release", "cancel", "claim"],
             description: "Which owner-side handshake step to perform.",
           },
           summary: {
             type: "string",
             description: "Optional checkpoint summary recorded with the task.",
+          },
+          handover: {
+            type: "string",
+            description:
+              "For action=claim: absolute path to the previous owner's handover record (the restart sidecar " +
+              "of its state file). Required, because a fresh successor has no state file of its own to read.",
           },
         },
         required: ["action"],

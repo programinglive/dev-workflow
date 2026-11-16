@@ -22,7 +22,7 @@ import {
   applyTransition,
   restartReadiness,
 } from "../../monitor-server/restart-handshake.cjs";
-import { readHandshake, writeHandshake } from "../../monitor-server/restart-handshake-store.cjs";
+import { readHandshake, writeHandshake, tryClaimHandshake, readClaim } from "../../monitor-server/restart-handshake-store.cjs";
 
 function stateFileOf(workflowState, options = {}) {
   return options.stateFile || workflowState?.stateFile || null;
@@ -30,8 +30,8 @@ function stateFileOf(workflowState, options = {}) {
 
 function loadRecord(workflowState, options = {}) {
   const read = readHandshake(stateFileOf(workflowState, options));
-  if (read.status === 'ok') return { record: read.record, corrupt: false };
-  if (read.status === 'corrupt') return { record: { state: STATES.REQUESTED, history: [] }, corrupt: true };
+  if (read.status === "ok") return { record: read.record, corrupt: false };
+  if (read.status === "corrupt") return { record: { state: STATES.REQUESTED, history: [] }, corrupt: true };
   return { record: { state: STATES.REQUESTED, history: [] }, corrupt: false };
 }
 
@@ -39,67 +39,76 @@ function save(workflowState, options, record) {
   return writeHandshake(stateFileOf(workflowState, options), record);
 }
 
+function samePath(a, b) {
+  const norm = (p) => String(p).replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+  return norm(a) === norm(b);
+}
+
 /**
- * Advance the handshake from the owner's side.
+ * Advance the handshake.
  *
  * @param {object} args
- * @param {string} args.action status|checkpoint|release|cancel
+ * @param {string} args.action status|checkpoint|release|cancel|claim
  */
 export async function handleRestartHandshake(args = {}, workflowState = null, options = {}) {
-  const action = String(args.action || 'status');
-  if (!workflowState?.state) return { ok: false, code: 'NO_STATE', note: 'No session state is loaded.' };
-  if (!stateFileOf(workflowState, options)) {
-    return { ok: false, code: 'NO_STATE_FILE', note: 'This session has no state file to record the handshake in.' };
+  const action = String(args.action || "status");
+  if (!workflowState?.state) return { ok: false, code: "NO_STATE", note: "No session state is loaded." };
+  // The claim names the previous owner's handover explicitly, so the caller
+  // does not need its own state file to start the claim.
+  if (action !== "claim" && !stateFileOf(workflowState, options)) {
+    return { ok: false, code: "NO_STATE_FILE", note: "This session has no state file to record the handshake in." };
   }
 
   const { record, corrupt } = loadRecord(workflowState, options);
 
-  if (action === 'status') {
+  if (action === "status") {
     return {
       ok: true,
       state: record.state,
       corrupt,
       checkpointConfirmedAt: record.checkpointConfirmedAt || null,
       ownerReleasedAt: record.ownerReleasedAt || null,
+      handler: record.handover || null,
+      claimedBy: record.claimedBy || null,
       readiness: restartReadiness(record),
       history: record.history || [],
     };
   }
 
-  if (action === 'cancel') {
-    const result = applyTransition(record, { next: STATES.CANCELLED, actor: 'owner' });
+  if (action === "cancel") {
+    const result = applyTransition(record, { next: STATES.CANCELLED, actor: "owner" });
     if (!result.ok) return { ok: false, code: result.code, note: result.reason };
     save(workflowState, options, result.record);
-    return { ok: true, state: result.record.state, note: 'Restart cancelled by the owner.' };
+    return { ok: true, state: result.record.state, note: "Restart cancelled by the owner." };
   }
 
-  if (action === 'checkpoint') {
-    const acknowledged = applyTransition(record, { next: STATES.OWNER_ACKNOWLEDGED, actor: 'owner' });
+  if (action === "checkpoint") {
+    const acknowledged = applyTransition(record, { next: STATES.OWNER_ACKNOWLEDGED, actor: "owner" });
     if (!acknowledged.ok) return { ok: false, code: acknowledged.code, note: acknowledged.reason };
     save(workflowState, options, acknowledged.record);
 
     const runCheckpoint = options.runCheckpoint || handleCheckpointTask;
     const checkpoint = await runCheckpoint(
-      { summary: typeof args.summary === 'string' ? args.summary : 'cooperative restart checkpoint' },
+      { summary: typeof args.summary === "string" ? args.summary : "cooperative restart checkpoint" },
       { workflowState, ...(options.checkpoint || {}) },
     );
 
     if (checkpoint?.confirmed !== true) {
       save(workflowState, options, {
         ...acknowledged.record,
-        lastCheckpointError: checkpoint?.note || 'checkpoint not confirmed',
+        lastCheckpointError: checkpoint?.note || "checkpoint not confirmed",
       });
       return {
         ok: false,
-        code: 'CHECKPOINT_NOT_CONFIRMED',
-        note: checkpoint?.note || 'The checkpoint write was not confirmed by the Zettly read-back.',
+        code: "CHECKPOINT_NOT_CONFIRMED",
+        note: checkpoint?.note || "The checkpoint write was not confirmed by the Zettly read-back.",
         state: acknowledged.record.state,
       };
     }
 
     const confirmed = applyTransition(acknowledged.record, {
       next: STATES.CHECKPOINT_CONFIRMED,
-      actor: 'owner',
+      actor: "owner",
       at: Number(args.at) || Date.now(),
       detail: { note: checkpoint.note },
     });
@@ -119,57 +128,174 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
     };
   }
 
-  if (action === 'release') {
+  if (action === "release") {
     if (record.state !== STATES.CHECKPOINT_CONFIRMED) {
       return {
         ok: false,
-        code: 'CHECKPOINT_REQUIRED',
+        code: "CHECKPOINT_REQUIRED",
         note: `ownership can only be released after a confirmed checkpoint; the handshake is at ${record.state}.`,
       };
     }
 
-    const quiesced = applyTransition(record, { next: STATES.QUIESCED, actor: 'owner' });
+    const quiesced = applyTransition(record, { next: STATES.QUIESCED, actor: "owner" });
     if (!quiesced.ok) return { ok: false, code: quiesced.code, note: quiesced.reason };
     save(workflowState, options, quiesced.record);
 
-    const projectDir = workflowState.state.projectDir || '';
+    const projectDir = workflowState.state.projectDir || "";
     const releaseMutex = options.releaseMutex || releaseWorktreeMutex;
     const released = await releaseMutex(projectDir);
     if (!released) {
-      save(workflowState, options, { ...quiesced.record, lastReleaseError: 'releaseWorktreeMutex returned false' });
+      save(workflowState, options, { ...quiesced.record, lastReleaseError: "releaseWorktreeMutex returned false" });
       return {
         ok: false,
-        code: 'RELEASE_NOT_CONFIRMED',
-        note: 'The lock mechanism did not confirm the release; ownership is still held.',
+        code: "RELEASE_NOT_CONFIRMED",
+        note: "The lock mechanism did not confirm the release; ownership is still held.",
         state: quiesced.record.state,
       };
     }
 
     const released2 = applyTransition(quiesced.record, {
       next: STATES.OWNER_RELEASED,
-      actor: 'owner',
+      actor: "owner",
       at: Number(args.at) || Date.now(),
     });
     if (!released2.ok) return { ok: false, code: released2.code, note: released2.reason };
 
-    const next = { ...released2.record, ownerReleasedAt: Number(args.at) || Date.now() };
+    const next = {
+      ...released2.record,
+      ownerReleasedAt: Number(args.at) || Date.now(),
+      // The durable handover: everything a successor needs so it never depends
+      // on this conversation. No credentials, no tokens.
+      handover: {
+        sessionKey: workflowState.sessionId || null,
+        stateFile: stateFileOf(workflowState, options),
+        machine: workflowState.state.machine || null,
+        projectDir: workflowState.state.projectDir || null,
+        taskDescription: workflowState.state.taskDescription || null,
+        todoId: Number(workflowState.state.zettly?.todoId) || null,
+        phase: workflowState.state.currentPhase || null,
+        at: Number(args.at) || Date.now(),
+      },
+      claimedBy: null,
+    };
+
     // The mutex is gone, so the record must be written by the store, not by
     // workflowState.save(). `persisted` is reported only when that write
     // actually succeeded and can be read back.
     const written = save(workflowState, options, next);
-    const readBack = written.ok ? readHandshake(stateFileOf(workflowState, options)) : { status: 'absent' };
-    const persisted = readBack.status === 'ok' && readBack.record?.state === STATES.OWNER_RELEASED;
+    const readBack = written.ok ? readHandshake(stateFileOf(workflowState, options)) : { status: "absent" };
+    const persisted = readBack.status === "ok" && readBack.record?.state === STATES.OWNER_RELEASED;
 
     return {
       ok: true,
       state: next.state,
       persisted,
+      handover: next.handover,
       note: persisted
-        ? 'Checkpoint confirmed and ownership released. The controller may now stop this process.'
-        : 'Ownership released in memory but the record could not be verified on disk; the controller must not proceed.',
+        ? "Checkpoint confirmed and ownership released. The controller may now stop this process."
+        : "Ownership released in memory but the record could not be verified on disk; the controller must not proceed.",
       readiness: restartReadiness(next),
     };
   }
 
-  return { ok: false, code: 'UNKNOWN_ACTION', note: `unknown action "${action}"` };
+  if (action === "claim") {
+    // Successor-side. The new agent reads the previous owner's durable handover
+    // and takes it over. It never touches the old process.
+    //
+    // The handover to claim is named explicitly: a fresh successor has its own
+    // state file, so reading its own would find nothing. The path comes from the
+    // controller, which got it from the release receipt.
+    const handoverFile = args.handover || options.stateFile || null;
+    if (!handoverFile) {
+      return { ok: false, code: "HANDOVER_REQUIRED", note: "claim needs the previous owner's handover path" };
+    }
+    const read = readHandshake(handoverFile);
+    if (read.status !== "ok") {
+      return { ok: false, code: "HANDOVER_NOT_FOUND", note: `no readable handover at ${handoverFile}` };
+    }
+    const prior = read.record;
+
+    const existing = readClaim(handoverFile);
+    if (existing || prior.claimedBy) {
+      const holder = existing || prior.claimedBy;
+      return {
+        ok: false,
+        code: "ALREADY_CLAIMED",
+        note: `the handover was already claimed by ${holder.sessionKey} at ${holder.at}`,
+      };
+    }
+
+    // The owner releasing the mutex does NOT prove its process exited. A live
+    // owner must never be claimed, so the controller has to have recorded that
+    // the old process is gone.
+    if (prior.state !== STATES.PROCESS_EXIT_VERIFIED && prior.state !== STATES.RELAUNCHED) {
+      return {
+        ok: false,
+        code: "OWNER_NOT_EXITED",
+        note: `the handover is at ${prior.state}; a successor may only claim after ${STATES.PROCESS_EXIT_VERIFIED}`,
+      };
+    }
+    if (!prior.handover || !prior.handover.sessionKey) {
+      return { ok: false, code: "HANDOVER_INCOMPLETE", note: "the handover does not name its session" };
+    }
+
+    // Same machine and same repository only, and both sides must actually say
+    // so: an absent value must never be read as "matches".
+    const machine = workflowState.state.machine || null;
+    if (!machine || !prior.handover.machine) {
+      return { ok: false, code: "MACHINE_UNVERIFIED", note: "the handover and this session must both name a machine" };
+    }
+    if (prior.handover.machine !== machine) {
+      return {
+        ok: false,
+        code: "MACHINE_MISMATCH",
+        note: `handover belongs to ${prior.handover.machine}, this session is ${machine}`,
+      };
+    }
+    const projectDir = workflowState.state.projectDir || null;
+    if (!projectDir || !prior.handover.projectDir) {
+      return { ok: false, code: "PROJECT_UNVERIFIED", note: "the handover and this session must both name a project" };
+    }
+    if (!samePath(prior.handover.projectDir, projectDir)) {
+      return {
+        ok: false,
+        code: "PROJECT_MISMATCH",
+        note: `handover belongs to ${prior.handover.projectDir}, this session is ${projectDir}`,
+      };
+    }
+
+    const claimant = String(workflowState.sessionId || "");
+    if (!claimant) return { ok: false, code: "NO_SESSION_IDENTITY", note: "this session has no identity to record" };
+
+    // True cross-process single winner: an OS-exclusive link, not a read then
+    // replace. The loser gets ALREADY_CLAIMED and never touches the task.
+    const claim = { sessionKey: claimant, at: Date.now(), todoId: prior.handover.todoId || null };
+    const won = tryClaimHandshake(handoverFile, claim);
+    if (!won.ok) {
+      if (won.code === "ALREADY_CLAIMED") {
+        const holder = readClaim(handoverFile);
+        return {
+          ok: false,
+          code: "ALREADY_CLAIMED",
+          note: holder ? `the handover was claimed by ${holder.sessionKey} at ${holder.at}` : "another successor claimed the handover first",
+        };
+      }
+      return { ok: false, code: "CLAIM_WRITE_FAILED", note: String(won.code) };
+    }
+
+    // The handover record itself is NOT rewritten: the claim file is the single
+    // authoritative winner, and mutating the handover here would race the owner
+    // and could report success while the record still says something else.
+    return {
+      ok: true,
+      state: STATES.SESSION_RECOVERED,
+      adoptSessionKey: prior.handover.sessionKey,
+      todoId: prior.handover.todoId,
+      taskDescription: prior.handover.taskDescription,
+      note: "Handover claimed. Adopt the task with resume_session { adopt: adoptSessionKey }.",
+      adoptionRequired: true,
+    };
+  }
+
+  return { ok: false, code: "UNKNOWN_ACTION", note: `unknown action "${action}"` };
 }
