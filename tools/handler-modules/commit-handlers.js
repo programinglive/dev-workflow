@@ -843,12 +843,45 @@ export async function handleForceCompleteTask(args, workflowState, context = {})
   const commitMessage =
     commitMessageArg || workflowState.state.lastCommitMessage || "(no commit recorded)";
 
+  let governanceBypassed = false;
+  let governanceViolations = [];
+  if (workflowState.state.governance && !context?.skipGovernanceGate) {
+    const projectDir = workflowState.state.projectDir || getActiveProjectDir() || "";
+    const govInput = context?.governanceInput || (projectDir ? collectGitContext(projectDir) : {});
+    const govCheck = evaluateGovernanceGate({
+      state: workflowState.state,
+      changedPaths: govInput.changedPaths || [],
+      docContents: govInput.docContents || {},
+      currentRepo: govInput.repository || workflowState.state.governance.repository || "",
+      currentRevision: govInput.revision !== undefined ? govInput.revision : Number(workflowState.state.dodRevision) || 0,
+      ciStatus: context?.ciStatus || govInput.ciStatus || null,
+    });
+    if (!govCheck.ok) {
+      const hasSecurityViolation = govCheck.violations.some((v) => v.code === "DOCUMENTATION_SECURITY_VIOLATION");
+      if (hasSecurityViolation) {
+        return textResponse(
+          `⚠️ POLICY_SECURITY_BLOCKED: force_complete_task cannot bypass credential/security violations in documentation.`
+        );
+      }
+      if (reason.length < 15) {
+        const codes = govCheck.violations.map((v) => v.code).join(", ");
+        return textResponse(
+          `⚠️ POLICY_FORCE_REASON_REQUIRED: Governance violations (${codes}) require an explicit force reason (>= 15 characters). Task NOT closed.`
+        );
+      }
+      governanceBypassed = true;
+      governanceViolations = govCheck.violations.map((v) => ({ policyId: v.policyId, code: v.code, reason: v.reason }));
+    }
+  }
+
   workflowState.addToHistory({
     taskDescription: workflowState.state.taskDescription,
     taskType: workflowState.state.taskType,
     commitMessage,
     forced: true,
     forceReason: reason,
+    governanceBypassed,
+    governanceViolations,
     definitionOfDoneSummary: summarize(
       Array.isArray(workflowState.state.definitionOfDone) ? workflowState.state.definitionOfDone : [],
       workflowState.state.dodRevision,
