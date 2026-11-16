@@ -65,6 +65,7 @@ Options:
 - `--policy <all|architecture.cli_first|engineering.documentation_required>`: Policy scope to evaluate (default: `all`).
 - `--dir <path>`: Target repository directory (default: current working directory).
 - `--base <ref>`: Optional git base ref for diff inspection.
+- `--state <path>`: Optional workflow state JSON file to evaluate recorded MCP evidence.
 - `--task-type <type>`: Task type hint (`feature`, `bugfix`, `refactor`, `other`).
 - `--description <text>`: Task description hint.
 - `--json`: Output machine-readable JSON report.
@@ -77,9 +78,10 @@ Exit codes:
 
 `governance/exceptions.js` (`validatePolicyException`) requires `policyId`, `repository`, `justification`, `scope`, `risk`, `owner`, a distinct `approver` (separation of duties; self-approval is rejected), and a valid non-expired `expiresAt`. Exceptions can never bypass CI or security checks.
 
-`force_complete_task` cannot silently bypass enforced governance policies with a reason string alone:
-- When enforced governance violations exist, `force_complete_task` requires `reason` (`>= 15` chars), a distinct human/owner `approvedBy` (rejecting self-approval or agent names), `approvalTicket` (`>= 6` chars), and `overrideToken` when `DEVWF_GOVERNANCE_OVERRIDE_TOKEN` is configured (`POLICY_OVERRIDE_UNAUTHORIZED` otherwise).
-- `DOCUMENTATION_SECURITY_VIOLATION` can never be bypassed (`POLICY_SECURITY_BLOCKED`).
+`force_complete_task` fails closed when enforced governance violations exist and cannot silently bypass policies with a reason string or forged approver metadata:
+- Requires `reason` (`>= 15` chars), a distinct human/owner `approvedBy` (rejecting self-approval or agent names), `approvalTicket` (`>= 6` chars), and `overrideToken` matching server-configured `DEVWF_GOVERNANCE_OVERRIDE_TOKEN` (`POLICY_OVERRIDE_UNAUTHORIZED` if unset or mismatched).
+- Caller-supplied `governanceMode` cannot downgrade an enforced repository; `rerun_workflow` and `claim_factory_task` preserve/re-resolve governance metadata (`GOVERNANCE_METADATA_MISSING` if stripped post-rollout).
+- Non-overridable violations configured in `rollout.nonOverridableViolations` (`DOCUMENTATION_SECURITY_VIOLATION`, `REQUIRED_CI_FAILED`) can never be bypassed (`POLICY_SECURITY_BLOCKED`).
 
 ## 8. Legacy Migration
 
