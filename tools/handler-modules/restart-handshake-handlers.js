@@ -35,6 +35,40 @@ async function persist(workflowState, record) {
 }
 
 /**
+ * Persist the release record after the mutex is gone.
+ *
+ * `workflowState.save()` correctly refuses once this process is no longer the
+ * owner. The release record still has to survive for the controller, so it is
+ * written atomically straight to the state file. This is the only write allowed
+ * to bypass the ownership guard, and only because it records the release that
+ * just happened.
+ */
+async function persistAfterRelease(workflowState, record, options = {}) {
+  if (workflowState?.state) workflowState.state.restartHandshake = record;
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  let file = options.stateFile || workflowState?.stateFile || null;
+  if (!file) {
+    try {
+      const mod = await import("../../workflow-state.js");
+      file = mod.resolveStateFile({ sessionId: workflowState?.sessionId || null, skipMigrationWrites: true });
+    } catch {
+      file = null;
+    }
+  }
+  if (!file) return false;
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(workflowState.state, null, 2), "utf8");
+    fs.renameSync(tmp, file);
+    return true;
+  } catch {
+    try { fs.unlinkSync(tmp); } catch {}
+    return false;
+  }
+}
+
+/**
  * Advance the handshake from the owner's side.
  *
  * @param {object} args
@@ -148,10 +182,16 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
     if (!released2.ok) return { ok: false, code: released2.code, note: released2.reason };
 
     const next = { ...released2.record, ownerReleasedAt: Number(args.at) || Date.now() };
-    await persist(workflowState, next);
+    // The mutex is gone now, so the normal save path correctly refuses: this
+    // process is no longer the owner. The record still has to survive for the
+    // controller, so it is written atomically straight to the state file. That
+    // is the one write that is allowed to bypass the guard, because it is the
+    // record OF the release itself.
+    const written = await persistAfterRelease(workflowState, next, options);
     return {
       ok: true,
       state: next.state,
+      persisted: written,
       note: 'Checkpoint confirmed and ownership released. The controller may now stop this process.',
       readiness: restartReadiness(next),
     };
