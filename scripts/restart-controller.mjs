@@ -73,6 +73,35 @@ function runCommand(command, timeoutMs = 60_000) {
 }
 
 /**
+ * Run the checkpoint command and require a confirmed result.
+ *
+ * The command is `devwf checkpoint --session <key>`, which uses the same
+ * authenticated handler as the MCP tool and exits non-zero unless the write
+ * was read back and matched. A command that merely exits 0 without a
+ * checkpoint would be a claim, not proof, so the exit code is the contract.
+ */
+function runCheckpoint(template, sessionKey, timeoutMs = 120_000) {
+  const command = template.map((part) => String(part).replace('{sessionKey}', sessionKey));
+  return new Promise((resolve) => {
+    const [executable, ...args] = command;
+    const child = spawn(executable, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+    let stderr = '';
+    child.stderr?.on('data', (chunk) => { stderr += String(chunk).slice(0, 2000); });
+    child.stdout?.on('data', () => {});
+    const timer = setTimeout(() => { try { child.kill(); } catch {} resolve({ ok: false, code: 'CHECKPOINT_TIMEOUT' }); }, timeoutMs);
+    child.on('error', () => { clearTimeout(timer); resolve({ ok: false, code: 'CHECKPOINT_FAILED' }); });
+    child.on('exit', (code) => {
+      clearTimeout(timer);
+      if (code === 0) return resolve({ ok: true, code: 'CHECKPOINT_CONFIRMED' });
+      // The CLI refuses rather than guesses: an unconfirmed write, a missing
+      // task, or a live session holding the mutation lock all land here.
+      const code2 = /mutation lock|foreign_lock|mutex/i.test(stderr) ? 'CHECKPOINT_LOCKED' : 'CHECKPOINT_FAILED';
+      resolve({ ok: false, code: code2 });
+    });
+  });
+}
+
+/**
  * Execute one queued command for this machine.
  *
  * Returns the result the Monitor should record. It never throws: a failure is a
@@ -99,7 +128,11 @@ async function executeCommand({ command, sessions, adapters, config, dryRun }) {
     owner: row.owner_pid
       ? { pid: Number(row.owner_pid), startedAt: String(row.owner_started_at || ''), executable: String(row.owner_executable || '') }
       : null,
-    hasCheckpoint: true,
+    // `hasCheckpoint` means "we have a way to save this before stopping", not
+    // "a checkpoint already exists". An idle session has nothing to lose; a
+    // session with a task is only restartable when a checkpoint adapter is
+    // configured, and that adapter must still exit 0 before any stop.
+    hasCheckpoint: !row.task || Boolean(config.checkpointCommand),
     dirtyWorktree: false,
     activeTask: Boolean(row.task),
   };
@@ -113,7 +146,7 @@ async function executeCommand({ command, sessions, adapters, config, dryRun }) {
 
   if (dryRun) return { status: 'done', code: 'DRY_RUN_PLANNED', detail: { steps: plan.steps } };
 
-  const checkpoint = async () => runCommand(config.checkpointCommand);
+  const checkpoint = async () => runCheckpoint(config.checkpointCommand, session.sessionKey);
   const relaunch = async () => runCommand(config.relaunchCommand);
 
   const result = await executeRestartOne({
