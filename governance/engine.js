@@ -13,8 +13,13 @@ let cachedPolicyBundle = null;
 let cachedPolicyStamp = "";
 
 export function loadPolicies() {
-  const st = statSync(POLICIES_PATH);
-  const stamp = `${st.mtimeMs}:${st.size}`;
+  let stamp = cachedPolicyStamp;
+  try {
+    const st = statSync(POLICIES_PATH);
+    stamp = `${st.mtimeMs}:${st.size}`;
+  } catch {
+    if (cachedPolicyBundle) return cachedPolicyBundle;
+  }
   if (cachedPolicyBundle && cachedPolicyStamp === stamp) return cachedPolicyBundle;
   const raw = readFileSync(POLICIES_PATH, "utf8");
   const parsed = JSON.parse(raw);

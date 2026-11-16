@@ -29,8 +29,7 @@ export function containsCredentials(text) {
   const content = String(text || "");
   if (!content) return false;
   if (CREDENTIAL_PATTERNS.some((re) => re.test(content))) return true;
-  const sec = classifySecurity({ text: content });
-  return sec?.blocked === true || (Array.isArray(sec?.findings) && sec.findings.some((f) => f.severity === "critical" || f.severity === "high"));
+  return classifySecurity({ text: content }) === "SECRET";
 }
 
 export function isPlaceholderOrEmptyDoc(text) {
