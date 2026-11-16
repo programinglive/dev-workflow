@@ -45,6 +45,7 @@ const {
 const { buildHealth, DEFAULT_STALE_AFTER_MS } = require('./health.cjs');
 const { buildMachinesQuery, DEFAULT_STALE_AFTER_DAYS, visibleMachines } = require('./machines-query.cjs');
 const { buildFleetParity } = require('./fleet-parity.cjs');
+const { loadApprovedRelease, loadFleetManifestSnapshot } = require('./approved-release.cjs');
 const { dedupeSessions } = require('./dedupe-sessions.cjs');
 const { buildReportQuery, buildReportPayload, estimateBuild } = require('./build-report.cjs');
 const { withRepoLink } = require('./repo-link.cjs');
@@ -1810,8 +1811,10 @@ function render(data) {
 
     const convStatus = p && p.convergenceStatus ? p.convergenceStatus : 'CONVERGED';
     const convBadge = '<span class="phase" style="margin-left:6px;font-size:10px">' + esc(convStatus) + '</span>';
+    const installedText = p.installedVersion ? esc(p.installedVersion) : '<i>belum dilapor</i>';
+    const targetHint = p.targetSource === 'approved' ? '' : ' <span class="meta">(mayoritas)</span>';
     const verSummary = p
-      ? '<div class="meta" style="margin-top:4px">Installed: <b>' + esc(p.installedVersion || '-') + '</b> · Running: <b>' + esc(p.runningVersion || '-') + '</b> · Target: <b>' + esc(p.targetVersion || '-') + '</b>' +
+      ? '<div class="meta" style="margin-top:4px">Installed: <b>' + installedText + '</b> · Running: <b>' + esc(p.runningVersion || '-') + '</b> · Target: <b>' + esc(p.targetVersion || '-') + '</b>' + targetHint +
         (p.toolCatalogDigest ? ' · Catalog: <code>' + esc(String(p.toolCatalogDigest).slice(0, 19)) + '</code>' : '') + '</div>'
       : '';
 
@@ -2278,7 +2281,10 @@ async function collectDashboardPayload({ query, limit = 20 }) {
   const mq = buildMachinesQuery({ staleAfterDays: STALE_AFTER_DAYS });
   const machineRows = await query(mq.sql, mq.params);
   const machines = visibleMachines(machineRows.rows);
-  const fleet = buildFleetParity(machines);
+  const fleet = buildFleetParity(machines, {
+    approvedRelease: loadApprovedRelease(),
+    fleetManifest: loadFleetManifestSnapshot(),
+  });
   const hq = buildHistoryQuery({ historyDays: HISTORY_DAYS });
   const nowMs = Date.now();
   // Verified lifecycle state for the UI. The privileged query runs inside the
