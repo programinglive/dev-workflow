@@ -4607,6 +4607,30 @@ export class WorkflowState {
     return merged.length - before.length;
   }
 
+  /**
+   * Write this session's JSON state file into the store, replacing any existing
+   * row for the session.
+   *
+   * `load()` prefers an existing SQLite row over the JSON file, so a successor
+   * that already had a row would reload its old state after adoption. Adoption
+   * calls this to make the copied state authoritative, then reloads and verifies.
+   * Runs under the ownership fence: the caller must hold the worktree mutex.
+   */
+  async adoptJsonIntoStore() {
+    return await this.runSerialized(async () => {
+      return await this._withOwnershipFence("adoptJsonIntoStore", async () => {
+        const db = await this._db();
+        const { key: sessionKey } = this._sessionKey();
+        const userId = getCurrentUserId(this.stateFile);
+        const projectPath = this._projectPath();
+        const state = await this._adoptLegacyJsonIfPresent(db, userId, projectPath, sessionKey, {
+          skipWrites: false,
+        });
+        return state;
+      });
+    });
+  }
+
   async save(options = {}) {
     return await this.runSerialized(async () => {
       return await this._withOwnershipFence("save", async () => {

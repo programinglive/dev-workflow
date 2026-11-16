@@ -227,11 +227,21 @@ test("adoption of an already adopted handover is refused", async () => {
 
 test("the winning claimant adopts the handover and the claim is marked adopted", async () => {
   await withHandover(async ({ state, sidecar }) => {
-    tryClaimHandshake(sidecar, { sessionKey: "ses_CURRENT", at: Date.now(), pid: 1, generation: 1 });
+    tryClaimHandshake(sidecar, { sessionKey: "ses_CURRENT", at: Date.now(), pid: process.pid, generation: 1 });
     const r = await handleResumeSession({ adopt: "ses_OTHER" }, state);
     assert.match(text(r), /^✅/);
     assert.equal(state.state.taskDescription, "Task yang tertinggal");
     const { readClaim } = await import("../monitor-server/restart-handshake-store.cjs");
     assert.ok(readClaim(sidecar).adoptedAt, "the claim is marked adopted");
+  });
+});
+
+test("adoption is refused when the claim belongs to another process", async () => {
+  await withHandover(async ({ state, sidecar }) => {
+    tryClaimHandshake(sidecar, { sessionKey: "ses_CURRENT", at: Date.now(), pid: process.pid + 1, generation: 1 });
+    const r = await handleResumeSession({ adopt: "ses_OTHER" }, state);
+    assert.match(text(r), /^⚠️/);
+    assert.match(text(r), /PID/);
+    assert.equal(state.state.currentPhase, "idle");
   });
 });

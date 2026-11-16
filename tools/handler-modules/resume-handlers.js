@@ -3,8 +3,9 @@ import path from "node:path";
 import { textResponse } from "./shared.js";
 import { summarize as summarizeDod, renderOutstanding } from "./dod.js";
 import { planProgress } from "./plan.js";
-import { DEFAULT_LOCK_STALE_MS, acquireWorktreeMutex, resolveCanonicalWorktreeRoot } from "../../process-lock.js";
+import { DEFAULT_LOCK_STALE_MS, acquireWorktreeMutex, releaseWorktreeMutex, resolveCanonicalWorktreeRoot } from "../../process-lock.js";
 import { readHandshake, readClaim, markClaimAdopted } from "../../monitor-server/restart-handshake-store.cjs";
+import { createLocalAdapters } from "../../session-controller-adapters.js";
 import { revalidatePreflight, runPreflight } from "../../preflight.js";
 
 /**
@@ -57,6 +58,22 @@ function readState(file) {
   } catch {
     return null;
   }
+}
+
+/**
+ * Whether a reloaded state is the task that was adopted.
+ *
+ * A matching description alone is not enough: two different tasks can share a
+ * description, and the point of the check is to prove the store holds the
+ * adopted task, not a leftover row that happens to read the same.
+ */
+function sameAdoptedState(loaded, source) {
+  if (!loaded || !source) return false;
+  if ((loaded.taskDescription || "") !== (source.taskDescription || "")) return false;
+  if ((loaded.currentPhase || "idle") !== (source.currentPhase || "idle")) return false;
+  if ((loaded.workflowTaskId || "") !== (source.workflowTaskId || "")) return false;
+  if (Number(loaded.dodRevision || 0) !== Number(source.dodRevision || 0)) return false;
+  return true;
 }
 
 /** Semua state sesi lain di proyek ini yang masih punya task berjalan. */
@@ -246,6 +263,31 @@ export async function handleResumeSession(args, workflowState) {
           `Only the winning successor may adopt the handover. Nothing was changed.`
       );
     }
+    // The claim must belong to this process, not merely to a reused session
+    // string. A fresh process that happens to reuse the id must go through
+    // recovery, which proves the previous claimant is gone.
+    if (Number(claim.pid) !== process.pid) {
+      return textResponse(
+        `⚠️ Adoption refused: the claim was made by PID ${claim.pid}, not this process (${process.pid}). ` +
+          `A different process must recover the claim first. Nothing was changed.`
+      );
+    }
+    if (claim.startedAt || claim.executable) {
+      let info = null;
+      try {
+        info = createLocalAdapters().processInfo(process.pid);
+      } catch {
+        info = null;
+      }
+      const startMismatch = claim.startedAt && info?.startedAt && String(claim.startedAt) !== String(info.startedAt);
+      const exeMismatch = claim.executable && info?.executable && String(claim.executable) !== String(info.executable);
+      if (startMismatch || exeMismatch) {
+        return textResponse(
+          `⚠️ Adoption refused: the claim's recorded process identity does not match this process. ` +
+            `Nothing was changed.`
+        );
+      }
+    }
   }
 
   // Salin ke berkas sesi ini, pertahankan isi apa adanya.
@@ -299,33 +341,37 @@ export async function handleResumeSession(args, workflowState) {
   delete resumed.owner;
 
   writeFileSync(target, JSON.stringify(resumed, null, 2), "utf8");
-  // `load()` performs a legacy-state migration write, which requires the
-  // worktree mutex. The capability is bound below, so the read-only reload is
-  // used here to keep the commit point explicit: the state file write plus a
-  // verified reload.
-  await workflowState.load({ skipWrites: true });
   if (typeof workflowState.bindKernelCapability === "function") {
     workflowState.bindKernelCapability(adoptMutex.capability);
   }
 
   // The reload must actually reflect the adopted task. `load()` prefers an
   // existing SQLite row for this session over the JSON file, so a successor
-  // that already had a row could otherwise be told "adopted" while its old
-  // state was reloaded. Force the adopted state into the store, then verify.
-  if (workflowState.state.taskDescription !== (source.taskDescription || "")) {
+  // that already had a row would otherwise be told "adopted" while its old
+  // state was reloaded. Write the copied state into the store first, then
+  // reload and verify the whole task identity, not just its description.
+  const abandon = async (message) => {
     try {
-      workflowState.state = { ...resumed };
-      await workflowState.save();
-      await workflowState.load({ skipWrites: true });
+      await releaseWorktreeMutex(adoptMutex.capability);
     } catch {
-      // Reported below: a reload that does not match is a failed adoption.
+      // The process still exits eventually; the message is the important part.
     }
+    return textResponse(message);
+  };
+
+  try {
+    await workflowState.adoptJsonIntoStore();
+  } catch (error) {
+    return await abandon(
+      `⚠️ Adoption did not commit: the copied state could not be written to the store ` +
+        `(${error?.message || error}). The worktree mutex was released; retry when the store is writable.`
+    );
   }
-  if (workflowState.state.taskDescription !== (source.taskDescription || "")) {
-    return textResponse(
+  await workflowState.load({ skipWrites: true });
+  if (!sameAdoptedState(workflowState.state, source)) {
+    return await abandon(
       `⚠️ Adoption did not commit: the reloaded state does not match the source task ` +
-        `("${source.taskDescription || ""}"). The worktree mutex is held, but the task was not adopted. ` +
-        `Retry after clearing this session's stored state.`
+        `("${source.taskDescription || ""}"). The worktree mutex was released; nothing was adopted.`
     );
   }
 
@@ -358,20 +404,23 @@ export async function handleResumeSession(args, workflowState) {
     }
   }
 
-  // The adoption commit point is the state file above: it was written and
-  // reloaded, so this session owns the task. This final save persists the
-  // preflight note; the worktree mutex is held, so it should succeed. A refusal
-  // is reported as a warning, never as a silent success.
-  let saveNote = "";
+  // The adoption commit point is the state file plus the verified store reload
+  // above. This final save persists the preflight note; the worktree mutex is
+  // held, so it should succeed. If it does not, the adoption is not durable and
+  // must not be reported as success or marked adopted.
   try {
     await workflowState.save();
   } catch (error) {
-    saveNote = `\n\nℹ️ Preflight note was not persisted: ${error?.message || error}`;
+    return await abandon(
+      `⚠️ Adoption is not durable: the state was copied but the final save failed ` +
+        `(${error?.message || error}). The claim was NOT marked adopted, so recovery can still ` +
+        `reconcile it. The worktree mutex was released.`
+    );
   }
 
-  // Finalize the claim so recovery can never discard this successor's progress.
-  // The claim stays as the audit record of who won; only the adopted marker is
-  // added. A failure here is a warning: the task is already adopted.
+  // Finalize the claim only after the adoption is durable, so recovery can never
+  // discard this successor's progress. The claim stays as the audit record of
+  // who won; only the adopted marker is added.
   let claimNote = "";
   if (hasHandover) {
     const marked = markClaimAdopted(handoverSidecar, { sessionKey: String(workflowState.sessionId || "") });
@@ -392,7 +441,6 @@ export async function handleResumeSession(args, workflowState) {
       `Source file kept at: ${chosen.file}\n` +
       outstanding +
       preflightNote +
-      saveNote +
       claimNote +
       `\n\nContinue with 'continue_workflow' or 'get_workflow_status'.`
   );
