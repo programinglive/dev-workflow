@@ -164,6 +164,21 @@ function inspectConfigFile(filePath, client) {
 }
 
 /**
+ * The version a resolved bootstrap reports, or null.
+ *
+ * A bootstrap that returns a revision but no version is a real state (an older
+ * bootstrap, or a staged release whose metadata is incomplete). Filling in
+ * '1.31.0' made the doctor report a version nobody had verified and made the
+ * fleet panel trust a target derived from that invention, so an unknown version
+ * stays unknown.
+ */
+function resolveRuntimeVersion(parsed) {
+  if (!parsed || typeof parsed !== 'object') return null;
+  const version = typeof parsed.version === 'string' ? parsed.version.trim() : '';
+  return version || null;
+}
+
+/**
  * Perform deep diagnostic check for one MCP client.
  */
 function diagnoseClient({
@@ -288,7 +303,7 @@ function diagnoseClient({
       if (parsed && parsed.revision) {
         bootstrapResolves = true;
         resolvedRevision = parsed.revision;
-        runtimeVersion = parsed.version || '1.31.0';
+        runtimeVersion = resolveRuntimeVersion(parsed);
       }
     } catch {
       bootstrapResolves = false;
@@ -310,7 +325,7 @@ function diagnoseClient({
         if (parsed && parsed.revision) {
           bootstrapResolves = true;
           resolvedRevision = parsed.revision;
-          runtimeVersion = parsed.version || '1.31.0';
+          runtimeVersion = resolveRuntimeVersion(parsed);
         }
       } catch {
         bootstrapResolves = false;
@@ -441,6 +456,7 @@ module.exports = {
   computeToolCatalogDigest,
   getClientConfigCandidates,
   inspectConfigFile,
+  resolveRuntimeVersion,
   diagnoseClient,
   diagnoseAllClients,
 };

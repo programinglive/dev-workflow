@@ -62,16 +62,40 @@ function asToolchain(value) {
  *
  * @param {Array<object>} machines rows with machine, release_version,
  *   release_revision, toolchain_json, stale
+ * @param {{ approvedRelease?: {version: string, revision: string}|null, fleetManifest?: object|null }} options
+ *   the release the fleet is supposed to run, and the pinned toolchain. When
+ *   absent the majority of what machines reported is used, and `targetSource`
+ *   says so.
  */
-function buildFleetParity(machines = []) {
+function buildFleetParity(machines = [], { approvedRelease = null, fleetManifest = null } = {}) {
   const rows = Array.isArray(machines) ? machines.filter((m) => m && m.machine) : [];
 
-  const version = majority(rows.map((m) => m.release_version));
-  const revision = majority(rows.map((m) => m.release_revision));
+  const reportedVersion = majority(rows.map((m) => m.release_version));
+  const reportedRevision = majority(rows.map((m) => m.release_revision));
 
-  // The union of tools any machine reported, so a tool missing everywhere is
-  // still listed rather than silently absent.
+  // A decision beats a vote. Only a well-formed approved release may become the
+  // target; anything else falls back to the reported majority rather than
+  // silently turning a broken release file into "no target".
+  const approved =
+    approvedRelease && typeof approvedRelease === 'object' && approvedRelease.version && approvedRelease.revision
+      ? approvedRelease
+      : null;
+  const version = approved ? approved.version : reportedVersion;
+  const revision = approved ? approved.revision : reportedRevision;
+  const targetSource = approved ? 'approved' : 'reported-majority';
+
+  // A pin is a decision, a majority is a poll. A tool the fleet has agreed on
+  // must not be "outvoted" by machines that have not been updated yet, or the
+  // panel recommends the stale version to everyone.
+  const pinnedTools =
+    fleetManifest && typeof fleetManifest.tools === 'object' && fleetManifest.tools ? fleetManifest.tools : null;
+
+  // The union of pinned tools and tools any machine reported, so a tool missing
+  // everywhere is still listed rather than silently absent.
   const toolNames = [];
+  if (pinnedTools) {
+    for (const name of Object.keys(pinnedTools)) toolNames.push(name);
+  }
   for (const row of rows) {
     for (const name of Object.keys(asToolchain(row.toolchain_json))) {
       if (!toolNames.includes(name)) toolNames.push(name);
@@ -84,12 +108,15 @@ function buildFleetParity(machines = []) {
       const toolchain = asToolchain(row.toolchain_json);
       return Object.prototype.hasOwnProperty.call(toolchain, name) ? toolchain[name] : undefined;
     });
-    // Only installed versions can define the expected value; `null` means the
-    // tool is genuinely absent and must not become the expectation.
-    const expected = majority(values.filter((v) => v !== null && v !== undefined));
+    const pin =
+      pinnedTools && Object.prototype.hasOwnProperty.call(pinnedTools, name) ? pinnedTools[name] : null;
+    // Only installed versions can define the fallback expectation; `null` means
+    // the tool is genuinely absent and must not become the expectation.
+    const expected = pin || majority(values.filter((v) => v !== null && v !== undefined));
     return {
       name,
       expected,
+      pinned: Boolean(pin),
       machines: rows.map((row, index) => ({
         machine: row.machine,
         version: values[index] === undefined ? null : values[index],
@@ -135,7 +162,14 @@ function buildFleetParity(machines = []) {
     const convergenceStatus = row.stale
       ? 'OFFLINE'
       : versionDiffers || revisionDiffers
-        ? (row.last_phase && row.last_phase !== 'idle' ? 'PINNED_ACTIVE_SESSION' : 'VERSION_MISMATCH')
+        ? // With an approved target, a machine that differs is simply not running
+          // it yet; the fix is a client refresh, not a debate about which version
+          // is correct.
+          approved
+          ? 'CLIENT_REFRESH_REQUIRED'
+          : row.last_phase && row.last_phase !== 'idle'
+            ? 'PINNED_ACTIVE_SESSION'
+            : 'VERSION_MISMATCH'
         : status === 'in-sync'
           ? 'CONVERGED'
           : 'CLIENT_REFRESH_REQUIRED';
@@ -143,9 +177,13 @@ function buildFleetParity(machines = []) {
     return {
       machine: row.machine,
       version: row.release_version || null,
-      installedVersion: row.installed_version || row.release_version || null,
+      // "Installed" is a different fact from "running", and nothing reports it
+      // yet. Copying the running version here made the panel claim an
+      // installation nobody had verified.
+      installedVersion: row.installed_version || null,
       runningVersion: row.release_version || null,
       targetVersion: version || row.release_version || null,
+      targetSource,
       revision: row.release_revision || null,
       toolCatalogDigest: row.tool_catalog_digest || (toolchain && toolchain.toolCatalogDigest) || null,
       convergenceStatus,
@@ -167,6 +205,7 @@ function buildFleetParity(machines = []) {
   return {
     version,
     revision,
+    targetSource,
     tools,
     machines: view,
     mismatched: view.filter((m) => m.status === 'drift').map((m) => m.machine),

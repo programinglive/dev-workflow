@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "channel": "stable",
+  "updated": "2026-11-16",
+  "notes": "One pinned toolchain for HELLOWORLD, MMCH and Mac. Every version below is already proven to run on at least one fleet machine, so no pin is a guess. Change a pin only after the version has been installed and smoke-tested on both Windows and macOS.",
+  "tools": {
+    "node": "24.22.1",
+    "npm": "11.19.1",
+    "gh": "2.103.3",
+    "glab": "1.126.0",
+    "wrangler": "4.156.0",
+    "gcloud": "590.0.0"
+  },
+  "managedMcp": {
+    "version": "1.32.1",
+    "revision": "623880a4d1613188ab718f31b6b5d762300635a1"
+  }
+}
