@@ -153,51 +153,29 @@ function claimGeneration(stateFile) {
     return null;
   }
   let max = 0;
+  const pattern = new RegExp(`^${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.retired\\.(\\d+)\\.`);
   for (const name of names) {
-    const match = new RegExp(`^${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.retired\\.(\\d+)\\.`).exec(name);
+    const match = pattern.exec(name);
     if (match) max = Math.max(max, Number(match[1]) || 0);
+  }
+  // The live claim counts too: if the retirement trail is cleaned up while a
+  // claim remains, the next generation must still move forward.
+  const current = readClaim(stateFile);
+  if (current && Number.isFinite(Number(current.generation))) {
+    max = Math.max(max, Number(current.generation));
   }
   return max + 1;
 }
 
 /**
- * Mark a claim as adopted so recovery can never discard a successor's progress.
+ * Run `fn` while holding the handover's recovery lock.
  *
- * The claim stays in place as the audit record of who won; only the marker is
- * added. Written atomically so a crash cannot leave a half-written claim.
+ * Adoption marking and claim retirement both mutate the same `.claim` path, so
+ * they must serialize on the same OS-exclusive lock. Without it, recovery can
+ * read an unadopted claim and rename it after adoption has replaced it, which
+ * would retire an adopted claim and let a second successor take the task.
  */
-function markClaimAdopted(stateFile, { sessionKey, at = Date.now() } = {}) {
-  const file = claimPath(stateFile);
-  if (!file) return { ok: false, code: 'NO_STATE_FILE' };
-  const current = readClaim(stateFile);
-  if (!current) return { ok: false, code: 'NO_CLAIM' };
-  if (sessionKey && current.sessionKey !== sessionKey) {
-    return { ok: false, code: 'CLAIMANT_MISMATCH' };
-  }
-  const next = { ...current, adoptedAt: at, adoptedBy: current.sessionKey };
-  const tmp = `${file}.${process.pid}.${Date.now()}.adopt.tmp`;
-  try {
-    fs.writeFileSync(tmp, JSON.stringify(next, null, 2), { mode: 0o600 });
-    fs.renameSync(tmp, file);
-    return { ok: true, claim: next };
-  } catch (error) {
-    try { fs.unlinkSync(tmp); } catch {}
-    return { ok: false, code: error?.code || 'WRITE_FAILED' };
-  }
-}
-
-/**
- * Retire a stale claim so a crashed successor cannot strand the task forever.
- *
- * This is the only path that removes a `.claim`, and it is deliberately narrow:
- * the caller must present the exact generation it observed, the claimant must
- * be proven dead by the controller, and the retirement is serialized by an
- * OS-exclusive lock so two recoverers cannot both act. The retired claim is
- * renamed, not deleted, so the audit trail survives.
- */
-function retireClaim(stateFile, { generation, expectedSessionKey = null, verify = null } = {}) {
-  const file = claimPath(stateFile);
-  if (!file) return { ok: false, code: 'NO_STATE_FILE' };
+function withRecoveryLock(file, fn) {
   const lock = `${file}.recovery`;
   const tmp = `${lock}.${process.pid}.${Date.now()}.tmp`;
   try {
@@ -213,8 +191,55 @@ function retireClaim(stateFile, { generation, expectedSessionKey = null, verify 
   } finally {
     try { fs.unlinkSync(tmp); } catch {}
   }
-
   try {
+    return fn();
+  } finally {
+    try { fs.unlinkSync(lock); } catch {}
+  }
+}
+
+/**
+ * Mark a claim as adopted so recovery can never discard a successor's progress.
+ *
+ * The claim stays in place as the audit record of who won; only the marker is
+ * added. Written atomically under the recovery lock so a concurrent retirement
+ * cannot rename the claim between the read and the replace.
+ */
+function markClaimAdopted(stateFile, { sessionKey, at = Date.now() } = {}) {
+  const file = claimPath(stateFile);
+  if (!file) return { ok: false, code: 'NO_STATE_FILE' };
+  return withRecoveryLock(file, () => {
+    const current = readClaim(stateFile);
+    if (!current) return { ok: false, code: 'NO_CLAIM' };
+    if (sessionKey && current.sessionKey !== sessionKey) {
+      return { ok: false, code: 'CLAIMANT_MISMATCH' };
+    }
+    const next = { ...current, adoptedAt: at, adoptedBy: current.sessionKey };
+    const tmp = `${file}.${process.pid}.${Date.now()}.adopt.tmp`;
+    try {
+      fs.writeFileSync(tmp, JSON.stringify(next, null, 2), { mode: 0o600 });
+      fs.renameSync(tmp, file);
+      return { ok: true, claim: next };
+    } catch (error) {
+      try { fs.unlinkSync(tmp); } catch {}
+      return { ok: false, code: error?.code || 'WRITE_FAILED' };
+    }
+  });
+}
+
+/**
+ * Retire a stale claim so a crashed successor cannot strand the task forever.
+ *
+ * This is the only path that removes a `.claim`, and it is deliberately narrow:
+ * the caller must present the exact generation it observed, the claimant must
+ * be proven dead by the controller, and the retirement is serialized by an
+ * OS-exclusive lock so two recoverers cannot both act. The retired claim is
+ * renamed, not deleted, so the audit trail survives.
+ */
+function retireClaim(stateFile, { generation, expectedSessionKey = null, verify = null } = {}) {
+  const file = claimPath(stateFile);
+  if (!file) return { ok: false, code: 'NO_STATE_FILE' };
+  return withRecoveryLock(file, () => {
     const current = readClaim(stateFile);
     if (!current) return { ok: false, code: 'NO_CLAIM' };
     if (Number(current.generation) !== Number(generation)) {
@@ -230,13 +255,13 @@ function retireClaim(stateFile, { generation, expectedSessionKey = null, verify 
       }
     }
     const retired = `${file}.retired.${Number(current.generation)}.${Date.now()}`;
-    fs.renameSync(file, retired);
-    return { ok: true, retired, claim: current };
-  } catch (error) {
-    return { ok: false, code: error?.code || 'RETIRE_FAILED' };
-  } finally {
-    try { fs.unlinkSync(lock); } catch {}
-  }
+    try {
+      fs.renameSync(file, retired);
+      return { ok: true, retired, claim: current };
+    } catch (error) {
+      return { ok: false, code: error?.code || 'RETIRE_FAILED' };
+    }
+  });
 }
 
 module.exports = {

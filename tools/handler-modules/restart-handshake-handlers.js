@@ -90,27 +90,46 @@ function verifyOwnerExit({ pid, startedAt, executable } = {}, { isAlive, process
     return { exited: false, code: "PID_REQUIRED", reason: "verify_exit needs the recorded owner PID", pid: target };
   }
 
-  if (typeof isAlive !== "function" || !isAlive(target)) {
+  // Fail closed: without a liveness probe nothing is proven.
+  if (typeof isAlive !== "function") {
+    return { exited: false, code: "LIVENESS_UNAVAILABLE", reason: "no process liveness probe is available", pid: target };
+  }
+  if (!isAlive(target)) {
     return { exited: true, pid: target };
   }
 
+  // The PID is alive. It is only a different process when the recorded identity
+  // decisively differs; an identity the live process cannot confirm is
+  // unverifiable, not proof of reuse.
+  if (typeof processInfo !== "function") {
+    return { exited: false, code: "PROCESS_UNVERIFIABLE", reason: `PID ${target} is alive and cannot be inspected`, pid: target };
+  }
   let info = null;
-  if (typeof processInfo === "function") {
-    try {
-      info = processInfo(target);
-    } catch {
-      info = null;
-    }
+  try {
+    info = processInfo(target);
+  } catch {
+    info = null;
+  }
+  if (!info) {
+    return { exited: false, code: "PROCESS_UNVERIFIABLE", reason: `PID ${target} is alive and could not be inspected`, pid: target };
   }
 
-  // The live process is not the recorded owner when its identity differs.
-  if (info) {
-    if (startedAt && info.startedAt && String(startedAt) !== String(info.startedAt)) {
-      return { exited: true, code: "PID_REUSED", pid: target };
-    }
-    if (executable && info.executable && String(executable) !== String(info.executable)) {
-      return { exited: true, code: "PID_REUSED", pid: target };
-    }
+  const recordedStart = startedAt ? String(startedAt) : "";
+  const liveStart = info.startedAt ? String(info.startedAt) : "";
+  const recordedExe = executable ? String(executable) : "";
+  const liveExe = info.executable ? String(info.executable) : "";
+
+  if (recordedStart && !liveStart) {
+    return { exited: false, code: "PROCESS_UNVERIFIABLE", reason: `PID ${target} creation time could not be read`, pid: target };
+  }
+  if (recordedExe && !liveExe) {
+    return { exited: false, code: "PROCESS_UNVERIFIABLE", reason: `PID ${target} executable could not be read`, pid: target };
+  }
+  if (recordedStart && liveStart && recordedStart !== liveStart) {
+    return { exited: true, code: "PID_REUSED", pid: target };
+  }
+  if (recordedExe && liveExe && recordedExe !== liveExe) {
+    return { exited: true, code: "PID_REUSED", pid: target };
   }
 
   return {
@@ -301,6 +320,29 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
     const prior = read.record;
     if (prior.state === STATES.PROCESS_EXIT_VERIFIED || prior.state === STATES.RELAUNCHED) {
       return { ok: true, state: prior.state, alreadyVerified: true };
+    }
+
+    // The controller must name the project it is acting on, and it must be the
+    // handover's project. Without this a caller could advance a sidecar that
+    // belongs to another project it happens to be able to reach.
+    const callerProject = workflowState.state.projectDir || args.projectDir || null;
+    if (!callerProject) {
+      return { ok: false, code: "PROJECT_UNVERIFIED", note: "verify_exit needs the project it is acting on" };
+    }
+    if (!prior.handover?.projectDir || !samePath(prior.handover.projectDir, callerProject)) {
+      return {
+        ok: false,
+        code: "PROJECT_MISMATCH",
+        note: `the handover belongs to ${prior.handover?.projectDir || "(unknown)"}, not ${callerProject}`,
+      };
+    }
+    const callerMachine = workflowState.state.machine || args.machine || process.env.DEVWF_MACHINE || null;
+    if (callerMachine && prior.handover?.machine && callerMachine !== prior.handover.machine) {
+      return {
+        ok: false,
+        code: "MACHINE_MISMATCH",
+        note: `the handover belongs to ${prior.handover.machine}, not ${callerMachine}`,
+      };
     }
 
     // Prove the owner is gone before recording anything. The identity comes

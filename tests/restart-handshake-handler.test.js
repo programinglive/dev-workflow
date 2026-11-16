@@ -231,7 +231,7 @@ test('verify_exit refuses to record an exit while the owner is still alive', asy
   const owner = recordedOwner(f);
   const result = await handleRestartHandshake(
     { action: 'verify_exit', handover: f.ws.stateFile },
-    { state: {} },
+    { state: { projectDir: '/tmp/project', machine: 'CANARY' } },
     { isAlive: () => true, processInfo: () => ({ pid: owner.pid, startedAt: owner.startedAt, executable: owner.executable }) }
   );
   assert.equal(result.ok, false);
@@ -244,7 +244,7 @@ test('verify_exit records the exit once the owner is gone', async () => {
   const f = await releasedFixture();
   const result = await handleRestartHandshake(
     { action: 'verify_exit', handover: f.ws.stateFile },
-    { state: {} },
+    { state: { projectDir: '/tmp/project', machine: 'CANARY' } },
     { isAlive: () => false }
   );
   assert.equal(result.ok, true);
@@ -262,7 +262,7 @@ test('verify_exit treats a reused PID as an exited owner', async () => {
   writeHs(f.ws.stateFile, { ...rec, handover: { ...rec.handover, owner: { ...owner, startedAt: 'OLD' } } });
   const result = await handleRestartHandshake(
     { action: 'verify_exit', handover: f.ws.stateFile },
-    { state: {} },
+    { state: { projectDir: '/tmp/project', machine: 'CANARY' } },
     { isAlive: () => true, processInfo: () => ({ pid: owner.pid, startedAt: 'NEW', executable: owner.executable }) }
   );
   assert.equal(result.ok, true);
@@ -273,7 +273,7 @@ test('verify_exit refuses a caller-supplied PID that is not the recorded owner',
   const f = await releasedFixture();
   const result = await handleRestartHandshake(
     { action: 'verify_exit', handover: f.ws.stateFile, pid: 999999 },
-    { state: {} },
+    { state: { projectDir: '/tmp/project', machine: 'CANARY' } },
     { isAlive: () => false }
   );
   assert.equal(result.ok, false);
@@ -287,7 +287,7 @@ test('verify_exit refuses a handover with no recorded owner identity', async () 
   writeHs(f.ws.stateFile, { ...rec, handover: { ...rec.handover, owner: undefined } });
   const result = await handleRestartHandshake(
     { action: 'verify_exit', handover: f.ws.stateFile },
-    { state: {} },
+    { state: { projectDir: '/tmp/project', machine: 'CANARY' } },
     { isAlive: () => false }
   );
   assert.equal(result.ok, false);
@@ -419,6 +419,62 @@ test('recover_claim proves a real crashed process is gone', async () => {
     assert.equal(recovered.ok, true);
     assert.equal(recovered.retiredGeneration, 1);
     assert.equal(readClaim(f.ws.stateFile), null);
+  } finally {
+    try { child.kill(); } catch {}
+  }
+});
+
+test('verify_exit refuses an alive PID it cannot inspect', async () => {
+  const f = await releasedFixture();
+  const result = await handleRestartHandshake(
+    { action: 'verify_exit', handover: f.ws.stateFile },
+    { state: { projectDir: '/tmp/project', machine: 'CANARY' } },
+    { isAlive: () => true, processInfo: () => null }
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'PROCESS_UNVERIFIABLE');
+  assert.equal(readHandshake(f.ws.stateFile).record.state, STATES.OWNER_RELEASED);
+});
+
+test('verify_exit refuses a handover from another project', async () => {
+  const f = await releasedFixture();
+  const result = await handleRestartHandshake(
+    { action: 'verify_exit', handover: f.ws.stateFile },
+    { state: { projectDir: '/tmp/other-project', machine: 'CANARY' } },
+    { isAlive: () => false }
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'PROJECT_MISMATCH');
+  assert.equal(readHandshake(f.ws.stateFile).record.state, STATES.OWNER_RELEASED);
+});
+
+test('verify_exit proves a real live owner cannot be certified exited', async () => {
+  const { spawn } = await import("node:child_process");
+  const { createLocalAdapters } = await import("../session-controller-adapters.js");
+  const f = await releasedFixture();
+  const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], { stdio: "ignore", windowsHide: true });
+  try {
+    const info = createLocalAdapters().processInfo(child.pid);
+    const rec = readHandshake(f.ws.stateFile).record;
+    writeHs(f.ws.stateFile, {
+      ...rec,
+      handover: { ...rec.handover, owner: { pid: child.pid, startedAt: info?.startedAt || null, executable: info?.executable || null } },
+    });
+    const alive = await handleRestartHandshake(
+      { action: 'verify_exit', handover: f.ws.stateFile },
+      { state: { projectDir: '/tmp/project', machine: 'CANARY' } }
+    );
+    assert.equal(alive.ok, false);
+    assert.equal(alive.code, 'PROCESS_STILL_ALIVE');
+
+    child.kill();
+    await new Promise((resolve) => child.once('exit', resolve));
+    const gone = await handleRestartHandshake(
+      { action: 'verify_exit', handover: f.ws.stateFile },
+      { state: { projectDir: '/tmp/project', machine: 'CANARY' } }
+    );
+    assert.equal(gone.ok, true);
+    assert.equal(gone.state, STATES.PROCESS_EXIT_VERIFIED);
   } finally {
     try { child.kill(); } catch {}
   }
