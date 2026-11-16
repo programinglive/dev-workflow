@@ -205,6 +205,9 @@ function stateFingerprint(state) {
     machine: state?.machine || '',
     projectDir: state?.projectDir || '',
     repository: state?.repository || null,
+    // The checkpoint record is part of the task: a stale file with the same
+    // task but an older checkpoint must not be handed over.
+    checkpoint: state?.checkpoint || null,
   };
   return crypto.createHash('sha256').update(JSON.stringify(subset)).digest('hex');
 }

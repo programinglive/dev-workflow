@@ -15,7 +15,7 @@
  * therefore keeps its own durable record beside the session state file, written
  * atomically, so a fresh process reads exactly what the owner recorded.
  */
-import { releaseWorktreeMutex } from "../../process-lock.js";
+import { releaseWorktreeMutex, getHeldWorktreeCapability } from "../../process-lock.js";
 import { readFileSync } from "node:fs";
 import { createLocalAdapters } from "../../session-controller-adapters.js";
 import { handleCheckpointTask } from "./checkpoint-handlers.js";
@@ -54,6 +54,42 @@ function samePath(a, b) {
  * `verify_exit`. A caller that could name the PID could name a dead one and
  * certify a live owner as gone.
  */
+/**
+ * Build the durable handover a successor needs. No credentials, no tokens.
+ */
+function buildHandover(workflowState, options, args = {}) {
+  const file = stateFileOf(workflowState, options) || "";
+  const base = file.split(/[\\/]/).pop() || "";
+  const key = base.replace(/^workflow-state\./, "").replace(/\.json$/, "");
+  return {
+    // The canonical session key (the state-file key), because that is what
+    // `resume_session { adopt }` looks up - not the raw MCP session id.
+    sessionKey: key || workflowState.sessionId || null,
+    rawSessionId: workflowState.sessionId || null,
+    stateFile: stateFileOf(workflowState, options),
+    machine: workflowState.state.machine || null,
+    projectDir: workflowState.state.projectDir || null,
+    taskDescription: workflowState.state.taskDescription || null,
+    todoId: Number(workflowState.state.zettly?.todoId) || null,
+    phase: workflowState.state.currentPhase || null,
+    at: Number(args.at) || Date.now(),
+    // The owner's own process identity, captured here so the controller can
+    // prove this exact process exited. Never a credential.
+    owner: captureProcessIdentity(options.adapters),
+    // The task snapshot the successor must adopt. Binding it here means a
+    // changed or stale JSON file with the same session key cannot supply a
+    // different task than the one that was checkpointed.
+    snapshot: {
+      taskDescription: workflowState.state.taskDescription || null,
+      workflowTaskId: workflowState.state.workflowTaskId || null,
+      todoId: Number(workflowState.state.zettly?.todoId) || null,
+      phase: workflowState.state.currentPhase || null,
+      dodRevision: Number(workflowState.state.dodRevision) || 0,
+      fingerprint: stateFingerprint(workflowState.state),
+    },
+  };
+}
+
 function captureProcessIdentity(adapters = null) {
   const identity = { pid: process.pid, startedAt: null, executable: null };
   try {
@@ -298,6 +334,38 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
     // another session's mutex in a multi-session process.
     const ownCapability = workflowState.boundKernelCapability || null;
     if (!ownCapability) {
+      // A retry after a successful release but a failed OWNER_RELEASED write
+      // finds no capability. If the worktree is genuinely unheld, the release
+      // did happen and the durable receipt can still be written.
+      const stillHeld = getHeldWorktreeCapability(projectDir);
+      if (record.state === STATES.QUIESCED && !stillHeld) {
+        const released2 = applyTransition(record, {
+          next: STATES.OWNER_RELEASED,
+          actor: "owner",
+          at: Number(args.at) || Date.now(),
+        });
+        if (!released2.ok) return { ok: false, code: released2.code, note: released2.reason };
+        const next = {
+          ...released2.record,
+          ownerReleasedAt: Number(args.at) || Date.now(),
+          handover: buildHandover(workflowState, options, args),
+          claimedBy: null,
+        };
+        const written = save(workflowState, options, next);
+        const readBack = written.ok ? readHandshake(stateFileOf(workflowState, options)) : { status: "absent" };
+        const persisted = readBack.status === "ok" && readBack.record?.state === STATES.OWNER_RELEASED;
+        return {
+          ok: persisted,
+          code: persisted ? undefined : "RELEASE_NOT_PERSISTED",
+          state: next.state,
+          persisted,
+          handover: next.handover,
+          note: persisted
+            ? "Ownership was already released; the durable receipt is now recorded."
+            : "Ownership is released but the receipt could not be written; the controller must not proceed.",
+          readiness: restartReadiness(next),
+        };
+      }
       return {
         ok: false,
         code: "NO_CAPABILITY",
@@ -328,38 +396,7 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
       ownerReleasedAt: Number(args.at) || Date.now(),
       // The durable handover: everything a successor needs so it never depends
       // on this conversation. No credentials, no tokens.
-      handover: {
-        // The canonical session key (the state-file key), because that is what
-        // `resume_session { adopt }` looks up — not the raw MCP session id.
-        sessionKey: (() => {
-          const file = stateFileOf(workflowState, options) || "";
-          const base = file.split(/[\\/]/).pop() || "";
-          const key = base.replace(/^workflow-state\./, "").replace(/\.json$/, "");
-          return key || workflowState.sessionId || null;
-        })(),
-        rawSessionId: workflowState.sessionId || null,
-        stateFile: stateFileOf(workflowState, options),
-        machine: workflowState.state.machine || null,
-        projectDir: workflowState.state.projectDir || null,
-        taskDescription: workflowState.state.taskDescription || null,
-        todoId: Number(workflowState.state.zettly?.todoId) || null,
-        phase: workflowState.state.currentPhase || null,
-        at: Number(args.at) || Date.now(),
-        // The owner's own process identity, captured here so the controller can
-        // prove this exact process exited. Never a credential.
-        owner: captureProcessIdentity(options.adapters),
-        // The task snapshot the successor must adopt. Binding it here means a
-        // changed or stale JSON file with the same session key cannot supply a
-        // different task than the one that was checkpointed.
-        snapshot: {
-          taskDescription: workflowState.state.taskDescription || null,
-          workflowTaskId: workflowState.state.workflowTaskId || null,
-          todoId: Number(workflowState.state.zettly?.todoId) || null,
-          phase: workflowState.state.currentPhase || null,
-          dodRevision: Number(workflowState.state.dodRevision) || 0,
-          fingerprint: stateFingerprint(workflowState.state),
-        },
-      },
+      handover: buildHandover(workflowState, options, args),
       claimedBy: null,
     };
 
@@ -391,9 +428,6 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
     const read = readHandshake(handoverFile);
     if (read.status !== "ok") return { ok: false, code: "HANDOVER_NOT_FOUND", note: `no readable handover at ${handoverFile}` };
     const prior = read.record;
-    if (prior.state === STATES.PROCESS_EXIT_VERIFIED || prior.state === STATES.RELAUNCHED) {
-      return { ok: true, state: prior.state, alreadyVerified: true };
-    }
 
     // The controller must name the project it is acting on, and it must be the
     // handover's project. Without this a caller could advance a sidecar that
@@ -425,6 +459,12 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
         code: "MACHINE_MISMATCH",
         note: `the handover belongs to ${prior.handover.machine}; exit must be verified on that machine, not ${callerMachine}`,
       };
+    }
+
+    // Only after the identity checks: an already-verified handover still has to
+    // belong to this project and machine before it is reported as verified.
+    if (prior.state === STATES.PROCESS_EXIT_VERIFIED || prior.state === STATES.RELAUNCHED) {
+      return { ok: true, state: prior.state, alreadyVerified: true };
     }
 
     // Prove the owner is gone before recording anything. The identity comes
