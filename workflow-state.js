@@ -4607,6 +4607,62 @@ export class WorkflowState {
     return merged.length - before.length;
   }
 
+  /**
+   * Write this session's JSON state file into the store, replacing any existing
+   * row for the session.
+   *
+   * `load()` prefers an existing SQLite row over the JSON file, so a successor
+   * that already had a row would reload its old state after adoption. Adoption
+   * calls this to make the copied state authoritative, then reloads and verifies.
+   * Runs under the ownership fence: the caller must hold the worktree mutex.
+   */
+  async adoptJsonIntoStore() {
+    return await this.runSerialized(async () => {
+      return await this._withOwnershipFence("adoptJsonIntoStore", async () => {
+        const db = await this._db();
+        const { key: sessionKey } = this._sessionKey();
+        const userId = getCurrentUserId(this.stateFile);
+        const projectPath = this._projectPath();
+        const read = await readJsonStateFile(this.stateFile, this.fs);
+        if (read.status !== "ok") {
+          throw new StateUnavailable(
+            `State file "${this.stateFile}" could not be read for adoption (${read.status}).`,
+          );
+        }
+        const state = sanitize(migrateOwnerMetadata(read.data));
+        if (!state || typeof state !== "object") {
+          throw new StateUnavailable(`State file "${this.stateFile}" did not contain a usable state.`);
+        }
+        // Replace, not insert-if-absent: a successor that already has a row must
+        // still end up with the adopted task, and the worktree mutex is held.
+        if (typeof db.replaceState === "function") {
+          await db.replaceState({ userId, projectPath, sessionKey, state });
+        } else {
+          await db.saveStateVersioned({ userId, projectPath, sessionKey, state, expectedVersion: null });
+        }
+        this._lastLoadCommittedSqlite = true;
+        return state;
+      });
+    });
+  }
+
+  async restoreStateIntoStore(state) {
+    return await this.runSerialized(async () => {
+      return await this._withOwnershipFence("restoreStateIntoStore", async () => {
+        const db = await this._db();
+        const { key: sessionKey } = this._sessionKey();
+        const userId = getCurrentUserId(this.stateFile);
+        const projectPath = this._projectPath();
+        if (typeof db.replaceState === "function") {
+          await db.replaceState({ userId, projectPath, sessionKey, state });
+        } else {
+          await db.saveStateVersioned({ userId, projectPath, sessionKey, state, expectedVersion: null });
+        }
+        return true;
+      });
+    });
+  }
+
   async save(options = {}) {
     return await this.runSerialized(async () => {
       return await this._withOwnershipFence("save", async () => {
