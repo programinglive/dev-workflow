@@ -196,7 +196,7 @@ export function createToolchainProbe({
     if (!executable) throw new Error(`${tool}_not_found`);
 
     if (platform === "win32" && /\.(?:cmd|bat)$/i.test(executable)) {
-      const command = [executable, ...args].map(shellEscape).join(" ");
+      const command = [executable, ...args].map((token) => shellEscape(token, { platform })).join(" ");
       const { stdout } = await exec(command, { timeout: timeoutMs });
       return stdout;
     }
