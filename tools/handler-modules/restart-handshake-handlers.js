@@ -46,6 +46,29 @@ function samePath(a, b) {
 }
 
 /**
+ * Capture this process's own identity so a later controller can prove it exited.
+ *
+ * The identity is recorded by the owner itself, not supplied by the caller of
+ * `verify_exit`. A caller that could name the PID could name a dead one and
+ * certify a live owner as gone.
+ */
+function captureProcessIdentity(adapters = null) {
+  const identity = { pid: process.pid, startedAt: null, executable: null };
+  try {
+    const a = adapters || createLocalAdapters();
+    const info = a.processInfo(process.pid);
+    if (info) {
+      identity.startedAt = info.startedAt || null;
+      identity.executable = info.executable || null;
+    }
+  } catch {
+    // Identity is best-effort at capture time; verify_exit fails closed when it
+    // is missing rather than trusting a caller-supplied substitute.
+  }
+  return identity;
+}
+
+/**
  * Decide whether the recorded owner process is genuinely gone.
  *
  * The controller asserts the exit, but an assertion is not proof: recording
@@ -175,10 +198,14 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
     };
     const written = save(workflowState, options, next);
     return {
-      ok: true,
+      ok: Boolean(written.ok),
+      code: written.ok ? undefined : "CHECKPOINT_NOT_PERSISTED",
       state: next.state,
       persisted: Boolean(written.ok),
       checkpointNote: checkpoint.note,
+      note: written.ok
+        ? "Checkpoint confirmed and recorded."
+        : "The checkpoint was confirmed in Zettly but the handshake record could not be written; the controller must not proceed.",
     };
   }
 
@@ -237,6 +264,9 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
         todoId: Number(workflowState.state.zettly?.todoId) || null,
         phase: workflowState.state.currentPhase || null,
         at: Number(args.at) || Date.now(),
+        // The owner's own process identity, captured here so the controller can
+        // prove this exact process exited. Never a credential.
+        owner: captureProcessIdentity(options.adapters),
       },
       claimedBy: null,
     };
@@ -249,7 +279,8 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
     const persisted = readBack.status === "ok" && readBack.record?.state === STATES.OWNER_RELEASED;
 
     return {
-      ok: true,
+      ok: persisted,
+      code: persisted ? undefined : "RELEASE_NOT_PERSISTED",
       state: next.state,
       persisted,
       handover: next.handover,
@@ -272,8 +303,25 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
       return { ok: true, state: prior.state, alreadyVerified: true };
     }
 
-    // Prove the owner is gone before recording anything. Without this a caller
-    // can mark a live process as exited and hand its task to a second writer.
+    // Prove the owner is gone before recording anything. The identity comes
+    // from the handover the owner wrote, never from the caller: a caller that
+    // could name the PID could name a dead one and certify a live owner.
+    const owner = prior.handover?.owner;
+    if (!owner || !Number.isFinite(Number(owner.pid))) {
+      return {
+        ok: false,
+        code: "OWNER_IDENTITY_MISSING",
+        note: "the handover does not record the owner process identity; exit cannot be proven",
+      };
+    }
+    if (args.pid != null && Number(args.pid) !== Number(owner.pid)) {
+      return {
+        ok: false,
+        code: "OWNER_PID_MISMATCH",
+        note: `the handover records owner PID ${owner.pid}, not ${args.pid}`,
+      };
+    }
+
     let adapters = null;
     if (typeof options.isAlive !== "function") {
       try {
@@ -283,7 +331,7 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
       }
     }
     const exit = verifyOwnerExit(
-      { pid: args.pid, startedAt: args.startedAt, executable: args.executable },
+      { pid: owner.pid, startedAt: owner.startedAt, executable: owner.executable },
       {
         isAlive: options.isAlive || adapters?.isAlive,
         processInfo: options.processInfo || adapters?.processInfo,
@@ -297,7 +345,7 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
       next: STATES.PROCESS_EXIT_VERIFIED,
       actor: "controller",
       at: Number(args.at) || Date.now(),
-      detail: args.pid ? { pid: Number(args.pid), identity: exit.code || "PROCESS_EXITED" } : null,
+      detail: { pid: Number(owner.pid), identity: exit.code || "PROCESS_EXITED" },
     });
     if (!step.ok) return { ok: false, code: step.code, note: step.reason };
     const written = writeHandshake(handoverFile, step.record);
@@ -379,13 +427,20 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
     // True cross-process single winner: an OS-exclusive link, not a read then
     // replace. The loser gets ALREADY_CLAIMED and never touches the task.
     const generation = claimGeneration(handoverFile);
+    if (generation == null) {
+      return { ok: false, code: "GENERATION_UNAVAILABLE", note: "the claim generation could not be determined; refusing to claim" };
+    }
+    const self = captureProcessIdentity(options.adapters);
     const claim = {
       sessionKey: claimant,
       at: Date.now(),
       todoId: prior.handover.todoId || null,
-      // Identity of the claiming process, so a crashed successor can later be
-      // proven dead before its claim is retired. Never a credential.
-      pid: process.pid,
+      // Identity of the claiming process, captured by the claimant itself, so a
+      // crashed successor can later be proven dead before its claim is retired.
+      // Never a credential.
+      pid: self.pid,
+      startedAt: self.startedAt,
+      executable: self.executable,
       machine,
       generation,
     };
@@ -437,6 +492,20 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
 
     const claim = readClaim(handoverFile);
     if (!claim) return { ok: false, code: "NO_CLAIM", note: "the handover has no claim to recover" };
+    if (claim.adoptedAt) {
+      return {
+        ok: false,
+        code: "CLAIM_ALREADY_ADOPTED",
+        note: `the claim was adopted by ${claim.sessionKey} at ${claim.adoptedAt}; its progress must not be discarded`,
+      };
+    }
+    if (!Number.isFinite(Number(claim.pid))) {
+      return {
+        ok: false,
+        code: "CLAIM_IDENTITY_MISSING",
+        note: "the claim does not record the claimant process identity; recovery cannot prove it is safe",
+      };
+    }
 
     const expectedGeneration = Number(args.generation);
     if (!Number.isFinite(expectedGeneration) || expectedGeneration !== Number(claim.generation)) {
@@ -462,7 +531,8 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
       return { ok: false, code: "PROJECT_MISMATCH", note: "recovery must run in the handover's project" };
     }
 
-    // Prove the claimant is gone. A live claimant keeps its claim however old
+    // Prove the claimant is gone using the identity the claimant recorded, not
+    // anything the caller supplies. A live claimant keeps its claim however old
     // the record looks.
     let adapters = null;
     if (typeof options.isAlive !== "function") {
@@ -472,13 +542,15 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
         adapters = null;
       }
     }
-    const exit = verifyOwnerExit(
-      { pid: claim.pid ?? args.pid, startedAt: args.startedAt, executable: args.executable },
-      {
-        isAlive: options.isAlive || adapters?.isAlive,
-        processInfo: options.processInfo || adapters?.processInfo,
-      }
-    );
+    const verifyClaimant = () =>
+      verifyOwnerExit(
+        { pid: claim.pid, startedAt: claim.startedAt, executable: claim.executable },
+        {
+          isAlive: options.isAlive || adapters?.isAlive,
+          processInfo: options.processInfo || adapters?.processInfo,
+        }
+      );
+    const exit = verifyClaimant();
     if (!exit.exited) {
       return { ok: false, code: "CLAIMANT_STILL_ALIVE", note: exit.reason, pid: exit.pid };
     }
@@ -486,6 +558,19 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
     const retired = retireClaim(handoverFile, {
       generation: expectedGeneration,
       expectedSessionKey: claim.sessionKey,
+      // Re-prove under the recovery lock: the claimant could have been replaced
+      // between the check above and the retirement.
+      verify: (current) => {
+        if (current.adoptedAt) return { ok: false, code: "CLAIM_ALREADY_ADOPTED" };
+        const again = verifyOwnerExit(
+          { pid: current.pid, startedAt: current.startedAt, executable: current.executable },
+          {
+            isAlive: options.isAlive || adapters?.isAlive,
+            processInfo: options.processInfo || adapters?.processInfo,
+          }
+        );
+        return again.exited ? { ok: true } : { ok: false, code: "CLAIMANT_STILL_ALIVE" };
+      },
     });
     if (!retired.ok) {
       return { ok: false, code: retired.code, note: `claim recovery failed: ${retired.code}`, currentGeneration: retired.currentGeneration };

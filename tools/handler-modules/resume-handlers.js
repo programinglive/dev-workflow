@@ -3,7 +3,8 @@ import path from "node:path";
 import { textResponse } from "./shared.js";
 import { summarize as summarizeDod, renderOutstanding } from "./dod.js";
 import { planProgress } from "./plan.js";
-import { DEFAULT_LOCK_STALE_MS, acquireWorktreeMutex } from "../../process-lock.js";
+import { DEFAULT_LOCK_STALE_MS, acquireWorktreeMutex, resolveCanonicalWorktreeRoot } from "../../process-lock.js";
+import { readHandshake, readClaim, markClaimAdopted } from "../../monitor-server/restart-handshake-store.cjs";
 import { revalidatePreflight, runPreflight } from "../../preflight.js";
 
 /**
@@ -204,6 +205,49 @@ export async function handleResumeSession(args, workflowState) {
     return textResponse("⚠️ Berkas state itu tidak bisa dibaca. Tidak ada yang diubah.");
   }
 
+  // A handover is not a generic left-behind session: it is a fenced transfer.
+  // When the source carries a handover sidecar, only the session that won the
+  // exclusive claim may adopt it, and only after the controller proved the old
+  // owner exited. Without this the single-winner claim would not fence adoption
+  // at all: a loser could copy the task whenever it got the worktree mutex.
+  const handoverSidecar = `${chosen.file}.restart-handshake.json`;
+  const hasHandover = existsSync(handoverSidecar);
+  if (hasHandover) {
+    const handshake = readHandshake(handoverSidecar);
+    if (handshake.status !== "ok") {
+      return textResponse(
+        `⚠️ Adoption refused: the handover record at "${handoverSidecar}" is not readable. Nothing was changed.`
+      );
+    }
+    const state = handshake.record?.state;
+    if (state !== "PROCESS_EXIT_VERIFIED" && state !== "RELAUNCHED") {
+      return textResponse(
+        `⚠️ Adoption refused: the handover is at ${state}; a successor may only adopt after PROCESS_EXIT_VERIFIED. ` +
+          `Nothing was changed.`
+      );
+    }
+    const claim = readClaim(handoverSidecar);
+    if (!claim) {
+      return textResponse(
+        `⚠️ Adoption refused: this handover has no claim. Claim it first with restart_handshake { action: "claim" }. ` +
+          `Nothing was changed.`
+      );
+    }
+    if (claim.adoptedAt) {
+      return textResponse(
+        `⚠️ Adoption refused: the handover was already adopted by ${claim.sessionKey} at ${claim.adoptedAt}. ` +
+          `Adopting it again would discard that successor's progress.`
+      );
+    }
+    const self = String(workflowState.sessionId || "");
+    if (!self || claim.sessionKey !== self) {
+      return textResponse(
+        `⚠️ Adoption refused: the claim belongs to ${claim.sessionKey}, not this session. ` +
+          `Only the winning successor may adopt the handover. Nothing was changed.`
+      );
+    }
+  }
+
   // Salin ke berkas sesi ini, pertahankan isi apa adanya.
   const target = workflowState.stateFile;
   mkdirSync(path.dirname(target), { recursive: true });
@@ -215,6 +259,20 @@ export async function handleResumeSession(args, workflowState) {
   // can never checkpoint. Acquire BEFORE the state write: if another live owner
   // still holds the worktree, the adoption is refused and nothing changes.
   const adoptProjectDir = source.projectDir || workflowState.state.projectDir || "";
+  // The mutex must be for the worktree this session actually writes into. A
+  // source state that names a different worktree is a cross-project adoption,
+  // which the mutex would not authorize.
+  const sessionProjectDir = workflowState.state.projectDir || projectDirFromStateFile(target);
+  if (adoptProjectDir && sessionProjectDir) {
+    const sourceRoot = resolveCanonicalWorktreeRoot(adoptProjectDir);
+    const sessionRoot = resolveCanonicalWorktreeRoot(sessionProjectDir);
+    if (!sourceRoot.ok || !sessionRoot.ok || sourceRoot.canonicalKey !== sessionRoot.canonicalKey) {
+      return textResponse(
+        `⚠️ Adoption refused: the source state belongs to "${adoptProjectDir}", which is not this session's ` +
+          `worktree ("${sessionProjectDir}"). A task cannot be adopted across projects. Nothing was changed.`
+      );
+    }
+  }
   // The capability owner key is the resolved state-file path: `_capabilityMatchesSession`
   // accepts it directly, and unlike the derived session key it cannot change when
   // the state is reloaded.
@@ -250,6 +308,27 @@ export async function handleResumeSession(args, workflowState) {
     workflowState.bindKernelCapability(adoptMutex.capability);
   }
 
+  // The reload must actually reflect the adopted task. `load()` prefers an
+  // existing SQLite row for this session over the JSON file, so a successor
+  // that already had a row could otherwise be told "adopted" while its old
+  // state was reloaded. Force the adopted state into the store, then verify.
+  if (workflowState.state.taskDescription !== (source.taskDescription || "")) {
+    try {
+      workflowState.state = { ...resumed };
+      await workflowState.save();
+      await workflowState.load({ skipWrites: true });
+    } catch {
+      // Reported below: a reload that does not match is a failed adoption.
+    }
+  }
+  if (workflowState.state.taskDescription !== (source.taskDescription || "")) {
+    return textResponse(
+      `⚠️ Adoption did not commit: the reloaded state does not match the source task ` +
+        `("${source.taskDescription || ""}"). The worktree mutex is held, but the task was not adopted. ` +
+        `Retry after clearing this session's stored state.`
+    );
+  }
+
   // Revalidate the README-first preflight against the current working tree.
   // Documentation edits are reported, not treated as failures; the caller
   // decides whether a change affects the task contract.
@@ -280,16 +359,25 @@ export async function handleResumeSession(args, workflowState) {
   }
 
   // The adoption commit point is the state file above: it was written and
-  // reloaded, so this session owns the task. This final save only persists the
-  // preflight note, and it runs before the successor has acquired the worktree
-  // mutex, so it can legitimately be refused. A refusal here must not turn a
-  // successful adoption into an error the caller cannot interpret — it is
-  // reported as a warning and never as failure.
+  // reloaded, so this session owns the task. This final save persists the
+  // preflight note; the worktree mutex is held, so it should succeed. A refusal
+  // is reported as a warning, never as a silent success.
   let saveNote = "";
   try {
     await workflowState.save();
   } catch (error) {
     saveNote = `\n\nℹ️ Preflight note was not persisted: ${error?.message || error}`;
+  }
+
+  // Finalize the claim so recovery can never discard this successor's progress.
+  // The claim stays as the audit record of who won; only the adopted marker is
+  // added. A failure here is a warning: the task is already adopted.
+  let claimNote = "";
+  if (hasHandover) {
+    const marked = markClaimAdopted(handoverSidecar, { sessionKey: String(workflowState.sessionId || "") });
+    if (!marked.ok) {
+      claimNote = `\n\nℹ️ The claim could not be marked adopted (${marked.code}); recovery may need manual review.`;
+    }
   }
 
   const dod = summarizeDod(workflowState.state.definitionOfDone, workflowState.state.dodRevision);
@@ -305,6 +393,7 @@ export async function handleResumeSession(args, workflowState) {
       outstanding +
       preflightNote +
       saveNote +
+      claimNote +
       `\n\nContinue with 'continue_workflow' or 'get_workflow_status'.`
   );
 }

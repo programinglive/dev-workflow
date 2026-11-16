@@ -221,12 +221,18 @@ async function releasedFixture() {
   return f;
 }
 
+/** The owner identity the release recorded, so tests verify the real PID. */
+function recordedOwner(f) {
+  return readHandshake(f.ws.stateFile).record.handover.owner;
+}
+
 test('verify_exit refuses to record an exit while the owner is still alive', async () => {
   const f = await releasedFixture();
+  const owner = recordedOwner(f);
   const result = await handleRestartHandshake(
-    { action: 'verify_exit', handover: f.ws.stateFile, pid: 4242 },
+    { action: 'verify_exit', handover: f.ws.stateFile },
     { state: {} },
-    { isAlive: () => true, processInfo: () => ({ pid: 4242, startedAt: 'A', executable: 'node' }) }
+    { isAlive: () => true, processInfo: () => ({ pid: owner.pid, startedAt: owner.startedAt, executable: owner.executable }) }
   );
   assert.equal(result.ok, false);
   assert.equal(result.code, 'PROCESS_STILL_ALIVE');
@@ -237,7 +243,7 @@ test('verify_exit refuses to record an exit while the owner is still alive', asy
 test('verify_exit records the exit once the owner is gone', async () => {
   const f = await releasedFixture();
   const result = await handleRestartHandshake(
-    { action: 'verify_exit', handover: f.ws.stateFile, pid: 4242 },
+    { action: 'verify_exit', handover: f.ws.stateFile },
     { state: {} },
     { isAlive: () => false }
   );
@@ -249,24 +255,43 @@ test('verify_exit records the exit once the owner is gone', async () => {
 
 test('verify_exit treats a reused PID as an exited owner', async () => {
   const f = await releasedFixture();
+  const owner = recordedOwner(f);
+  // The handover records the owner's real creation time; a live PID with a
+  // different one is a different process.
+  const rec = readHandshake(f.ws.stateFile).record;
+  writeHs(f.ws.stateFile, { ...rec, handover: { ...rec.handover, owner: { ...owner, startedAt: 'OLD' } } });
   const result = await handleRestartHandshake(
-    { action: 'verify_exit', handover: f.ws.stateFile, pid: 4242, startedAt: 'OLD', executable: 'node' },
+    { action: 'verify_exit', handover: f.ws.stateFile },
     { state: {} },
-    { isAlive: () => true, processInfo: () => ({ pid: 4242, startedAt: 'NEW', executable: 'node' }) }
+    { isAlive: () => true, processInfo: () => ({ pid: owner.pid, startedAt: 'NEW', executable: owner.executable }) }
   );
   assert.equal(result.ok, true);
   assert.equal(result.state, STATES.PROCESS_EXIT_VERIFIED);
 });
 
-test('verify_exit requires the recorded owner PID', async () => {
+test('verify_exit refuses a caller-supplied PID that is not the recorded owner', async () => {
   const f = await releasedFixture();
+  const result = await handleRestartHandshake(
+    { action: 'verify_exit', handover: f.ws.stateFile, pid: 999999 },
+    { state: {} },
+    { isAlive: () => false }
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'OWNER_PID_MISMATCH');
+  assert.equal(readHandshake(f.ws.stateFile).record.state, STATES.OWNER_RELEASED);
+});
+
+test('verify_exit refuses a handover with no recorded owner identity', async () => {
+  const f = await releasedFixture();
+  const rec = readHandshake(f.ws.stateFile).record;
+  writeHs(f.ws.stateFile, { ...rec, handover: { ...rec.handover, owner: undefined } });
   const result = await handleRestartHandshake(
     { action: 'verify_exit', handover: f.ws.stateFile },
     { state: {} },
     { isAlive: () => false }
   );
   assert.equal(result.ok, false);
-  assert.equal(result.code, 'PID_REQUIRED');
+  assert.equal(result.code, 'OWNER_IDENTITY_MISSING');
   assert.equal(readHandshake(f.ws.stateFile).record.state, STATES.OWNER_RELEASED);
 });
 /**
@@ -276,9 +301,9 @@ test('verify_exit requires the recorded owner PID', async () => {
  * is immutable and must never be deleted just because it looks old, so the only
  * way out is a generation-fenced recovery that proves the claimant is gone.
  */
-function writeStaleClaim(f, { sessionKey = 'ses_crashed', generation = 1, pid = 919191 } = {}) {
+function writeStaleClaim(f, { sessionKey = 'ses_crashed', generation = 1, pid = 919191, startedAt = 'S', executable = 'node' } = {}) {
   const file = claimPath(f.ws.stateFile);
-  fs.writeFileSync(file, JSON.stringify({ sessionKey, at: Date.now() - 60_000, pid, generation }, null, 2));
+  fs.writeFileSync(file, JSON.stringify({ sessionKey, at: Date.now() - 60_000, pid, startedAt, executable, generation }, null, 2));
 }
 
 test('recover_claim retires a claim whose successor died', async () => {
@@ -302,15 +327,45 @@ test('recover_claim retires a claim whose successor died', async () => {
 
 test('recover_claim refuses while the claimant is alive', async () => {
   const f = await exitedFixture();
-  writeStaleClaim(f, { pid: 4242 });
+  writeStaleClaim(f, { pid: 4242, startedAt: 'S', executable: 'node' });
   const result = await handleRestartHandshake(
     { action: 'recover_claim', handover: f.ws.stateFile, generation: 1 },
     { state: { machine: 'CANARY', projectDir: '/tmp/project' } },
-    { isAlive: () => true, processInfo: () => ({ pid: 4242, startedAt: 'A', executable: 'node' }) }
+    { isAlive: () => true, processInfo: () => ({ pid: 4242, startedAt: 'S', executable: 'node' }) }
   );
   assert.equal(result.ok, false);
   assert.equal(result.code, 'CLAIMANT_STILL_ALIVE');
   assert.equal(readClaim(f.ws.stateFile).sessionKey, 'ses_crashed');
+});
+
+test('recover_claim refuses a claim that was already adopted', async () => {
+  const f = await exitedFixture();
+  writeStaleClaim(f);
+  const file = claimPath(f.ws.stateFile);
+  const claim = JSON.parse(fs.readFileSync(file, 'utf8'));
+  fs.writeFileSync(file, JSON.stringify({ ...claim, adoptedAt: Date.now() }, null, 2));
+  const result = await handleRestartHandshake(
+    { action: 'recover_claim', handover: f.ws.stateFile, generation: 1 },
+    { state: { machine: 'CANARY', projectDir: '/tmp/project' } },
+    { isAlive: () => false }
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'CLAIM_ALREADY_ADOPTED');
+  assert.ok(readClaim(f.ws.stateFile), 'an adopted claim is never retired');
+});
+
+test('recover_claim refuses a claim with no recorded identity', async () => {
+  const f = await exitedFixture();
+  const file = claimPath(f.ws.stateFile);
+  fs.writeFileSync(file, JSON.stringify({ sessionKey: 'ses_legacy', at: Date.now(), generation: 1 }, null, 2));
+  const result = await handleRestartHandshake(
+    { action: 'recover_claim', handover: f.ws.stateFile, generation: 1 },
+    { state: { machine: 'CANARY', projectDir: '/tmp/project' } },
+    { isAlive: () => false }
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'CLAIM_IDENTITY_MISSING');
+  assert.ok(readClaim(f.ws.stateFile));
 });
 
 test('recover_claim is fenced by the observed generation', async () => {
@@ -339,10 +394,13 @@ test('recover_claim needs a claim to recover', async () => {
 
 test('recover_claim proves a real crashed process is gone', async () => {
   const { spawn } = await import("node:child_process");
+  const { createLocalAdapters } = await import("../session-controller-adapters.js");
   const f = await exitedFixture();
   const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], { stdio: "ignore", windowsHide: true });
   try {
-    writeStaleClaim(f, { pid: child.pid, generation: 1 });
+    // Record the child's real identity, exactly as a claimant would.
+    const info = createLocalAdapters().processInfo(child.pid);
+    writeStaleClaim(f, { pid: child.pid, generation: 1, startedAt: info?.startedAt || 'S', executable: info?.executable || 'node' });
     // The claimant is alive right now: recovery must refuse with the real OS check.
     const alive = await handleRestartHandshake(
       { action: "recover_claim", handover: f.ws.stateFile, generation: 1 },

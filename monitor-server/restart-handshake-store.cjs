@@ -132,27 +132,58 @@ function tryClaimHandshake(stateFile, claim) {
 }
 
 /**
- * How many claims have already been retired for this handover.
+ * The next claim generation for this handover.
  *
- * The generation is derived from the durable audit trail instead of being
- * written into the handover record, because that record is immutable: the
- * `.claim` file is the authoritative winner and a retired claim is kept, never
- * deleted, so the count only grows.
+ * Derived from the durable audit trail instead of the handover record, because
+ * that record is immutable: the `.claim` file is the authoritative winner and a
+ * retired claim is kept, never deleted, so the maximum only grows. Returns null
+ * when the trail cannot be read, so a caller fails closed instead of silently
+ * restarting at generation 1.
  */
-function retiredClaimCount(stateFile) {
+function claimGeneration(stateFile) {
   const file = claimPath(stateFile);
-  if (!file) return 0;
+  if (!file) return null;
   const dir = path.dirname(file);
   const base = path.basename(file);
+  let names;
   try {
-    return fs.readdirSync(dir).filter((name) => name.startsWith(`${base}.retired.`)).length;
-  } catch {
-    return 0;
+    names = fs.readdirSync(dir);
+  } catch (error) {
+    if (error && error.code === 'ENOENT') return 1;
+    return null;
   }
+  let max = 0;
+  for (const name of names) {
+    const match = new RegExp(`^${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.retired\\.(\\d+)\\.`).exec(name);
+    if (match) max = Math.max(max, Number(match[1]) || 0);
+  }
+  return max + 1;
 }
 
-function claimGeneration(stateFile) {
-  return retiredClaimCount(stateFile) + 1;
+/**
+ * Mark a claim as adopted so recovery can never discard a successor's progress.
+ *
+ * The claim stays in place as the audit record of who won; only the marker is
+ * added. Written atomically so a crash cannot leave a half-written claim.
+ */
+function markClaimAdopted(stateFile, { sessionKey, at = Date.now() } = {}) {
+  const file = claimPath(stateFile);
+  if (!file) return { ok: false, code: 'NO_STATE_FILE' };
+  const current = readClaim(stateFile);
+  if (!current) return { ok: false, code: 'NO_CLAIM' };
+  if (sessionKey && current.sessionKey !== sessionKey) {
+    return { ok: false, code: 'CLAIMANT_MISMATCH' };
+  }
+  const next = { ...current, adoptedAt: at, adoptedBy: current.sessionKey };
+  const tmp = `${file}.${process.pid}.${Date.now()}.adopt.tmp`;
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(next, null, 2), { mode: 0o600 });
+    fs.renameSync(tmp, file);
+    return { ok: true, claim: next };
+  } catch (error) {
+    try { fs.unlinkSync(tmp); } catch {}
+    return { ok: false, code: error?.code || 'WRITE_FAILED' };
+  }
 }
 
 /**
@@ -164,7 +195,7 @@ function claimGeneration(stateFile) {
  * OS-exclusive lock so two recoverers cannot both act. The retired claim is
  * renamed, not deleted, so the audit trail survives.
  */
-function retireClaim(stateFile, { generation, expectedSessionKey = null } = {}) {
+function retireClaim(stateFile, { generation, expectedSessionKey = null, verify = null } = {}) {
   const file = claimPath(stateFile);
   if (!file) return { ok: false, code: 'NO_STATE_FILE' };
   const lock = `${file}.recovery`;
@@ -192,6 +223,12 @@ function retireClaim(stateFile, { generation, expectedSessionKey = null } = {}) 
     if (expectedSessionKey && current.sessionKey !== expectedSessionKey) {
       return { ok: false, code: 'CLAIMANT_MISMATCH' };
     }
+    if (typeof verify === 'function') {
+      const verdict = verify(current);
+      if (!verdict || verdict.ok !== true) {
+        return { ok: false, code: verdict?.code || 'VERIFY_FAILED' };
+      }
+    }
     const retired = `${file}.retired.${Number(current.generation)}.${Date.now()}`;
     fs.renameSync(file, retired);
     return { ok: true, retired, claim: current };
@@ -212,5 +249,6 @@ module.exports = {
   readClaim,
   tryClaimHandshake,
   claimGeneration,
+  markClaimAdopted,
   retireClaim,
 };
