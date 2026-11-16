@@ -479,3 +479,31 @@ test('verify_exit proves a real live owner cannot be certified exited', async ()
     try { child.kill(); } catch {}
   }
 });
+
+test('verify_exit refuses to verify a handover from another machine', async () => {
+  const f = await releasedFixture();
+  const result = await handleRestartHandshake(
+    { action: 'verify_exit', handover: f.ws.stateFile },
+    { state: { projectDir: '/tmp/project', machine: 'OTHER-MACHINE' } },
+    { isAlive: () => false }
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'MACHINE_MISMATCH');
+  assert.equal(readHandshake(f.ws.stateFile).record.state, STATES.OWNER_RELEASED);
+});
+
+test('a recovery lock left by a dead process is reclaimed', async () => {
+  const f = await exitedFixture();
+  writeStaleClaim(f);
+  const { claimPath } = await import("../monitor-server/restart-handshake-store.cjs");
+  const lock = `${claimPath(f.ws.stateFile)}.recovery`;
+  // A dead PID holds the lock; recovery must not be blocked forever.
+  fs.writeFileSync(lock, JSON.stringify({ pid: 999999, at: Date.now() - 60_000 }));
+  const result = await handleRestartHandshake(
+    { action: 'recover_claim', handover: f.ws.stateFile, generation: 1 },
+    { state: { machine: 'CANARY', projectDir: '/tmp/project' } },
+    { isAlive: () => false }
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.retiredGeneration, 1);
+});

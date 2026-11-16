@@ -243,7 +243,11 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
 
     const projectDir = workflowState.state.projectDir || "";
     const releaseMutex = options.releaseMutex || releaseWorktreeMutex;
-    const released = await releaseMutex(projectDir);
+    // Release this session's own capability, not "whatever the process holds
+    // for this worktree": one process can serve several sessions, and releasing
+    // by path could drop another session's mutex.
+    const ownCapability = workflowState.boundKernelCapability || null;
+    const released = await releaseMutex(ownCapability || projectDir);
     if (!released) {
       save(workflowState, options, { ...quiesced.record, lastReleaseError: "releaseWorktreeMutex returned false" });
       return {
@@ -337,11 +341,17 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
       };
     }
     const callerMachine = workflowState.state.machine || args.machine || process.env.DEVWF_MACHINE || null;
-    if (callerMachine && prior.handover?.machine && callerMachine !== prior.handover.machine) {
+    if (!callerMachine || !prior.handover?.machine) {
+      return { ok: false, code: "MACHINE_UNVERIFIED", note: "the handover and this controller must both name a machine" };
+    }
+    // The exit check inspects the LOCAL process table, so it is only meaningful
+    // on the machine that owns the handover. A controller on another machine
+    // would see the PID absent and certify a live remote owner as exited.
+    if (callerMachine !== prior.handover.machine) {
       return {
         ok: false,
         code: "MACHINE_MISMATCH",
-        note: `the handover belongs to ${prior.handover.machine}, not ${callerMachine}`,
+        note: `the handover belongs to ${prior.handover.machine}; exit must be verified on that machine, not ${callerMachine}`,
       };
     }
 

@@ -177,19 +177,54 @@ function claimGeneration(stateFile) {
  */
 function withRecoveryLock(file, fn) {
   const lock = `${file}.recovery`;
-  const tmp = `${lock}.${process.pid}.${Date.now()}.tmp`;
-  try {
+  const writeTmp = () => {
+    const tmp = `${lock}.${process.pid}.${Date.now()}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify({ pid: process.pid, at: Date.now() }), { mode: 0o600 });
-  } catch (error) {
-    return { ok: false, code: error?.code || 'WRITE_FAILED' };
+    return tmp;
+  };
+  const tryLink = () => {
+    let tmp = null;
+    try {
+      tmp = writeTmp();
+      fs.linkSync(tmp, lock);
+      return { ok: true };
+    } catch (error) {
+      if (error && error.code === 'EEXIST') return { ok: false, code: 'EEXIST' };
+      return { ok: false, code: error?.code || 'LINK_FAILED' };
+    } finally {
+      if (tmp) {
+        try { fs.unlinkSync(tmp); } catch {}
+      }
+    }
+  };
+
+  let acquired = tryLink();
+  if (!acquired.ok && acquired.code === 'EEXIST') {
+    // A recoverer that died while holding the lock must not block recovery
+    // forever. The lock records its owner's PID; reclaim it only when that
+    // process is provably gone. An unreadable lock is treated as live.
+    let ownerPid = null;
+    try {
+      ownerPid = Number(JSON.parse(fs.readFileSync(lock, 'utf8')).pid);
+    } catch {
+      ownerPid = null;
+    }
+    let ownerAlive = true;
+    if (Number.isFinite(ownerPid) && ownerPid > 0) {
+      try {
+        process.kill(ownerPid, 0);
+        ownerAlive = true;
+      } catch (error) {
+        ownerAlive = error?.code === 'EPERM';
+      }
+    }
+    if (!ownerAlive) {
+      try { fs.unlinkSync(lock); } catch {}
+      acquired = tryLink();
+    }
   }
-  try {
-    fs.linkSync(tmp, lock);
-  } catch (error) {
-    if (error && error.code === 'EEXIST') return { ok: false, code: 'RECOVERY_IN_PROGRESS' };
-    return { ok: false, code: error?.code || 'LINK_FAILED' };
-  } finally {
-    try { fs.unlinkSync(tmp); } catch {}
+  if (!acquired.ok) {
+    return { ok: false, code: acquired.code === 'EEXIST' ? 'RECOVERY_IN_PROGRESS' : acquired.code };
   }
   try {
     return fn();
