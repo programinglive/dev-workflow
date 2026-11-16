@@ -64,6 +64,24 @@ stop a process, but only the client can start it again. Without a configured
 relaunch it reports `RELAUNCH_ADAPTER_REQUIRED` and leaves the process running,
 because a half restart is worse than no restart.
 
+**Why `checkpointCommand` is required too.** The controller will not stop a
+process whose work has not been saved. There is no CLI checkpoint: saving a task
+is the `checkpoint_task` MCP tool, so the command must invoke it for the project
+being restarted. Until it is configured the controller refuses with
+`CHECKPOINT_ADAPTER_REQUIRED` and stops nothing — a fail-safe, not a bug.
+
+### Verified per client
+
+| Client | Relaunch mechanism | Status |
+|---|---|---|
+| OpenCode | `opencode service restart` | configured on HELLOWORLD; the service restart reconnects MCP servers, so the launcher fetches the current release |
+| Codex | none (no restart verb in the CLI) | needs the client restarted by its own means |
+| Antigravity | none (GUI/CLI has no restart verb) | needs the client restarted by its own means |
+
+A coordinated restart that includes Codex or Antigravity therefore still needs a
+human at that machine. The channel handles the audit, the ordering and the
+reporting; it does not invent a relaunch the client cannot provide.
+
 ## Controller-side executor
 
 The controller-side executor is headless and testable:
