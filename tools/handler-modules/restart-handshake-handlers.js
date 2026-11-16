@@ -48,14 +48,14 @@ function samePath(a, b) {
  * Advance the handshake.
  *
  * @param {object} args
- * @param {string} args.action status|checkpoint|release|cancel|claim
+ * @param {string} args.action status|checkpoint|release|cancel|claim|verify_exit
  */
 export async function handleRestartHandshake(args = {}, workflowState = null, options = {}) {
   const action = String(args.action || "status");
   if (!workflowState?.state) return { ok: false, code: "NO_STATE", note: "No session state is loaded." };
   // The claim names the previous owner's handover explicitly, so the caller
   // does not need its own state file to start the claim.
-  if (action !== "claim" && !stateFileOf(workflowState, options)) {
+  if (action !== "claim" && action !== "verify_exit" && !stateFileOf(workflowState, options)) {
     return { ok: false, code: "NO_STATE_FILE", note: "This session has no state file to record the handshake in." };
   }
 
@@ -167,7 +167,15 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
       // The durable handover: everything a successor needs so it never depends
       // on this conversation. No credentials, no tokens.
       handover: {
-        sessionKey: workflowState.sessionId || null,
+        // The canonical session key (the state-file key), because that is what
+        // `resume_session { adopt }` looks up — not the raw MCP session id.
+        sessionKey: (() => {
+          const file = stateFileOf(workflowState, options) || "";
+          const base = file.split(/[\\/]/).pop() || "";
+          const key = base.replace(/^workflow-state\./, "").replace(/\.json$/, "");
+          return key || workflowState.sessionId || null;
+        })(),
+        rawSessionId: workflowState.sessionId || null,
         stateFile: stateFileOf(workflowState, options),
         machine: workflowState.state.machine || null,
         projectDir: workflowState.state.projectDir || null,
@@ -196,6 +204,31 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
         : "Ownership released in memory but the record could not be verified on disk; the controller must not proceed.",
       readiness: restartReadiness(next),
     };
+  }
+
+  if (action === "verify_exit") {
+    // Controller-side. The old process is gone, proven by the controller, not
+    // by the owner. This is what makes a successor eligible.
+    const handoverFile = args.handover || options.stateFile || null;
+    if (!handoverFile) return { ok: false, code: "HANDOVER_REQUIRED", note: "verify_exit needs the handover path" };
+    const read = readHandshake(handoverFile);
+    if (read.status !== "ok") return { ok: false, code: "HANDOVER_NOT_FOUND", note: `no readable handover at ${handoverFile}` };
+    const prior = read.record;
+    if (prior.state === STATES.PROCESS_EXIT_VERIFIED || prior.state === STATES.RELAUNCHED) {
+      return { ok: true, state: prior.state, alreadyVerified: true };
+    }
+    const step = applyTransition(prior, {
+      next: STATES.PROCESS_EXIT_VERIFIED,
+      actor: "controller",
+      at: Number(args.at) || Date.now(),
+      detail: args.pid ? { pid: Number(args.pid) } : null,
+    });
+    if (!step.ok) return { ok: false, code: step.code, note: step.reason };
+    const written = writeHandshake(handoverFile, step.record);
+    if (!written.ok) return { ok: false, code: "WRITE_FAILED", note: String(written.code) };
+    const back = readHandshake(handoverFile);
+    const persisted = back.status === "ok" && back.record.state === STATES.PROCESS_EXIT_VERIFIED;
+    return { ok: persisted, state: step.record.state, persisted };
   }
 
   if (action === "claim") {
@@ -239,9 +272,9 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
       return { ok: false, code: "HANDOVER_INCOMPLETE", note: "the handover does not name its session" };
     }
 
-    // Same machine and same repository only, and both sides must actually say
-    // so: an absent value must never be read as "matches".
-    const machine = workflowState.state.machine || null;
+    // A fresh successor has no task yet, so its identity comes from the
+    // environment the client launched it with, not from task state.
+    const machine = workflowState.state.machine || process.env.DEVWF_MACHINE || null;
     if (!machine || !prior.handover.machine) {
       return { ok: false, code: "MACHINE_UNVERIFIED", note: "the handover and this session must both name a machine" };
     }
@@ -252,7 +285,7 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
         note: `handover belongs to ${prior.handover.machine}, this session is ${machine}`,
       };
     }
-    const projectDir = workflowState.state.projectDir || null;
+    const projectDir = workflowState.state.projectDir || process.cwd() || null;
     if (!projectDir || !prior.handover.projectDir) {
       return { ok: false, code: "PROJECT_UNVERIFIED", note: "the handover and this session must both name a project" };
     }

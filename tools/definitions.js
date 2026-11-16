@@ -309,7 +309,7 @@ export function getToolList() {
         properties: {
           action: {
             type: "string",
-            enum: ["status", "checkpoint", "release", "cancel", "claim"],
+            enum: ["status", "checkpoint", "release", "cancel", "claim", "verify_exit"],
             description: "Which owner-side handshake step to perform.",
           },
           summary: {

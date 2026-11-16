@@ -15,9 +15,12 @@ const path = require('node:path');
 
 const SUFFIX = '.restart-handshake.json';
 
+// Accept either the session state file or the sidecar path itself, so a
+// controller holding a handover path does not have to know the convention.
 function handshakePath(stateFile) {
   if (!stateFile) return null;
-  return `${path.resolve(String(stateFile))}${SUFFIX}`;
+  const resolved = path.resolve(String(stateFile));
+  return resolved.endsWith(SUFFIX) ? resolved : `${resolved}${SUFFIX}`;
 }
 
 /**
@@ -90,7 +93,8 @@ function clearHandshake(stateFile) {
  */
 function claimPath(stateFile) {
   if (!stateFile) return null;
-  return `${path.resolve(String(stateFile))}${SUFFIX}.claim`;
+  const resolved = path.resolve(String(stateFile));
+  return resolved.endsWith(SUFFIX) ? `${resolved}.claim` : `${resolved}${SUFFIX}.claim`;
 }
 
 function readClaim(stateFile) {
