@@ -22,10 +22,49 @@ GET  /api/fleet/restart/status   { active, audit }
 GET  /api/fleet/restart/audit    { audit }
 ```
 
-The POST returns a plan, not a process action. Each machine controller executes
-its own entries.
+`mode: "all"` plans the fleet and then enqueues one durable command per target
+in `restart_commands` (migration 007). A repeated request cannot queue the same
+target twice while its command is still pending.
 
-## Controller CLI
+## Controller channel
+
+The queue is pull-based, so no inbound access to a machine is needed:
+
+```
+POST /api/reaper/commands          signed by the machine -> its pending commands only
+POST /api/reaper/commands/result   signed by the machine -> record the outcome
+```
+
+Both are authenticated with the same per-machine HMAC credential as the reaper.
+The Monitor filters by machine, so a credential for MMCH can neither read nor
+complete a Mac command. A result update only applies while the command is
+`pending`, so a replayed report is a no-op.
+
+### Controller CLI
+
+```bash
+node scripts/restart-controller.mjs --config ~/devwf-controller/config.json --once
+node scripts/restart-controller.mjs --config ... --dry-run
+node scripts/restart-controller.mjs --config ...            # poll every 30s
+```
+
+Config (mode 600):
+
+```json
+{
+  "machine": "MMCH",
+  "secret": "<this machine's reaper secret>",
+  "monitor": "http://monitor-host.example:3100",
+  "relaunchCommand": ["C:\\path\\to\\client.exe", "--restore"]
+}
+```
+
+**Why `relaunchCommand` is required for a real restart.** The controller can
+stop a process, but only the client can start it again. Without a configured
+relaunch it reports `RELAUNCH_ADAPTER_REQUIRED` and leaves the process running,
+because a half restart is worse than no restart.
+
+## Controller-side executor
 
 The controller-side executor is headless and testable:
 
@@ -53,7 +92,8 @@ failure this design exists to prevent.
 
 ## What is not wired yet
 
-There is no Monitor-to-controller command channel. The Monitor produces the
-plan and the audit; a controller must fetch and execute it. Until that channel
-exists, Restart All is proven at the planner and executor level with fixtures,
-not against live clients.
+Nothing in the dispatch path: the queue, the signed poll, the signed result and
+the controller CLI are all implemented. What remains is per-client relaunch
+knowledge — each AI CLI is started differently, so `relaunchCommand` must be
+configured per machine before a real restart can complete. Without it the
+controller stops nothing and reports `RELAUNCH_ADAPTER_REQUIRED`.
