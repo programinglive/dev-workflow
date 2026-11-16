@@ -293,6 +293,34 @@ export function getToolList() {
       },
     },
     {
+      name: "restart_handshake",
+      description:
+        "Owner side of a cooperative restart. The session holds the worktree mutex, so an external " +
+        "controller cannot checkpoint or release it; this tool lets the owner do its half. " +
+        "action=status reports the current handshake state and readiness. " +
+        "action=checkpoint writes and verifies a checkpoint through the Zettly read-back and records " +
+        "OWNER_ACKNOWLEDGED then CHECKPOINT_CONFIRMED; an unconfirmed write aborts the restart. " +
+        "action=release records QUIESCED, releases the owned worktree mutex through the official path, " +
+        "and records OWNER_RELEASED only when the lock mechanism confirms it. " +
+        "action=cancel stops the restart before the process is touched. " +
+        "The owner can never record the controller's steps (process exit, relaunch, recovery).",
+      inputSchema: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: ["status", "checkpoint", "release", "cancel"],
+            description: "Which owner-side handshake step to perform.",
+          },
+          summary: {
+            type: "string",
+            description: "Optional checkpoint summary recorded with the task.",
+          },
+        },
+        required: ["action"],
+      },
+    },
+    {
       name: "checkpoint_task",
       description:
         "Write an authoritative checkpoint of the current task into its Zettly Todo and prove the " +

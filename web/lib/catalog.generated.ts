@@ -8,7 +8,7 @@ export const GENERATED_CATALOG = {
   "repositoryUrl": "https://github.com/programinglive/dev-workflow-mcp-server",
   "repositoryVisibility": "PRIVATE",
   "npmPubliclyPublished": false,
-  "mcpToolCount": 58,
+  "mcpToolCount": 59,
   "mcpTools": [
     {
       "name": "acknowledge_handover",
@@ -1037,6 +1037,34 @@ export const GENERATED_CATALOG = {
       "params": []
     },
     {
+      "name": "restart_handshake",
+      "description": "Owner side of a cooperative restart. The session holds the worktree mutex, so an external controller cannot checkpoint or release it; this tool lets the owner do its half. action=status reports the current handshake state and readiness. action=checkpoint writes and verifies a checkpoint through the Zettly read-back and records OWNER_ACKNOWLEDGED then CHECKPOINT_CONFIRMED; an unconfirmed write aborts the restart. action=release records QUIESCED, releases the owned worktree mutex through the official path, and records OWNER_RELEASED only when the lock mechanism confirms it. action=cancel stops the restart before the process is touched. The owner can never record the controller's steps (process exit, relaunch, recovery).",
+      "required": [
+        "action"
+      ],
+      "params": [
+        {
+          "name": "action",
+          "type": "string",
+          "description": "Which owner-side handshake step to perform.",
+          "required": true,
+          "enumValues": [
+            "status",
+            "checkpoint",
+            "release",
+            "cancel"
+          ]
+        },
+        {
+          "name": "summary",
+          "type": "string",
+          "description": "Optional checkpoint summary recorded with the task.",
+          "required": false,
+          "enumValues": []
+        }
+      ]
+    },
+    {
       "name": "resume_session",
       "description": "Reconnect to a workflow state left behind by another session in THIS project. Called without arguments it lists what is resumable (task, phase, DoD and plan progress) and whether it is safe to take. With { adopt: \"<session-key>\" } it copies that state into this session and continues from there. Refuses tasks whose owner is still writing, refuses when this session already has a running task, and never deletes the source file.",
       "required": [],
@@ -1565,6 +1593,7 @@ export const GENERATED_CATALOG = {
       "share",
       "drop",
       "complete",
+      "checkpoint",
       "help",
       "version",
       "doctor",
@@ -1585,7 +1614,7 @@ export const GENERATED_CATALOG = {
       "doctor",
       "upgrade"
     ],
-    "usage": "devwf - close sessions and cards without the web monitor\n\nUsage:\n  devwf doctor                                 Check environment, node, and storage diagnostics\n  devwf setup [--skip-zettly] [--json]         Initialize local-first profile (preserves existing Zettly)\n  devwf zettly status|skip|connect|switch|disconnect|doctor\n                                               Manage optional per-user Zettly integration\n  devwf pair [--url <url>] [--json]            Generate pairing challenge for mobile companion\n  devwf list                                  List sessions from the monitor\n  devwf close --session <key> [--dry-run]      Mark one session closed\n  devwf share list                             List live share links\n  devwf share revoke --token <t> [--dry-run]   Revoke one share link\n  devwf share revoke --orphans [--dry-run]     Revoke every orphan link\n  devwf drop --session <key> --reason <r> [--dry-run]\n                                               Drop a task without completing it\n  devwf complete --session <key> [--next-steps <s>]... [--dry-run]\n                                               Complete a task whose DoD is proven\n  devwf identity --dir <path> [--against <path>] [--json]\n                                               Print the repository identity contract and\n                                               whether <path> may start a task against --against\n  devwf --help | --version\n\nEnvironment:\n  DEVWF_MONITOR_URL     Base URL of the central monitor (required)\n  DEVWF_MONITOR_TOKEN   Write token for the monitor (required for writes)\n\nRules:\n  --session is mandatory for every command that changes anything. There is no\n  \"current session\" default, so a missing target is always a refusal.\n  --dry-run prints what would change and writes nothing.\n  No command ever signals a process. close only marks the session closed.\n\nExit codes:\n  0 success   1 refusal or failure"
+    "usage": "devwf - close sessions and cards without the web monitor\n\nUsage:\n  devwf doctor                                 Check environment, node, and storage diagnostics\n  devwf setup [--skip-zettly] [--json]         Initialize local-first profile (preserves existing Zettly)\n  devwf zettly status|skip|connect|switch|disconnect|doctor\n                                               Manage optional per-user Zettly integration\n  devwf pair [--url <url>] [--json]            Generate pairing challenge for mobile companion\n  devwf list                                  List sessions from the monitor\n  devwf close --session <key> [--dry-run]      Mark one session closed\n  devwf share list                             List live share links\n  devwf share revoke --token <t> [--dry-run]   Revoke one share link\n  devwf share revoke --orphans [--dry-run]     Revoke every orphan link\n  devwf drop --session <key> --reason <r> [--dry-run]\n                                               Drop a task without completing it\n  devwf complete --session <key> [--next-steps <s>]... [--dry-run]\n                                               Complete a task whose DoD is proven\n  devwf checkpoint --session <key> [--summary <s>] [--dry-run]\n                                               Write and verify a task checkpoint before a restart\n  devwf identity --dir <path> [--against <path>] [--json]\n                                               Print the repository identity contract and\n                                               whether <path> may start a task against --against\n  devwf --help | --version\n\nEnvironment:\n  DEVWF_MONITOR_URL     Base URL of the central monitor (required)\n  DEVWF_MONITOR_TOKEN   Write token for the monitor (required for writes)\n\nRules:\n  --session is mandatory for every command that changes anything. There is no\n  \"current session\" default, so a missing target is always a refusal.\n  --dry-run prints what would change and writes nothing.\n  No command ever signals a process. close only marks the session closed.\n\nExit codes:\n  0 success   1 refusal or failure"
   },
   "changelogEntries": [
     {

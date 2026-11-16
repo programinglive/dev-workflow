@@ -18,6 +18,7 @@ import { handleNextSteps } from "./next-steps-handlers.js";
 import { handleResumeSession } from "./resume-handlers.js";
 import { handleAcknowledgeInstructions } from "./preflight-handlers.js";
 import { handleSetPlan, handleMarkPlanStep } from "./workflow-handlers.js";
+import { handleRestartHandshake } from "./restart-handshake-handlers.js";
 import { handleCheckpointTask, handleHandoffTask, handleAcknowledgeHandover } from "./checkpoint-handlers.js";
 import { handleFetchTask } from "./remote-checkpoint.js";
 import { renderPlanShort } from "./plan.js";
@@ -442,6 +443,8 @@ async function dispatchToolCall({
         return handleNextSteps(args, workflowState);
       case "resume_session":
         return handleResumeSession(args, workflowState);
+      case "restart_handshake":
+        return textResponse(JSON.stringify(await handleRestartHandshake(args, workflowState)));
       case "checkpoint_task":
         return textResponse(
           JSON.stringify(
