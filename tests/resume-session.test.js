@@ -54,6 +54,9 @@ async function withProject(fn) {
 
   const state = new WorkflowState(currentFile);
   await state.load();
+  // A real session knows the worktree it runs in; the fixture must too, or the
+  // cross-project guard compares against the test runner's cwd.
+  state.state.projectDir = projectDir;
 
   try {
     return await fn({ state, projectDir, userDir, currentFile, otherFile, write, root });

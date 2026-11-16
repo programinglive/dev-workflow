@@ -8,6 +8,9 @@ import { handleRestartHandshake } from "../tools/handler-modules/restart-handsha
 import { STATES } from "../monitor-server/restart-handshake.cjs";
 import { readHandshake, writeHandshake, claimPath } from "../monitor-server/restart-handshake-store.cjs";
 
+// The machine identity comes from the process environment, never from state.
+process.env.DEVWF_MACHINE = "CANARY";
+
 /**
  * Owner-side handshake. The record lives beside the session state file, not in
  * workflow state, because workflow state is reloaded from SQLite and the save
@@ -177,20 +180,32 @@ test('claim succeeds once and fences out a second successor', async () => {
 
 test('claim refuses a different machine', async () => {
   const f = await exitedFixture();
-  const result = await handleRestartHandshake({ action: 'claim', handover: f.ws.stateFile }, {
-    sessionId: 'ses_b', state: { machine: 'OTHER', projectDir: '/tmp/project' },
-  });
-  assert.equal(result.ok, false);
-  assert.equal(result.code, 'MACHINE_MISMATCH');
+  const previous = process.env.DEVWF_MACHINE;
+  process.env.DEVWF_MACHINE = 'OTHER';
+  try {
+    const result = await handleRestartHandshake({ action: 'claim', handover: f.ws.stateFile }, {
+      sessionId: 'ses_b', state: { projectDir: '/tmp/project' },
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'MACHINE_MISMATCH');
+  } finally {
+    process.env.DEVWF_MACHINE = previous;
+  }
 });
 
 test('claim refuses a missing machine rather than reading it as a match', async () => {
   const f = await exitedFixture();
-  const result = await handleRestartHandshake({ action: 'claim', handover: f.ws.stateFile }, {
-    sessionId: 'ses_b', state: { projectDir: '/tmp/project' },
-  });
-  assert.equal(result.ok, false);
-  assert.equal(result.code, 'MACHINE_UNVERIFIED');
+  const previous = process.env.DEVWF_MACHINE;
+  delete process.env.DEVWF_MACHINE;
+  try {
+    const result = await handleRestartHandshake({ action: 'claim', handover: f.ws.stateFile }, {
+      sessionId: 'ses_b', state: { projectDir: '/tmp/project' },
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'MACHINE_UNVERIFIED');
+  } finally {
+    process.env.DEVWF_MACHINE = previous;
+  }
 });
 
 test('claim refuses a different project', async () => {
@@ -484,14 +499,20 @@ test('verify_exit proves a real live owner cannot be certified exited', async ()
 
 test('verify_exit refuses to verify a handover from another machine', async () => {
   const f = await releasedFixture();
-  const result = await handleRestartHandshake(
-    { action: 'verify_exit', handover: f.ws.stateFile },
-    { state: { projectDir: '/tmp/project', machine: 'OTHER-MACHINE' } },
-    { isAlive: () => false }
-  );
-  assert.equal(result.ok, false);
-  assert.equal(result.code, 'MACHINE_MISMATCH');
-  assert.equal(readHandshake(f.ws.stateFile).record.state, STATES.OWNER_RELEASED);
+  const previous = process.env.DEVWF_MACHINE;
+  process.env.DEVWF_MACHINE = 'OTHER-MACHINE';
+  try {
+    const result = await handleRestartHandshake(
+      { action: 'verify_exit', handover: f.ws.stateFile },
+      { state: { projectDir: '/tmp/project' } },
+      { isAlive: () => false }
+    );
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'MACHINE_MISMATCH');
+    assert.equal(readHandshake(f.ws.stateFile).record.state, STATES.OWNER_RELEASED);
+  } finally {
+    process.env.DEVWF_MACHINE = previous;
+  }
 });
 
 test('a recovery lock left by a dead process is reclaimed', async () => {
@@ -512,13 +533,19 @@ test('a recovery lock left by a dead process is reclaimed', async () => {
 
 test('verify_exit ignores a caller-supplied machine name', async () => {
   const f = await releasedFixture();
-  const result = await handleRestartHandshake(
-    { action: 'verify_exit', handover: f.ws.stateFile, machine: 'CANARY' },
-    { state: { projectDir: '/tmp/project', machine: 'OTHER-MACHINE' } },
-    { isAlive: () => false }
-  );
-  assert.equal(result.ok, false);
-  assert.equal(result.code, 'MACHINE_MISMATCH');
+  const previous = process.env.DEVWF_MACHINE;
+  process.env.DEVWF_MACHINE = 'OTHER-MACHINE';
+  try {
+    const result = await handleRestartHandshake(
+      { action: 'verify_exit', handover: f.ws.stateFile, machine: 'CANARY' },
+      { state: { projectDir: '/tmp/project' } },
+      { isAlive: () => false }
+    );
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'MACHINE_MISMATCH');
+  } finally {
+    process.env.DEVWF_MACHINE = previous;
+  }
 });
 
 test('release refuses when the session holds no capability', async () => {

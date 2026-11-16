@@ -6,6 +6,8 @@ import { planProgress } from "./plan.js";
 import { DEFAULT_LOCK_STALE_MS, acquireWorktreeMutex, releaseWorktreeMutex, resolveCanonicalWorktreeRoot } from "../../process-lock.js";
 import { readHandshake, readClaim, markClaimAdopted } from "../../monitor-server/restart-handshake-store.cjs";
 import { createLocalAdapters } from "../../session-controller-adapters.js";
+import { resolveProjectDir } from "../../exec.js";
+import { stateFingerprint } from "../../monitor-server/restart-handshake.cjs";
 import { revalidatePreflight, runPreflight } from "../../preflight.js";
 
 /**
@@ -268,12 +270,9 @@ export async function handleResumeSession(args, workflowState) {
     // or stale file with the same session key must not supply a different task.
     const snap = h.snapshot;
     if (snap) {
-      const mismatch =
-        (snap.taskDescription || "") !== (source.taskDescription || "") ||
-        (snap.workflowTaskId || "") !== (source.workflowTaskId || "") ||
-        (snap.phase || "idle") !== (source.currentPhase || "idle") ||
-        Number(snap.dodRevision || 0) !== Number(source.dodRevision || 0) ||
-        (snap.todoId && source.zettly?.todoId && Number(snap.todoId) !== Number(source.zettly.todoId));
+      const mismatch = snap.fingerprint
+        ? stateFingerprint(source) !== snap.fingerprint
+        : (snap.taskDescription || "") !== (source.taskDescription || "");
       if (mismatch) {
         return textResponse(
           `⚠️ Adoption refused: the source state no longer matches the task snapshot the owner ` +
@@ -339,10 +338,21 @@ export async function handleResumeSession(args, workflowState) {
   // can never checkpoint. Acquire BEFORE the state write: if another live owner
   // still holds the worktree, the adoption is refused and nothing changes.
   const adoptProjectDir = source.projectDir || workflowState.state.projectDir || "";
-  // The mutex must be for the worktree this session actually writes into. A
-  // source state that names a different worktree is a cross-project adoption,
-  // which the mutex would not authorize.
-  const sessionProjectDir = workflowState.state.projectDir || projectDirFromStateFile(target);
+  // The mutex must be for the worktree this session actually operates in. The
+  // state file itself lives in a separate state bucket, so the comparison is
+  // between the source's recorded worktree and this session's runtime project,
+  // not between the state file and the worktree.
+  let sessionProjectDir = workflowState.state.projectDir || "";
+  if (!sessionProjectDir) {
+    try {
+      sessionProjectDir = resolveProjectDir({
+        env: process.env,
+        candidates: [process.cwd(), process.env.INIT_CWD],
+      }).dir;
+    } catch {
+      sessionProjectDir = "";
+    }
+  }
   if (adoptProjectDir && sessionProjectDir) {
     const sourceRoot = resolveCanonicalWorktreeRoot(adoptProjectDir);
     const sessionRoot = resolveCanonicalWorktreeRoot(sessionProjectDir);
@@ -350,18 +360,6 @@ export async function handleResumeSession(args, workflowState) {
       return textResponse(
         `⚠️ Adoption refused: the source state belongs to "${adoptProjectDir}", which is not this session's ` +
           `worktree ("${sessionProjectDir}"). A task cannot be adopted across projects. Nothing was changed.`
-      );
-    }
-    // The state file being written must live under the worktree the mutex
-    // covers. Otherwise the check and the mutex could cover one worktree while
-    // the write targets another.
-    const targetPath = path.resolve(String(target));
-    const rootPath = path.resolve(String(sessionRoot.worktreeRoot));
-    const underRoot = targetPath === rootPath || targetPath.startsWith(rootPath + path.sep);
-    if (!underRoot) {
-      return textResponse(
-        `⚠️ Adoption refused: the state file "${targetPath}" is outside the worktree "${rootPath}". ` +
-          `Nothing was changed.`
       );
     }
   }
@@ -390,18 +388,20 @@ export async function handleResumeSession(args, workflowState) {
   };
   delete resumed.owner;
 
-  // Keep the previous target so a failed adoption can be rolled back instead of
-  // leaving the copied task on disk with ownership released.
+  // Keep the previous target and the previous stored state so a failed adoption
+  // can be rolled back instead of leaving the copied task on disk or in SQLite
+  // with ownership released.
   let previousTarget = null;
   try {
     previousTarget = readFileSync(target, "utf8");
   } catch {
     previousTarget = null;
   }
+  const previousState = workflowState.state ? JSON.parse(JSON.stringify(workflowState.state)) : null;
 
   const abandon = async (message) => {
-    // Restore the target file so a later load cannot expose a task that was
-    // never durably adopted.
+    // Restore the target file and the stored row so a later load cannot expose
+    // a task that was never durably adopted.
     try {
       if (previousTarget === null) {
         if (existsSync(target)) rmSync(target, { force: true });
@@ -410,6 +410,19 @@ export async function handleResumeSession(args, workflowState) {
       }
     } catch {
       // Best effort; the message still reports the failure.
+    }
+    try {
+      if (previousState && typeof workflowState.restoreStateIntoStore === "function") {
+        await workflowState.restoreStateIntoStore(previousState);
+      }
+    } catch {
+      // Best effort; the claim stays unadopted so recovery can reconcile.
+    }
+    try {
+      workflowState.boundKernelCapability = null;
+      if (previousState) workflowState.state = previousState;
+    } catch {
+      // In-memory cleanup is best effort.
     }
     try {
       await releaseWorktreeMutex(adoptMutex.capability);

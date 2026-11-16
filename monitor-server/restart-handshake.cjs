@@ -185,6 +185,30 @@ function restartReadiness(record = {}) {
   return { ok: true, code: 'READY', state };
 }
 
+/**
+ * A stable fingerprint of the task a handover transfers.
+ *
+ * The handover binds this at release and adoption recomputes it from the source
+ * JSON, so a changed or stale file with the same session key cannot supply a
+ * different task, DoD, plan, or evidence.
+ */
+function stateFingerprint(state) {
+  const crypto = require('node:crypto');
+  const subset = {
+    taskDescription: state?.taskDescription || '',
+    workflowTaskId: state?.workflowTaskId || '',
+    currentPhase: state?.currentPhase || 'idle',
+    dodRevision: Number(state?.dodRevision) || 0,
+    definitionOfDone: state?.definitionOfDone || [],
+    plan: state?.plan || [],
+    zettly: state?.zettly || null,
+    machine: state?.machine || '',
+    projectDir: state?.projectDir || '',
+    repository: state?.repository || null,
+  };
+  return crypto.createHash('sha256').update(JSON.stringify(subset)).digest('hex');
+}
+
 module.exports = {
   STATES,
   ORDER,
@@ -196,4 +220,5 @@ module.exports = {
   canTransition,
   applyTransition,
   restartReadiness,
+  stateFingerprint,
 };
