@@ -7,7 +7,7 @@ import path from "node:path";
 import { WorkflowState } from "../workflow-state.js";
 import { handleStartTask, handleCreateDocumentation, handleWaiveDocumentation } from "../tools/handler-modules/workflow-handlers.js";
 import { handleMarkDodItem } from "../tools/handler-modules/dod-handlers.js";
-import { handleCompleteTask } from "../tools/handler-modules/commit-handlers.js";
+import { handleCompleteTask, handleForceCompleteTask } from "../tools/handler-modules/commit-handlers.js";
 import { classifyTask } from "../governance/classifier.js";
 import { evaluateGovernanceGate, loadPolicies } from "../governance/engine.js";
 import { validatePolicyException } from "../governance/exceptions.js";
@@ -519,4 +519,51 @@ test("Workflow Governance 15-25: exceptions, repo/commit binding, CI failure, ve
   const ciFail = runCiGovernanceValidation({ projectDir: repoDir, policy: "all" });
   assert.equal(ciFail.ok, false);
   assert.equal(ciFail.exitCode, 1);
+
+  // force_complete_task cannot silently bypass governance
+  const repoDir2 = makeTempGitRepo();
+  const ws2 = makeWorkflowState(repoDir2);
+  await handleStartTask(
+    {
+      description: "Implement new billing CLI",
+      type: "feature",
+      projectDir: repoDir2,
+      definitionOfDone: ["Done"],
+      plan: ["Step 1"],
+      mermaidFlow: "flowchart TD\nA-->B",
+      governanceMode: "enforce",
+    },
+    ws2,
+    null
+  );
+  const silentForce = await handleForceCompleteTask(
+    { commitMessage: "wip", reason: "" },
+    ws2,
+    {
+      governanceInput: {
+        changedPaths: ["bin/cli.js"],
+        docContents: {},
+        repository: "programinglive/dev-workflow-mcp-server",
+        revision: 0,
+      },
+    }
+  );
+  assert.ok(silentForce.content[0].text.includes("POLICY_FORCE_REASON_REQUIRED"));
+
+  const auditedForce = await handleForceCompleteTask(
+    { commitMessage: "wip", reason: "Emergency rollback; remediation tracked in Todo #900" },
+    ws2,
+    {
+      governanceInput: {
+        changedPaths: ["bin/cli.js"],
+        docContents: {},
+        repository: "programinglive/dev-workflow-mcp-server",
+        revision: 0,
+      },
+    }
+  );
+  assert.ok(auditedForce.content[0].text.includes("force-completed"));
+  const lastHistory = ws2.state.history.at(-1);
+  assert.equal(lastHistory.governanceBypassed, true);
+  assert.ok(lastHistory.governanceViolations.length >= 1);
 });
