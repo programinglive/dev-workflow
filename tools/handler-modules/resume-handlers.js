@@ -231,6 +231,12 @@ export async function handleResumeSession(args, workflowState) {
   // at all: a loser could copy the task whenever it got the worktree mutex.
   const handoverSidecar = `${chosen.file}.restart-handshake.json`;
   const hasHandover = existsSync(handoverSidecar);
+  if (!hasHandover && source.handover) {
+    return textResponse(
+      `⚠️ Adoption refused: this state was handed over, but its handover record is missing. ` +
+        `A fenced handover cannot be adopted without its record. Nothing was changed.`
+    );
+  }
   if (hasHandover) {
     const handshake = readHandshake(handoverSidecar);
     if (handshake.status !== "ok") {

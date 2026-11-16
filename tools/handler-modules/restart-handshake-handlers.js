@@ -15,8 +15,9 @@
  * therefore keeps its own durable record beside the session state file, written
  * atomically, so a fresh process reads exactly what the owner recorded.
  */
-import { releaseWorktreeMutex, getHeldWorktreeCapability } from "../../process-lock.js";
+import { releaseWorktreeMutex, acquireWorktreeMutex } from "../../process-lock.js";
 import { readFileSync } from "node:fs";
+import path from "node:path";
 import { createLocalAdapters } from "../../session-controller-adapters.js";
 import { handleCheckpointTask } from "./checkpoint-handlers.js";
 import {
@@ -25,7 +26,7 @@ import {
   restartReadiness,
   stateFingerprint,
 } from "../../monitor-server/restart-handshake.cjs";
-import { readHandshake, writeHandshake, tryClaimHandshake, readClaim, claimGeneration, retireClaim } from "../../monitor-server/restart-handshake-store.cjs";
+import { readHandshake, writeHandshake, tryClaimHandshake, readClaim, claimGeneration, retireClaim, handshakePath } from "../../monitor-server/restart-handshake-store.cjs";
 
 function stateFileOf(workflowState, options = {}) {
   return options.stateFile || workflowState?.stateFile || null;
@@ -45,6 +46,26 @@ function save(workflowState, options, record) {
 function samePath(a, b) {
   const norm = (p) => String(p).replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
   return norm(a) === norm(b);
+}
+
+/**
+ * Whether the sidecar path is the one its own record names.
+ *
+ * A caller supplies the path, so without this check it could point at any
+ * reachable sidecar whose metadata happens to match. The record names its state
+ * file, and the sidecar must be that file's sidecar.
+ */
+function handoverMatchesStateFile(handoverFile, record) {
+  const recorded = record?.handover?.stateFile;
+  if (!recorded) return false;
+  try {
+    const given = path.resolve(String(handoverFile));
+    // Callers may name either the state file or its sidecar; both resolve to the
+    // same handover, and nothing else does.
+    return given === path.resolve(handshakePath(recorded)) || given === path.resolve(String(recorded));
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -327,6 +348,24 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
       };
     }
 
+    // Mark the state itself as handed over while the mutex is still held, so a
+    // deleted sidecar cannot silently downgrade a fenced handover to the generic
+    // left-behind-session path.
+    if (record.state === STATES.CHECKPOINT_CONFIRMED && typeof workflowState.save === "function") {
+      try {
+        const file = stateFileOf(workflowState, options) || "";
+        const base = file.split(/[\\/]/).pop() || "";
+        const key = base.replace(/^workflow-state\./, "").replace(/\.json$/, "");
+        workflowState.state.handover = {
+          at: Number(args.at) || Date.now(),
+          sessionKey: key || workflowState.sessionId || null,
+        };
+        await workflowState.save();
+      } catch {
+        // The sidecar still records the handover; this marker is defense in depth.
+      }
+    }
+
     const projectDir = workflowState.state.projectDir || "";
     const releaseMutex = options.releaseMutex || releaseWorktreeMutex;
     // Release this session's own capability. Releasing by path would resolve to
@@ -335,10 +374,16 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
     const ownCapability = workflowState.boundKernelCapability || null;
     if (!ownCapability) {
       // A retry after a successful release but a failed OWNER_RELEASED write
-      // finds no capability. If the worktree is genuinely unheld, the release
-      // did happen and the durable receipt can still be written.
-      const stillHeld = getHeldWorktreeCapability(projectDir);
-      if (record.state === STATES.QUIESCED && !stillHeld) {
+      // finds no capability. Prove the worktree is genuinely unheld by trying
+      // to acquire it: a capability held by another process is a named pipe this
+      // process cannot see, so a local lookup is not proof.
+      const probe = await acquireWorktreeMutex({ projectDir, timeoutMs: 0 });
+      if (record.state === STATES.QUIESCED && probe.ok) {
+        try {
+          await releaseWorktreeMutex(probe.capability);
+        } catch {
+          // The probe capability is released on process exit regardless.
+        }
         const released2 = applyTransition(record, {
           next: STATES.OWNER_RELEASED,
           actor: "owner",
@@ -428,6 +473,9 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
     const read = readHandshake(handoverFile);
     if (read.status !== "ok") return { ok: false, code: "HANDOVER_NOT_FOUND", note: `no readable handover at ${handoverFile}` };
     const prior = read.record;
+    if (!handoverMatchesStateFile(handoverFile, prior)) {
+      return { ok: false, code: "HANDOVER_PATH_MISMATCH", note: "the handover path is not the sidecar its record names" };
+    }
 
     // The controller must name the project it is acting on, and it must be the
     // handover's project. Without this a caller could advance a sidecar that
@@ -535,6 +583,9 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
       return { ok: false, code: "HANDOVER_NOT_FOUND", note: `no readable handover at ${handoverFile}` };
     }
     const prior = read.record;
+    if (!handoverMatchesStateFile(handoverFile, prior)) {
+      return { ok: false, code: "HANDOVER_PATH_MISMATCH", note: "the handover path is not the sidecar its record names" };
+    }
 
     const existing = readClaim(handoverFile);
     if (existing || prior.claimedBy) {
@@ -659,6 +710,9 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
     const read = readHandshake(handoverFile);
     if (read.status !== "ok") return { ok: false, code: "HANDOVER_NOT_FOUND", note: `no readable handover at ${handoverFile}` };
     const prior = read.record;
+    if (!handoverMatchesStateFile(handoverFile, prior)) {
+      return { ok: false, code: "HANDOVER_PATH_MISMATCH", note: "the handover path is not the sidecar its record names" };
+    }
     if (prior.state !== STATES.PROCESS_EXIT_VERIFIED && prior.state !== STATES.RELAUNCHED) {
       return { ok: false, code: "OWNER_NOT_EXITED", note: `the handover is at ${prior.state}; recovery needs ${STATES.PROCESS_EXIT_VERIFIED}` };
     }
@@ -674,23 +728,25 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
     }
     // A crash between the durable adoption and the adopted marker leaves an
     // unmarked claim. The claimant's own state file proves the task was already
-    // adopted, so recovery must not hand it to a second successor.
-    if (claim.stateFile && claim.adoptedTask?.taskDescription) {
+    // adopted, so recovery must not hand it to a second successor. Re-checked
+    // under the recovery lock below, because adoption can commit in between.
+    const claimantAlreadyAdopted = (candidate) => {
+      if (!candidate?.stateFile || !candidate?.adoptedTask?.taskDescription) return false;
       try {
-        const claimantState = JSON.parse(readFileSync(claim.stateFile, "utf8"));
-        const sameTask = claim.adoptedTask.fingerprint
-          ? stateFingerprint(claimantState) === claim.adoptedTask.fingerprint
-          : (claimantState.taskDescription || "") === claim.adoptedTask.taskDescription;
-        if (sameTask) {
-          return {
-            ok: false,
-            code: "CLAIM_ALREADY_ADOPTED",
-            note: `the claimant's state already holds the adopted task; recovery would discard its progress`,
-          };
-        }
+        const claimantState = JSON.parse(readFileSync(candidate.stateFile, "utf8"));
+        return candidate.adoptedTask.fingerprint
+          ? stateFingerprint(claimantState) === candidate.adoptedTask.fingerprint
+          : (claimantState.taskDescription || "") === candidate.adoptedTask.taskDescription;
       } catch {
-        // No readable claimant state: fall through to the liveness proof.
+        return false;
       }
+    };
+    if (claimantAlreadyAdopted(claim)) {
+      return {
+        ok: false,
+        code: "CLAIM_ALREADY_ADOPTED",
+        note: `the claimant's state already holds the adopted task; recovery would discard its progress`,
+      };
     }
     if (!Number.isFinite(Number(claim.pid))) {
       return {
@@ -755,6 +811,7 @@ export async function handleRestartHandshake(args = {}, workflowState = null, op
       // between the check above and the retirement.
       verify: (current) => {
         if (current.adoptedAt) return { ok: false, code: "CLAIM_ALREADY_ADOPTED" };
+        if (claimantAlreadyAdopted(current)) return { ok: false, code: "CLAIM_ALREADY_ADOPTED" };
         const again = verifyOwnerExit(
           { pid: current.pid, startedAt: current.startedAt, executable: current.executable },
           {
