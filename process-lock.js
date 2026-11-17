@@ -70,8 +70,141 @@ const heldLeases = new Map();
 export const OPTION_B_LOCK_PROTOCOL_VERSION = 3;
 export const SUPPORTED_KERNEL_MUTEX_PLATFORMS = new Set(["win32", "linux"]);
 
+/**
+ * Explicit operator opt-in for the unverified kernel mutex on macOS.
+ *
+ * WHY THE OPT-IN EXISTS
+ * ---------------------
+ * The OS-owned worktree mutex has no natively verified implementation on
+ * macOS: Linux has abstract unix sockets, Windows has named pipes, and macOS
+ * has neither. The endpoint therefore fails closed on darwin, and because
+ * every workflow write requires that capability, a Mac cannot write workflow
+ * state at all. A Mac that cannot write state never reports to the central
+ * monitor, so the fleet view keeps showing a stale machine forever.
+ *
+ * WHY IT STAYS OFF BY DEFAULT
+ * ---------------------------
+ * The darwin endpoint is a unix domain socket file, not an OS kernel object.
+ * Its exclusivity is therefore best-effort, and the operator has to say so
+ * explicitly. Only the exact value "1" activates it; every other value,
+ * including an empty one, keeps the fail-closed refusal.
+ */
+export const UNVERIFIED_MUTEX_OPT_IN_ENV = "DEVWF_ALLOW_UNVERIFIED_MUTEX";
+
+/** The one value that activates the unverified darwin mutex. */
+export const UNVERIFIED_MUTEX_OPT_IN_VALUE = "1";
+
+/**
+ * Directory that holds the darwin unix socket endpoints. Overridable so tests
+ * never write into the real home directory.
+ */
+export const UNVERIFIED_MUTEX_SOCKET_DIR_ENV = "DEVWF_MUTEX_SOCKET_DIR";
+
+/** Warning printed once per process when the unverified mutex is activated. */
+export const UNVERIFIED_MUTEX_WARNING =
+  "WARNING: kernel mutex unverified on darwin; enabled by DEVWF_ALLOW_UNVERIFIED_MUTEX=1";
+
 /** Map of active OS-owned worktree mutex capabilities keyed by canonical worktree identity. */
 const heldWorktreeMutexes = new Map();
+
+/** Set once the unverified-mutex warning has been printed in this process. */
+let unverifiedMutexWarningEmitted = false;
+
+/**
+ * Whether the operator explicitly allowed the unverified darwin mutex.
+ *
+ * Only the exact string "1" counts. Anything else, including "true" or "0",
+ * keeps the fail-closed refusal, so a typo can never silently weaken the
+ * ownership fence.
+ */
+export function isUnverifiedMutexOptInEnabled(env = process.env) {
+  if (!env || typeof env !== "object") return false;
+  const raw = env[UNVERIFIED_MUTEX_OPT_IN_ENV];
+  if (typeof raw !== "string") return false;
+  return raw.trim() === UNVERIFIED_MUTEX_OPT_IN_VALUE;
+}
+
+/**
+ * Print the unverified-mutex warning once per process.
+ *
+ * The warning is not decoration: a Mac running with an unverified ownership
+ * fence must be visible in the log of every session, and the operator has to
+ * be able to tell from the log alone which machines run unverified.
+ */
+export function warnUnverifiedMutexOnce() {
+  if (unverifiedMutexWarningEmitted) return false;
+  unverifiedMutexWarningEmitted = true;
+  console.warn(UNVERIFIED_MUTEX_WARNING);
+  return true;
+}
+
+/** Directory that holds the darwin unix socket endpoints. */
+function unverifiedMutexSocketDir(env = process.env) {
+  const override = env && typeof env === "object" ? env[UNVERIFIED_MUTEX_SOCKET_DIR_ENV] : undefined;
+  if (typeof override === "string" && override.trim() !== "") return path.resolve(override.trim());
+  return path.join(os.homedir(), ".devwf");
+}
+
+/**
+ * Longest unix socket path this implementation accepts.
+ *
+ * The address of a unix socket lives in `sun_path`, which is 104 bytes on
+ * macOS including the terminating NUL. Binding a longer path fails with
+ * EINVAL, so the endpoint name is shortened when the directory is long
+ * enough to push the path over the limit.
+ */
+const MAX_UNIX_SOCKET_PATH = 100;
+
+/**
+ * Build the darwin endpoint path for one canonical worktree.
+ *
+ * The file name carries the worktree digest, so two different worktrees never
+ * share one endpoint. When the directory is too long for the platform limit,
+ * the digest is shortened instead: 64 bits of the digest still names one
+ * worktree unambiguously. When even that does not fit, the longest candidate
+ * is returned and the bind fails, which refuses the capability.
+ */
+function darwinMutexSocketPath(canonicalKey, env = process.env) {
+  const dir = unverifiedMutexSocketDir(env);
+  const digest = createHash("sha256").update(`worktree:${canonicalKey}`).digest();
+  const hex32 = digest.toString("hex").slice(0, 32);
+  const candidates = [
+    path.join(dir, `devwf-wt-${hex32}.sock`),
+    path.join(dir, `devwf-wt-${hex32.slice(0, 16)}.sock`),
+  ];
+  return candidates.find((candidate) => candidate.length <= MAX_UNIX_SOCKET_PATH) || candidates[0];
+}
+
+/**
+ * Remove a unix socket file that has no listener behind it.
+ *
+ * A clean exit removes the file, but a killed process leaves it behind and the
+ * next bind would fail forever. A live owner always accepts a connection, so a
+ * connection that is refused proves the file is a leftover and may be removed.
+ *
+ * Returns true when a leftover file was removed.
+ */
+async function reclaimStaleUnixSocket(socketPath) {
+  if (!socketPath) return false;
+  if (!existsSync(socketPath)) return false;
+  const refused = await new Promise((resolve) => {
+    const probe = net.connect(socketPath);
+    const finish = (value) => {
+      probe.removeAllListeners();
+      probe.destroy();
+      resolve(value);
+    };
+    probe.once("connect", () => finish(false));
+    probe.once("error", (error) => finish(error && error.code === "ECONNREFUSED"));
+  });
+  if (!refused) return false;
+  try {
+    unlinkSync(socketPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function normalizeWorktreeString(targetPath, platform = process.platform) {
   let normalized = path.resolve(String(targetPath || ""));
@@ -234,10 +367,28 @@ export function resolveCanonicalWorktreeRoot(projectDir, platform = process.plat
 
 /**
  * Derive the OS-owned kernel mutex endpoint from canonical Git working-tree identity.
- * Fails closed on macOS (darwin) and any unsupported platform.
+ * Fails closed on macOS (darwin) and any unsupported platform, unless the operator
+ * explicitly allowed the unverified darwin endpoint through the environment.
  */
-export function worktreeMutexEndpoint(canonicalWorktreeKey, platform = process.platform) {
+export function worktreeMutexEndpoint(canonicalWorktreeKey, platform = process.platform, env = process.env) {
   if (!SUPPORTED_KERNEL_MUTEX_PLATFORMS.has(platform)) {
+    // macOS has no abstract unix sockets and no named pipes, so the endpoint
+    // cannot be an OS kernel object. The operator can still allow the best
+    // effort unix socket endpoint explicitly; every other platform keeps the
+    // fail-closed refusal.
+    if (platform === "darwin" && isUnverifiedMutexOptInEnabled(env)) {
+      const normalizedKey = normalizeWorktreeString(canonicalWorktreeKey, platform);
+      return {
+        supported: true,
+        platform: "darwin",
+        canonicalKey: normalizedKey,
+        // The digest is part of the file name, so two different worktrees
+        // never share one endpoint.
+        path: darwinMutexSocketPath(normalizedKey, env),
+        exclusive: true,
+        unverified: true,
+      };
+    }
     return {
       supported: false,
       platform,
@@ -461,6 +612,7 @@ export async function acquireWorktreeMutex({
   pid = process.pid,
   platform = process.platform,
   ownerKey = null,
+  env = process.env,
 } = {}) {
   const normalizedOwnerKey =
     typeof ownerKey === "string" && ownerKey.trim() !== "" ? ownerKey.trim() : String(pid);
@@ -474,7 +626,7 @@ export async function acquireWorktreeMutex({
     };
   }
 
-  const endpoint = worktreeMutexEndpoint(wt.canonicalKey, platform);
+  const endpoint = worktreeMutexEndpoint(wt.canonicalKey, platform, env);
   if (!endpoint.supported) {
     return {
       ok: false,
@@ -485,6 +637,16 @@ export async function acquireWorktreeMutex({
       worktreeRoot: wt.worktreeRoot,
       canonicalKey: wt.canonicalKey,
     };
+  }
+  if (endpoint.unverified) {
+    // The operator allowed an endpoint that is not an OS kernel object. Say so
+    // once per process, before the capability is handed out.
+    warnUnverifiedMutexOnce();
+    try {
+      mkdirSync(path.dirname(endpoint.path), { recursive: true });
+    } catch {
+      // A missing directory surfaces as a bind error below, which fails closed.
+    }
   }
 
   const existing = heldWorktreeMutexes.get(wt.canonicalKey);
@@ -575,6 +737,14 @@ export async function acquireWorktreeMutex({
         server.close();
       } catch {}
       if (error && error.code === "EADDRINUSE") {
+        // A unix socket file outlives the process that bound it when that
+        // process was killed instead of exiting cleanly. Such a leftover has
+        // no listener, so connecting to it fails with ECONNREFUSED and the
+        // file can be removed. A live owner always accepts the connection,
+        // so a live owner's socket is never removed.
+        if (endpoint.unverified && (await reclaimStaleUnixSocket(endpoint.path))) {
+          continue;
+        }
         if (Date.now() >= deadline) {
           return {
             ok: false,
