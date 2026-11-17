@@ -19,6 +19,7 @@ import {
   LOCK_FILENAME,
   setIsAliveForTests,
   clearHeldLeasesForTests,
+  UNVERIFIED_MUTEX_OPT_IN_ENV,
 } from "../process-lock.js";
 import {
   WorkflowState,
@@ -600,19 +601,46 @@ test("Adversarial 10: Legacy/new version overlap is rejected fail-closed", async
 test("Platform requirement: macOS (darwin) and unsupported platforms fail closed without TCP port fallback", async () => {
   await withTempWorkspace(async (base) => {
     const repo = await createRepo(base, "darwin-fail-closed");
-    const epDarwin = worktreeMutexEndpoint(repo, "darwin");
+    // The default is asserted with an explicit empty environment, so this
+    // contract states what the DEFAULT is instead of inheriting whatever the
+    // machine running the suite happens to have configured.
+    const epDarwin = worktreeMutexEndpoint(repo, "darwin", {});
     assert.equal(epDarwin.supported, false);
     assert.equal(epDarwin.error, "PLATFORM_UNSUPPORTED_KERNEL_MUTEX");
 
-    const acqDarwin = await acquireWorktreeMutex({ projectDir: repo, platform: "darwin" });
+    const acqDarwin = await acquireWorktreeMutex({ projectDir: repo, platform: "darwin", env: {} });
     assert.equal(acqDarwin.ok, false);
     assert.equal(acqDarwin.supported, false);
     assert.equal(acqDarwin.reason, "unsupported_platform");
     assert.equal(acqDarwin.error, "PLATFORM_UNSUPPORTED_KERNEL_MUTEX");
 
-    const acqFreebsd = await acquireWorktreeMutex({ projectDir: repo, platform: "freebsd" });
+    const acqFreebsd = await acquireWorktreeMutex({ projectDir: repo, platform: "freebsd", env: {} });
     assert.equal(acqFreebsd.ok, false);
     assert.equal(acqFreebsd.reason, "unsupported_platform");
+  });
+});
+
+test("Platform requirement: the explicit darwin opt-in still refuses a TCP port fallback and still refuses other platforms", async () => {
+  await withTempWorkspace(async (base) => {
+    const repo = await createRepo(base, "darwin-optin-no-tcp");
+    const env = { [UNVERIFIED_MUTEX_OPT_IN_ENV]: "1" };
+
+    const endpoint = worktreeMutexEndpoint(repo, "darwin", env);
+    assert.equal(endpoint.supported, true);
+    // A unix domain socket is a file path, never a TCP port: a port would let
+    // an unrelated local process collide with the ownership fence.
+    assert.ok(endpoint.path.endsWith(".sock"), `expected a unix socket path, got ${endpoint.path}`);
+    assert.equal(/^\d+$/.test(endpoint.path), false, "the endpoint must not be a TCP port");
+
+    // The opt-in is specific to macOS. Every other unsupported platform keeps
+    // refusing, so the escape hatch cannot widen the supported set.
+    const acqFreebsd = await acquireWorktreeMutex({ projectDir: repo, platform: "freebsd", env });
+    assert.equal(acqFreebsd.ok, false);
+    assert.equal(acqFreebsd.reason, "unsupported_platform");
+
+    const epFreebsd = worktreeMutexEndpoint(repo, "freebsd", env);
+    assert.equal(epFreebsd.supported, false);
+    assert.equal(epFreebsd.error, "PLATFORM_UNSUPPORTED_KERNEL_MUTEX");
   });
 });
 
