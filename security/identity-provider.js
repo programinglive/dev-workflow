@@ -21,7 +21,7 @@ export function decodeJwtPayload(token) {
 
 /**
  * Creates a Local-First IdentityProvider that operates 100% offline without
- * PocketBase, Central Gateway, or Factory dependencies.
+ * PocketBase or Central Gateway dependencies.
  */
 export function createLocalIdentityProvider({ defaultUserId = "local-developer" } = {}) {
   const revokedSubjects = new Set();

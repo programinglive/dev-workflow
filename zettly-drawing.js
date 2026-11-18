@@ -84,7 +84,7 @@ export function drawingPayload(state,mermaidCode,description) {
   const graph=flowGraph(mermaidCode);
   const nodes=graph.nodes;
   const store={
-    'document:document':{id:'document:document',typeName:'document',gridSize:20,name:title,meta:{workflowTaskId:String(state.workflowTaskId||''),zettlyTodoId:todoId,factoryTaskId:String(state.zettly?.externalLinks?.factory?.id||''),mermaidCode:String(mermaidCode).slice(0,10000)}},
+    'document:document':{id:'document:document',typeName:'document',gridSize:20,name:title,meta:{workflowTaskId:String(state.workflowTaskId||''),zettlyTodoId:todoId,mermaidCode:String(mermaidCode).slice(0,10000)}},
     'page:page':{id:'page:page',typeName:'page',name:'Page 1',index:'a1',meta:{}},
   };
   const height=50+Math.ceil(nodes.length/2)*154;

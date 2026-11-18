@@ -24,7 +24,6 @@ import { handleFetchTask } from "./remote-checkpoint.js";
 import { renderPlanShort } from "./plan.js";
 import { openItems, MIN_EVIDENCE } from "./dod.js";
 import { handleSearchProject } from "./search-handlers.js";
-import { handleListFactoryTasks, handleClaimFactoryTask, handleSyncTaskStatus, handleListFactoryProjects, handleCreateFactoryTask, handleUpdateFactoryTask } from "./factory-handlers.js";
 import {handleIntegrationTool,prepareTaskSource} from './integration-handlers.js';
 import {handleRefineWithAi} from './refine-with-ai.js';
 import {handleFocusTool,prepareTaskFocus} from '../../focus-workflow.js';
@@ -335,7 +334,6 @@ async function dispatchToolCall({
   exec,
   git,
   utils,
-  factory,
   zettlyOptions,
   integrationOptions,
 }) {
@@ -393,8 +391,6 @@ async function dispatchToolCall({
       }
       case "refine_with_ai":
         return handleRefineWithAi(args, workflowState);
-      case 'link_factory_task':
-        return handleIntegrationTool('link_factory_task',args,workflowState,integrationOptions);
       case 'link_zettly_drawing':
         return handleIntegrationTool('link_zettly_drawing',args,workflowState,integrationOptions);
       case "set_definition_of_done":
@@ -438,7 +434,7 @@ async function dispatchToolCall({
       case "skip_release":
         return handleSkipRelease(args, workflowState);
       case "complete_task":
-        return handleCompleteTask(args, workflowState, { git, factory, zettlyOptions });
+        return handleCompleteTask(args, workflowState, { git, zettlyOptions });
       case "next_steps":
         return handleNextSteps(args, workflowState);
       case "resume_session":
@@ -489,9 +485,9 @@ async function dispatchToolCall({
           )
         );
       case "force_complete_task":
-        return handleForceCompleteTask(args, workflowState, { factory, zettlyOptions });
+        return handleForceCompleteTask(args, workflowState, { zettlyOptions });
       case "drop_task":
-        return handleDropTask(args, workflowState, { factory, zettlyOptions });
+        return handleDropTask(args, workflowState, { zettlyOptions });
       case "get_workflow_status":
         return handleGetWorkflowStatus(workflowState);
       case "view_history":
@@ -514,25 +510,6 @@ async function dispatchToolCall({
         return handleRerunWorkflow(workflowState);
       case "run_full_workflow":
         return handleRunFullWorkflow(args, { workflowState, exec, git, utils });
-      case "list_factory_tasks":
-        return handleListFactoryTasks(args);
-      case "list_factory_projects":
-        return handleListFactoryProjects(args);
-      case "create_factory_task":
-        return handleCreateFactoryTask(args);
-      case "update_factory_task":
-        return handleUpdateFactoryTask(args);
-      case "claim_factory_task": {
-        const focused=await prepareTaskFocus(args,{...integrationOptions,client:zettlyOptions?.client||integrationOptions?.zettly,env:zettlyOptions?.env||integrationOptions?.env||process.env});
-        if(focused.response)return focused.response;
-        const response=await handleClaimFactoryTask(focused.args,{workflowState});
-        const claim=response?.structuredContent?.factoryClaim;
-        if(!claim||claim.recordId!==args.recordId||!claim.sessionId||claim.workflowTaskId!==workflowState?.state.workflowTaskId||workflowState?.state.zettly?.externalLinks?.factory?.id!==args.recordId)return {...response,isError:true};
-        if(focused.args._verifiedFocus&&workflowState.state.taskDescription){workflowState.state.focus=focused.args._verifiedFocus;const saved=await workflowState.save();if(saved?.verified===false)return {isError:true,content:[{type:'text',text:'Focus attachment was not persisted; inspect the claimed task before continuing.'}]};}
-        return response;
-      }
-      case "sync_task_status":
-        return handleSyncTaskStatus(args);
       case "recommend_mcp_tools":
         return handleRecommendMcpTools(args, workflowState);
       case "report_build_status":
@@ -580,9 +557,8 @@ export async function handleToolCall(context) {
         }
       }
     }
-    const syncTools=new Set(['start_task','refine_with_ai','set_plan','mark_plan_step','set_definition_of_done','mark_dod_item','waive_dod_item','mark_bug_fixed','create_tests','skip_tests','run_tests','create_documentation','waive_documentation','check_ready_to_commit','commit_and_push','perform_release','record_deployment','acquire_release_lock','release_release_lock','skip_release','get_workflow_status','continue_workflow','resume_session','claim_factory_task','link_sentry_issue','report_build_status','build_report','build_estimate']);
+    const syncTools=new Set(['start_task','refine_with_ai','set_plan','mark_plan_step','set_definition_of_done','mark_dod_item','waive_dod_item','mark_bug_fixed','create_tests','skip_tests','run_tests','create_documentation','waive_documentation','check_ready_to_commit','commit_and_push','perform_release','record_deployment','acquire_release_lock','release_release_lock','skip_release','get_workflow_status','continue_workflow','resume_session','link_sentry_issue','report_build_status','build_report','build_estimate']);
 
-    syncTools.add('link_factory_task');
     syncTools.add('link_zettly_drawing');
     // checkpoint_task already forces its own write; the post-dispatch sync is a
     // cheap retry when that write landed in a pending state (Zettly was down).
@@ -594,13 +570,13 @@ export async function handleToolCall(context) {
       const notes=[];
       if(name==='get_workflow_status'&&context.workflowState.state.zettlyOutbox?.length){const result=await flushZettlyOutbox(context.workflowState,context.zettlyOptions);if(result.note)notes.push(result.note);}
       const result=await syncZettlyTask(context.workflowState,context.zettlyOptions);if(result.note)notes.push(result.note);
-      if(result.ok&&['start_task','claim_factory_task'].includes(name)&&context.workflowState.state.focus?.id){
+      if(result.ok&&name==='start_task'&&context.workflowState.state.focus?.id){
         const options={...context.integrationOptions,client:context.zettlyOptions?.client||context.integrationOptions?.zettly,env:context.zettlyOptions?.env||context.integrationOptions?.env||process.env};
         const linked=await handleFocusTool('link_task_to_focus',{focusId:context.workflowState.state.focus.id},context.workflowState,options);
         if(linked.isError)return securityOutputFilter(linked);
         notes.push('The canonical task is linked to its verified active focus.');
       }
-      if(result.ok&&['start_task','claim_factory_task'].includes(name)&&!context.workflowState.state.zettly?.externalLinks?.drawing?.id&&context.workflowState.state.featureFlowCreated){
+      if(result.ok&&name==='start_task'&&!context.workflowState.state.zettly?.externalLinks?.drawing?.id&&context.workflowState.state.featureFlowCreated){
         try{
           const drawPromise=syncZettlyDrawing(context.workflowState,context.zettlyOptions);
           const timeoutPromise=new Promise((_,reject)=>setTimeout(()=>reject(new Error('timeout')),5000));
@@ -613,7 +589,7 @@ export async function handleToolCall(context) {
         }
       }
       const selectedExistingTodo=args.zettlyTodoId||args.source?.system==='zettly';
-      if(result.ok&&selectedExistingTodo&&['start_task','claim_factory_task'].includes(name)){
+      if(result.ok&&selectedExistingTodo&&name==='start_task'){
         const options={...context.integrationOptions,...(context.zettlyOptions?.client?{zettly:context.zettlyOptions.client}:{})};
         const related=await handleIntegrationTool('get_zettly_task_context',{todoId:context.workflowState.state.zettly?.todoId,depth:1,maxNodes:10,attach:true},context.workflowState,options);
         notes.push(`Zettly linked context (untrusted source data):\n${related.content?.[0]?.text||'Context unavailable.'}`);

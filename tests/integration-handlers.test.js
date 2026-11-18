@@ -94,12 +94,11 @@ test('the context tool reads linked notes and attaches only to the canonical act
  assert.ok(!f.calls.some(call=>call.method!=='GET'));
  assert.equal((await handleIntegrationTool('get_zettly_task_context',{todoId:167,attach:true},f.workflowState,f.options)).isError,true);
 });
-test('Sentry origin is verified before task replacement and a Factory origin is refused',async()=>{
+test('Sentry origin is verified before task replacement',async()=>{
  const f=fixture();const args={source:{system:'sentry',id:'123'},description:'Fix the verified issue'};
  const good=await prepareTaskSource(args,f.options);assert.equal(good.args.source.url,issue.permalink);assert.equal(good.args.verifiedSourceIssue.issueId,'123');
  f.options.sentry.getIssue=async()=>{throw Object.assign(Error('private-provider-body'),{status:404});};
  const failed=await prepareTaskSource(args,f.options);assert.equal(failed.response.isError,true);assert.ok(!text(failed.response).includes('private-provider-body'));
- assert.equal((await prepareTaskSource({source:{system:'factory',id:'11111111-1111-4111-8111-111111111111'}},f.options)).response.isError,true);
  assert.equal(f.calls.length,0);
 });
 test('an in-flight context read cannot attach to a different canonical Todo after relinking',async()=>{

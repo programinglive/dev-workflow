@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
  *
  * WHAT WAS MEASURED (9 November 2026)
  * ----------------------------------
- * Three sessions kept showing as `CODING / mungkin macet` while Factory
+ * Three sessions kept showing as `CODING / mungkin macet` while the board
  * reported all three tasks `done`. The monitor table explained it:
  *
  *     sessions PRIMARY KEY (session_key, task_id)

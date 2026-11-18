@@ -36,7 +36,6 @@ const AREA_HINTS = [
   ['checkpoint', ['checkpoint', 'handoff', 'handover', 'checkpoint_task']],
   ['zettly', ['zettly', 'draw', 'todo', 'tag', 'zettelkasten']],
   ['erp', ['erp', 'clinic', 'laravel', 'livewire']],
-  ['factory', ['factory', 'claim']],
   ['deploy', ['deploy', 'release', 'pipeline', 'runner', 'ci']],
   ['sentry', ['sentry', 'issue', 'error']],
   ['infra', ['infra', 'server', 'vm', 'nginx', 'database', 'ssh']],

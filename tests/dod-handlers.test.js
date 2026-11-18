@@ -20,7 +20,7 @@ import { summarize } from "../tools/handler-modules/dod.js";
  *   2. Item DoD tidak bisa dicentang tanpa bukti, atau dikecualikan tanpa alasan.
  *   3. Ready check, commit, dan complete menolak selama masih ada item terbuka.
  *   4. Bukti lama menjadi basi saat ada perubahan kerja baru setelah commit.
- *   5. Checklist papan Factory diimpor sebagai rencana, bukan sebagai bukti.
+ *   5. Checklist diimpor sebagai rencana, bukan sebagai bukti.
  */
 
 async function withState(callback) {
@@ -564,22 +564,6 @@ test("get_workflow_status menampilkan ringkasan dan perincian DoD", async () => 
     assert.match(out, /\[~\] deploy staging/);
     assert.match(out, /staging mati/);
     assert.match(out, /\[ \] login terverifikasi/);
-  });
-});
-
-test("get_workflow_status menyebut sumber papan untuk DoD dari Factory", async () => {
-  await withState(async (state) => {
-    state.state.currentPhase = "coding";
-    state.state.taskDescription = "Task dari papan";
-    state.state.dodSource = "factory";
-    state.state.dodFactoryTaskId = "abc";
-    state.state.definitionOfDone = [
-      { id: "dod-1", text: "build lulus", status: "open", evidence: "", waivedReason: "", revision: 0, updatedAt: "" },
-    ];
-
-    const out = text(await call("get_workflow_status", {}, state));
-
-    assert.match(out, /Factory/i);
   });
 });
 

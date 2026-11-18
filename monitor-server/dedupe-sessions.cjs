@@ -93,7 +93,7 @@ function dedupeSessions(sessions) {
   // ---------------------------------
   // Measured against production on 10 November 2026: a finished task keeps its
   // `task_id` while its `task` is cleared (that is the documented way to close a
-  // task), and that row still carries its Zettly, Factory and Draw relations.
+  // task), and that row still carries its relations.
   // Dropping every row with an empty `task` would have erased those relations
   // whenever a sibling card existed. Only a row with BOTH fields empty is the
   // identity row.

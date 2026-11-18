@@ -11,7 +11,7 @@ import { deriveTags, ensureTags } from "../zettly-tags.js";
  *   proyek:<name>   which codebase
  *   tipe:<type>     feature / bugfix / refactor / infra / other
  *   area:<topic>    subsystem, inferred from the wording and the path
- *   sumber:<from>   manual, sentry, factory
+ *   sumber:<from>   manual, sentry
  */
 
 test("a task yields a project tag from the repository name", () => {
