@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.32.8](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.32.7...v1.32.8) (2026-11-18)
+
+
+### ✨ Features
+
+* **managed:** add fleet-status.cjs CLI to check MCP and toolchain parity ([3855c1a](https://github.com/programinglive/dev-workflow-mcp-server/commit/3855c1a9d9dea9d5676370862898158a7f45a953))
+
 ### [1.32.7](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.32.5...v1.32.7) (2026-11-18)
 
 
