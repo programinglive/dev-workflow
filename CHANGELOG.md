@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.32.4](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.32.3...v1.32.4) (2026-11-18)
+
+
+### ✨ Features
+
+* **managed:** restore rollout/restart scripts and guard release against active CI pipelines ([7306678](https://github.com/programinglive/dev-workflow-mcp-server/commit/730667897cf6eed93dbfae4ad328b3090ce8a784))
+
 ### [1.32.3](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.32.0...v1.32.3) (2026-11-18)
 
 
