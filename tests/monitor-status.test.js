@@ -125,8 +125,8 @@ test("fase hand-off juga terminal, bukan sesi yang masih bekerja", () => {
 
 test("a finished task that only ever reported coding still ends eventually", () => {
   // This is the exact shape the closure-identity bug produced: a row stuck at
-  // `coding` whose task was already done in Factory. The classifier cannot
-  // read Factory, but it must never call that row active forever. The
+  // `coding` whose task was already done upstream. The classifier cannot
+  // read that board, but it must never call that row active forever. The
   // closure-identity fix stops new rows from being created; this guards the
   // ageing path for rows that already exist.
   const ancient = classifySession({ phase: "coding", updatedAt: menitLalu(300), now: NOW });

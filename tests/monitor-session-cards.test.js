@@ -91,8 +91,8 @@ test("the upsert unifies the task-metadata and the card-chain models", () => {
   const { sql, params } = buildSessionUpsert({
     ...CARD,
     workflowTaskId: "task-x",
-    taskOrigin: { system: "factory", id: "45489f0d" },
-    taskRelations: [{ system: "factory", id: "45489f0d", relation: "tracks", label: "Factory 45489f0d" }],
+    taskOrigin: { system: "sentry", id: "45489f0d" },
+    taskRelations: [{ system: "sentry", id: "45489f0d", relation: "tracks", label: "Sentry 45489f0d" }],
     repositoryPath: "/code/x",
     repositoryRemote: "git@github.com:x.git",
   });
@@ -113,7 +113,7 @@ test("the upsert unifies the task-metadata and the card-chain models", () => {
   // 17 base + 5 metadata + 2 release + 1 toolchain + 3 chain + 1 refinement = 29.
   assert.equal(params.length, 34, "the unified upsert takes 34 params");
   assert.equal(params.at(17), "task-x");
-  assert.equal(params.at(18), JSON.stringify({ system: "factory", id: "45489f0d", url: "", label: "" }));
+  assert.equal(params.at(18), JSON.stringify({ system: "sentry", id: "45489f0d", url: "", label: "" }));
   assert.equal(params.at(20), "/code/x");
   assert.equal(params.at(21), "git@github.com:x.git");
   assert.equal(params.at(25), "task-b");

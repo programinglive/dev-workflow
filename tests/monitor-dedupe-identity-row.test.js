@@ -86,7 +86,7 @@ test("identity rows on different machines are not merged into each other", () =>
 
 test("a finished task keeps its relations even when its task text is cleared", () => {
   // Production, 10 November 2026: closing a task clears `task` but keeps its
-  // `task_id` and its Zettly/Factory/Draw relations. Treating that as an
+  // `task_id` and its relations. Treating that as an
   // identity row would have deleted the flow from a real card.
   const closed = cardRow({ task: "", task_id: "ba6dc5da", task_relations_json: [{ system: "zettly_draw", id: "126" }] });
   const rows = dedupeSessions([closed]);

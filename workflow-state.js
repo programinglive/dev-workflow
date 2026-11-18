@@ -65,7 +65,7 @@ let monitorInFlight = false;
  * (session_key, task_id). Jadi laporan penutupan tidak menutup baris task yang
  * tadi dikerjakan: ia menulis baris BARU dengan task_id kosong, sementara baris
  * aslinya tetap pada fase `coding` selamanya. Setelah 15 menit dashboard
- * menyebutnya "mungkin macet" - padahal tasknya sudah selesai dan Factory sudah
+ * menyebutnya "mungkin macet" - padahal tasknya sudah selesai dan sistem sudah
  * melaporkannya `done` (terukur pada 3 sesi sekaligus).
  *
  * Nilai ini sengaja disimpan di tingkat modul, bukan di state, karena state
@@ -3888,7 +3888,6 @@ export class WorkflowState {
       // tools/handler-modules/dod.js; di sini hanya disimpan.
       definitionOfDone: [],
       dodSource: "",
-      dodFactoryTaskId: "",
       // Naik setiap ada perubahan kerja baru setelah commit tercatat, sehingga
       // bukti item `done` yang lama otomatis tidak lagi berlaku.
       dodRevision: 0,
@@ -4163,7 +4162,6 @@ export class WorkflowState {
         // tools/handler-modules/dod.js; di sini hanya disimpan.
         definitionOfDone: [],
         dodSource: "",
-        dodFactoryTaskId: "",
         // Naik setiap ada perubahan kerja baru setelah commit tercatat, sehingga
         // bukti item `done` yang lama otomatis tidak lagi berlaku.
         dodRevision: 0,
@@ -4379,9 +4377,6 @@ export class WorkflowState {
       this.state.definitionOfDone = normalizeDodItems(this.state.definitionOfDone);
       if (typeof this.state.dodSource !== "string") {
         this.state.dodSource = "";
-      }
-      if (typeof this.state.dodFactoryTaskId !== "string") {
-        this.state.dodFactoryTaskId = "";
       }
       if (!Number.isFinite(Number(this.state.dodRevision)) || Number(this.state.dodRevision) < 0) {
         this.state.dodRevision = 0;
@@ -5895,7 +5890,6 @@ export class WorkflowState {
       // tools/handler-modules/dod.js; di sini hanya disimpan.
       definitionOfDone: [],
       dodSource: "",
-      dodFactoryTaskId: "",
       // Naik setiap ada perubahan kerja baru setelah commit tercatat, sehingga
       // bukti item `done` yang lama otomatis tidak lagi berlaku.
       dodRevision: 0,

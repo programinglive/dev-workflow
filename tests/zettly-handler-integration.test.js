@@ -49,18 +49,6 @@ test('required missing focus preserves the current task and makes no task writes
  });
 });
 
-test('rejected Factory claim preserves the previous task focus and makes no remote link writes',async()=>{
- const previousUrl=process.env.FACTORY_URL,previousApi=process.env.FACTORY_API_URL;
- delete process.env.FACTORY_URL;delete process.env.FACTORY_API_URL;
- try {await withWorkflowState(async state=>{
-  state.state.workflowTaskId='old-task';state.state.taskDescription='Previous work';state.state.currentPhase='coding';state.state.zettly={todoId:20};state.state.focus={id:7,todoId:20,ownerId:1,title:'Keep this focus'};
-  const calls=[];const client={async request(method,route,body){calls.push({method,route,body});if(route==='/user')return {id:1};if(route==='/focus')return {data:[{id:7,user_id:1,title:'Keep this focus',completed_at:null}]};if(route==='/todos/20')return {data:{id:20,user_id:1,description:'Original work'}};return {data:{id:20}};}};
-  const response=await handleToolCall({...context(state,client),zettlyOptions:{env:{DEVWF_ZETTLY_SYNC:'0'},client},request:createRequest('claim_factory_task',{recordId:'missing',focusId:7})});
-  assert.equal(state.state.focus.todoId,20);assert.equal(state.state.taskDescription,'Previous work');assert.ok(calls.every(c=>c.method==='GET'));
-  assert.equal(response.isError,true);
- });}finally{if(previousUrl===undefined)delete process.env.FACTORY_URL;else process.env.FACTORY_URL=previousUrl;if(previousApi===undefined)delete process.env.FACTORY_API_URL;else process.env.FACTORY_API_URL=previousApi;}
-});
-
 test('handlers create and persist one Todo, synchronize progress, and complete one linked outcome',async()=>{
  await withWorkflowState(async state=>{
   const client=mockApi(),ctx=context(state,client);
@@ -128,7 +116,7 @@ test('starting from an existing Zettly task reads its linked note context and re
 test('a verified Sentry source survives automatic Zettly tracking and a failed source read preserves the task',async()=>{
  await withWorkflowState(async state=>{
   const client=mockApi(),ctx=context(state,client);
-  ctx.integrationOptions={env:{},zettly:null,factory:null,sentry:{organization:'example',async getIssue(){return {id:'123',shortId:'APP-1',permalink:'https://example.sentry.io/issues/123/'};}}};
+  ctx.integrationOptions={env:{},zettly:null,sentry:{organization:'example',async getIssue(){return {id:'123',shortId:'APP-1',permalink:'https://example.sentry.io/issues/123/'};}}};
   const result=await handleToolCall({...ctx,request:createRequest('start_task',{...startArgs,source:{system:'sentry',id:'123'}})});
   assert.ok(!result.isError);assert.equal(state.state.taskOrigin.system,'sentry');assert.equal(state.state.taskOrigin.id,'123');assert.equal(state.state.zettly.todoId,1);assert.equal(state.state.zettly.externalLinks.sentry.issueId,'123');
   const before=structuredClone(state.state);

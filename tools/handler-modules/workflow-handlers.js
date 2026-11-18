@@ -809,7 +809,6 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
           updatedAt: new Date().toISOString(),
         }));
         workflowState.state.dodSource = "manual";
-        workflowState.state.dodFactoryTaskId = "";
         workflowState.state.dodRevision = 0;
         workflowState.state.preflight = preflight;
         workflowState.state.testsSkipped = false;
@@ -1092,28 +1091,6 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
     );
   }
 
-  // Record to the Factory board when requested. It never fails start_task,
-  // but its failure IS SHOWN - an invisible failure is exactly what
-  // let the board stay silent for two days without anyone knowing.
-  let factoryNote = "";
-  try {
-    const { createRequire } = await import("node:module");
-    const req = createRequire(import.meta.url);
-    const { recordToFactory } = req("../../factory-auto-task.cjs");
-    const result = await recordToFactory({ state: workflowState.state });
-    if (result.ok) {
-      workflowState.state.dodFactoryTaskId = result.id;
-      workflowState.state.zettly.externalLinks={...workflowState.state.zettly.externalLinks,factory:{id:result.id,taskKey:''}};
-      const persisted=await workflowState.save();
-      if(persisted?.verified===false||persisted?.conflict)throw Error('Factory link persistence was not verified');
-      factoryNote = `\n\n🏭 ${result.reused?'Linked existing':'Recorded in'} Factory: ${result.id}`;
-    } else if (result.reason && result.reason !== "dimatikan" && result.reason !== "kredensial Factory tidak lengkap") {
-      factoryNote = `\n\n⚠️ Factory did NOT record this task: ${result.reason}`;
-    }
-  } catch (e) {
-    factoryNote = `\n\n⚠️ Factory did NOT record this task: ${String(e && e.message).slice(0, 160)}`;
-  }
-
   let drawNote = "";
   try {
     const drawing = await syncZettlyDrawing(workflowState, zettlyOptions);
@@ -1175,7 +1152,7 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
   })();
 
   return textResponse(
-    `✅ Task Started: ${args.description}\n\n${project.message}${warningBlock}${claimBlock}${factoryNote}${drawNote}\n\n` +
+    `✅ Task Started: ${args.description}\n\n${project.message}${warningBlock}${claimBlock}${drawNote}\n\n` +
       cliTip +
       `📋 Definition of Done (${workflowState.state.definitionOfDone.length} items, all still open):\n${dodLines}\n` +
       `   Prove each item with 'mark_dod_item' { id, evidence } once it is genuinely proven,\n` +

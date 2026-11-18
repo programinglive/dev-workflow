@@ -105,7 +105,7 @@ function blockFor(state,status,args={}) {
 function externalLinkSummary(state) {
   const links=sanitize(state.zettly?.externalLinks||{});
   const provenance=buildTaskProvenance(state);
-  return [`Source: ${provenance.taskOrigin.system}${provenance.taskOrigin.id?` ${provenance.taskOrigin.id}`:''}`,links.sentry?`Sentry: ${links.sentry.shortId||links.sentry.issueId} ${links.sentry.url||''}`:'',links.factory?`Factory: ${links.factory.taskKey||links.factory.id} (${links.factory.id})`:'',links.drawing?`Zettly Draw: ${links.drawing.url||`https://zettly.programinglive.com/draw/${links.drawing.id}`}`:''].filter(Boolean).join('\n');
+  return [`Source: ${provenance.taskOrigin.system}${provenance.taskOrigin.id?` ${provenance.taskOrigin.id}`:''}`,links.sentry?`Sentry: ${links.sentry.shortId||links.sentry.issueId} ${links.sentry.url||''}`:'',links.drawing?`Zettly Draw: ${links.drawing.url||`https://zettly.programinglive.com/draw/${links.drawing.id}`}`:''].filter(Boolean).join('\n');
 }
 function mergeBlock(description,state,block) {
   const id=state.workflowTaskId.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
