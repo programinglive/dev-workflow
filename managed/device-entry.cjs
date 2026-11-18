@@ -21,17 +21,13 @@ function buildEnvironment({client,env=process.env,configPath}={}) {
     const source=JSON.parse(fs.readFileSync(config,'utf8'));
     const record=source.mcp?.['dev-workflow']||source.mcp?.servers?.['dev-workflow'];
     for(const [name,value] of Object.entries(record?.environment||record?.env||{})) {
-      if(typeof value!=='string'||name.startsWith('FACTORY_')) continue;
+      if(typeof value!=='string') continue;
       const canonicalEndpoint=name==='DEVWF_MONITOR_URL'||name==='DEVWF_RELEASE_URL';
       if(merged[name]&&!canonicalEndpoint) continue;
       const ref=/^\{env:([A-Za-z_][A-Za-z0-9_]*)\}$/.exec(value);
       merged[name]=ref?(env[ref[1]]||''):value;
     }
   }
-  for(const key of Object.keys(merged)) {
-    if(key.startsWith('FACTORY_')) delete merged[key];
-  }
-  merged.FACTORY_AUTO_TASK='false';
   merged.DEVWF_AGENT=client;
   return merged;
 }

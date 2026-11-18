@@ -33,7 +33,6 @@ test("state lama tanpa field DoD dimuat sebagai daftar kosong, bukan undefined",
 
     assert.deepEqual(state.state.definitionOfDone, []);
     assert.equal(state.state.dodSource, "");
-    assert.equal(state.state.dodFactoryTaskId, "");
     assert.equal(state.state.dodRevision, 0);
   });
 });
@@ -69,15 +68,12 @@ test("reset mengosongkan DoD supaya task berikutnya tidak mewarisi bukti", async
     state.state.definitionOfDone = [
       { id: "dod-1", text: "build lulus", status: "done", evidence: "npm test", revision: 0 },
     ];
-    state.state.dodSource = "factory";
-    state.state.dodFactoryTaskId = "abc";
     state.state.dodRevision = 3;
 
     state.reset();
 
     assert.deepEqual(state.state.definitionOfDone, []);
     assert.equal(state.state.dodSource, "");
-    assert.equal(state.state.dodFactoryTaskId, "");
     assert.equal(state.state.dodRevision, 0);
   });
 });

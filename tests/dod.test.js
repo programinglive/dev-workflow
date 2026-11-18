@@ -7,7 +7,7 @@ import {
   MIN_EVIDENCE,
   validateItemTexts,
   normalizeItems,
-  parseFactoryChecklist,
+  parseChecklist,
   isSatisfied,
   nextItemId,
   openItems,
@@ -61,20 +61,20 @@ test("validateItemTexts menolak duplikat tanpa memandang huruf besar kecil", () 
   assert.match(result.error, /duplikat/i);
 });
 
-test("parseFactoryChecklist mengambil butir berkotak dan membuang kotaknya", () => {
-  const result = parseFactoryChecklist("- [ ] build lulus\n- [x] tes lama hijau\n* [X] deploy dicoba");
+test("parseChecklist mengambil butir berkotak dan membuang kotaknya", () => {
+  const result = parseChecklist("- [ ] build lulus\n- [x] tes lama hijau\n* [X] deploy dicoba");
 
   assert.deepEqual(result.items, ["build lulus", "tes lama hijau", "deploy dicoba"]);
   assert.equal(result.truncated, false);
 });
 
-test("parseFactoryChecklist mengambil butir tanpa kotak", () => {
-  const result = parseFactoryChecklist("- build lulus\n+ migrasi jalan\n* rollback dicoba");
+test("parseChecklist mengambil butir tanpa kotak", () => {
+  const result = parseChecklist("- build lulus\n+ migrasi jalan\n* rollback dicoba");
 
   assert.deepEqual(result.items, ["build lulus", "migrasi jalan", "rollback dicoba"]);
 });
 
-test("parseFactoryChecklist mengabaikan heading, baris kosong, dan paragraf prosa", () => {
+test("parseChecklist mengabaikan heading, baris kosong, dan paragraf prosa", () => {
   const board = [
     "## Kondisi selesai",
     "",
@@ -85,35 +85,35 @@ test("parseFactoryChecklist mengabaikan heading, baris kosong, dan paragraf pros
     "Jangan lupa update changelog.",
   ].join("\n");
 
-  const result = parseFactoryChecklist(board);
+  const result = parseChecklist(board);
 
   assert.deepEqual(result.items, ["build lulus"]);
 });
 
-test("parseFactoryChecklist memotong teks kepanjangan dan menandainya", () => {
-  const result = parseFactoryChecklist(`- [ ] ${"y".repeat(MAX_TEXT + 50)}`);
+test("parseChecklist memotong teks kepanjangan dan menandainya", () => {
+  const result = parseChecklist(`- [ ] ${"y".repeat(MAX_TEXT + 50)}`);
 
   assert.equal(result.items[0].length, MAX_TEXT);
   assert.equal(result.truncated, true);
 });
 
-test("parseFactoryChecklist membatasi 20 item dan menandainya", () => {
+test("parseChecklist membatasi 20 item dan menandainya", () => {
   const board = Array.from({ length: MAX_ITEMS + 5 }, (_, index) => `- [ ] kondisi ${index + 1}`).join("\n");
-  const result = parseFactoryChecklist(board);
+  const result = parseChecklist(board);
 
   assert.equal(result.items.length, MAX_ITEMS);
   assert.equal(result.truncated, true);
 });
 
-test("parseFactoryChecklist membuang duplikat dan menandainya", () => {
-  const result = parseFactoryChecklist("- [ ] build lulus\n- [ ] Build Lulus");
+test("parseChecklist membuang duplikat dan menandainya", () => {
+  const result = parseChecklist("- [ ] build lulus\n- [ ] Build Lulus");
 
   assert.deepEqual(result.items, ["build lulus"]);
   assert.equal(result.truncated, true);
 });
 
-test("parseFactoryChecklist mengembalikan daftar kosong untuk papan tanpa checklist", () => {
-  const result = parseFactoryChecklist("Tidak ada daftar di sini.\n\n## Heading saja");
+test("parseChecklist mengembalikan daftar kosong untuk papan tanpa checklist", () => {
+  const result = parseChecklist("Tidak ada daftar di sini.\n\n## Heading saja");
 
   assert.deepEqual(result.items, []);
   assert.equal(result.truncated, false);

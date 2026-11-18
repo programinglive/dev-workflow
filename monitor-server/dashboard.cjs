@@ -353,7 +353,7 @@ const PAGE = `<!doctype html>
   .task-metadata a { color:#79c0ff; }
   .task-relation-list { display:flex; align-items:center; flex-wrap:wrap; gap:5px; margin-top:4px; }
   .task-relation { display:inline-flex; align-items:center; max-width:100%; padding:2px 8px; border:1px solid #2d3b50; border-radius:999px; background:#101a2a; overflow-wrap:anywhere; }
-  .task-relation-factory { border-color:#9e6a2266; background:#2a1c0e; }
+  .task-relation-sentry { border-color:#9e6a2266; background:#2a1c0e; }
   .task-relation-zettly_draw { border-color:#8b5cf666; background:#201630; }
   .flow-preview { margin-top:8px; }
   .flow-thumb-box { transition:border-color .15s ease, box-shadow .15s ease; }

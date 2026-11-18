@@ -190,7 +190,7 @@ test("started_at tidak hilang oleh laporan tanpa waktu mulai", async (t) => {
 test('PostgreSQL preserves task provenance on completion and clears relations for a different task', async (t) => {
   if (lewati(t)) return;
   await bersihkan();
-  const taskOrigin = { system: 'factory', id: 'F-7', url: 'https://factory.example/', label: 'Factory task' };
+  const taskOrigin = { system: 'sentry', id: 'F-7', url: 'https://sentry.example/', label: 'Sentry task' };
   const taskRelations = [{ system: 'zettly', id: 'Z-2', url: 'https://zettly.example/todos/Z-2', label: 'Todo', relation: 'tracks' }];
   await simpan({ ...DASAR, workflowTaskId: 'wf-1', taskOrigin, taskRelations });
   await simpan({ ...DASAR, task: '', phase: 'idle' });

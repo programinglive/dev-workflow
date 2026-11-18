@@ -8,7 +8,7 @@ const require = createRequire(import.meta.url);
 const { buildSessionUpsert } = require('../monitor-server/session-upsert.cjs');
 const dashboard = readFileSync(new URL('../monitor-server/dashboard.cjs', import.meta.url), 'utf8');
 
-const origin = { system: 'factory', id: 'F-7', url: 'https://factory.example/tasks/F-7', label: 'Printer repair' };
+const origin = { system: 'zettly', id: 'Z-9', url: 'https://zettly.example/todos/Z-9', label: 'Printer repair' };
 const relations = [
   { system: 'zettly', id: 'Z-2', url: 'https://zettly.example/todos/Z-2', label: 'Tracking Todo', relation: 'tracks' },
   { system: 'sentry', id: '91', url: 'https://sentry.io/organizations/test/issues/91/', label: 'Error', relation: 'reports' },
@@ -111,8 +111,8 @@ test('dashboard renders explicit origin separately from every relation with IDs 
   const { estimateBuild } = require('../monitor-server/build-report.cjs');
   vm.runInContext(normalizeTaskMetadata.toString() + '\n' + renderTaskMetadata.toString(), context);
   const html = context.renderTaskMetadata({ workflow_task_id: 'wf-1', task_origin_json: origin, task_relations_json: relations });
-  assert.match(html.replace(/<[^>]*>/g, ''), /Source: Factory/);
-  assert.match(html, /F-7/);
+  assert.match(html.replace(/<[^>]*>/g, ''), /Source: Zettly/);
+  assert.match(html, /Z-9/);
   assert.match(html, /Relations:/);
   assert.match(html, /Zettly.*Z-2/);
   assert.match(html, /Sentry.*91/);
@@ -154,7 +154,7 @@ test('served browser script displays metadata on cards, history and detail and a
   browser.bukaDetail('s');
   for (const id of ['list', 'history', 'modal-task-metadata']) {
     const html = node(id).innerHTML;
-    assert.match(html.replace(/<[^>]*>/g, ''), /Source: Factory/);
+    assert.match(html.replace(/<[^>]*>/g, ''), /Source: Zettly/);
     for (const record of [origin, ...relations]) {
       assert.ok(html.includes(record.id), id + ' shows the service ID');
       assert.ok(html.includes('href="' + record.url + '"'), id + ' shows the service link');

@@ -195,8 +195,8 @@ test("the unified upsert stores task metadata next to the chain identity", async
     taskType: "feature",
     phase: "coding",
     workflowTaskId: "wfk-1",
-    taskOrigin: { system: "factory", id: "45489f0d" },
-    taskRelations: [{ system: "factory", id: "45489f0d", relation: "tracks", label: "Factory 45489f0d" }],
+    taskOrigin: { system: "sentry", id: "45489f0d" },
+    taskRelations: [{ system: "sentry", id: "45489f0d", relation: "tracks", label: "Sentry 45489f0d" }],
     repositoryPath: "/code/dev-workflow-mcp-server",
     repositoryRemote: "git@github.com:programinglive/dev-workflow-mcp-server.git",
   });
@@ -207,7 +207,7 @@ test("the unified upsert stores task metadata next to the chain identity", async
     [sessionKey],
   );
   assert.equal(r.rows[0].workflow_task_id, "wfk-1");
-  assert.deepEqual(r.rows[0].task_origin_json, { system: "factory", id: "45489f0d", url: "", label: "" });
+  assert.deepEqual(r.rows[0].task_origin_json, { system: "sentry", id: "45489f0d", url: "", label: "" });
   assert.equal(r.rows[0].task_relations_json.length, 1);
   assert.equal(r.rows[0].task_relations_json[0].id, "45489f0d");
   assert.equal(r.rows[0].repo_path, "/code/dev-workflow-mcp-server");

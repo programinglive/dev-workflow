@@ -2,17 +2,15 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {drawingPayload,flowGraph,flowNodes,syncZettlyDrawing} from '../zettly-drawing.js';
 
-const code='flowchart TD\nA[Verify source] --> B[Link Factory]\nB --> C[Implement fix]\nC --> D[Verify release]';
-const factoryId='c8d61cc0-d855-4078-b89c-81bb330b169c';
-const state=()=>({workflowTaskId:'workflow-1',taskDescription:'Repair monitor',mermaidCode:code,featureFlowDescription:'A verified plan',zettly:{todoId:215,externalLinks:{factory:{id:factoryId}}}});
+const code='flowchart TD\nA[Verify source] --> B[Link drawn plan]\nB --> C[Implement fix]\nC --> D[Verify release]';
+const state=()=>({workflowTaskId:'workflow-1',taskDescription:'Repair monitor',mermaidCode:code,featureFlowDescription:'A verified plan',zettly:{todoId:215,externalLinks:{}}});
 
 test('Mermaid nodes become editable Draw shapes and a safe thumbnail',()=>{
- assert.deepEqual(flowNodes(code),['Verify source','Link Factory','Implement fix','Verify release']);
+ assert.deepEqual(flowNodes(code),['Verify source','Link drawn plan','Implement fix','Verify release']);
  const result=drawingPayload(state(),code,'A verified plan');
  const store=result.document.document.store;
  assert.equal(Object.values(store).filter(record=>record.type==='geo').length,4);
  assert.equal(Object.values(store).filter(record=>record.type==='arrow').length,3);
- assert.equal(store['document:document'].meta.factoryTaskId,factoryId);
  assert.match(result.thumbnail,/^data:image\/svg\+xml/);
  assert.ok(!decodeURIComponent(result.thumbnail).includes('<script>'));
 });

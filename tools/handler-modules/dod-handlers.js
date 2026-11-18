@@ -105,9 +105,7 @@ export async function handleSetDefinitionOfDone(args, workflowState) {
   }
 
   state.definitionOfDone = items;
-  if (state.dodSource !== "factory") {
-    state.dodSource = "manual";
-  }
+  state.dodSource = "manual";
   touch(workflowState);
   await workflowState.save();
 
