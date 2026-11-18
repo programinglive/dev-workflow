@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.32.5](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.32.4...v1.32.5) (2026-11-18)
+
+
+### 🐛 Bug Fixes
+
+* **managed:** fallback to prebuild-install for better-sqlite3 under npm 12 allowScripts ([22a5156](https://github.com/programinglive/dev-workflow-mcp-server/commit/22a51560f81f17f588f2b117401c2e81c111af06))
+
 ### [1.32.4](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.32.3...v1.32.4) (2026-11-18)
 
 
