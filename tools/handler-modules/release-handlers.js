@@ -4,6 +4,7 @@ import { assertMutationRepository } from "./commit-handlers.js";
 import { assertPreflightScope } from "../../preflight.js";
 import { captureRepositoryIdentity, parseRemoteIdentity } from "../../repository-identity.js";
 import { acquireReleaseLock, releaseReleaseLock, readReleaseLock } from "../release-lock.js";
+import { checkActivePipelinesBeforeRelease } from "../pipeline-guard.js";
 
 /**
  * Label repo yang dipakai, untuk ditampilkan di laporan.
@@ -345,6 +346,13 @@ export async function handleAcquireReleaseLock(args, context) {
   });
   if (!repoGuard.ok) {
     return textResponse(repoGuard.message);
+  }
+
+  const pipelineCheck = checkActivePipelinesBeforeRelease({
+    projectDir: getActiveProjectDir() || workflowState.state.projectDir || process.cwd(),
+  });
+  if (!pipelineCheck.ok) {
+    return textResponse(pipelineCheck.message);
   }
 
   const runFenced = (op, fn) =>
@@ -824,6 +832,13 @@ export async function handlePerformRelease(args, context) {
       `  ${finalCommand}\n\n` +
       `Sebutkan tipe rilisnya: releaseType "patch" | "minor" | "major".`
     );
+  }
+
+  const pipelineCheck = checkActivePipelinesBeforeRelease({
+    projectDir: getActiveProjectDir() || workflowState.state.projectDir || process.cwd(),
+  });
+  if (!pipelineCheck.ok) {
+    return textResponse(pipelineCheck.message);
   }
 
   const runFenced = (op, fn) =>
