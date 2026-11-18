@@ -79,7 +79,16 @@ async function installDependencies(root) {
   try {
     await execFileAsync(executable,[...args,'ci','--omit=dev','--ignore-scripts','--no-audit','--no-fund'],options);
     await execFileAsync(executable,[...args,'rebuild','better-sqlite3','--no-audit','--no-fund'],options);
-    await execFileAsync(process.execPath,['-e',"const D=require('better-sqlite3');const d=new D(':memory:');d.close()"],options);
+    try {
+      await execFileAsync(process.execPath,['-e',"const D=require('better-sqlite3');const d=new D(':memory:');d.close()"],options);
+    } catch {
+      const sqliteDir=path.join(root,'node_modules','better-sqlite3');
+      const prebuild=path.join(root,'node_modules','prebuild-install','bin.js');
+      if(fsSync.existsSync(sqliteDir)&&fsSync.existsSync(prebuild)) {
+        await execFileAsync(process.execPath,[prebuild],{...options,cwd:sqliteDir});
+      }
+      await execFileAsync(process.execPath,['-e',"const D=require('better-sqlite3');const d=new D(':memory:');d.close()"],options);
+    }
   } catch {throw new Error('Managed release dependency installation failed; prior release retained');}
 }
 
