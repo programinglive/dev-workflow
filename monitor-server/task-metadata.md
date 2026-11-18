@@ -2,10 +2,10 @@
 
 Reporters may send `workflowTaskId`, `taskOrigin` and `taskRelations` alongside
 the existing session snapshot. Origin is the initial source of the work and
-accepts `zettly`, `factory`, `sentry`, `manual` or `unknown`. Relations describe
-associated Zettly Todos, Factory tasks and Sentry issues without changing that
+accepts `zettly`, `sentry`, `manual` or `unknown`. Relations describe
+associated Zettly Todos, Zettly Draw plans and Sentry issues without changing that
 source. Each record carries its actual ID, label and HTTP(S) resource URL;
-relations also carry a short relation description. Use the known Factory board
+relations also carry a short relation description. Use the known service
 URL when no task detail route exists. The monitor never invents detail routes.
 
 Cards, session detail and history show Source separately from Relations. Missing
