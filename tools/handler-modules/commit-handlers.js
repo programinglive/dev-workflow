@@ -16,6 +16,33 @@ import { collectGitContext } from "../../governance/ci-validator.js";
 import { validateForceOverrideAuthorization } from "../../governance/exceptions.js";
 
 /**
+ * Check whether test updates exist in the working tree or in recent commits on HEAD
+ * so `commit_and_push` does not falsely block when tests were already committed.
+ */
+export async function hasTestEvidenceForCommit({
+  testsSkipped = false,
+  statusOutput = "",
+  execFn = null,
+} = {}) {
+  if (testsSkipped) return true;
+  if (containsTestFilesInStatus(statusOutput)) return true;
+  if (typeof execFn !== "function") return false;
+
+  try {
+    const { stdout } = await execFn("git log -n 3 --name-only --pretty=format:");
+    const syntheticStatus = String(stdout || "")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((file) => `M  ${file}`)
+      .join("\n");
+    return containsTestFilesInStatus(syntheticStatus);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Tutup task Factory yang di-claim saat workflow berakhir, supaya board tidak
  * menumpuk task gantung.
  *
@@ -466,7 +493,12 @@ export async function handleCommitAndPush(args, context) {
 
   const statusOutput = await git.getStatusOutput();
 
-  if (!workflowState.state.testsSkipped && !containsTestFilesInStatus(statusOutput)) {
+  const hasTests = await hasTestEvidenceForCommit({
+    testsSkipped: Boolean(workflowState.state.testsSkipped),
+    statusOutput,
+    execFn: exec,
+  });
+  if (!hasTests) {
     return textResponse("⚠️ Please include test updates in your changes before running 'commit_and_push'. Ensure at least one test file is modified.");
   }
 
