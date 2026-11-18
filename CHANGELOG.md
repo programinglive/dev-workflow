@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.32.7](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.32.5...v1.32.7) (2026-11-18)
+
+
+### 📝 Documentation
+
+* **monitor:** drop retired Factory provenance wording ([893a2a1](https://github.com/programinglive/dev-workflow-mcp-server/commit/893a2a1409691a0bd30e5f4eb51f773868fd466b))
+* **operations:** add Factory retirement and Next.js security execution journal ([6754086](https://github.com/programinglive/dev-workflow-mcp-server/commit/67540867c3c846d4395d44eafd2d768d48ca28b8))
+
+
+### 🐛 Bug Fixes
+
+* **web:** restore generated catalog removed by Factory cleanup ([f074335](https://github.com/programinglive/dev-workflow-mcp-server/commit/f074335280c54cf90a2dcf63d2cc22f998ef82b4))
+* **workflow:** check recent commits for test evidence in commit_and_push ([79dd64d](https://github.com/programinglive/dev-workflow-mcp-server/commit/79dd64d07a8fd94fe77be23b5fc880b3d6afb5b0))
+
+
+### 🧹 Chores
+
+* **factory:** remove retired Factory integration from current main ([59cdad8](https://github.com/programinglive/dev-workflow-mcp-server/commit/59cdad83c8118b93000b8fff7d3f8233d179e68c))
+* **release:** 1.32.6 🚀 ([9ff3627](https://github.com/programinglive/dev-workflow-mcp-server/commit/9ff3627206e9ea80692e279a335d79f3d375caf1))
+
 ### [1.32.6](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.32.5...v1.32.6) (2026-11-18)
 
 
