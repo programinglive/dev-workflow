@@ -2,17 +2,62 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
-### Open-Source Repository Baseline
+### [1.32.3](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.32.0...v1.32.3) (2026-11-18)
 
-DevWorkflow's Git history was reinitialized as part of its open-source preparation.
 
-The new repository baseline consolidates the project's existing functionality into a clean, portable source tree, separating public development resources from environment-specific internal configurations.
+### 📝 Documentation
 
-This change does not represent a complete rewrite of the application. Existing functionality has been preserved and validated through automated tests.
+* **restart:** record the verified relaunch mechanism per client ([#117](https://github.com/programinglive/dev-workflow-mcp-server/issues/117)) ([fa89b40](https://github.com/programinglive/dev-workflow-mcp-server/commit/fa89b40282fb47bcadc99d9d1549e50ed0302772))
 
-Earlier internal development history is maintained separately and is not part of the public repository.
 
-**Note:** Commit hashes from before this baseline are no longer part of the supported public Git history.
+### 🐛 Bug Fixes
+
+* **fleet:** report real tool versions and target the approved release ([#124](https://github.com/programinglive/dev-workflow-mcp-server/issues/124)) ([18f5296](https://github.com/programinglive/dev-workflow-mcp-server/commit/18f5296f46ec6db2cb5c69094e924fa9f4dde0e4))
+* **handover:** bind claims to the task, replace the successor row, reclaim dead locks ([9451910](https://github.com/programinglive/dev-workflow-mcp-server/commit/945191095fe35b45c3050c5de7d9b61844387216))
+* **handover:** bind exit and claim identity to the owner, fence adoption ([f5330cb](https://github.com/programinglive/dev-workflow-mcp-server/commit/f5330cbf0835edbf56114f1bbf1b9f0fd89b59c3))
+* **handover:** bind the snapshot, harden the lock, and persist the checkpoint ([ec6f4c4](https://github.com/programinglive/dev-workflow-mcp-server/commit/ec6f4c4d3b4281b84406d40073087b8fc15b3d38))
+* **handover:** close recovery races and make adoption durable ([aca1b81](https://github.com/programinglive/dev-workflow-mcp-server/commit/aca1b8174fe65e04334aae79b3041979abbf25f8))
+* **handover:** compare process start as an instant and require the session project ([6c6bcbe](https://github.com/programinglive/dev-workflow-mcp-server/commit/6c6bcbe441ddeecdc4011bbcb2dbd0244f0abb0d))
+* **handover:** fence a failed claim marker and prove the released receipt ([7179e92](https://github.com/programinglive/dev-workflow-mcp-server/commit/7179e92c64b5267c1242b0b626093d970a103268))
+* **handover:** prove release across processes and bind the sidecar path ([1dc1844](https://github.com/programinglive/dev-workflow-mcp-server/commit/1dc1844f30a476dad677c95702f0b8248aaf0d77))
+* **handover:** support the pinned state layout and close the remaining races ([0dd8bfc](https://github.com/programinglive/dev-workflow-mcp-server/commit/0dd8bfc8c38b756cdc498a9a06a2544321707621))
+* **handover:** verify owner exit and let a successor own the worktree ([00ec998](https://github.com/programinglive/dev-workflow-mcp-server/commit/00ec998f5ef9a245bc0c20ade51eec4471bcb58a))
+* **handover:** verify the checkpoint file and fail closed on a damaged counter ([ada9272](https://github.com/programinglive/dev-workflow-mcp-server/commit/ada9272443f02e22855568b4b6b8768138c53a0d))
+* **lock:** use one acceptance rule for nested and legacy focus bindings ([#106](https://github.com/programinglive/dev-workflow-mcp-server/issues/106)) ([7e25149](https://github.com/programinglive/dev-workflow-mcp-server/commit/7e2514936313a085d9dfe610337c53e5cc78071e))
+* **reaper:** atomic attestation reconciliation and fail-closed focus binding ([#108](https://github.com/programinglive/dev-workflow-mcp-server/issues/108)) ([862514b](https://github.com/programinglive/dev-workflow-mcp-server/commit/862514b33e26d236a79a9e8ab42272c4aea11aa5))
+* **restart:** claim the handover with an OS-exclusive link, not read-then-replace ([5914584](https://github.com/programinglive/dev-workflow-mcp-server/commit/5914584c966838aee96227f1992bbd495f248104))
+* **restart:** require a verified exit, mandatory identity, and an explicit handover for claim ([d1e484a](https://github.com/programinglive/dev-workflow-mcp-server/commit/d1e484ad1571babc048489b15a8696257494f639))
+* **restart:** store the handshake record beside the session state file ([#120](https://github.com/programinglive/dev-workflow-mcp-server/issues/120)) ([b7c18ad](https://github.com/programinglive/dev-workflow-mcp-server/commit/b7c18ada3c08377c57cda9ac2f63d5df6cc9e763)), closes [#842](https://github.com/programinglive/dev-workflow-mcp-server/issues/842)
+* **resume:** find left-behind sessions in the per-project users layout ([c69b219](https://github.com/programinglive/dev-workflow-mcp-server/commit/c69b2190a4a30b12369e9f6a5b63ea62fcfacc85))
+* **resume:** make adoption commit without the successor's mutex ([05f3c1f](https://github.com/programinglive/dev-workflow-mcp-server/commit/05f3c1f581b23915ee74065e0e603c77bfbce933))
+* **security:** stop treating a session identifier as a credential ([#107](https://github.com/programinglive/dev-workflow-mcp-server/issues/107)) ([a231adf](https://github.com/programinglive/dev-workflow-mcp-server/commit/a231adf23d891dcfb15209d902c7500a6b199a52))
+* **web:** generate the version banner in English ([ca6a475](https://github.com/programinglive/dev-workflow-mcp-server/commit/ca6a475d78081800193d9037e75cb05e5eabe93c))
+
+
+### 🧹 Chores
+
+* **deps)(deps:** bump the minor-and-patch group with 5 updates ([#112](https://github.com/programinglive/dev-workflow-mcp-server/issues/112)) ([1e816f8](https://github.com/programinglive/dev-workflow-mcp-server/commit/1e816f8bf128b825ec0ff97468a7a964ca496f2d))
+* **deps)(deps:** bump vite from 7.3.7 to 8.3.8 ([#113](https://github.com/programinglive/dev-workflow-mcp-server/issues/113)) ([aab6f10](https://github.com/programinglive/dev-workflow-mcp-server/commit/aab6f105674561a1961dd0786ae9480b08892eae))
+* **fleet:** bump pinned toolchain to latest verified versions ([#125](https://github.com/programinglive/dev-workflow-mcp-server/issues/125)) ([aa384d2](https://github.com/programinglive/dev-workflow-mcp-server/commit/aa384d253e0527a198eda38ff176565bf160c429))
+* **release:** 1.32.1 ([#116](https://github.com/programinglive/dev-workflow-mcp-server/issues/116)) ([623880a](https://github.com/programinglive/dev-workflow-mcp-server/commit/623880a4d1613188ab718f31b6b5d762300635a1))
+* **release:** 1.32.2 ([4724466](https://github.com/programinglive/dev-workflow-mcp-server/commit/4724466f1ee0a42ef8e65a93c0c7e82f63ea11cf))
+* **web-deps)(deps:** bump the minor-and-patch group ([#114](https://github.com/programinglive/dev-workflow-mcp-server/issues/114)) ([c5bb643](https://github.com/programinglive/dev-workflow-mcp-server/commit/c5bb64370a222ac81ffad86929a3b69a6a4347ba))
+
+
+### ✨ Features
+
+* **cli:** add devwf checkpoint for the restart controller ([#118](https://github.com/programinglive/dev-workflow-mcp-server/issues/118)) ([00d6a30](https://github.com/programinglive/dev-workflow-mcp-server/commit/00d6a305b3be5a2791fff4044c68ed7dd9c97b7d))
+* **governance:** block unnormalized nullable date coalesce in check_ready_to_commit ([5efcaf6](https://github.com/programinglive/dev-workflow-mcp-server/commit/5efcaf6b8ad67dc48dfbe5b508f4e12b6c909d74))
+* **governance:** enforce CLI-First and Documentation-as-Code policies ([#123](https://github.com/programinglive/dev-workflow-mcp-server/issues/123)) ([2391b61](https://github.com/programinglive/dev-workflow-mcp-server/commit/2391b61030bf4bc766c717c96a014b29e64954b9)), closes [#95](https://github.com/programinglive/dev-workflow-mcp-server/issues/95) [#869](https://github.com/programinglive/dev-workflow-mcp-server/issues/869) [#95](https://github.com/programinglive/dev-workflow-mcp-server/issues/95) [#869](https://github.com/programinglive/dev-workflow-mcp-server/issues/869) [#95](https://github.com/programinglive/dev-workflow-mcp-server/issues/95) [#869](https://github.com/programinglive/dev-workflow-mcp-server/issues/869)
+* **managed:** fail-closed maintenance admission at the launcher level ([#109](https://github.com/programinglive/dev-workflow-mcp-server/issues/109)) ([c479557](https://github.com/programinglive/dev-workflow-mcp-server/commit/c479557c0b0d5f9a6277cfdcfe26717fdc74ed50))
+* **monitor:** centralized fleet restart orchestration ([#111](https://github.com/programinglive/dev-workflow-mcp-server/issues/111)) ([e3aaee2](https://github.com/programinglive/dev-workflow-mcp-server/commit/e3aaee23c731c91e72ff4ddfcf367b8981e33663))
+* **monitor:** wire the restart command channel ([#115](https://github.com/programinglive/dev-workflow-mcp-server/issues/115)) ([834f53f](https://github.com/programinglive/dev-workflow-mcp-server/commit/834f53fa6d6e27b9c69d293d70b242dcee6eba37))
+* **process-lock:** explicit opt-in for unverified kernel mutex on darwin ([b5f729e](https://github.com/programinglive/dev-workflow-mcp-server/commit/b5f729e6c2bfced0c7f105dc58181c60bbe24ec8))
+* **restart:** controller-side exit verification and a usable handover key ([3cca23b](https://github.com/programinglive/dev-workflow-mcp-server/commit/3cca23b9c2c717f1ccf89863f854c79ddbd35d2d))
+* **restart:** cooperative owner-side handshake ([#119](https://github.com/programinglive/dev-workflow-mcp-server/issues/119)) ([c05df4e](https://github.com/programinglive/dev-workflow-mcp-server/commit/c05df4e1b233f2cdc165e521ce16f8adace4380e))
+* **restart:** same-machine successor claim over a durable handover ([dd0813f](https://github.com/programinglive/dev-workflow-mcp-server/commit/dd0813f7def84b0811642959337a0e6c1b866ed9))
+* **restart:** same-machine successor claim over a durable handover ([#121](https://github.com/programinglive/dev-workflow-mcp-server/issues/121)) ([7345d7c](https://github.com/programinglive/dev-workflow-mcp-server/commit/7345d7c1fa3c6c2d59cc6392279c233c728a054a))
+* **session:** accept Codex and Antigravity session identity from their real metadata keys ([#110](https://github.com/programinglive/dev-workflow-mcp-server/issues/110)) ([73afee9](https://github.com/programinglive/dev-workflow-mcp-server/commit/73afee94ae9fdfd76823b9c0103d8ee1920302e7))
 
 ## [1.31.0](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.30.0...v1.31.0) (2026-11-12)
 
