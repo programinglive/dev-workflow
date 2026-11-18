@@ -8,7 +8,7 @@
  *
  * MENGAPA PER ITEM, BUKAN SATU TEKS
  * ---------------------------------
- * Factory menyimpan DoD sebagai teks checklist. Itu cukup untuk gerbang
+ * DoD bisa datang sebagai teks checklist. Itu cukup untuk gerbang
  * "tidak boleh kosong", tetapi tidak bisa membedakan "sudah dibuktikan" dari
  * "ditulis lalu dilupakan". Di sini tiap item punya status sendiri, bukti
  * sendiri, dan revisi saat ia dibuktikan.
@@ -151,14 +151,14 @@ export function normalizeItems(raw) {
 }
 
 /**
- * Membaca checklist papan Factory menjadi daftar teks.
+ * Membaca checklist (markdown) menjadi daftar teks.
  *
  * Butir `- [x]` tetap diimpor sebagai item BIASA (status `open` di sisi
- * pemanggil): checklist papan adalah rencana kerja, bukan bukti. Kalau kotak
- * centang papan dipercaya apa adanya, agen bisa mewarisi klaim orang lain tanpa
- * pernah menjalankan apa pun di mesin ini.
+ * pemanggil): checklist adalah rencana kerja, bukan bukti. Kalau kotak centang
+ * dipercaya apa adanya, agen bisa mewarisi klaim orang lain tanpa pernah
+ * menjalankan apa pun di mesin ini.
  */
-export function parseFactoryChecklist(text) {
+export function parseChecklist(text) {
   const lines = String(text ?? "").split(/\r?\n/);
   const items = [];
   const seen = new Set();

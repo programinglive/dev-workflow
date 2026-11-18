@@ -12,7 +12,7 @@
  * WHY drop AND complete GO THROUGH THE HANDLERS
  * --------------------------------------------
  * Closing a card is not "flip a flag". The handler writes the outcome to
- * Zettly, cancels the Factory task, appends history and resets the workflow.
+ * Zettly, appends history and resets the workflow.
  * Reimplementing that here would create a second writer that drifts, and the
  * card would be closed locally while the Todo still looks open. The CLI only
  * decides *whether* to call, never *what* closing means.

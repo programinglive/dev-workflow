@@ -19,12 +19,12 @@ function normalizeTaskMetadata(input) {
     if (relation) result.relation = text(v.relation, 80);
     return result;
   };
-  const origin = record(value.taskOrigin, ['zettly', 'factory', 'sentry', 'manual', 'unknown'], false) || {};
+  const origin = record(value.taskOrigin, ['zettly', 'sentry', 'manual', 'unknown'], false) || {};
   const relations = [];
   const seen = new Set();
   if (Array.isArray(value.taskRelations)) {
     for (const item of value.taskRelations.slice(0, 120)) {
-      const normalized = record(item, ['zettly', 'zettly_draw', 'factory', 'sentry', 'session_chain'], true);
+      const normalized = record(item, ['zettly', 'zettly_draw', 'sentry', 'session_chain'], true);
       if (!normalized || !normalized.id) continue;
       const key = normalized.system + ':' + normalized.id + ':' + normalized.relation;
       if (seen.has(key)) continue;
@@ -43,7 +43,7 @@ function renderTaskMetadata(session) {
     taskRelations: session.task_relations_json,
   });
   const escape = v => String(v || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
-  const names = { zettly: 'Zettly', zettly_draw: 'Zettly Draw', factory: 'Factory', sentry: 'Sentry', session_chain: 'Zettelkasten', manual: 'Manual', unknown: 'Unknown' };
+  const names = { zettly: 'Zettly', zettly_draw: 'Zettly Draw', sentry: 'Sentry', session_chain: 'Zettelkasten', manual: 'Manual', unknown: 'Unknown' };
   const item = (record, relation) => {
     if (record.system === 'session_chain') {
       const relNames = { preceded_by: 'Lanjutan dari', superseded_by: 'Dilanjutkan di' };
@@ -53,8 +53,8 @@ function renderTaskMetadata(session) {
     }
     const prefix = names[record.system];
     const label = record.label || '';
-    const shortId = record.id ? (record.system === 'factory' ? record.id.slice(0, 8) : record.id) : '';
-    const named = label.startsWith(prefix + ' ') ? label : record.system === 'zettly_draw' && label.startsWith('Draw #') ? 'Zettly ' + label : prefix + (label ? (['factory', 'sentry'].includes(record.system) ? ' ' : ' · ') + label : '');
+    const shortId = record.id ? record.id : '';
+     const named = label.startsWith(prefix + ' ') ? label : record.system === 'zettly_draw' && label.startsWith('Draw #') ? 'Zettly ' + label : prefix + (label ? (record.system === 'sentry' ? ' ' : ' · ') + label : '');
     const main = shortId && !named.includes(shortId) ? named + ' #' + shortId : named;
     const relationNames = { tracks: 'Todo', executes: 'eksekusi', visual_plan: 'rencana visual', source_issue: 'isu sumber', focus: 'fokus', preceded_by: 'Lanjutan dari', superseded_by: 'Dilanjutkan di' };
     const text = main + (relation && relationNames[record.relation] ? ' · ' + relationNames[record.relation] : '');

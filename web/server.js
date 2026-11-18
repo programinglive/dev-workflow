@@ -10,7 +10,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { databaseConnectionUrl,requireSigningSecret } from '../security/config.js';
-import { securityJsonMiddleware,knowledgeInputMiddleware } from '../security/http.js';
+import { securityJsonMiddleware } from '../security/http.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -177,32 +177,6 @@ app.prepare().then(() => {
             safeLog('error', 'Get history error:', error);
             res.status(500).json({ error: 'Internal server error' });
         }
-    });
-
-    // 🏭 AI Software Factory API Endpoints (for factory.programinglive.com integration)
-    server.get('/api/factory/status', (req, res) => {
-        res.json({
-            factory: 'programinglive-node-factory',
-            status: 'operational',
-            domain: process.env.FACTORY_DOMAIN || 'factory.programinglive.com',
-            version: '1.9.1',
-            features: {
-                workflowDiscipline: true,
-                agenticSkills: true,
-                tokenCompression: true
-            },
-            timestamp: new Date().toISOString()
-        });
-    });
-
-    server.post('/api/factory/webhook', knowledgeInputMiddleware, (req, res) => {
-        const payload = req.body;
-        safeLog('info','Factory webhook received');
-        res.json({
-            success: true,
-            message: 'Webhook received and queued for factory processing',
-            receivedAt: new Date().toISOString()
-        });
     });
 
     // Next.js handler for all other routes

@@ -17,7 +17,7 @@ import {
 // Kenapa tes ini ada:
 //
 // 31 Oktober 2026 dua proses dev-workflow MCP hidup bersamaan (PID 23528 dan
-// 3988). Yang lebih tua memegang password Factory LAMA, yang lebih muda memegang
+// 3988). Yang lebih tua memegang password LAMA, yang lebih muda memegang
 // yang baru, sehingga tool yang sama menjawab berbeda tergantung proses mana yang
 // melayaninya. Keduanya juga menulis berkas state workflow yang sama.
 //

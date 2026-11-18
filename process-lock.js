@@ -3344,7 +3344,7 @@ export function lockWarning(result) {
   return (
     `Another dev-workflow MCP process (PID ${result.holder.pid}, alive since ${started}) ` +
     "is still running and uses the same state directory. " +
-    "The older process holds the environment it was started with, so Factory credentials " +
+    "The older process holds the environment it was started with, so service credentials " +
     "and workflow state can differ between processes. Close OpenCode and open it again to " +
     "make sure only one process is alive."
   );

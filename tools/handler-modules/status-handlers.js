@@ -79,7 +79,7 @@ export async function handleGetWorkflowStatus(workflowState) {
 
   const dodItems = Array.isArray(status.definitionOfDone) ? status.definitionOfDone : [];
   const dod = summarize(dodItems, status.dodRevision);
-  const dodSource = status.dodSource === "factory" ? " (dari papan Factory)" : "";
+  const dodSource = "";
 
   // Task yang sedang berjalan saat tata letak state berubah tidak disalin ke
   // berkas sesi (menyalinnya berarti mewarisi pekerjaan orang lain), tetapi ia
@@ -457,7 +457,6 @@ export async function handleRerunWorkflow(workflowState) {
       ? workflowState.state.definitionOfDone.map((item) => ({ ...item }))
       : [],
     dodSource: workflowState.state.dodSource || "",
-    dodFactoryTaskId: workflowState.state.dodFactoryTaskId || "",
     dodRevision: Number(workflowState.state.dodRevision) || 0,
   };
 

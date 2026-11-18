@@ -259,14 +259,13 @@ finished.
 | `sentry-client.js` | Bounded read-only Sentry cloud issue queries with private device credentials |
 | `task-provenance.js` | True initial task origin and verified service/context relation metadata |
 | `zettly-context.js` | Bounded incoming/outgoing Zettelkasten task and note context with explicit coverage |
-| `tools/handler-modules/integration-handlers.js` | Verified service connection states and canonical Zettly/Factory/Sentry links |
+| `tools/handler-modules/integration-handlers.js` | Verified service connection states and canonical Zettly/Sentry links |
 | `db/` | Storage adapters: SQLite (default), PostgreSQL, MySQL, plus migration and replication |
 | `monitor.js` | Best-effort reporting of workflow changes to the live dashboard; the MCP process also sends a small heartbeat while its client session stays connected |
 | `monitor-server/` | The dashboard process (`dashboard.cjs`), the public share process (`share-server.cjs`), their SQL builders, and their systemd units. Includes responsive bottom navigation bar (Aktif, Riwayat, Rekap, Mesin, Info) and interactive session detail modals. Session cards show the repository (`repo_path` plus `repo_remote`) and warn when a task has no Mermaid flow yet. A card, a history row and a recap line all require **both** a task and a project; see [strict task and project identity](docs/strict-task-identity.md). Reopening a session detail restores its close control. The machine view excludes one identified retired synthetic report while preserving later reports from the same machine name. Main-branch CI deploys reviewed monitor artifacts through a dedicated key after tests pass when monitor files changed. |
 | `web/` | The public marketing site: Next.js static export published to `devworkflow.programinglive.com` |
 | `mobile-app/` | Dedicated Android tablet cockpit (Expo/React Native) optimized for Xiaomi Pad 6 (2880×1800 landscape). Features runtime server profile switching (`server-profile.js`), live build monitoring, flow previews, and "Buka di Browser" integration. |
 | `security/` | Secret references, output scanning, and the audit |
-| `factory-*.js`, `db/` | Software Factory integration: claiming board tasks, pushing results |
 | `managed/` | Central release distribution, bootstrap launcher, protocol validation, and automated multi-device rollout (`managed/rollout.cjs`) |
 | `scripts/` | Release, build, verification, and server setup helpers |
 | `tests/` | One file per behaviour; `monitor-*` covers the dashboard, `web-*` the site |
@@ -323,15 +322,15 @@ See [MCP client configuration](#mcp-client-configuration).
 | `set_focus` | Create or reuse an active focus without replacing others |
 | `link_task_to_focus` | Associate the active canonical task with a focus by focusId |
 | `complete_focus` | Close a specific focus only after linked work is complete and evidence is recorded |
-| `get_integration_status` | Verify authenticated access to Zettly, Factory and Sentry without exposing credentials |
+| `get_integration_status` | Verify authenticated access to Zettly and Sentry without exposing credentials |
 | `get_zettly_task_context` | Read bounded linked task/note context, cycles and incoming/outgoing coverage |
 | `list_sentry_issues` | Read bounded Sentry issue summaries in the configured organization |
 | `inventory_sentry_issues` | Scan all accessible projects and issue pages in an explicit window; save a private coverage snapshot |
 | `get_sentry_issue` | Retrieve one bounded issue summary without raw event payloads |
-| `link_sentry_issue` | Link a verified issue and optional existing Factory task to the current canonical Zettly Todo |
+| `link_sentry_issue` | Link a verified issue to the current canonical Zettly Todo |
 | `start_task` | Begin a task; requires `definitionOfDone` and `plan`; automatically creates or links its Zettly Todo |
 | `refine_with_ai` | After the flow gate, submit complete AI-rewritten task instructions using new and prior context; bugfixes require reproduction, expected and observed behavior, evidence, and constraints; updates the same task and Todo, retaining proven evidence |
-| `recommend_mcp_tools` | Central discovery index and context-aware recommender for all MCP servers and tools (`central-gateway`, `pocketbase`, `infra-knowledge`, `notify`, `factory`, `zettly`, `clinic-helper`, `playwright`, `gcp`, `cloudflare`, `netlify`, `mermaid`) |
+| `recommend_mcp_tools` | Central discovery index and context-aware recommender for all MCP servers and tools (`central-gateway`, `pocketbase`, `infra-knowledge`, `notify`, `zettly`, `clinic-helper`, `playwright`, `gcp`, `cloudflare`, `netlify`, `mermaid`) |
 | `report_build_status` | Report live build, test, security scan, or deployment progress (`building`, `testing`, `scanning`, `deploying`, `succeeded`, `failed`, `idle`) with target, command, stage, progress percentage, output snippet, and runner job URL |
 | `sync_zettly_task` | Retry pending Zettly task/outcome synchronization or link an existing Todo |
 | `set_plan` | Replace the work plan of the running task |
@@ -346,7 +345,6 @@ See [MCP client configuration](#mcp-client-configuration).
 | `mark_dod_item` | Prove one item, with evidence |
 | `waive_dod_item` | Exclude one item, with a reason |
 | `create_feature_flow` | Record the Mermaid plan and publish an editable Zettly Draw linked to the canonical Todo (tldraw v4 store schema, fractional indexing, and ProseMirror richText compliant) |
-| `link_factory_task` | Verify and link an existing Factory task to the active Todo and monitor session |
 | `link_zettly_drawing` | Verify and link an existing Zettly Draw to the active Todo |
 | `mark_bug_fixed` | Mark the implementation done |
 | `create_tests` | Mark tests as written |
@@ -405,7 +403,7 @@ Four axes, so a card can be reached from several directions:
 proyek:<repository>   which codebase the work belongs to
 tipe:<type>           feature, bugfix, refactor, infra, other
 area:<subsystem>      monitor, cli, checkpoint, zettly, erp, deploy, ...
-sumber:<origin>       manual, sentry, factory, codex, mcp
+sumber:<origin>       manual, sentry, codex, mcp
 ```
 
 `zettly-tags.js` derives the names and resolves them to ids. A tag is created
@@ -464,7 +462,7 @@ render as two cards.
 
 ### Central MCP Ecosystem Index (`recommend_mcp_tools`)
 
-Because `dev-workflow` is always the first MCP server invoked in every coding session, it acts as the discovery index and smart recommender for all MCP servers in our ecosystem (`central-gateway`, `pocketbase`, `infra-knowledge`, `notify`, `factory`, `zettly`, `clinic-helper`, `playwright`, `gcp`, `cloudflare`, `netlify`, `mermaid`).
+Because `dev-workflow` is always the first MCP server invoked in every coding session, it acts as the discovery index and smart recommender for all MCP servers in our ecosystem (`central-gateway`, `pocketbase`, `infra-knowledge`, `notify`, `zettly`, `clinic-helper`, `playwright`, `gcp`, `cloudflare`, `netlify`, `mermaid`).
 
 - **Automatic Recommendations**: `start_task`, `get_workflow_status`, and `continue_workflow` score the active task description, `projectDir`, `definitionOfDone`, and `plan` steps against `MCP_ECOSYSTEM_INDEX` (`mcp-index.js`) and append a `🧭 Recommended MCP Tools` block showing the best-matching MCP servers, key tools, and why they matched.
 - **On-Demand Search & Full Catalog**: Call `recommend_mcp_tools` with `{ "query": "send Pusher alert and inspect PocketBase", "projectDir": "D:/code/notification-hub" }` to get targeted recommendations, or `{ "includeAll": true }` to view the complete ecosystem catalog.
@@ -577,7 +575,7 @@ Each item is later either **proven** or **excluded**, and the workflow refuses t
 - Evidence is required (5-500 characters). It is what separates "proven" from "claimed".
 - An excluded item keeps its reason in the state and in the `history` entry's `definitionOfDoneSummary`.
 - When new working changes appear after a commit, `dodRevision` increments and previously proven items must be re-confirmed against the code that is actually being committed. Waivers survive.
-- A task claimed from the Factory board imports the board checklist as **open** items: a checked box on the board is someone's plan, not proof that this machine ran anything.
+- A checklist imported from an external board is imported as **open** items: a checked box is someone's plan, not proof that this machine ran anything.
 - `set_definition_of_done` fills the checklist of a task started before this rule existed. Replacing a list that already has proven items is refused unless `append: true`.
 - `force_complete_task` is the audited escape hatch: `forced: true`, your reason, and the DoD summary land in history.
 
@@ -856,7 +854,7 @@ DEVWF_MONITOR_TOKEN=<same token the monitor was started with>
 Both are required for `list`, `close` and `share`. `drop` and `complete` do not
 talk to the monitor at all: they load the target session's state on this machine
 and run the ordinary `drop_task` / `complete_task` handlers, so the Zettly Todo,
-the Factory task and the history are closed exactly as the MCP tool would close
+the linked task and the history are closed exactly as the MCP tool would close
 them. Point `DEVWF_STATE_ROOT` at a state tree if the default is wrong.
 
 Four rules matter more than the flags:
@@ -1064,16 +1062,9 @@ DEV_WORKFLOW_DB_URL=postgresql://USER:[REDACTED]@HOST:5432/database
 | `DEV_WORKFLOW_DB_PATH` | `.state/dev-workflow.db` | SQLite path (optional) |
 | `DEV_WORKFLOW_USER_ID` | auto-generated | User ID for multi-user isolation |
 | `DEV_WORKFLOW_STATE_FILE` | auto-resolved | Base directory for workflow state. Each `<base>/projects/<project>/` holds one state file per session under `users/<user>/`, plus one shared history file. Two sessions never share a task slot. See `docs/2026-11-01-state-isolation-design.md` |
-| `FACTORY_URL` | - | Factory base URL, e.g. `https://factory.programinglive.com` |
-| `FACTORY_TOKEN` | - | PocketBase `activity_users` token sent as a Bearer header |
-| `FACTORY_EMAIL` | - | `activity_users` email, exchanged for a token on demand |
-| `FACTORY_PASSWORD` | - | Password for that account |
-| `FACTORY_PB_URL` | `https://pocketbase.programinglive.com` | Where the token is obtained |
-| `FACTORY_MACHINE_ID` | hostname | Device name shown on the Factory board |
 | `DEVWF_MONITOR_URL` | — | Central monitor server URL (e.g. Tailscale IP) for `list_active_sessions` |
 | `DEVWF_LOCAL_URL` | — | Local browser-accessible URL of the monitor (e.g. `http://localhost:3100`). When set and different from `DEVWF_MONITOR_URL`, `list_active_sessions` shows an extra **🖥️ Buka di browser** line so you can open the dashboard directly. |
 | `DEVWF_MONITOR_TOKEN` | — | Bearer token for write endpoints on the monitor server |
-| `FACTORY_DEVICE_ID` | derived from the name | Stable device UUID |
 
 ### Project-specific state
 
