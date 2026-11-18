@@ -211,6 +211,64 @@ export function evaluateEnglishPolicy(workflowState) {
   return { ok: result.status === 0, skipped: false, report };
 }
 
+const NULLABLE_DATE_KEY_COALESCE_RE = /['"][a-z0-9_]*(?:_date|_at)['"]\s*\]\s*\?\?\s*null\b/i;
+const NULLABLE_DATE_GUARD_RE = /\b(?:filled|trim|empty|nullableTrimmed|Carbon::|!==\s*['"]['"])|\?\s*:/i;
+
+/**
+ * Scan a unified git diff for newly added PHP lines in `app/` that pass
+ * `$arr['*_date'] ?? null` or `$arr['*_at'] ?? null` without normalizing
+ * empty strings (`''`) to `null`.
+ */
+export function findUnnormalizedNullableDateAssignments(diffText) {
+  const findings = [];
+  let currentFile = null;
+
+  for (const rawLine of String(diffText || "").split(/\r?\n/)) {
+    if (rawLine.startsWith("+++ b/")) {
+      currentFile = rawLine.slice(6).trim();
+      continue;
+    }
+    if (!currentFile || !currentFile.startsWith("app/") || !currentFile.endsWith(".php")) {
+      continue;
+    }
+    if (!rawLine.startsWith("+") || rawLine.startsWith("+++")) {
+      continue;
+    }
+
+    const line = rawLine.slice(1);
+    if (NULLABLE_DATE_KEY_COALESCE_RE.test(line) && !NULLABLE_DATE_GUARD_RE.test(line)) {
+      findings.push({ file: currentFile, line: line.trim() });
+    }
+  }
+
+  return findings;
+}
+
+/**
+ * Guard against MariaDB strict-mode `1292 Incorrect date value: ''` regressions
+ * caused by bare `?? null` on Livewire/UI array date fields.
+ */
+export function evaluateStrictNullableInputGate(workflowState, context = {}) {
+  if (typeof context.diffText === "string") {
+    const findings = findUnnormalizedNullableDateAssignments(context.diffText);
+    return { ok: findings.length === 0, skipped: false, findings };
+  }
+
+  const projectDir = workflowState?.state?.projectDir;
+  if (!projectDir) return { ok: true, skipped: true, findings: [] };
+
+  const result = spawnSync("git", ["diff", "HEAD", "--", "app/"], {
+    cwd: projectDir,
+    encoding: "utf8",
+  });
+  if (result.status !== 0) {
+    return { ok: true, skipped: true, findings: [] };
+  }
+
+  const findings = findUnnormalizedNullableDateAssignments(result.stdout);
+  return { ok: findings.length === 0, skipped: false, findings };
+}
+
 export async function handleReadyCheck(workflowState, context = {}) {
   const status = workflowState.state;
   const testsCreatedDone = status.testsSkipped || status.testsCreated;
@@ -229,6 +287,7 @@ export async function handleReadyCheck(workflowState, context = {}) {
   const docGate = await evaluateDocumentationGate(workflowState, context);
   const docGateSatisfied = isGateSatisfied(docGate.status);
   const englishGate = evaluateEnglishPolicy(workflowState);
+  const nullableDateGate = evaluateStrictNullableInputGate(workflowState, context);
 
   const checks = [
     { name: "Task started", done: status.currentPhase !== "idle" },
@@ -249,6 +308,7 @@ export async function handleReadyCheck(workflowState, context = {}) {
     },
     { name: "Documentation updated for code changes", done: docGateSatisfied },
     { name: "English-only engineering policy", done: englishGate.ok },
+    { name: "Strict nullable date input normalization", done: nullableDateGate.ok },
     { name: "Definition of done satisfied", done: dodSatisfied },
   ];
 
@@ -289,6 +349,17 @@ export async function handleReadyCheck(workflowState, context = {}) {
     hints.push(
       "English-only engineering policy failed. Write comments, test descriptions, identifiers and " +
         `assertion messages in English, or add \`language-allow: <reason>\` for localized product copy.\n${englishGate.report}`,
+    );
+  }
+
+  if (!nullableDateGate.ok) {
+    const lines = nullableDateGate.findings
+      .map((f) => `  - ${f.file}: ${f.line}`)
+      .join("\n");
+    hints.push(
+      "Strict nullable date input check failed: bare `?? null` on `*_date` / `*_at` keys passes empty strings (`''`) from Livewire/UI forms into MySQL/MariaDB strict mode (`SQLSTATE[22007] 1292 Incorrect date value`), which SQLite tests hide.\n" +
+        `${lines}\n` +
+        "Normalize empty strings to `null` (e.g. `filled(...)` or `nullableTrimmed(...)`), assert `$this->assertNull($model->getRawOriginal('...'))` in tests, and run `npm run test:mariadb`.",
     );
   }
 
