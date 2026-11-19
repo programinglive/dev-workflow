@@ -1464,6 +1464,12 @@ Close the other OpenCode window, or give this session its own checkout with
 locks with no heartbeat for 10 minutes, so a leftover MCP process does not block
 you; `force: true` overrides it when you know the other session is idle.
 
+**`dev-workflow` disappeared with `PROJECT_OWNERSHIP_LOST` and exit code 1.**
+The heartbeat used to terminate the whole MCP process when its bound worktree
+was deleted. It now releases the stale capability, unbinds it, logs the reason,
+and keeps serving. See `docs/HEARTBEAT-OWNERSHIP-LOSS.md` for the full chain and
+the operator recovery steps.
+
 **`ERR_MODULE_NOT_FOUND: Cannot find package 'dotenv'`** - dependencies are not
 installed. Run `npm install` in the repo.
 

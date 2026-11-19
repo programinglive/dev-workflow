@@ -18,6 +18,7 @@ import { existsSync } from "node:fs";
 import {
   acquireWorktreeMutex,
   writeKernelLockMetadata,
+  releaseWorktreeMutex,
   releaseAllWorktreeMutexesSync,
   findActiveLegacyWriter,
   verifyLegacyFleetQuiescence,
@@ -249,6 +250,64 @@ function sharedStateRoot(lockDir) {
   return path.basename(parent) === "projects" ? path.dirname(parent) : null;
 }
 
+/**
+ * Refresh advisory lock metadata for a capability this process holds.
+ *
+ * A worktree can disappear while the MCP process keeps serving: an operator
+ * deletes it, a cleanup job removes it, or a disk is unmounted.
+ * `writeKernelLockMetadata` fails closed in that case with
+ * PROJECT_OWNERSHIP_LOST, and an exception escaping the heartbeat interval
+ * would terminate the whole MCP server and drop every tool. Ownership loss is
+ * recoverable for a background refresh: log it, unbind the stale capability,
+ * release its OS mutex, and keep serving. Every other error still propagates
+ * so genuine defects stay visible instead of being misread as recovery.
+ */
+export async function refreshWorktreeLockMetadata(
+  state,
+  capability,
+  { operation = "heartbeat", writeMetadata = writeKernelLockMetadata, dir = null, expectedOwnerKey = null } = {},
+) {
+  if (!state || !capability) return { ok: false, skipped: true };
+  try {
+    const result = writeMetadata({
+      dir: dir || projectLockDir(state.stateFile),
+      capability,
+      projectDir: capability.worktreeRoot,
+      ...(expectedOwnerKey ? { expectedOwnerKey } : {}),
+    });
+    return { ok: true, wrote: result?.wrote === true, result };
+  } catch (error) {
+    if (error?.code !== "PROJECT_OWNERSHIP_LOST") throw error;
+    const reason = error?.details?.reason || "project_ownership_lost";
+    const worktree = capability.worktreeRoot || error?.details?.capabilityWorktree || "";
+    safeLog(
+      "error",
+      `Warning: worktree ownership lost during ${operation} (${reason}) for ${worktree}. ` +
+        `Releasing the stale capability and continuing without it.`,
+    );
+    state.bindKernelCapability(null);
+    try {
+      await releaseWorktreeMutex(capability);
+    } catch (releaseError) {
+      safeLog(
+        "error",
+        `Warning: failed to release the stale worktree mutex: ${releaseError?.message || releaseError}`,
+      );
+    }
+    return { ok: false, recovered: true, reason, worktree };
+  }
+}
+
+/**
+ * One heartbeat tick. Exported so the interval wiring stays a two-line
+ * adapter and the recovery path is directly testable without waiting 200s.
+ */
+export async function runWorktreeHeartbeatTick(state, options = {}) {
+  const capability = state?.boundKernelCapability;
+  if (!capability || !capability.active) return { ok: false, skipped: true };
+  return refreshWorktreeLockMetadata(state, capability, { operation: "heartbeat", ...options });
+}
+
 export async function initStartupWorktreeMutex(state, { heartbeat = false } = {}) {
   state.requireKernelMutex = true;
   const lockDir = projectLockDir(state.stateFile);
@@ -312,10 +371,9 @@ export async function initStartupWorktreeMutex(state, { heartbeat = false } = {}
             state.historyFile = resolveHistoryFile(resolvedStateFile);
           }
         }
-        writeKernelLockMetadata({
+        await refreshWorktreeLockMetadata(state, acquired.capability, {
+          operation: "startup",
           dir: lockDir,
-          capability: acquired.capability,
-          projectDir: acquired.worktreeRoot,
           expectedOwnerKey: startupOwnerKey,
         });
       } else if (acquired.reason === "unsupported_platform") {
@@ -329,14 +387,15 @@ export async function initStartupWorktreeMutex(state, { heartbeat = false } = {}
 
   if (heartbeat) {
     const hb = setInterval(() => {
-      const cap = state?.boundKernelCapability;
-      if (cap && cap.active) {
-        writeKernelLockMetadata({
-          dir: projectLockDir(state.stateFile),
-          capability: cap,
-          projectDir: cap.worktreeRoot,
-        });
-      }
+      void runWorktreeHeartbeatTick(state).catch((error) => {
+        // Any non-ownership failure is reported, not swallowed, but a
+        // background heartbeat must never take the server down with it.
+        safeLog(
+          "error",
+          `Warning: worktree heartbeat failed (${error?.code || error?.message || error}). ` +
+            `The capability stays bound; the next tick retries.`,
+        );
+      });
     }, HEARTBEAT_MS);
     hb.unref?.();
   }
