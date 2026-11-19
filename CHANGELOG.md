@@ -2,6 +2,33 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.33.0](https://github.com/programinglive/dev-workflow/compare/v1.32.8...v1.33.0) (2026-11-19)
+
+
+### ⚠ BREAKING CHANGES
+
+* fix CLI-First/orphan reset gates and rename package to @programinglive/dev-workflow
+
+### 🐛 Bug Fixes
+
+* **deps:** move vite to devDependencies and patch hono advisories ([2892231](https://github.com/programinglive/dev-workflow/commit/289223148206fb4a1712c801520f76f6174b843e))
+
+
+### 🧹 Chores
+
+* **web:** regenerate catalog after 1.32.8 release ([b781b58](https://github.com/programinglive/dev-workflow/commit/b781b583fc8d4f1801b15caa4c6d47415ac5704d))
+
+
+### 📝 Documentation
+
+* **managed:** replace single-focus exception with multiple concurrent focuses rule ([0e807ab](https://github.com/programinglive/dev-workflow/commit/0e807ab6fd4d1a7ed4e412c74796a3fc1f9fead2))
+* **operations:** update execution journal with final outcome ([e98359e](https://github.com/programinglive/dev-workflow/commit/e98359e50e287b701fe87004beac9a04477918b6))
+
+
+### ✨ Features
+
+* fix CLI-First/orphan reset gates and rename package to @programinglive/dev-workflow ([a9fdea5](https://github.com/programinglive/dev-workflow/commit/a9fdea53f79a6707a53e169793f40f5acdae6bb8))
+
 ### [1.32.8](https://github.com/programinglive/dev-workflow-mcp-server/compare/v1.32.7...v1.32.8) (2026-11-18)
 
 
