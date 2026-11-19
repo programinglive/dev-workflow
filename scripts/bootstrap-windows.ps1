@@ -1,4 +1,4 @@
-# ==============================================================================
+﻿# ==============================================================================
 # Programinglive Homelab Bootstrap Script for Windows (HELLOWORLD)
 # Installs: RTK (Token Killer), Superpowers (Skills), and Dev-Workflow MCP
 #
@@ -15,7 +15,7 @@ $setupScript = Join-Path $repoRoot 'scripts\setup-stack.js'
 
 if (!(Test-Path $setupScript)) {
     Write-Host "✗ Could not find $setupScript" -ForegroundColor Red
-    Write-Host "  Run this script from inside a clone of dev-workflow-mcp-server." -ForegroundColor Red
+    Write-Host "  Run this script from inside a clone of dev-workflow." -ForegroundColor Red
     exit 1
 }
 

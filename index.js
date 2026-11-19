@@ -52,7 +52,7 @@ const __filename = fileURLToPath(import.meta.url);
 // Create MCP server
 export const server = new Server(
   {
-    name: "@programinglive/dev-workflow-mcp-server",
+    name: "@programinglive/dev-workflow",
     version: "1.0.0",
   },
   {

@@ -103,7 +103,7 @@ async function main() {
     nodeEngine: pkg.engines?.node || ">=20.0.0",
     license: pkg.license || "MIT",
     ossBaselineTag: "v1.31.0-oss.0",
-    repositoryUrl: "https://github.com/programinglive/dev-workflow-mcp-server",
+    repositoryUrl: "https://github.com/programinglive/dev-workflow",
     repositoryVisibility: "PRIVATE",
     npmPubliclyPublished: false,
     mcpToolCount: mcpTools.length,

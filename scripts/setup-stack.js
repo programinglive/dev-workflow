@@ -3,7 +3,7 @@ import { safeLog } from '../security/sanitizer.js';
 
 /**
  * Unified Setup Script for AI Agent Development Stack:
- * 1. dev-workflow-mcp-server (Workflow discipline & state tracking)
+ * 1. dev-workflow (Workflow discipline & state tracking)
  * 2. obra/superpowers (Agentic skills framework: brainstorming, TDD, planning)
  * 3. rtk (Rust Token Killer - command output compression)
  *
