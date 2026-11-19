@@ -16,7 +16,7 @@ SETUP_SCRIPT="$REPO_ROOT/scripts/setup-stack.js"
 
 if [ ! -f "$SETUP_SCRIPT" ]; then
     echo "✗ Could not find $SETUP_SCRIPT" >&2
-    echo "  Run this script from inside a clone of dev-workflow-mcp-server." >&2
+    echo "  Run this script from inside a clone of dev-workflow." >&2
     exit 1
 fi
 

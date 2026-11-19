@@ -16,7 +16,7 @@ test("package.json includes mcpName for MCP registry", async () => {
 
   assert.strictEqual(
     pkg.mcpName,
-    "io.github.programinglive/dev-workflow-mcp-server",
+    "io.github.programinglive/dev-workflow",
     "package.json should declare mcpName matching the MCP server namespace",
   );
 });
@@ -26,7 +26,7 @@ test("server.json is configured for npm package deployment", async () => {
 
   assert.strictEqual(
     server.name,
-    "io.github.programinglive/dev-workflow-mcp-server",
+    "io.github.programinglive/dev-workflow",
     "server.json name should match the MCP server namespace",
   );
   assert.ok(Array.isArray(server.packages) && server.packages.length > 0,
@@ -49,7 +49,7 @@ test("server.json is configured for npm package deployment", async () => {
 
   assert.strictEqual(
     npmPkg.identifier,
-    "@programinglive/dev-workflow-mcp-server",
+    "@programinglive/dev-workflow",
     "server.json npm identifier should match the published npm package name",
   );
 

@@ -1,11 +1,11 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-10-17/server.schema.json",
-  "name": "io.github.programinglive/dev-workflow-mcp-server",
+  "name": "io.github.programinglive/dev-workflow",
   "description": "MCP server to enforce development workflow discipline",
-  "title": "Dev Workflow MCP Server",
+  "title": "DevWorkflow",
   "websiteUrl": "https://devworkflow.programinglive.com/",
   "repository": {
-    "url": "https://github.com/programinglive/dev-workflow-mcp-server",
+    "url": "https://github.com/programinglive/dev-workflow",
     "source": "github"
   },
   "version": "1.4.6",
@@ -13,7 +13,7 @@
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
-      "identifier": "@programinglive/dev-workflow-mcp-server",
+      "identifier": "@programinglive/dev-workflow",
       "version": "1.4.6",
       "transport": {
         "type": "stdio"

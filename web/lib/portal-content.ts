@@ -27,10 +27,10 @@ export const PORTAL_SECTIONS: PortalSection[] = [
       {
         heading: "2. Runtime Requirements & Installation Modes",
         body: [
-          "Requires Node.js >= 20.0.0. Because programinglive/dev-workflow-mcp-server is currently PRIVATE (authenticated Git access required) and not yet published to public npm, install from an authorized repository clone:",
+          "Requires Node.js >= 20.0.0. Install directly from npm (`@programinglive/dev-workflow`) or from a repository clone:",
         ],
-        code: `git clone https://github.com/programinglive/dev-workflow-mcp-server.git
-cd dev-workflow-mcp-server
+        code: `git clone https://github.com/programinglive/dev-workflow.git
+cd dev-workflow
 npm ci
 npx devwf doctor`,
         table: {
@@ -58,7 +58,7 @@ npx devwf zettly disconnect --confirm`,
       {
         heading: "3. Register an AI Coding Client & Verify MCP Tools",
         body: [
-          "Point your coding client's MCP stdio configuration to node /path/to/dev-workflow-mcp-server/index.js, then run devwf fleet doctor --json (with DEVWF_PUBLIC_LOCAL_FIRST=1 for local-first standalone checks) to verify client registration and stdio initialize/tools/list resolution.",
+          "Point your coding client's MCP stdio configuration to node /path/to/dev-workflow/index.js, then run devwf fleet doctor --json (with DEVWF_PUBLIC_LOCAL_FIRST=1 for local-first standalone checks) to verify client registration and stdio initialize/tools/list resolution.",
         ],
         code: `DEVWF_PUBLIC_LOCAL_FIRST=1 npx devwf fleet doctor --json`,
       },

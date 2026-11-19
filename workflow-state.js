@@ -4068,7 +4068,20 @@ export class WorkflowState {
     return cap;
   }
 
-  async _withOwnershipFence(operation, fn) {
+  async _withOwnershipFence(operation, fn, { allowOrphanedReset = false } = {}) {
+    if (allowOrphanedReset && this.state?.currentPhase === "idle") {
+      try {
+        const cap = this._assertKernelOwnership(operation, { allowDrainingInFlight: true });
+        if (cap) {
+          return await useWorktreeCapability(cap, fn, { operation });
+        }
+      } catch {
+        // Terminal force_complete_task / drop_task reset on a deleted worktree or
+        // restarted MCP server must still be able to persist the idle state.
+        return await fn();
+      }
+      return await fn();
+    }
     const cap = this._assertKernelOwnership(operation, { allowDrainingInFlight: false });
     if (cap) {
       return await useWorktreeCapability(cap, fn, { operation });
@@ -4441,7 +4454,7 @@ export class WorkflowState {
   }
 
   /** Menulis hanya `history` ke berkas bersama, tanpa task milik sesi ini. */
-  async writeHistoryFile() {
+  async writeHistoryFile(options = {}) {
     if (this.historyFile === this.stateFile) {
       return;
     }
@@ -4491,7 +4504,7 @@ export class WorkflowState {
       assertSafeKnowledge(payload);
       await fs.mkdir(path.dirname(this.historyFile), { recursive: true });
       await fs.writeFile(this.historyFile, JSON.stringify(payload, null, 2));
-    });
+    }, { allowOrphanedReset: Boolean(options?.allowOrphanedReset) });
   }
 
   async ensurePrimaryFile() {
@@ -4664,7 +4677,7 @@ export class WorkflowState {
     return await this.runSerialized(async () => {
       return await this._withOwnershipFence("save", async () => {
         return await this._saveUnderFence(options);
-      });
+      }, { allowOrphanedReset: Boolean(options?.allowOrphanedReset) });
     });
   }
 
@@ -4729,7 +4742,7 @@ export class WorkflowState {
     if (conflict) {
       this._adoptState(existing?.state ?? null);
       this.lastConflict = conflict;
-      await this._exportJson();
+      await this._exportJson({ allowOrphanedReset: Boolean(options?.allowOrphanedReset) });
       return { ...reconciled, conflict, verified: false };
     }
     this.lastConflict = null;
@@ -4753,7 +4766,9 @@ export class WorkflowState {
     // diukur di mesin ini: 96 KB per simpan, 74% di antaranya riwayat, dan
     // angkanya naik terus seiring usia proyek - di jalur terpanas sistem.
     const { history: _omitHistory, ...persistedState } = this.state;
-    this._assertKernelOwnership("save_commit", { allowDrainingInFlight: true });
+    if (!(options?.allowOrphanedReset && this.state?.currentPhase === "idle")) {
+      this._assertKernelOwnership("save_commit", { allowDrainingInFlight: true });
+    }
 
     try {
       written = await db.saveStateVersioned({
@@ -4830,7 +4845,7 @@ export class WorkflowState {
             diskPhase: winner?.state?.currentPhase || "idle",
             reason: error.message,
           };
-          await this._exportJson();
+          await this._exportJson({ allowOrphanedReset: Boolean(options?.allowOrphanedReset) });
           return { ...reconciled, conflict: this.lastConflict, verified: false };
         }
       } else {
@@ -4891,15 +4906,15 @@ export class WorkflowState {
       pendingProjectionRepair: this.state?.pendingProjectionRepair || null,
       pendingHistorySummaryRepairKeys: this.state?.pendingHistorySummaryRepairKeys || null,
     });
-    const exportOk = await this._exportJson();
+    const exportOk = await this._exportJson({ allowOrphanedReset: Boolean(options?.allowOrphanedReset) });
     this._lastExportJsonOk = exportOk !== false;
     if (exportOk === false) {
       postCommitProjectionErrors.push("exportJson:EXPORT_RETURNED_FALSE");
     }
 
     try {
-      await this.writeHistoryFile();
-      await this.updateProjectSummary();
+      await this.writeHistoryFile({ allowOrphanedReset: Boolean(options?.allowOrphanedReset) });
+      await this.updateProjectSummary({ allowOrphanedReset: Boolean(options?.allowOrphanedReset) });
     } catch (error) {
       if (error instanceof ProjectOwnershipLostError || error?.code === "PROJECT_OWNERSHIP_LOST") {
         throw error;
@@ -5685,7 +5700,7 @@ export class WorkflowState {
         // bukan sumber kebenaran.
         await ensureCompatibilityLinks(this.stateFile);
         return true;
-      });
+      }, { allowOrphanedReset: Boolean(options?.allowOrphanedReset) });
     } catch (error) {
       if (error instanceof ProjectOwnershipLostError || error?.code === "PROJECT_OWNERSHIP_LOST") {
         if (options.allowSkipIfForeignLock === true && !this.boundLockLease) {
@@ -5707,7 +5722,7 @@ export class WorkflowState {
         assertSafeKnowledge(summary);
         await fs.mkdir(path.dirname(summaryPath), { recursive: true });
         await fs.writeFile(summaryPath, JSON.stringify(summary, null, 2));
-      });
+      }, { allowOrphanedReset: Boolean(options?.allowOrphanedReset) });
     } catch (error) {
       if (
         (error instanceof ProjectOwnershipLostError || error?.code === "PROJECT_OWNERSHIP_LOST") &&

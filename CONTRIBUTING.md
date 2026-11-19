@@ -1,4 +1,4 @@
-# Contributing to dev-workflow-mcp-server
+# Contributing to dev-workflow
 
 Thanks for your interest in contributing! Follow the guidelines below to keep the development process smooth and aligned with the workflow enforced by this project.
 

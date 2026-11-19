@@ -123,13 +123,16 @@ export function classifyTask({ taskType = "other", description = "", changedPath
     taskClass = type === "bugfix" ? "BUG_FIX" : "NEW_FEATURE";
   }
 
-  let cliFirstApplicability = CLI_FIRST_APPLICABILITY.ASSESSMENT_REQUIRED;
-  if (taskClass === "PRESENTATION_ONLY" || taskClass === "DOCUMENTATION_ONLY") {
-    cliFirstApplicability = CLI_FIRST_APPLICABILITY.NOT_APPLICABLE;
-  } else if (
-    taskClass === "NEW_FEATURE" ||
-    taskClass === "INTEGRATION" ||
-    diff.hasCliCommand
+  const isReadOnlyAudit =
+    diff.all.length === 0 &&
+    /\b(audit|investigat|inspect|check|diagnos|review|triage|read-only|verify)\b/i.test(desc);
+
+  let cliFirstApplicability = CLI_FIRST_APPLICABILITY.NOT_APPLICABLE;
+  if (
+    !isReadOnlyAudit &&
+    (taskClass === "NEW_FEATURE" ||
+      taskClass === "INTEGRATION" ||
+      diff.hasCliCommand)
   ) {
     cliFirstApplicability = CLI_FIRST_APPLICABILITY.REQUIRED;
   }

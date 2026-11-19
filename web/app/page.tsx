@@ -101,7 +101,7 @@ export default function Home() {
         </p>
         <pre className="p-4 rounded-md bg-slate-900 text-slate-100 text-xs sm:text-sm leading-relaxed overflow-x-auto">
           <code>{`git clone ${GENERATED_CATALOG.repositoryUrl}.git
-cd dev-workflow-mcp-server
+cd dev-workflow
 npm ci
 npx devwf doctor`}</code>
         </pre>

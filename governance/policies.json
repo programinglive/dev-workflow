@@ -9,6 +9,7 @@
       "REQUIRED_CI_FAILED"
     ],
     "pilotRepositories": [
+      "programinglive/dev-workflow",
       "programinglive/dev-workflow-mcp-server",
       "beautyworld_repository/clinic"
     ]
