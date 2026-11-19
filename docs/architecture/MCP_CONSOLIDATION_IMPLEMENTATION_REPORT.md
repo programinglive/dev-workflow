@@ -145,8 +145,8 @@ The target architecture consolidates the client-facing registry from 9 servers d
 -      "env": {
 -        "POCKETBASE_URL": "https://pocketbase.programinglive.com",
 -        "POCKETBASE_TOKEN_FILE": "D:/code/pocketbase/.env",
--        "CF_ACCESS_CLIENT_ID": "d1ea3cf2df47b8692e94b7b903c814d5.access",
--        "CF_ACCESS_CLIENT_SECRET": "cfast_BSYWs2tXwisdV8NLQckrXAvGc55D5yHAo1z7Xr5ob46e87d7",
+-        "CF_ACCESS_CLIENT_ID": "<REDACTED_CF_ACCESS_CLIENT_ID>",
+-        "CF_ACCESS_CLIENT_SECRET": "<REDACTED_CF_ACCESS_CLIENT_SECRET>",
 -        "CF_ACCESS_AUDIENCE": "07e6dfb766deea19e98e2382bd1970ea0b6cc1d3f92fcef4f42a98c877c8913d"
 -      },
 -      "timeoutSeconds": 30,
@@ -192,8 +192,8 @@ The target architecture consolidates the client-facing registry from 9 servers d
 -[mcp_servers.pocketbase.env]
 -POCKETBASE_URL = 'https://pocketbase.programinglive.com'
 -POCKETBASE_TOKEN_FILE = 'D:/code/pocketbase/.env'
--CF_ACCESS_CLIENT_ID = 'd1ea3cf2df47b8692e94b7b903c814d5.access'
--CF_ACCESS_CLIENT_SECRET = 'cfast_BSYWs2tXwisdV8NLQckrXAvGc55D5yHAo1z7Xr5ob46e87d7'
+-CF_ACCESS_CLIENT_ID = '<REDACTED_CF_ACCESS_CLIENT_ID>'
+-CF_ACCESS_CLIENT_SECRET = '<REDACTED_CF_ACCESS_CLIENT_SECRET>'
 -CF_ACCESS_AUDIENCE = '07e6dfb766deea19e98e2382bd1970ea0b6cc1d3f92fcef4f42a98c877c8913d'
 -
  [mcp_servers.central-gateway]
@@ -244,8 +244,8 @@ The target architecture consolidates the client-facing registry from 9 servers d
 -    "environment": {
 -      "POCKETBASE_URL": "https://pocketbase.programinglive.com",
 -      "POCKETBASE_TOKEN_FILE": "D:/code/pocketbase/.env",
--      "CF_ACCESS_CLIENT_ID": "d1ea3cf2df47b8692e94b7b903c814d5.access",
--      "CF_ACCESS_CLIENT_SECRET": "cfast_BSYWs2tXwisdV8NLQckrXAvGc55D5yHAo1z7Xr5ob46e87d7",
+-      "CF_ACCESS_CLIENT_ID": "<REDACTED_CF_ACCESS_CLIENT_ID>",
+-      "CF_ACCESS_CLIENT_SECRET": "<REDACTED_CF_ACCESS_CLIENT_SECRET>",
 -      "CF_ACCESS_AUDIENCE": "07e6dfb766deea19e98e2382bd1970ea0b6cc1d3f92fcef4f42a98c877c8913d"
 -    }
 -  },
