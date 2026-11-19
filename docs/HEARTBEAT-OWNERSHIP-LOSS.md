@@ -17,7 +17,7 @@ payload carried the decisive detail:
 code: PROJECT_OWNERSHIP_LOST
 details.operation: writeKernelLockMetadata
 details.reason: invalid_target_worktree
-details.capabilityWorktree: C:\Users\DHIKA\.worktrees\dev-workflow-rename-and-fix
+details.capabilityWorktree: <deleted-worktree>
 ```
 
 ## Root cause
