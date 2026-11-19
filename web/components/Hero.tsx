@@ -11,7 +11,7 @@ export default function Hero() {
 
     useEffect(() => {
         // Fetch npm downloads directly from npm API
-        fetch("https://api.npmjs.org/downloads/point/last-month/@programinglive/dev-workflow-mcp-server")
+        fetch("https://api.npmjs.org/downloads/point/last-month/@programinglive/dev-workflow")
             .then(res => res.json())
             .then(data => setDownloads(data.downloads || 0))
             .catch(() => setDownloads(null));

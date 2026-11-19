@@ -76,7 +76,7 @@ graph LR
 
 ## How DevWorkflow Works (Architecture & Core Mechanics)
 
-DevWorkflow (`dev-workflow-mcp-server`) is the centralized engineering governance and discipline engine designed for autonomous and interactive AI coding agents (Antigravity CLI/IDE, OpenCode, Codex, Claude Code) working alongside human developers across distributed workstations.
+DevWorkflow (`dev-workflow`) is the centralized engineering governance and discipline engine designed for autonomous and interactive AI coding agents (Antigravity CLI/IDE, OpenCode, Codex, Claude Code) working alongside human developers across distributed workstations.
 
 It solves the fundamental failure modes of autonomous AI software development:
 1. **Hallucination & Scope Creep**: Agents jumping straight into guessing implementations, writing bloated unneeded files, and drifting from original goals.
@@ -278,8 +278,8 @@ finished.
 ### 1. Clone and install
 
 ```bash
-git clone https://github.com/programinglive/dev-workflow-mcp-server.git
-cd dev-workflow-mcp-server
+git clone https://github.com/programinglive/dev-workflow.git
+cd dev-workflow
 npm install
 ```
 
@@ -976,7 +976,7 @@ OpenCode V2 nests servers under `mcp.servers` and does **not** accept an
     "servers": {
       "dev-workflow": {
         "type": "local",
-        "command": ["node", "C:\\path\\to\\dev-workflow-mcp-server\\index.js"]
+        "command": ["node", "C:\\path\\to\\dev-workflow\\index.js"]
       }
     }
   }
@@ -986,7 +986,7 @@ OpenCode V2 nests servers under `mcp.servers` and does **not** accept an
 The simplest way to write this correctly is to let OpenCode do it:
 
 ```bash
-opencode mcp add dev-workflow --global -- node "C:\path\to\dev-workflow-mcp-server\index.js"
+opencode mcp add dev-workflow --global -- node "C:\path\to\dev-workflow\index.js"
 ```
 
 ### Claude Desktop
@@ -999,7 +999,7 @@ opencode mcp add dev-workflow --global -- node "C:\path\to\dev-workflow-mcp-serv
   "mcpServers": {
     "dev-workflow": {
       "command": "node",
-      "args": ["C:\\path\\to\\dev-workflow-mcp-server\\index.js"]
+      "args": ["C:\\path\\to\\dev-workflow\\index.js"]
     }
   }
 }
@@ -1015,7 +1015,7 @@ opencode mcp add dev-workflow --global -- node "C:\path\to\dev-workflow-mcp-serv
   "mcpServers": {
     "dev-workflow": {
       "command": "node",
-      "cwd": "C:\\path\\to\\dev-workflow-mcp-server",
+      "cwd": "C:\\path\\to\\dev-workflow",
       "args": ["index.js"]
     }
   }
@@ -1031,7 +1031,7 @@ opencode mcp add dev-workflow --global -- node "C:\path\to\dev-workflow-mcp-serv
   "mcpServers": {
     "dev-workflow": {
       "command": "node",
-      "args": ["C:\\path\\to\\dev-workflow-mcp-server\\index.js"]
+      "args": ["C:\\path\\to\\dev-workflow\\index.js"]
     }
   }
 }
@@ -1316,9 +1316,9 @@ anywhere, and `id-token: write` plus `registry-url` on `setup-node` is the whole
 configuration. The trusted publisher is registered with `npm trust`:
 
 ```bash
-npm trust github @programinglive/dev-workflow-mcp-server \
+npm trust github @programinglive/dev-workflow \
   --file .github/workflows/github-release.yml \
-  --repo programinglive/dev-workflow-mcp-server \
+  --repo programinglive/dev-workflow \
   --allow-publish -y
 ```
 
