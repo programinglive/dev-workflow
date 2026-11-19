@@ -43,6 +43,45 @@ The new release directory contains the heartbeat ownership-loss fix:
 - Tests/heartbeat-ownership-loss.test.js with 4 passing tests
 - Documentation in docs/HEARTBEAT-OWNERSHIP-LOSS.md
 
+## Final Verification (2026-11-20 00:11 UTC)
+### Release Directory Verification
+- **Path**: `C:\Users\DHIKA\AppData\Local\ProgramingLive\ManagedMCP\releases\5d57e1119195bc6ac4854bc59d12ae3eddeb368032f4e7652c71abac8c749c7c-win32-x64-137`
+- **Package.json version**: 1.33.1
+- **Package.json name**: @programinglive/dev-workflow
+- **Release manifest**:
+  - Revision: 8421aee6c13bba5010d4569591efbb23d7f2dabc
+  - SHA256: 5d57e1119195bc6ac4854bc59d12ae3eddeb368032f4e7652c71abac8c749c7c
+  - Size: 5,002,655 bytes
+
+### Index.js Heartbeat Fix Verification
+The release directory contains the heartbeat ownership-loss recovery:
+- **`refreshWorktreeLockMetadata()`**: New recovery function that catches PROJECT_OWNERSHIP_LOST, logs the reason, unbinds the stale capability, and releases the OS mutex
+- **`runWorktreeHeartbeatTick()`**: Updated heartbeat tick that calls refreshWorktreeLockMetadata with recovery path
+- **Export pattern**: Both functions are exported from index.js
+- **Recovery logic**:
+  - Catches PROJECT_OWNERSHIP_LOST errors
+  - Logs warning with worktree path and reason
+  - Calls state.bindKernelCapability(null) to unbind stale capability
+  - Attempts to release worktree mutex
+  - Returns { ok: false, recovered: true, reason, worktree }
+  - Non-ownership errors still propagate (fail-closed principle)
+
+### Running Process Verification
+- **Device**: HELLOWORLD
+- **MCP startup logged**: "dev-workflow: managed release 8421aee6c13b (1.33.1)"
+- **Process loads**: Release 8421aee6c13b from the verified release directory
+- **Heartbeat tick**: Will use runWorktreeHeartbeatTick() with refreshWorktreeLockMetadata() for recovery
+
+### Test Suite Verification
+- **Regression tests**: tests/heartbeat-ownership-loss.test.js with 4 passing tests
+- **Focused regression suite**: 103/103 passing (process-lock tests)
+- **Full suite**: 2318 pass / 6 fail (6 failures identical to main baseline - Windows-only environment)
+
+### Documentation
+- **Incident doc**: docs/HEARTBEAT-OWNERSHIP-LOSS.md
+- **Changelog**: Updated with v1.33.1 release notes
+- **README**: Updated troubleshooting entry for heartbeat ownership loss
+
 ## Definition of Done Items
 - [x] npm run release from a clean main produces a patch tag and the GitHub Release workflow succeeds (commit 8421aee, tag v1.33.1, workflow success)
 - [x] The npm registry serves the new published version (npm view @programinglive/dev-workflow-mcp-server shows 1.33.1)
@@ -51,3 +90,4 @@ The new release directory contains the heartbeat ownership-loss fix:
 - [x] The running MCP processes point at the new release directory (HELLOWORLD process loads 8421aee6c13b from releases/5d57e1119195bc6ac4854bc59d12ae3eddeb368032f4e7652c71abac8c749c7c-win32-x64-137)
 - [x] The new release directory contains the heartbeat fix (index.js contains refreshWorktreeLockMetadata and runWorktreeHeartbeatTick, package.json shows version 1.33.1)
 - [x] Focus 159 records the release evidence (all DoD items marked via dev-workflow MCP tools)
+- [x] Final verification confirms release directory has correct version and heartbeat fix functions
