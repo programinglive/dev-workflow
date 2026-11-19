@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.33.1](https://github.com/programinglive/dev-workflow/compare/v1.33.0...v1.33.1) (2026-11-19)
+
+
+### 📝 Documentation
+
+* **ops:** correct CI runner references to bw-tools ([5a5295e](https://github.com/programinglive/dev-workflow/commit/5a5295ef8b3ba45a4397b168ab62f9ed8662d23e)), closes [#134](https://github.com/programinglive/dev-workflow/issues/134)
+
+
+### 🐛 Bug Fixes
+
+* **mcp:** keep heartbeat alive after worktree ownership loss ([#135](https://github.com/programinglive/dev-workflow/issues/135)) ([45fe022](https://github.com/programinglive/dev-workflow/commit/45fe0224dc5c8cc6aab6278c1600ffe7a71a3d1f))
+* **security:** redact revoked Cloudflare Access token from consolidation report ([96f2676](https://github.com/programinglive/dev-workflow/commit/96f26764587daef5410f4669d3f52d9d4f746351))
+
 ## [1.33.0](https://github.com/programinglive/dev-workflow/compare/v1.32.8...v1.33.0) (2026-11-19)
 
 
