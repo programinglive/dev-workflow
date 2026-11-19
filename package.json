@@ -1,15 +1,16 @@
 {
-  "name": "@programinglive/dev-workflow-mcp-server",
+  "name": "@programinglive/dev-workflow",
   "version": "1.32.8",
   "description": "MCP server to enforce development workflow discipline",
   "homepage": "https://devworkflow.programinglive.com/",
-  "mcpName": "io.github.programinglive/dev-workflow-mcp-server",
+  "mcpName": "io.github.programinglive/dev-workflow",
   "type": "module",
   "main": "index.js",
   "engines": {
     "node": ">=20"
   },
   "bin": {
+    "dev-workflow": "index.js",
     "dev-workflow-mcp": "index.js",
     "devwf": "bin/cli.js"
   },
@@ -53,7 +54,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/programinglive/dev-workflow-mcp-server.git"
+    "url": "git+https://github.com/programinglive/dev-workflow.git"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",

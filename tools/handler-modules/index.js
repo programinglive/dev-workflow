@@ -485,9 +485,9 @@ async function dispatchToolCall({
           )
         );
       case "force_complete_task":
-        return handleForceCompleteTask(args, workflowState, { zettlyOptions });
+        return await handleForceCompleteTask(args, workflowState, { zettlyOptions });
       case "drop_task":
-        return handleDropTask(args, workflowState, { zettlyOptions });
+        return await handleDropTask(args, workflowState, { zettlyOptions });
       case "get_workflow_status":
         return handleGetWorkflowStatus(workflowState);
       case "view_history":
@@ -619,6 +619,11 @@ export async function handleToolCall(context) {
         `Workflow TIDAK dilanjutkan, karena menulis ke tempat lain akan membuat pekerjaan ` +
         `ini tidak bisa ditemukan lagi. Perbaiki penyebabnya (ruang disk, izin, atau berkas ` +
         `rusak) sebelum mengulang.`}]};
+    }
+    if(error?.code==='PROJECT_OWNERSHIP_LOST'||error?.name==='ProjectOwnershipLostError') {
+      return {isError:true,content:[{type:'text',text:
+        `⚠️ Project/worktree ownership lost: ${error.message}\n\n` +
+        `If the temporary worktree was already removed, use 'force_complete_task' or 'drop_task' to reset the session.`}]};
     }
     safeLog('error','Tool request failed',error);
     return {isError:true,content:[{type:'text',text:'⚠️ Internal server error while processing the tool request.'}]};

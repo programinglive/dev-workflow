@@ -29,7 +29,7 @@ import { fileURLToPath } from "node:url";
 
 const execFileAsync = promisify(execFile);
 
-const PACKAGE_NAME = "@programinglive/dev-workflow-mcp-server";
+const PACKAGE_NAME = "@programinglive/dev-workflow";
 const REGISTRY_URL = `https://registry.npmjs.org/${PACKAGE_NAME}/latest`;
 const TIMEOUT_MS = 5000;
 

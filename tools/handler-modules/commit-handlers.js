@@ -899,10 +899,15 @@ export async function handleForceCompleteTask(args, workflowState, context = {})
     ),
   });
 
-  const zettlyResult = await closeZettlyTask(workflowState,'closed_with_exceptions',args,context.zettlyOptions);
+  let zettlyResult = { ok: true, note: "" };
+  try {
+    zettlyResult = await closeZettlyTask(workflowState, "closed_with_exceptions", args, context.zettlyOptions);
+  } catch (error) {
+    zettlyResult = { ok: false, note: `Zettly sync skipped during orphaned force-complete: ${error?.message || error}` };
+  }
   const zettlyNote = zettlyResult.note ? `\n${zettlyResult.ok?'✅':'⚠️'} ${zettlyResult.note}` : '';
   workflowState.reset();
-  await workflowState.save();
+  await workflowState.save({ allowOrphanedReset: true });
 
   const reasonText = reason ? reason : "(none provided)";
 
@@ -926,10 +931,15 @@ export async function handleDropTask(args, workflowState, context = {}) {
     ),
   });
 
-  const zettlyResult = await closeZettlyTask(workflowState,'cancelled',args,context.zettlyOptions);
+  let zettlyResult = { ok: true, note: "" };
+  try {
+    zettlyResult = await closeZettlyTask(workflowState, "cancelled", args, context.zettlyOptions);
+  } catch (error) {
+    zettlyResult = { ok: false, note: `Zettly sync skipped during orphaned drop: ${error?.message || error}` };
+  }
   const zettlyNote = zettlyResult.note ? `\n${zettlyResult.ok?'✅':'⚠️'} ${zettlyResult.note}` : '';
   workflowState.reset();
-  await workflowState.save();
+  await workflowState.save({ allowOrphanedReset: true });
 
   return textResponse(`⚠️ Task dropped. Workflow state reset.${zettlyNote}`);
 }
