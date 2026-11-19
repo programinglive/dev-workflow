@@ -20,7 +20,7 @@ started the session (for example `HELLOWORLD`).
 
 `managed/launcher.cjs` now sets `DEVWF_BUILD_HOST=build-host.example` when the variable is
 absent, because the fleet standard is that every build, test suite and pipeline
-runs on the build-host.example runner (`127.0.0.1`). A device that genuinely builds
+runs on the universal self-hosted Linux runner (`bw-tools`, `127.0.0.1`). A device that genuinely builds
 elsewhere can still override it, or pass `buildHost` on the call.
 
 ## Verifying

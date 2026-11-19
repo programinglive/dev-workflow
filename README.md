@@ -1255,15 +1255,15 @@ captured stderr before the build test asserts on it.
 ## CI
 
 `.github/workflows/ci.yml` is a thin caller for the organisation-wide standard
-`programinglive/ci-cd@v1`. It runs on the **self-hosted runner on MMCH**, not on
-GitHub-hosted minutes:
+`programinglive/ci-cd@v1`. It runs on the universal self-hosted Linux runner on
+`bw-tools`, not on GitHub-hosted minutes or the decommissioned MMCH runner:
 
 ```yaml
 jobs:
   ci:
     uses: programinglive/ci-cd/.github/workflows/ci-node.yml@v1
     with:
-      runner: '["self-hosted","windows","mmch"]'
+      runner: '["self-hosted","linux","bw-tools"]'
 ```
 
 | Job | Steps |
@@ -1308,7 +1308,7 @@ Runner provisioning and troubleshooting: [docs/homelab/ci-runner.md](./docs/home
 
 | Job | Runner | Work |
 |---|---|---|
-| `build` | self-hosted MMCH | check the tag matches `package.json` → `npm ci` → `npm test` → `build:server` → verify the bundle starts → `npm pack` → upload tarball |
+| `build` | self-hosted `bw-tools` (Linux) | check the tag matches `package.json` → `npm ci` → `npm test` → `build:server` → verify the bundle starts → `npm pack` → upload tarball |
 | `publish` | `ubuntu-latest` | download tarball → `npm publish` → create/update the GitHub release |
 
 Publishing uses **Trusted Publishing (OIDC)**: no long-lived npm token is stored
@@ -1553,7 +1553,7 @@ plus SSH across three machines (MMCH, HELLOWORLD, Mac).
 | [docs/homelab/README.md](./docs/homelab/README.md) | Overview and quick reference |
 | [docs/homelab/infra-tailnet-ssh.md](./docs/homelab/infra-tailnet-ssh.md) | Tailnet and SSH setup |
 | [docs/homelab/cli-tools.md](./docs/homelab/cli-tools.md) | CLI tools per machine |
-| [docs/homelab/ci-runner.md](./docs/homelab/ci-runner.md) | Self-hosted CI runner on MMCH |
+| [docs/homelab/ci-runner.md](./docs/homelab/ci-runner.md) | Universal self-hosted CI runner on `bw-tools` (the MMCH runner is decommissioned) |
 | [docs/homelab/security-rules.md](./docs/homelab/security-rules.md) | Security rules |
 | [.agent/workflows/homelab-setup.md](./.agent/workflows/homelab-setup.md) | MCP workflow for onboarding a new machine |
 
