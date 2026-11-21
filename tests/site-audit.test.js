@@ -7,6 +7,7 @@ import { auditSite } from "../audit/site-audit.js";
 import { validateAuditUrl, fetchPage } from "../audit/fetch-page.js";
 import { checkHeaders } from "../audit/checks/headers.js";
 import { checkSeo } from "../audit/checks/seo.js";
+import { checkA11y } from "../audit/checks/a11y-static.js";
 import { parseArgs } from "../cli/args.js";
 import { runCommand } from "../cli/commands.js";
 import { handleToolCall } from "../tools/handlers.js";
@@ -238,6 +239,29 @@ test("checkSeo flags an unresolvable canonical instead of throwing", () => {
     sitemap: { status: 200, url: "https://example.com/sitemap.xml", urlCount: 1 },
   });
   assert.ok(findings.some((finding) => finding.id === "seo.canonical_invalid"));
+});
+
+test("checkA11y accepts implicit labels and still reports unnamed controls", () => {
+  const document = (body) => ({
+    finalUrl: "https://example.com/",
+    body: `<!doctype html><html lang="en"><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body><h1>Page</h1>${body}</body></html>`,
+  });
+
+  const implicit = checkA11y({
+    page: document('<label>Search <input type="search" name="query"></label>'),
+  });
+  assert.ok(
+    !implicit.some((finding) => finding.id === "a11y.input_label_missing"),
+    "a control nested inside a label already has an accessible name",
+  );
+
+  const explicit = checkA11y({
+    page: document('<label for="query">Search</label><input id="query" name="query">'),
+  });
+  assert.ok(!explicit.some((finding) => finding.id === "a11y.input_label_missing"));
+
+  const unnamed = checkA11y({ page: document('<input name="query">') });
+  assert.ok(unnamed.some((finding) => finding.id === "a11y.input_label_missing"));
 });
 
 test("checkHeaders reports missing security headers and accepts a complete set", () => {
