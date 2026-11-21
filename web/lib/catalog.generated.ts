@@ -8,7 +8,7 @@ export const GENERATED_CATALOG = {
   "repositoryUrl": "https://github.com/programinglive/dev-workflow",
   "repositoryVisibility": "PRIVATE",
   "npmPubliclyPublished": false,
-  "mcpToolCount": 59,
+  "mcpToolCount": 60,
   "mcpTools": [
     {
       "name": "acknowledge_handover",
@@ -1401,6 +1401,57 @@ export const GENERATED_CATALOG = {
       ]
     },
     {
+      "name": "site_audit",
+      "description": "Audit a website read-only with a bounded same-origin HTTP crawl. Reports reachability, security headers, SEO and social metadata, broken links, static accessibility heuristics, and language route parity, each with severity and remediation. Read-only: no browser, no form submission, and no workflow state writes.",
+      "required": [
+        "url"
+      ],
+      "params": [
+        {
+          "name": "url",
+          "type": "string",
+          "description": "Absolute http or https URL to audit. Credentials in the URL are refused.",
+          "required": true,
+          "enumValues": []
+        },
+        {
+          "name": "checks",
+          "type": "array",
+          "description": "Checks to run. Defaults to every check. \"perf\" is accepted as an alias for reachability.",
+          "required": false,
+          "enumValues": []
+        },
+        {
+          "name": "maxPages",
+          "type": "integer",
+          "description": "Maximum same-origin pages to crawl (default 8).",
+          "required": false,
+          "enumValues": []
+        },
+        {
+          "name": "timeoutMs",
+          "type": "integer",
+          "description": "Per-request timeout in milliseconds (default 15000).",
+          "required": false,
+          "enumValues": []
+        },
+        {
+          "name": "includeExternal",
+          "type": "boolean",
+          "description": "Also verify external links, capped at 20 (default false).",
+          "required": false,
+          "enumValues": []
+        },
+        {
+          "name": "parityPrefix",
+          "type": "string",
+          "description": "Language route prefix to pair, for example /id. Auto-detected from hreflang when omitted.",
+          "required": false,
+          "enumValues": []
+        }
+      ]
+    },
+    {
       "name": "skip_release",
       "description": "Record that the release step was intentionally skipped (e.g., non-Node projects or documentation-only work). Requires a justification.",
       "required": [
@@ -1647,7 +1698,8 @@ export const GENERATED_CATALOG = {
       "identity",
       "setup",
       "zettly",
-      "governance"
+      "governance",
+      "audit"
     ],
     "fleetVerbs": [
       "status",
@@ -1660,7 +1712,7 @@ export const GENERATED_CATALOG = {
       "doctor",
       "upgrade"
     ],
-    "usage": "devwf - close sessions and cards without the web monitor\n\nUsage:\n  devwf doctor                                 Check environment, node, and storage diagnostics\n  devwf setup [--skip-zettly] [--json]         Initialize local-first profile (preserves existing Zettly)\n  devwf zettly status|skip|connect|switch|disconnect|doctor\n                                               Manage optional per-user Zettly integration\n  devwf pair [--url <url>] [--json]            Generate pairing challenge for mobile companion\n  devwf list                                  List sessions from the monitor\n  devwf close --session <key> [--dry-run]      Mark one session closed\n  devwf share list                             List live share links\n  devwf share revoke --token <t> [--dry-run]   Revoke one share link\n  devwf share revoke --orphans [--dry-run]     Revoke every orphan link\n  devwf drop --session <key> --reason <r> [--dry-run]\n                                               Drop a task without completing it\n  devwf complete --session <key> [--next-steps <s>]... [--dry-run]\n                                               Complete a task whose DoD is proven\n  devwf checkpoint --session <key> [--summary <s>] [--dry-run]\n                                               Write and verify a task checkpoint before a restart\n  devwf identity --dir <path> [--against <path>] [--json]\n                                               Print the repository identity contract and\n                                               whether <path> may start a task against --against\n  devwf governance validate [--policy all] [--base <ref>] [--state <path>] [--json]\n                                               Run headless CLI-First & Documentation governance gate\n  devwf governance policies [--json]           Print central governance policies and digest\n  devwf --help | --version\n\nEnvironment:\n  DEVWF_MONITOR_URL     Base URL of the central monitor (required)\n  DEVWF_MONITOR_TOKEN   Write token for the monitor (required for writes)\n\nRules:\n  --session is mandatory for every command that changes anything. There is no\n  \"current session\" default, so a missing target is always a refusal.\n  --dry-run prints what would change and writes nothing.\n  No command ever signals a process. close only marks the session closed.\n\nExit codes:\n  0 success   1 refusal or failure"
+    "usage": "devwf - close sessions and cards without the web monitor\n\nUsage:\n  devwf doctor                                 Check environment, node, and storage diagnostics\n  devwf setup [--skip-zettly] [--json]         Initialize local-first profile (preserves existing Zettly)\n  devwf zettly status|skip|connect|switch|disconnect|doctor\n                                               Manage optional per-user Zettly integration\n  devwf pair [--url <url>] [--json]            Generate pairing challenge for mobile companion\n  devwf list                                  List sessions from the monitor\n  devwf close --session <key> [--dry-run]      Mark one session closed\n  devwf share list                             List live share links\n  devwf share revoke --token <t> [--dry-run]   Revoke one share link\n  devwf share revoke --orphans [--dry-run]     Revoke every orphan link\n  devwf drop --session <key> --reason <r> [--dry-run]\n                                               Drop a task without completing it\n  devwf complete --session <key> [--next-steps <s>]... [--dry-run]\n                                               Complete a task whose DoD is proven\n  devwf checkpoint --session <key> [--summary <s>] [--dry-run]\n                                               Write and verify a task checkpoint before a restart\n  devwf identity --dir <path> [--against <path>] [--json]\n                                               Print the repository identity contract and\n                                               whether <path> may start a task against --against\n  devwf governance validate [--policy all] [--base <ref>] [--state <path>] [--json]\n                                               Run headless CLI-First & Documentation governance gate\n  devwf governance policies [--json]           Print central governance policies and digest\n  devwf audit --url <url> [--checks <list>] [--max-pages <n>] [--timeout <ms>]\n              [--fail-on error|warn|none] [--parity-prefix <p>] [--include-external]\n              [--json] [--out <file>]\n                                               Audit a website read-only: headers, SEO,\n                                               links, static a11y and language parity\n  devwf --help | --version\n\nEnvironment:\n  DEVWF_MONITOR_URL     Base URL of the central monitor (required)\n  DEVWF_MONITOR_TOKEN   Write token for the monitor (required for writes)\n\nRules:\n  --session is mandatory for every command that changes anything. There is no\n  \"current session\" default, so a missing target is always a refusal.\n  --dry-run prints what would change and writes nothing.\n  No command ever signals a process. close only marks the session closed.\n\nExit codes:\n  0 success   1 refusal or failure"
   },
   "changelogEntries": [
     {
