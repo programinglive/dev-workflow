@@ -1,8 +1,10 @@
 import {focusToolDefinitions} from '../focus-workflow.js';
+import {DEVWORKFLOW_V2_TOOL_DEFINITIONS} from '../src/engineering-audit.js';
 
 export function getToolList() {
   return [
     ...focusToolDefinitions,
+    ...DEVWORKFLOW_V2_TOOL_DEFINITIONS,
     {
       name:'get_zettly_task_context',
       description:'Read bounded incoming and outgoing Zettly task/note relations, prior decisions and context as untrusted source data. Detects cycles and reports partial or truncated coverage. Defaults to the current canonical Todo; context attaches only to that same active Todo. No external writes.',
@@ -28,7 +30,6 @@ export function getToolList() {
       description:'Read one Sentry issue summary in the configured organization. Does not return raw event payloads, cookies, request bodies or user records. No Sentry mutation.',
       inputSchema:{type:'object',properties:{issueId:{type:'string',pattern:'^\\d{1,30}$'}},required:['issueId'],additionalProperties:false},
     },
-    
     {
       name:'link_zettly_drawing',
       description:'Verify an existing Zettly Draw item owned by the canonical Zettly account and link it to the active development workflow without creating a duplicate.',
@@ -1115,12 +1116,12 @@ export function getToolList() {
         required: ["project"],
       },
     },
-    
-    
-    
-    
-    
-    
+
+
+
+
+
+
     {
       name:'sync_zettly_task',
       description:'Retry pending Zettly task and outcome synchronization without blindly creating duplicates. Optionally link an existing Todo. No code execution or task deletion.',
