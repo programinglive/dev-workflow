@@ -314,7 +314,7 @@ See [MCP client configuration](#mcp-client-configuration).
 
 ## Available Tools
 
-64 tools. See [service connections and proactive Zettly direction](docs/service-integrations.md) and [focus-first development](docs/focus-workflow.md).
+60 tools. See [service connections and proactive Zettly direction](docs/service-integrations.md) and [focus-first development](docs/focus-workflow.md).
 
 | Tool | Purpose |
 |---|---|
@@ -335,6 +335,7 @@ See [MCP client configuration](#mcp-client-configuration).
 | `sync_zettly_task` | Retry pending Zettly task/outcome synchronization or link an existing Todo |
 | `set_plan` | Replace the work plan of the running task |
 | `search_project` | Search bounded local text in the active repo; returns sanitized path:line citations |
+| `site_audit` | Audit a website read-only: reachability, security headers, SEO and social metadata, broken links, static accessibility heuristics, and language route parity; returns findings with severity and remediation |
 | `mark_plan_step` | Mark one plan step done (or reopen it) |
 | `resume_session` | Reconnect to state left behind by another session in this project |
 | `checkpoint_task` | Write a checkpoint into the linked Zettly Todo and report `confirmed` only after reading it back; `showRevertPlan` adds a read-only revert record |
@@ -870,6 +871,42 @@ Four rules matter more than the flags:
 - **Exit code 0 means it really happened.** A refusal, an unknown session, a
   missing token or a `complete` whose Definition of Done is still open all exit
   non-zero, so a script can depend on the result rather than the wording.
+
+### Auditing a website
+
+`devwf audit` and the `site_audit` MCP tool share one headless engine, so a
+terminal run and an agent run produce the same report. The audit is read-only:
+a bounded same-origin GET crawl, no browser, no form submission, no cookies, and
+no writes unless `--out` is passed.
+
+```bash
+devwf audit --url https://programinglive.com
+devwf audit --url https://programinglive.com --json --out report.json
+devwf audit --url https://programinglive.com \
+  --checks headers,seo,links,a11y,parity \
+  --max-pages 8 --timeout 15000 --fail-on error
+```
+
+Checks in v1:
+
+| Check | What it reports |
+|---|---|
+| `reachability` | HTTP status, redirect chain, TTFB, HTML size, compression, content type (`perf` is an alias) |
+| `headers` | Missing CSP, HSTS, frame protection, Referrer-Policy, Permissions-Policy, nosniff, COOP, and version disclosure |
+| `seo` | Title and description length, canonical, robots meta, Open Graph, real `og:image` dimensions, Twitter card, sitemap, `robots.txt` |
+| `links` | Same-origin 4xx/5xx, unreachable links, redirects; external links only with `--include-external` |
+| `a11y` | Static heuristics: `lang`, one `h1`, image alt, form labels, duplicate ids, vague link text, skip link, viewport |
+| `parity` | Pairs each page with its language counterpart (for example `/id/about`) and reports missing routes |
+
+The report carries `schemaVersion`, per-category scores, and every finding with
+`severity`, `detail`, `evidence`, and `remediation`. Scoring is explainable:
+each category starts at 100 and loses 25 per error, 8 per warning, and 1 per
+info.
+
+Limits are part of the contract: `http` and `https` only, URLs with credentials
+are refused, five redirects maximum, a 2 MB body cap, per-request timeout,
+`maxPages` between 1 and 25, and concurrency 4. Exit codes: `0` when nothing
+reaches `--fail-on`, `1` when something does, `2` for invalid input.
 
 ### Taking a task across machines
 

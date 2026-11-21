@@ -31,6 +31,9 @@ import {
 import { captureRepositoryIdentity, evaluateProjectSwitch, parseRemoteIdentity } from "../repository-identity.js";
 import { runCiGovernanceValidation } from "../governance/ci-validator.js";
 import { loadPolicies } from "../governance/engine.js";
+import { auditSite } from "../audit/site-audit.js";
+import { formatHumanReport } from "../audit/report.js";
+import { writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import os from "node:os";
 
@@ -761,6 +764,53 @@ export async function runCommand({
       throw new CliError(`Governance validation failed (${report.violations.length} violation(s)).`, 1);
     }
     return { ok: true };
+  }
+
+  if (command === "audit") {
+    const url = requireValue(args.url, "--url <url>", "audit");
+    const failOn = args.failOn || "error";
+    if (!["error", "warn", "none"].includes(failOn)) {
+      throw new CliError('--fail-on must be "error", "warn", or "none". Nothing was audited.', 2);
+    }
+    if (args.maxPages !== undefined && (!Number.isFinite(args.maxPages) || args.maxPages < 1)) {
+      throw new CliError("--max-pages must be a positive number. Nothing was audited.", 2);
+    }
+    if (args.timeoutMs !== undefined && (!Number.isFinite(args.timeoutMs) || args.timeoutMs < 1000)) {
+      throw new CliError("--timeout must be at least 1000 milliseconds. Nothing was audited.", 2);
+    }
+
+    let report;
+    try {
+      report = await auditSite({
+        url,
+        checks: args.checks,
+        maxPages: args.maxPages,
+        timeoutMs: args.timeoutMs,
+        includeExternal: Boolean(args.includeExternal),
+        parityPrefix: args.parityPrefix,
+      });
+    } catch (error) {
+      throw new CliError(`Audit could not start: ${error.message}`, 2);
+    }
+
+    if (args.out) {
+      await writeFile(args.out, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+    }
+
+    if (args.json) {
+      out.write(JSON.stringify(report, null, 2));
+    } else {
+      out.write(formatHumanReport(report));
+      if (args.out) out.write(`JSON report written to ${args.out}`);
+    }
+
+    const failed = failOn === "error"
+      ? report.summary.errors > 0
+      : failOn === "warn"
+        ? report.summary.errors + report.summary.warnings > 0
+        : false;
+
+    return { ok: !failed, report };
   }
 
   throw new CliError(`Unsupported command "${command}". Run "devwf --help".`);

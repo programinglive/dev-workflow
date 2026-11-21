@@ -14,7 +14,7 @@
  * only `list` runs without one.
  */
 
-const COMMANDS = ["list", "close", "share", "drop", "complete", "checkpoint", "help", "version", "doctor", "pair", "fleet", "identity", "setup", "zettly", "governance"];
+const COMMANDS = ["list", "close", "share", "drop", "complete", "checkpoint", "help", "version", "doctor", "pair", "fleet", "identity", "setup", "zettly", "governance", "audit"];
 const FLEET_VERBS = ["status", "check", "plan", "stage", "activate", "verify", "rollback", "doctor", "upgrade"];
 const ZETTLY_VERBS = ["status", "skip", "connect", "switch", "disconnect", "doctor"];
 const GOVERNANCE_VERBS = ["validate", "policies"];
@@ -53,6 +53,11 @@ Usage:
   devwf governance validate [--policy all] [--base <ref>] [--state <path>] [--json]
                                                Run headless CLI-First & Documentation governance gate
   devwf governance policies [--json]           Print central governance policies and digest
+  devwf audit --url <url> [--checks <list>] [--max-pages <n>] [--timeout <ms>]
+              [--fail-on error|warn|none] [--parity-prefix <p>] [--include-external]
+              [--json] [--out <file>]
+                                               Audit a website read-only: headers, SEO,
+                                               links, static a11y and language parity
   devwf --help | --version
 
 Environment:
@@ -84,8 +89,14 @@ const FLAGS_WITH_VALUE = new Set([
   "--state",
   "--task-type",
   "--description",
+  "--checks",
+  "--max-pages",
+  "--timeout",
+  "--fail-on",
+  "--parity-prefix",
+  "--out",
 ]);
-const BOOLEAN_FLAGS = new Set(["--dry-run", "--orphans", "--help", "--version", "--json", "--authorize", "--all", "--resume", "--force", "--skip-zettly", "--confirm", "--token-stdin"]);
+const BOOLEAN_FLAGS = new Set(["--dry-run", "--orphans", "--help", "--version", "--json", "--authorize", "--all", "--resume", "--force", "--skip-zettly", "--confirm", "--token-stdin", "--include-external"]);
 
 /**
  * Parses argv (without the node and script entries).
@@ -104,7 +115,7 @@ export function parseArgs(argv = []) {
   const command = words[0];
   if (!COMMANDS.includes(command)) {
     throw new CliError(
-      `Unknown command "${command}". Valid commands: list, close, share, drop, complete. Run "devwf --help".`
+      `Unknown command "${command}". Valid commands: ${COMMANDS.join(", ")}. Run "devwf --help".`
     );
   }
 
@@ -166,6 +177,7 @@ export function parseArgs(argv = []) {
       if (word === "--skip-zettly") args.skipZettly = true;
       if (word === "--confirm") args.confirm = true;
       if (word === "--token-stdin") args.tokenStdin = true;
+      if (word === "--include-external") args.includeExternal = true;
       continue;
     }
 
@@ -187,6 +199,12 @@ export function parseArgs(argv = []) {
       else if (word === "--state") args.state = value;
       else if (word === "--task-type") args.taskType = value;
       else if (word === "--description") args.description = value;
+      else if (word === "--checks") args.checks = value.split(",").map((item) => item.trim()).filter(Boolean);
+      else if (word === "--max-pages") args.maxPages = Number(value);
+      else if (word === "--timeout") args.timeoutMs = Number(value);
+      else if (word === "--fail-on") args.failOn = value;
+      else if (word === "--parity-prefix") args.parityPrefix = value;
+      else if (word === "--out") args.out = value;
       else if (word === "--next-steps") args.nextSteps.push(value);
       else if (word === "--summary") args.summary = value;
       continue;

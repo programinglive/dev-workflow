@@ -5,6 +5,7 @@ import { safeLog, securityOutputFilter } from '../../security/sanitizer.js';
 import { withEnglishGuidance } from '../../workflow-guidance.js';
 import { syncZettlyTask, flushZettlyOutbox } from '../../zettly-workflow.js';
 import { securityAudit } from '../../security/audit.js';
+import { auditSite } from '../../audit/site-audit.js';
 import path from 'node:path';
 import { assertSafeToolCommand } from '../../security/commands.js';
 import { sessionKeyFromRequest } from "../../workflow-state.js";
@@ -380,6 +381,17 @@ async function dispatchToolCall({
         const root=marker>=0 ? file.slice(0,marker) : file ? path.dirname(file) : process.cwd();
         const userId=process.env.DEV_WORKFLOW_USER_ID || (marker>=0?path.basename(path.dirname(file)):'default');
         const report=await securityAudit({root,state:workflowState?.state,stateFile:file,userId});
+        return textResponse(JSON.stringify(report));
+      }
+      case 'site_audit': {
+        const report=await auditSite({
+          url:args.url,
+          checks:args.checks,
+          maxPages:args.maxPages,
+          timeoutMs:args.timeoutMs,
+          includeExternal:args.includeExternal,
+          parityPrefix:args.parityPrefix,
+        });
         return textResponse(JSON.stringify(report));
       }
       case "start_task": {
