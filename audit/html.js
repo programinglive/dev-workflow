@@ -104,6 +104,7 @@ export function getFormControls(html) {
         ariaLabel: getAttribute(tag, "aria-label"),
         ariaLabelledBy: getAttribute(tag, "aria-labelledby"),
         title: getAttribute(tag, "title"),
+        raw: tag,
       });
     }
   }
@@ -114,6 +115,14 @@ export function getLabelTargets(html) {
   return findTags(html, "label")
     .map((tag) => getAttribute(tag, "for"))
     .filter((value) => typeof value === "string" && value !== "");
+}
+
+/**
+ * Inner HTML of every label block. A control nested inside one of these blocks
+ * already has an accessible name, even without a for/id pair.
+ */
+export function getLabelBodies(html) {
+  return findTagBlocks(html, "label").map((block) => block.inner);
 }
 
 export function getIds(html) {
