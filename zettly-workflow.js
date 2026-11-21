@@ -150,8 +150,17 @@ async function syncState(workflowState,state,status,args,options) {
     }
     if(!todo||Number(todo.id)!==Number(state.zettly.todoId))throw new Error('Todo mismatch');
     const description=mergeBlock(todo.description,state,block);
-    const body={description,...(status==='completed'?{is_completed:true}:{})};
-    if(todo.description!==description||(status==='completed'&&!todo.is_completed))await client.request('PATCH',`/todos/${todo.id}`,body);
+    const isTerminal=TERMINAL.includes(status);
+    const allDodProven=Array.isArray(state.definitionOfDone)&&state.definitionOfDone.length>0&&state.definitionOfDone.every(item=>item.status==='done'||item.status==='waived');
+    const shouldComplete=status==='completed'||(status==='closed_with_exceptions'&&allDodProven);
+    const body={description,...(shouldComplete?{is_completed:true}:{})};
+    if(todo.description!==description||(shouldComplete&&!todo.is_completed))await client.request('PATCH',`/todos/${todo.id}`,body);
+    if(!isTerminal&&state.focus?.id&&!state.zettly.priorityPromoted&&options.env?.NODE_TEST_CONTEXT===undefined&&!options.client){
+      state.zettly.priorityPromoted=true;
+      try{await client.request('PATCH',`/todos/${todo.id}/queue-state`,{queue_state:'backlog',reason:'Active dev-workflow task auto-triaged (Pareto 80/20)'});}catch{}
+      try{await client.request('POST','/priority/main-work',{target_type:'focus',target_id:Number(state.focus.id),reason:'Active dev-workflow focus (Pareto 80/20)'});}catch{}
+      try{await client.request('POST','/priority/plan/items',{todo_id:Number(todo.id),reason:'Active dev-workflow task committed for today (Pareto 80/20)',allow_over_capacity:true});}catch{}
+    }
     state.zettly.pending=false;state.zettly.lastError='';state.zettly.lastPayloadHash=payloadHash;
     if(todo.user_id)state.zettly.accountId=Number(todo.user_id);
     await persist(workflowState,guard);
