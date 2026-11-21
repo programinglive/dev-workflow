@@ -17,8 +17,10 @@ test('device-entry prefers canonical DEVWF_MONITOR_URL and DEVWF_RELEASE_URL fro
   );
 });
 
-test('workflow-guidance exports CLI-First and Mandatory Mermaid Flow rules without private host assumptions', () => {
+test('workflow-guidance exports CLI-First, Mandatory Mermaid Flow, Pareto Priority, and PR Reversibility rules without private host assumptions', () => {
   const guidanceSource = fs.readFileSync(path.join(__dirname, '..', 'workflow-guidance.js'), 'utf8');
   assert.match(guidanceSource, /CLI-First/);
   assert.match(guidanceSource, /Mandatory Mermaid Flow Design Gate/);
+  assert.match(guidanceSource, /Pareto 80\/20 Priority-First Execution/);
+  assert.match(guidanceSource, /PR\/MR Reversibility & Release-Safety Gate/);
 });
