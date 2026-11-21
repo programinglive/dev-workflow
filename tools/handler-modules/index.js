@@ -28,6 +28,7 @@ import {handleIntegrationTool,prepareTaskSource} from './integration-handlers.js
 import {handleRefineWithAi} from './refine-with-ai.js';
 import {handleFocusTool,prepareTaskFocus} from '../../focus-workflow.js';
 import {syncZettlyDrawing} from '../../zettly-drawing.js';
+import {DEVWORKFLOW_V2_TOOL_NAMES,handleDevWorkflowV2Tool} from '../../src/engineering-audit.js';
 
 function summarizeResponse(label, response) {
   const text = response?.content?.[0]?.text || "";
@@ -535,6 +536,10 @@ async function dispatchToolCall({
       case "report_build_status":
         return handleReportBuildStatus(args, workflowState);
       default:
+        if (DEVWORKFLOW_V2_TOOL_NAMES.has(name)) {
+          const result = await handleDevWorkflowV2Tool(name, args, workflowState);
+          return textResponse(JSON.stringify(result, null, 2));
+        }
         throw new Error(`Unknown tool: ${name}`);
     }
   } catch (error) {
@@ -617,7 +622,7 @@ export async function handleToolCall(context) {
       }
       if(notes.length&&typeof response?.content?.[0]?.text==='string')response={...response,content:[{...response.content[0],text:response.content[0].text+'\n\n'+notes.join('\n')},...response.content.slice(1)]};
     }
-    const structuredIntegrationReads=new Set(['get_integration_status','list_sentry_issues','get_sentry_issue','inventory_sentry_issues','get_zettly_task_context','get_current_focus','set_focus','link_task_to_focus','complete_focus']);
+    const structuredIntegrationReads=new Set(['get_integration_status','list_sentry_issues','get_sentry_issue','inventory_sentry_issues','get_zettly_task_context','get_current_focus','set_focus','link_task_to_focus','complete_focus',...DEVWORKFLOW_V2_TOOL_NAMES]);
     if(structuredIntegrationReads.has(name))return securityOutputFilter(response);
     return securityOutputFilter(withEnglishGuidance(withPlanProgress(withConflictNotice(response, context.workflowState), context.workflowState),name));
   } catch(error) {
