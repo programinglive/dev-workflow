@@ -18,6 +18,7 @@
  */
 
 import { sessionKeyFromRequest } from "./workflow-state.js";
+import { DEVWORKFLOW_V2_TOOL_NAMES } from "./src/engineering-audit.js";
 
 /**
  * Tools that are safe to run without a verified MCP session identity.
@@ -41,6 +42,7 @@ export const NON_SESSION_SCOPED_TOOLS = new Set([
   "project_summary_db",
   "security_audit",
   "search_project",
+  ...DEVWORKFLOW_V2_TOOL_NAMES,
 ]);
 
 export const SESSION_IDENTITY_REQUIRED_MESSAGE =
