@@ -14,6 +14,7 @@ import {
   getHtmlLang,
   getIds,
   getImages,
+  getLabelBodies,
   getLabelTargets,
   getMeta,
 } from "../html.js";
@@ -78,9 +79,11 @@ export function checkA11y({ page } = {}) {
   }
 
   const labelTargets = new Set(getLabelTargets(html));
+  const labelBodies = getLabelBodies(html);
   const unnamed = getFormControls(html).filter((control) => {
     if (control.ariaLabel || control.ariaLabelledBy || control.title) return false;
     if (control.id && labelTargets.has(control.id)) return false;
+    if (control.raw && labelBodies.some((body) => body.includes(control.raw))) return false;
     return true;
   });
   if (unnamed.length > 0) {

@@ -82,6 +82,10 @@ devwf audit --url ...        site_audit MCP tool
 `perf` is an alias for the size and timing findings produced by
 `reachability`; it is not a separate browser measurement.
 
+The a11y form-label check accepts both explicit `for`/`id` labels and implicit
+labels, where the control is nested inside the `<label>` element. Reporting the
+latter as unlabelled was a false positive found during the first real audit.
+
 ## Report schema
 
 ```json
