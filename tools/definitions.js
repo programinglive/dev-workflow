@@ -45,6 +45,27 @@ export function getToolList() {
       inputSchema:{type:'object',properties:{},additionalProperties:false},
     },
     {
+      name:'site_audit',
+      description:'Audit a website read-only with a bounded same-origin HTTP crawl. Reports reachability, security headers, SEO and social metadata, broken links, static accessibility heuristics, and language route parity, each with severity and remediation. Read-only: no browser, no form submission, and no workflow state writes.',
+      inputSchema:{
+        type:'object',
+        properties:{
+          url:{type:'string',minLength:1,maxLength:2000,description:'Absolute http or https URL to audit. Credentials in the URL are refused.'},
+          checks:{
+            type:'array',
+            items:{type:'string',enum:['reachability','headers','seo','links','a11y','parity']},
+            description:'Checks to run. Defaults to every check. "perf" is accepted as an alias for reachability.',
+          },
+          maxPages:{type:'integer',minimum:1,maximum:25,description:'Maximum same-origin pages to crawl (default 8).'},
+          timeoutMs:{type:'integer',minimum:1000,maximum:60000,description:'Per-request timeout in milliseconds (default 15000).'},
+          includeExternal:{type:'boolean',description:'Also verify external links, capped at 20 (default false).'},
+          parityPrefix:{type:'string',maxLength:100,description:'Language route prefix to pair, for example /id. Auto-detected from hreflang when omitted.'},
+        },
+        required:['url'],
+        additionalProperties:false,
+      },
+    },
+    {
       name: "search_project",
       description: "Search bounded local text files in the active workflow project's Git repository. Read-only; no persistent index or network calls. Returns sanitized path:line citations. Lexical matching only; does not accept a filesystem path.",
       inputSchema: {
