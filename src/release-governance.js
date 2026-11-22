@@ -10,7 +10,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { REMOVED_LEGACY_TOOLS } from "./tool-catalog-auditor.js";
 
-export const RELEASE_GOVERNANCE_VERSION = "1.0.0";
+export const RELEASE_GOVERNANCE_VERSION = "2.0.0";
 
 /**
  * Authoritative registry of public `programinglive` open-source repositories
@@ -169,21 +169,46 @@ export function detectRepositoryEntry(projectDir, explicitRepoName = null) {
 }
 
 /**
- * Evaluate the Permanent Open-Source Release Documentation & Website Synchronization Gate.
+ * Evaluate the Permanent Two-Stage Open-Source Release Governance Gate.
+ *
+ * Stages:
+ *   - "pre_publish"  : verifies source version, README, CHANGELOG, website source &
+ *                      generated catalog locally (never circularly requires unpublished npm/GH).
+ *   - "post_publish" : verifies external published artifacts (GitHub Release, npm published
+ *                      version, npm `latest` dist-tag, runtime CLI version, and live website HTML).
+ *   - "both"         : runs Stage A (pre_publish) and Stage B (post_publish).
  */
 export async function evaluateReleaseDocsGate({
   projectDir,
   repoName = null,
+  stage = "pre_publish",
   expectedVersion = null,
   expectedToolCount = null,
+  githubReleaseVersion = null,
+  npmPublishedVersion = null,
+  npmLatestVersion = null,
+  runtimeVersion = null,
   liveWebsiteHtml = null,
   checkLiveWebsite = false,
 } = {}) {
+  const normalizedStage = String(stage || "pre_publish").toLowerCase();
+  const runPre = normalizedStage === "pre_publish" || normalizedStage === "both";
+  const runPost =
+    normalizedStage === "post_publish" ||
+    normalizedStage === "both" ||
+    Boolean(checkLiveWebsite) ||
+    typeof liveWebsiteHtml === "string" ||
+    Boolean(githubReleaseVersion) ||
+    Boolean(npmPublishedVersion) ||
+    Boolean(npmLatestVersion) ||
+    Boolean(runtimeVersion);
+
   const root = path.resolve(projectDir || process.cwd());
   const registryEntry = detectRepositoryEntry(root, repoName);
   const pkg = readJsonSafe(path.join(root, "package.json"));
   const composer = readJsonSafe(path.join(root, "composer.json"));
   const actualVersion = pkg?.version || composer?.version || expectedVersion || null;
+  const targetVersion = expectedVersion || actualVersion;
 
   const findings = [];
   const checks = [];
@@ -192,220 +217,312 @@ export async function evaluateReleaseDocsGate({
     findings.push({ code, severity, file, message });
   };
 
-  // 1. Version source verification
-  if (expectedVersion && actualVersion && expectedVersion !== actualVersion) {
-    addFinding(
-      "RELEASE_VERSION_MISMATCH",
-      "error",
-      pkg ? "package.json" : "composer.json",
-      `Expected release version ${expectedVersion}, but version source reports ${actualVersion}.`
-    );
-  }
-  checks.push({
-    name: "version_source",
-    status: expectedVersion && actualVersion !== expectedVersion ? "FAIL" : "PASS",
-    version: actualVersion,
-  });
-
-  // 2. README.md synchronization
-  const readmePath = path.join(root, "README.md");
-  if (!fs.existsSync(readmePath)) {
-    addFinding("MISSING_README", "error", "README.md", "Public repository is missing README.md.");
-  } else {
-    const readme = fs.readFileSync(readmePath, "utf8");
-    if (actualVersion && !readme.includes(actualVersion)) {
+  // Stage A — PRE-PUBLISH checks
+  if (runPre) {
+    if (expectedVersion && actualVersion && expectedVersion !== actualVersion) {
       addFinding(
-        "README_VERSION_DRIFT",
+        "RELEASE_VERSION_MISMATCH",
         "error",
-        "README.md",
-        `README.md does not reference current release version ${actualVersion}.`
+        pkg ? "package.json" : "composer.json",
+        `Expected release version ${expectedVersion}, but version source reports ${actualVersion}.`
       );
     }
-    for (const pat of PRIVATE_LEAK_PATTERNS) {
-      if (pat.test(readme)) {
+    checks.push({
+      name: "version_source",
+      stage: "pre_publish",
+      status: expectedVersion && actualVersion !== expectedVersion ? "FAIL" : "PASS",
+      version: actualVersion,
+    });
+
+    const readmePath = path.join(root, "README.md");
+    if (!fs.existsSync(readmePath)) {
+      addFinding("MISSING_README", "error", "README.md", "Public repository is missing README.md.");
+    } else {
+      const readme = fs.readFileSync(readmePath, "utf8");
+      if (actualVersion && !readme.includes(actualVersion)) {
         addFinding(
-          "PRIVATE_ENVIRONMENT_LEAK",
+          "README_VERSION_DRIFT",
           "error",
           "README.md",
-          `README.md contains private workstation or internal host identifier matching ${pat}.`
+          `README.md does not reference current release version ${actualVersion}.`
         );
       }
+      for (const pat of PRIVATE_LEAK_PATTERNS) {
+        if (pat.test(readme)) {
+          addFinding(
+            "PRIVATE_ENVIRONMENT_LEAK",
+            "error",
+            "README.md",
+            `README.md contains private workstation or internal host identifier matching ${pat}.`
+          );
+        }
+      }
     }
-  }
 
-  // 3. CHANGELOG.md synchronization
-  const changelogPath = path.join(root, "CHANGELOG.md");
-  if (fs.existsSync(changelogPath)) {
-    const changelog = fs.readFileSync(changelogPath, "utf8");
-    if (actualVersion && !changelog.includes(actualVersion)) {
-      addFinding(
-        "CHANGELOG_VERSION_DRIFT",
-        "error",
-        "CHANGELOG.md",
-        `CHANGELOG.md does not contain a release entry for version ${actualVersion}.`
-      );
-    }
-  } else if (registryEntry?.requiredDocs?.includes("CHANGELOG.md")) {
-    addFinding("MISSING_CHANGELOG", "error", "CHANGELOG.md", "Required CHANGELOG.md is missing.");
-  }
-
-  // 4. Website source & generated catalog synchronization (when web/ exists)
-  const webDir = path.join(root, "web");
-  let websiteSourceStatus = "NOT_APPLICABLE";
-  if (fs.existsSync(webDir)) {
-    websiteSourceStatus = "PASS";
-
-    const catalogPath = path.join(root, "web", "lib", "catalog.generated.ts");
-    if (fs.existsSync(catalogPath)) {
-      const catalog = fs.readFileSync(catalogPath, "utf8");
-      if (actualVersion && !catalog.includes(`"${actualVersion}"`)) {
-        websiteSourceStatus = "FAIL";
+    const changelogPath = path.join(root, "CHANGELOG.md");
+    if (fs.existsSync(changelogPath)) {
+      const changelog = fs.readFileSync(changelogPath, "utf8");
+      if (actualVersion && !changelog.includes(actualVersion)) {
         addFinding(
-          "WEBSITE_CATALOG_VERSION_DRIFT",
+          "CHANGELOG_VERSION_DRIFT",
           "error",
-          "web/lib/catalog.generated.ts",
-          `Generated website catalog does not match version ${actualVersion}. Run web/scripts/generate-docs-data.mjs.`
+          "CHANGELOG.md",
+          `CHANGELOG.md does not contain a release entry for version ${actualVersion}.`
         );
       }
-      if (expectedToolCount !== null) {
-        const countMatch = /toolCount:\s*(\d+)/.exec(catalog);
-        if (countMatch && Number(countMatch[1]) !== Number(expectedToolCount)) {
+    } else if (registryEntry?.requiredDocs?.includes("CHANGELOG.md")) {
+      addFinding("MISSING_CHANGELOG", "error", "CHANGELOG.md", "Required CHANGELOG.md is missing.");
+    }
+
+    const webDir = path.join(root, "web");
+    let websiteSourceStatus = "NOT_APPLICABLE";
+    if (fs.existsSync(webDir)) {
+      websiteSourceStatus = "PASS";
+
+      const catalogPath = path.join(root, "web", "lib", "catalog.generated.ts");
+      if (fs.existsSync(catalogPath)) {
+        const catalog = fs.readFileSync(catalogPath, "utf8");
+        if (actualVersion && !catalog.includes(`"${actualVersion}"`)) {
           websiteSourceStatus = "FAIL";
           addFinding(
-            "WEBSITE_TOOL_COUNT_DRIFT",
+            "WEBSITE_CATALOG_VERSION_DRIFT",
             "error",
             "web/lib/catalog.generated.ts",
-            `Generated website catalog reports toolCount=${countMatch[1]}, expected ${expectedToolCount}.`
+            `Generated website catalog does not match version ${actualVersion}. Run web/scripts/generate-docs-data.mjs.`
           );
+        }
+        if (expectedToolCount !== null) {
+          const countMatch = /"?(?:mcpToolCount|toolCount)"?:\s*(\d+)/.exec(catalog);
+          if (countMatch && Number(countMatch[1]) !== Number(expectedToolCount)) {
+            websiteSourceStatus = "FAIL";
+            addFinding(
+              "WEBSITE_TOOL_COUNT_DRIFT",
+              "error",
+              "web/lib/catalog.generated.ts",
+              `Generated website catalog reports toolCount=${countMatch[1]}, expected ${expectedToolCount}.`
+            );
+          }
+        }
+      }
+
+      const docsDataFiles = ["web/lib/how-to-use-data.ts", "web/lib/use-cases-data.ts"];
+      for (const rel of docsDataFiles) {
+        const full = path.join(root, rel);
+        if (!fs.existsSync(full)) continue;
+        const content = fs.readFileSync(full, "utf8");
+
+        const pkgVerMatch = /@programinglive\/dev-workflow@([0-9]+\.[0-9]+\.[0-9]+)/g;
+        let m;
+        while ((m = pkgVerMatch.exec(content)) !== null) {
+          if (actualVersion && m[1] !== actualVersion) {
+            websiteSourceStatus = "FAIL";
+            addFinding(
+              "WEBSITE_STALE_PACKAGE_VERSION",
+              "error",
+              rel,
+              `Website doc file references outdated package version @programinglive/dev-workflow@${m[1]} (current: ${actualVersion}).`
+            );
+          }
+        }
+
+        if (expectedToolCount !== null) {
+          const tdMatch = /"toolsDiscovered":\s*(\d+)/.exec(content);
+          if (tdMatch && Number(tdMatch[1]) !== Number(expectedToolCount)) {
+            websiteSourceStatus = "FAIL";
+            addFinding(
+              "WEBSITE_STALE_TOOL_COUNT",
+              "error",
+              rel,
+              `Website doc file shows toolsDiscovered: ${tdMatch[1]}, expected ${expectedToolCount}.`
+            );
+          }
+        }
+
+        for (const removed of REMOVED_TOOL_NAMES) {
+          const rx = new RegExp(`\\b${removed}\\b`);
+          if (rx.test(content)) {
+            websiteSourceStatus = "FAIL";
+            addFinding(
+              "WEBSITE_REMOVED_TOOL_REFERENCE",
+              "error",
+              rel,
+              `Website documentation still references removed v2 MCP tool '${removed}'. Replace with canonical '${REMOVED_LEGACY_TOOLS[removed].canonicalTool}'.`
+            );
+          }
+        }
+
+        for (const pat of PRIVATE_LEAK_PATTERNS) {
+          if (pat.test(content)) {
+            websiteSourceStatus = "FAIL";
+            addFinding(
+              "WEBSITE_PRIVATE_LEAK",
+              "error",
+              rel,
+              `Public website file contains forbidden private workstation/host pattern ${pat}.`
+            );
+          }
         }
       }
     }
-
-    const docsDataFiles = ["web/lib/how-to-use-data.ts", "web/lib/use-cases-data.ts"];
-    for (const rel of docsDataFiles) {
-      const full = path.join(root, rel);
-      if (!fs.existsSync(full)) continue;
-      const content = fs.readFileSync(full, "utf8");
-
-      // Detect stale @programinglive/dev-workflow@<oldVersion>
-      const pkgVerMatch = /@programinglive\/dev-workflow@([0-9]+\.[0-9]+\.[0-9]+)/g;
-      let m;
-      while ((m = pkgVerMatch.exec(content)) !== null) {
-        if (actualVersion && m[1] !== actualVersion) {
-          websiteSourceStatus = "FAIL";
-          addFinding(
-            "WEBSITE_STALE_PACKAGE_VERSION",
-            "error",
-            rel,
-            `Website doc file references outdated package version @programinglive/dev-workflow@${m[1]} (current: ${actualVersion}).`
-          );
-        }
-      }
-
-      // Detect stale toolsDiscovered mismatch
-      if (expectedToolCount !== null) {
-        const tdMatch = /"toolsDiscovered":\s*(\d+)/.exec(content);
-        if (tdMatch && Number(tdMatch[1]) !== Number(expectedToolCount)) {
-          websiteSourceStatus = "FAIL";
-          addFinding(
-            "WEBSITE_STALE_TOOL_COUNT",
-            "error",
-            rel,
-            `Website doc file shows toolsDiscovered: ${tdMatch[1]}, expected ${expectedToolCount}.`
-          );
-        }
-      }
-
-      // Detect removed legacy MCP tool names in active tutorials
-      for (const removed of REMOVED_TOOL_NAMES) {
-        const rx = new RegExp(`\\b${removed}\\b`);
-        if (rx.test(content)) {
-          websiteSourceStatus = "FAIL";
-          addFinding(
-            "WEBSITE_REMOVED_TOOL_REFERENCE",
-            "error",
-            rel,
-            `Website documentation still references removed v2 MCP tool '${removed}'. Replace with canonical '${REMOVED_LEGACY_TOOLS[removed].canonicalTool}'.`
-          );
-        }
-      }
-
-      // Private leak guard in public web/
-      for (const pat of PRIVATE_LEAK_PATTERNS) {
-        if (pat.test(content)) {
-          websiteSourceStatus = "FAIL";
-          addFinding(
-            "WEBSITE_PRIVATE_LEAK",
-            "error",
-            rel,
-            `Public website file contains forbidden private workstation/host pattern ${pat}.`
-          );
-        }
-      }
-    }
+    checks.push({ name: "website_source", stage: "pre_publish", status: websiteSourceStatus });
   }
-  checks.push({ name: "website_source", status: websiteSourceStatus });
 
-  // 5. Optional live website verification
+  // Stage B — POST-PUBLISH checks (external surfaces)
   let liveWebsiteStatus = "NOT_CHECKED";
-  let inspectedHtml = liveWebsiteHtml;
-  if (!inspectedHtml && checkLiveWebsite && registryEntry?.websiteUrl) {
-    try {
-      const resp = await fetch(registryEntry.websiteUrl, {
-        signal: AbortSignal.timeout(5000),
-      });
-      if (resp.ok) {
-        inspectedHtml = await resp.text();
-      } else {
-        liveWebsiteStatus = `HTTP_${resp.status}`;
+  let liveWebsiteVersionDetected = null;
+  let npmAndGithubPassed = true;
+  let liveWebsiteFailed = false;
+
+  if (runPost) {
+    if (normalizedStage === "post_publish" || normalizedStage === "both" || githubReleaseVersion !== null) {
+      const ghMatch = Boolean(githubReleaseVersion && targetVersion && githubReleaseVersion.replace(/^v/, "") === targetVersion.replace(/^v/, ""));
+      if (!ghMatch && (normalizedStage === "post_publish" || normalizedStage === "both" || githubReleaseVersion !== null)) {
+        npmAndGithubPassed = false;
         addFinding(
-          "LIVE_WEBSITE_HTTP_ERROR",
-          "warning",
-          registryEntry.websiteUrl,
-          `Live website returned HTTP ${resp.status}.`
+          "GITHUB_RELEASE_VERSION_DRIFT",
+          "error",
+          "github-release",
+          `GitHub Release version '${githubReleaseVersion || "MISSING"}' does not match target release '${targetVersion}'.`
         );
       }
-    } catch (err) {
-      liveWebsiteStatus = "FETCH_FAILED";
-      addFinding(
-        "LIVE_WEBSITE_UNREACHABLE",
-        "warning",
-        registryEntry.websiteUrl,
-        `Could not reach live website: ${err.message}`
-      );
+      checks.push({ name: "github_release", stage: "post_publish", status: ghMatch ? "PASS" : "FAIL", value: githubReleaseVersion });
     }
-  }
 
-  if (typeof inspectedHtml === "string" && inspectedHtml.length > 0) {
-    const hasCurrentVersion = actualVersion ? inspectedHtml.includes(actualVersion) : true;
-    const removedFound = REMOVED_TOOL_NAMES.filter((t) => new RegExp(`\\b${t}\\b`).test(inspectedHtml));
-    if (!hasCurrentVersion || removedFound.length > 0) {
-      liveWebsiteStatus = "DEPLOY_PENDING_OR_DRIFTED";
+    if (normalizedStage === "post_publish" || normalizedStage === "both" || npmPublishedVersion !== null) {
+      const npmPubMatch = Boolean(npmPublishedVersion && targetVersion && npmPublishedVersion === targetVersion);
+      if (!npmPubMatch) {
+        npmAndGithubPassed = false;
+        addFinding(
+          "NPM_PUBLISHED_VERSION_DRIFT",
+          "error",
+          "npm-registry",
+          `npm published version '${npmPublishedVersion || "UNPUBLISHED"}' does not match target release '${targetVersion}'.`
+        );
+      }
+      checks.push({ name: "npm_published", stage: "post_publish", status: npmPubMatch ? "PASS" : "FAIL", value: npmPublishedVersion });
+    }
+
+    if (normalizedStage === "post_publish" || normalizedStage === "both" || npmLatestVersion !== null) {
+      const npmLatestMatch = Boolean(npmLatestVersion && targetVersion && npmLatestVersion === targetVersion);
+      if (!npmLatestMatch) {
+        npmAndGithubPassed = false;
+        addFinding(
+          "NPM_LATEST_TAG_DRIFT",
+          "error",
+          "npm-dist-tags",
+          `npm 'latest' dist-tag '${npmLatestVersion || "MISSING"}' does not match target release '${targetVersion}'.`
+        );
+      }
+      checks.push({ name: "npm_latest_tag", stage: "post_publish", status: npmLatestMatch ? "PASS" : "FAIL", value: npmLatestVersion });
+    }
+
+    if (runtimeVersion !== null) {
+      const rtMatch = Boolean(runtimeVersion && targetVersion && runtimeVersion.replace(/^v/, "") === targetVersion.replace(/^v/, ""));
+      if (!rtMatch) {
+        npmAndGithubPassed = false;
+        addFinding(
+          "RUNTIME_VERSION_DRIFT",
+          "error",
+          "cli-runtime",
+          `Installed CLI runtime version '${runtimeVersion}' does not match target release '${targetVersion}'.`
+        );
+      }
+      checks.push({ name: "runtime_version", stage: "post_publish", status: rtMatch ? "PASS" : "FAIL", value: runtimeVersion });
+    }
+
+    let inspectedHtml = liveWebsiteHtml;
+    if (!inspectedHtml && checkLiveWebsite && registryEntry?.websiteUrl) {
+      try {
+        const resp = await fetch(registryEntry.websiteUrl, {
+          signal: AbortSignal.timeout(5000),
+        });
+        if (resp.ok) {
+          inspectedHtml = await resp.text();
+        } else {
+          liveWebsiteStatus = `HTTP_${resp.status}`;
+          liveWebsiteFailed = true;
+          addFinding(
+            "LIVE_WEBSITE_HTTP_ERROR",
+            "error",
+            registryEntry.websiteUrl,
+            `Live website returned HTTP ${resp.status}.`
+          );
+        }
+      } catch (err) {
+        liveWebsiteStatus = "FETCH_FAILED";
+        liveWebsiteFailed = true;
+        addFinding(
+          "LIVE_WEBSITE_UNREACHABLE",
+          "error",
+          registryEntry.websiteUrl,
+          `Could not reach live website: ${err.message}`
+        );
+      }
+    }
+
+    if (typeof inspectedHtml === "string" && inspectedHtml.length > 0) {
+      const hasCurrentVersion = targetVersion ? inspectedHtml.includes(targetVersion) : true;
+      const removedFound = REMOVED_TOOL_NAMES.filter((t) => new RegExp(`\\b${t}\\b`).test(inspectedHtml));
+      if (!hasCurrentVersion || removedFound.length > 0) {
+        liveWebsiteStatus = "DEPLOY_PENDING_OR_DRIFTED";
+        liveWebsiteFailed = true;
+        addFinding(
+          "LIVE_WEBSITE_DRIFT",
+          "error",
+          registryEntry?.websiteUrl || "live-website",
+          !hasCurrentVersion
+            ? `Live website does not display current release version ${targetVersion}. Redeploy website after release.`
+            : `Live website still displays removed MCP tools: ${removedFound.join(", ")}.`
+        );
+      } else {
+        liveWebsiteStatus = "LIVE_SYNCED";
+        liveWebsiteVersionDetected = targetVersion;
+      }
+    } else if ((normalizedStage === "post_publish" || normalizedStage === "both") && registryEntry?.websiteUrl && !inspectedHtml) {
+      liveWebsiteStatus = "NOT_VERIFIED";
+      liveWebsiteFailed = true;
       addFinding(
-        "LIVE_WEBSITE_DRIFT",
+        "LIVE_WEBSITE_NOT_VERIFIED",
         "error",
-        registryEntry?.websiteUrl || "live-website",
-        !hasCurrentVersion
-          ? `Live website does not display current release version ${actualVersion}. Redeploy website after release.`
-          : `Live website still displays removed MCP tools: ${removedFound.join(", ")}.`
+        registryEntry.websiteUrl,
+        "Post-publish verification requires live website HTML check for projects with an official website."
       );
-    } else {
-      liveWebsiteStatus = "LIVE_SYNCED";
     }
   }
-  checks.push({ name: "live_website", status: liveWebsiteStatus });
+  checks.push({ name: "live_website", stage: "post_publish", status: liveWebsiteStatus });
 
   const errors = findings.filter((f) => f.severity === "error");
   const warnings = findings.filter((f) => f.severity === "warning");
 
+  let stageVerdict;
+  if (normalizedStage === "pre_publish" && !runPost) {
+    stageVerdict = errors.length === 0 ? "PRE_PUBLISH_PASS" : "PRE_PUBLISH_FAIL";
+  } else if (errors.length === 0) {
+    stageVerdict = "POST_PUBLISH_PASS";
+  } else if (npmAndGithubPassed && liveWebsiteFailed) {
+    stageVerdict = "RELEASE_PUBLISHED_BUT_NOT_FULLY_VERIFIED";
+  } else {
+    stageVerdict = "POST_PUBLISH_FAIL";
+  }
+
   return {
     ok: errors.length === 0,
     gate: "release_docs_gate",
+    stage: normalizedStage,
+    stageVerdict,
     status: errors.length === 0 ? (warnings.length === 0 ? "PASSED" : "PASSED_WITH_WARNINGS") : "BLOCKED",
     repoName: registryEntry?.name || repoName || path.basename(root),
     repository: registryEntry?.repo || null,
     websiteUrl: registryEntry?.websiteUrl || null,
     version: actualVersion,
+    releaseIdentity: {
+      SOURCE_VERSION: actualVersion,
+      GITHUB_RELEASE_VERSION: githubReleaseVersion,
+      NPM_PUBLISHED_VERSION: npmPublishedVersion,
+      NPM_LATEST_VERSION: npmLatestVersion,
+      WEBSITE_DEPLOYED_VERSION: liveWebsiteVersionDetected,
+      RUNTIME_VERSION: runtimeVersion,
+    },
     registryCount: OPEN_SOURCE_RELEASE_REGISTRY.length,
     checks,
     errorsCount: errors.length,

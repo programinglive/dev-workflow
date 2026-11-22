@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [3.1.2](https://github.com/programinglive/dev-workflow/compare/v3.1.1...v3.1.2) (2026-11-22)
+
+### ✨ Features
+* **release-governance:** implement Two-Stage Release Gate (`PRE_PUBLISH` and `POST_PUBLISH`) with Canonical Release State Model (`SOURCE_VERSION`, `GITHUB_RELEASE_VERSION`, `NPM_PUBLISHED_VERSION`, `NPM_LATEST_VERSION`, `WEBSITE_DEPLOYED_VERSION`, `RUNTIME_VERSION`) wired into `github-release.yml` and `deploy-web.yml`.
+* **docs/web:** add Zettly Code v1.0 Debugging Journey to How to Use, add public [docs/guides/zettly-code-integration.md](docs/guides/zettly-code-integration.md), display `65 Canonical MCP Tools` & `Node 20+` in Homepage Hero, and clean up the last `audit_security` mention in `security_audit` description.
+
+### 🐛 Bug Fixes
+* **ci:** add Node 20/22.16 TypeScript transpile fallback in `tests/opencode-guard-plugin.test.js` so `Create GitHub Release` and `npm publish` pass 100% on the Linux runner (`Node v22.16.0`).
+
 ## [3.1.1](https://github.com/programinglive/dev-workflow/compare/v3.1.0...v3.1.1) (2026-11-22)
 
 ### 🐛 Bug Fixes

@@ -2,14 +2,30 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
 const pluginPath = path.join(repoRoot, 'managed', 'plugins', 'dev-workflow-guard.ts');
 
-// Node 22+ strips TypeScript types natively when importing .ts files.
-const pluginModule = await import(`file:///${pluginPath.replace(/\\/g, '/')}`);
+// Node 22.18+ strips TypeScript types natively; older Node 20/22.x runners
+// fall back to typescript.transpileModule so CI passes on every Node >= 20.
+let pluginModule;
+try {
+  pluginModule = await import(pathToFileURL(pluginPath).href);
+} catch (err) {
+  if (err?.code !== 'ERR_UNKNOWN_FILE_EXTENSION') throw err;
+  const ts = (await import('typescript')).default;
+  const source = fs.readFileSync(pluginPath, 'utf8');
+  const transpiled = ts.transpileModule(source, {
+    compilerOptions: {
+      module: ts.ModuleKind.ESNext,
+      target: ts.ScriptTarget.ES2022,
+    },
+  });
+  const encoded = Buffer.from(transpiled.outputText, 'utf8').toString('base64');
+  pluginModule = await import(`data:text/javascript;base64,${encoded}`);
+}
 const {
   default: DevWorkflowGuardPlugin,
   evaluateToolCall,

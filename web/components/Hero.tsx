@@ -5,6 +5,7 @@ import { ArrowRight } from "lucide-react";
 import Terminal from "./Terminal";
 import { useEffect, useState } from "react";
 import { WEB_VERSION } from "@/lib/version";
+import { GENERATED_CATALOG } from "@/lib/catalog.generated";
 
 export default function Hero() {
     const [downloads, setDownloads] = useState<number | null>(null);
@@ -58,11 +59,15 @@ export default function Hero() {
                             <div className="text-gray-600 dark:text-gray-500">Latest Version</div>
                         </div>
                         <div>
+                            <div className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white">{GENERATED_CATALOG.mcpToolCount}</div>
+                            <div className="text-gray-600 dark:text-gray-500">Canonical MCP Tools</div>
+                        </div>
+                        <div>
                             <div className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white">MIT</div>
                             <div className="text-gray-600 dark:text-gray-500">License</div>
                         </div>
                         <div>
-                            <div className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white">Node 18+</div>
+                            <div className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white">Node 20+</div>
                             <div className="text-gray-600 dark:text-gray-500">Compatibility</div>
                         </div>
                         {downloads !== null && (

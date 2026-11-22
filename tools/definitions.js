@@ -42,7 +42,7 @@ export function getToolList() {
     },
     {
       name:'security_audit',
-      description:'[READ_ONLY_RUNTIME_DB] Audit DevWorkflow runtime state, protected file permissions, runtime configuration metadata and scoped SQLite/Postgres/MySQL workflow rows. Returns sanitized findings only; does not resolve credentials. (For static ZET-SEC-* source-code scanning, use audit_security.)',
+      description:'[READ_ONLY_RUNTIME_DB] Audit DevWorkflow runtime state, protected file permissions, runtime configuration metadata and scoped SQLite/Postgres/MySQL workflow rows. Returns sanitized findings only; does not resolve credentials. (For static ZET-SEC-* source-code scanning, use audit with category "security".)',
       inputSchema:{type:'object',properties:{},additionalProperties:false},
     },
     {

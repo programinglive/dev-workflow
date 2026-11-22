@@ -5,6 +5,7 @@ import {
   HOW_TO_USE_STEPS,
   ROLE_COMPARISON_TABLE,
   OPTIONAL_INTEGRATIONS_DATA,
+  ZETTLY_CODE_DEBUGGING_JOURNEY,
 } from "@/lib/how-to-use-data";
 import { GENERATED_CATALOG } from "@/lib/catalog.generated";
 import { WEB_VERSION } from "@/lib/version";
@@ -291,6 +292,38 @@ export default function HowToUsePage() {
                 </code>
               </div>
             </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Zettly Code v1.0 Debugging Journey */}
+      <section id="zettly-code-journey" className="space-y-6">
+        <div className="border-b border-slate-200 pb-3">
+          <div className="text-xs font-mono text-indigo-600 uppercase tracking-wider font-semibold">
+            Optional Extension · Zettly Code v1.0
+          </div>
+          <h2 className="text-2xl font-semibold tracking-tight text-slate-900">
+            Context-Aware Bug-Fix &amp; Debugging Journey
+          </h2>
+          <p className="text-sm text-slate-600 mt-1">
+            When the optional Zettly Code engine is connected, DevWorkflow pairs persistent SQLite code memory
+            (<code className="font-mono text-xs">code_context</code>, <code className="font-mono text-xs">code_index</code>)
+            with mandatory <code className="font-mono text-xs">@zettly-code</code> bug-fix knowledge comments.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {ZETTLY_CODE_DEBUGGING_JOURNEY.map((step) => (
+            <article
+              key={step.slug}
+              className="p-5 rounded-xl border border-slate-200 bg-white shadow-sm space-y-3"
+            >
+              <h3 className="text-base font-semibold text-slate-900">{step.title}</h3>
+              <p className="text-sm text-slate-600">{step.summary}</p>
+              {step.codeSample && (
+                <CodeBlock code={step.codeSample} language="json" title={step.shortTitle} />
+              )}
+            </article>
           ))}
         </div>
       </section>
