@@ -3,11 +3,14 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
+import { fileURLToPath } from "node:url";
 import {
   DEVWORKFLOW_V2_TOOL_DEFINITIONS,
   handleDevWorkflowV2Tool,
 } from "../src/engineering-audit.js";
 import { getToolList } from "../tools/definitions.js";
+
+const REPO_ROOT = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 
 test("DevWorkflow V2.0 registers all 22 core audit and helper tools in MCP tool catalog", () => {
   const catalogNames = new Set(getToolList().map((t) => t.name));
@@ -17,13 +20,44 @@ test("DevWorkflow V2.0 registers all 22 core audit and helper tools in MCP tool 
   }
 });
 
-test("audit_standards validates Zettly Engineering Standards Registry without errors", async () => {
-  const zettlyDir = "D:/code/zettly";
-  const res = await handleDevWorkflowV2Tool("audit_standards", { projectDir: zettlyDir });
-  assert.equal(res.valid, true, `Expected valid registry, got issues: ${JSON.stringify(res.issues)}`);
-  assert.equal(res.has_registry_directory, true);
-  assert.ok(res.rules_count >= 11);
-  assert.ok(res.approved_exceptions_count >= 1);
+test("audit_standards validates Engineering Standards Registry without errors", async () => {
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "devwf-v2-standards-"));
+  try {
+    await fs.mkdir(path.join(tmpDir, "engineering", "standards"), { recursive: true });
+    await fs.mkdir(path.join(tmpDir, "engineering", "exceptions"), { recursive: true });
+    await fs.writeFile(
+      path.join(tmpDir, "engineering", "standards", "architecture.yaml"),
+      [
+        "rules:",
+        "  - id: ZET-ARCH-001",
+        "    title: Deep modules with clear responsibility boundaries",
+        "    severity: medium",
+        "    enforcement: advisory",
+        "    rationale: Controllers should delegate complex queries to service modules.",
+      ].join("\n"),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(tmpDir, "engineering", "exceptions", "approved-exceptions.yaml"),
+      [
+        "exceptions:",
+        "  - id: EXC-001",
+        "    rule_id: ZET-ARCH-001",
+        "    file: app/Http/Controllers/LegacyReportController.php",
+        "    reason: Legacy report export pending migration",
+        "    approved_by: architecture-review",
+      ].join("\n"),
+      "utf8"
+    );
+
+    const res = await handleDevWorkflowV2Tool("audit_standards", { projectDir: tmpDir });
+    assert.equal(res.valid, true, `Expected valid registry, got issues: ${JSON.stringify(res.issues)}`);
+    assert.equal(res.has_registry_directory, true);
+    assert.ok(res.rules_count >= 11);
+    assert.ok(res.approved_exceptions_count >= 1);
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  }
 });
 
 test("Automatic Code Audit Engine detects seeded violations across categories and generates formatted report", async () => {
@@ -172,9 +206,9 @@ test("Helper tools explain violations, plan fixes, analyze change impact, and pr
   assert.equal(proposed.proposed_enforcement, "advisory");
 });
 
-test("DevWorkflow V2.0 self-audits its own codebase and Zettly V1.6.1 changes cleanly", async () => {
+test("DevWorkflow V2.0 self-audits its own codebase cleanly", async () => {
   const selfAudit = await handleDevWorkflowV2Tool("audit_code", {
-    projectDir: "D:/code/dev-workflow-mcp-server",
+    projectDir: REPO_ROOT,
     files: [
       "src/engineering-audit.js",
       "tools/definitions.js",
@@ -183,17 +217,4 @@ test("DevWorkflow V2.0 self-audits its own codebase and Zettly V1.6.1 changes cl
     ],
   });
   assert.equal(selfAudit.result, "PASS", `Self-audit failed: ${JSON.stringify(selfAudit.findings)}`);
-
-  const zettlyAudit = await handleDevWorkflowV2Tool("audit_code", {
-    projectDir: "D:/code/zettly",
-    files: [
-      "app/Http/Controllers/Api/CodingAgentWorkerController.php",
-      "app/Services/AiOrganization/AiCtoOrchestratorService.php",
-      "app/Console/Commands/CodingAgentSafetyCommand.php",
-      "agent_worker/executor.py",
-      "tests/Feature/CodingAgent/V16ReleaseSafetyAndAiOrgTest.php",
-      "agent_worker/test_executor.py",
-    ],
-  });
-  assert.equal(zettlyAudit.result, "PASS", `Zettly V1.6.1 audit failed: ${JSON.stringify(zettlyAudit.findings)}`);
 });
