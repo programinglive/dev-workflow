@@ -799,6 +799,8 @@ export async function runCommand({
       const report = await handleDevWorkflowV2Tool("audit_report", {
         projectDir: targetDir,
         scope,
+        changeMode: args.mode || (args.auditVerb === "changes" ? "auto" : null),
+        baseRef: args.base || args.against || null,
       });
 
       if (args.out) {
@@ -810,11 +812,16 @@ export async function runCommand({
         out.write(report.formatted_report);
       }
 
+      const isFailureOrIncomplete =
+        report.result === "FAIL" ||
+        report.result === "PARTIAL" ||
+        report.overall_verdict === "INCOMPLETE" ||
+        report.detection_status === "FAILED";
       const failed =
         failOn === "error"
-          ? report.result === "FAIL"
+          ? isFailureOrIncomplete
           : failOn === "warn"
-            ? report.result === "FAIL" || report.result === "WARN"
+            ? isFailureOrIncomplete || report.result === "WARN"
             : false;
       return { ok: !failed, report };
     }
