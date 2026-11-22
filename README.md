@@ -20,6 +20,7 @@ Install → Connect AI Client → Start Task → Design Flow → Implement → T
 - **Free & Local-First:** Persists task contracts, checkpoints, and evidence in local SQLite WAL. Works completely offline.
 - **No Mandatory Cloud Services:** You do **not** need Zettly, an Android tablet, Tailscale, or any ProgramingLive infrastructure to use DevWorkflow.
 - **Progressive Optional Integrations:** Add Zettly planning sync, the DevWorkflow Android Companion, or team fleet governance later only if you want them.
+- **Interactive Guides:** Walk through the [10-Step How to Use Guide](https://devworkflow.programinglive.com/how-to-use/) or explore [13 Real-World Use Cases](https://devworkflow.programinglive.com/use-cases/).
 
 ---
 

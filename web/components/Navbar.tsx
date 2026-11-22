@@ -9,6 +9,8 @@ import { GENERATED_CATALOG } from "@/lib/catalog.generated";
 
 const NAV_LINKS = [
   { href: "/", label: "Overview" },
+  { href: "/how-to-use/", label: "How to Use" },
+  { href: "/use-cases/", label: "Use Cases" },
   { href: "/docs/", label: "Docs" },
   { href: "/developers/", label: "Developers" },
   { href: "/releases/", label: "Releases" },

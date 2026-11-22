@@ -63,10 +63,16 @@ export default function Home() {
 
         <div className="flex flex-wrap items-center gap-3 pt-1">
           <Link
-            href="/developers/getting-started/"
+            href="/how-to-use/"
             className="inline-flex items-center px-4 py-2 rounded-md bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-colors"
           >
-            Get Started
+            How to Use (10 Steps)
+          </Link>
+          <Link
+            href="/use-cases/"
+            className="inline-flex items-center px-4 py-2 rounded-md border border-slate-300 bg-white text-slate-800 text-sm font-medium hover:bg-slate-50 transition-colors"
+          >
+            Real-World Use Cases
           </Link>
           <Link
             href="/docs/"
@@ -114,9 +120,74 @@ devwf doctor`}</code>
 
       {/* How It Works */}
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-slate-900">How It Works</h2>
-        <div className="p-4 rounded-lg border border-slate-200 bg-white text-xs sm:text-sm font-mono text-slate-700 overflow-x-auto">
-          Install → Connect AI Client → Start Task → Implement → Test → Audit &amp; Review → Release
+        <div className="flex items-baseline justify-between">
+          <h2 className="text-lg font-semibold text-slate-900">How It Works</h2>
+          <Link href="/how-to-use/" className="text-sm text-blue-600 hover:underline">
+            Read 10-Step Practical Guide →
+          </Link>
+        </div>
+        <div className="p-4 rounded-lg border border-slate-200 bg-white text-xs sm:text-sm font-mono text-slate-700 overflow-x-auto flex items-center justify-between gap-2">
+          <span>Install → Connect AI Client → Start Task → Implement → Test → Audit &amp; Review → Release</span>
+          <Link href="/how-to-use/" className="text-blue-600 font-sans text-xs underline whitespace-nowrap ml-2">
+            Detailed Steps
+          </Link>
+        </div>
+      </section>
+
+      {/* Featured Use Cases */}
+      <section className="space-y-5">
+        <div className="flex items-baseline justify-between border-b border-slate-200 pb-3">
+          <h2 className="text-lg font-semibold text-slate-900">Featured Workflow Tutorials</h2>
+          <Link href="/use-cases/" className="text-sm text-blue-600 hover:underline">
+            View All 13 Use Cases →
+          </Link>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <Link
+            href="/use-cases/solo-ai-developer/"
+            className="p-4 rounded-lg border border-slate-200 bg-white hover:border-blue-300 transition-colors space-y-1.5 block"
+          >
+            <div className="flex items-center justify-between text-xs font-mono">
+              <span className="text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                Beginner
+              </span>
+              <span className="text-slate-500">15 min</span>
+            </div>
+            <h3 className="text-sm font-semibold text-slate-900">Solo AI Coding Developer</h3>
+            <p className="text-xs text-slate-600">
+              Maintain task discipline, lock scope, and ship verified features without context drift.
+            </p>
+          </Link>
+          <Link
+            href="/use-cases/bug-fix/"
+            className="p-4 rounded-lg border border-slate-200 bg-white hover:border-blue-300 transition-colors space-y-1.5 block"
+          >
+            <div className="flex items-center justify-between text-xs font-mono">
+              <span className="text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                Beginner
+              </span>
+              <span className="text-slate-500">20 min</span>
+            </div>
+            <h3 className="text-sm font-semibold text-slate-900">AI-Assisted Bug Fix</h3>
+            <p className="text-xs text-slate-600">
+              Isolate root causes and write failing regression tests first before applying code fixes.
+            </p>
+          </Link>
+          <Link
+            href="/use-cases/multi-agent-collaboration/"
+            className="p-4 rounded-lg border border-slate-200 bg-white hover:border-blue-300 transition-colors space-y-1.5 block"
+          >
+            <div className="flex items-center justify-between text-xs font-mono">
+              <span className="text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded border border-purple-200">
+                Advanced
+              </span>
+              <span className="text-slate-500">30 min</span>
+            </div>
+            <h3 className="text-sm font-semibold text-slate-900">Multi-Agent Collaboration</h3>
+            <p className="text-xs text-slate-600">
+              Coordinate concurrent AI sessions in isolated git worktrees with kernel mutex fencing.
+            </p>
+          </Link>
         </div>
       </section>
 
