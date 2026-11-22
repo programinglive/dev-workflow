@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, lstatSync } from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { scanSecrets } from "../security/scanner.js";
@@ -15,6 +16,22 @@ import {
 } from "../process-lock.js";
 
 const execFileAsync = promisify(execFile);
+
+export const STANDARDS_REGISTRY_VERSION = "2.1.4";
+export const FINDING_FINGERPRINT_VERSION = "2.0";
+
+const ALLOWED_VERIFY_BINARIES = new Set([
+  "node",
+  "npm",
+  "npx",
+  "php",
+  "phpunit",
+  "paratest",
+  "pytest",
+  "python",
+  "python3",
+  "git",
+]);
 
 /**
  * Built-in baseline Engineering Standards derived from the 5 foundational software books:
@@ -273,6 +290,144 @@ export function redactSecretValues(text) {
 }
 
 /**
+ * Compute deterministic Finding Identity v2.0 fingerprint from ruleId, normalized file path,
+ * and normalized evidence/source snippet (tolerate line movement while distinguishing distinct
+ * violations in the same file).
+ */
+export function computeFindingFingerprint(ruleId, relFile, evidenceSnippet = "") {
+  const normRule = String(ruleId || "").trim();
+  const normFile = String(relFile || "")
+    .replaceAll("\\", "/")
+    .replace(/^\.\//, "")
+    .trim();
+  // Strip volatile line-number phrases like "Line 12 has trailing whitespace" -> "has trailing whitespace"
+  const normEvidence = redactSecretValues(String(evidenceSnippet || ""))
+    .replace(/\b[Ll]ine\s+\d+\b/g, "line")
+    .trim()
+    .replace(/\s+/g, " ");
+  return crypto
+    .createHash("sha256")
+    .update(`${normRule}::${normFile}::${normEvidence}`)
+    .digest("hex")
+    .slice(0, 24);
+}
+
+/**
+ * Analyze a source file for active PHP/JS debug statements (`dd`, `var_dump`) while:
+ * 1. Ignoring occurrences inside comments (`//`, `#`, `/* ... * /`) or string literals.
+ * 2. Distinguishing simple standalone statements (`dd($x);`) from behavior-sensitive
+ *    complex occurrences (inline conditionals `if ($x) dd($x);`, braceless control-flow
+ *    bodies, expressions `$a || dd($x);`, nested calls `dd(foo($x));`, or multiline calls).
+ */
+export function analyzeDebugStatementsInSource(content) {
+  const lines = String(content || "").split(/\r?\n/);
+  const hits = [];
+  let inBlockComment = false;
+
+  for (let idx = 0; idx < lines.length; idx++) {
+    const rawLine = lines[idx];
+    let codeOnly = "";
+    let i = 0;
+    let inSingleQuote = false;
+    let inDoubleQuote = false;
+
+    while (i < rawLine.length) {
+      const ch = rawLine[i];
+      const next = rawLine[i + 1] || "";
+
+      if (inBlockComment) {
+        if (ch === "*" && next === "/") {
+          inBlockComment = false;
+          i += 2;
+        } else {
+          i += 1;
+        }
+        continue;
+      }
+
+      if (inSingleQuote) {
+        if (ch === "\\") {
+          i += 2;
+          continue;
+        }
+        if (ch === "'") inSingleQuote = false;
+        i += 1;
+        continue;
+      }
+
+      if (inDoubleQuote) {
+        if (ch === "\\") {
+          i += 2;
+          continue;
+        }
+        if (ch === '"') inDoubleQuote = false;
+        i += 1;
+        continue;
+      }
+
+      if (ch === "/" && next === "*") {
+        inBlockComment = true;
+        i += 2;
+        continue;
+      }
+      if ((ch === "/" && next === "/") || ch === "#") {
+        break;
+      }
+      if (ch === "'") {
+        inSingleQuote = true;
+        codeOnly += "''";
+        i += 1;
+        continue;
+      }
+      if (ch === '"') {
+        inDoubleQuote = true;
+        codeOnly += '""';
+        i += 1;
+        continue;
+      }
+
+      codeOnly += ch;
+      i += 1;
+    }
+
+    if (!/\b(?:dd|var_dump)\s*\(/.test(codeOnly)) {
+      continue;
+    }
+
+    // Check whether previous non-empty line is a braceless control structure (e.g. `if ($cond)`)
+    let prevCodeLine = "";
+    for (let p = idx - 1; p >= 0; p--) {
+      const candidate = lines[p].trim();
+      if (!candidate || candidate.startsWith("//") || candidate.startsWith("#") || candidate.startsWith("*")) {
+        continue;
+      }
+      prevCodeLine = candidate;
+      break;
+    }
+    const afterBracelessControl =
+      /^(?:if|elseif|else\s+if|for|foreach|while)\s*\(.*\)\s*$/.test(prevCodeLine) ||
+      /^else\s*$/.test(prevCodeLine);
+
+    // Simple standalone statement: single line, no nested parens in args, no other statement on line
+    const isSimpleStandaloneSyntax = /^\s*(?:dd|var_dump)\s*\([^()]*\)\s*;\s*$/.test(codeOnly);
+    const isSimpleStandalone = isSimpleStandaloneSyntax && !afterBracelessControl;
+
+    hits.push({
+      line: idx + 1,
+      rawLine: rawLine.trim().slice(0, 120),
+      isSimpleStandalone,
+      autofixEligible: isSimpleStandalone,
+      autofixClass: isSimpleStandalone ? "AF-1" : "AF-2",
+      semanticRisk: isSimpleStandalone
+        ? "LOW_STANDALONE_DEBUG_STATEMENT"
+        : "HIGH_CONTROL_FLOW_OR_EXPRESSION_EMBEDDED",
+    });
+  }
+
+  return hits;
+}
+
+/**
  * Parse simple YAML standards/exceptions files without external dependencies.
  */
 function parseSimpleStandardsYaml(content, categoryFallback = "general") {
@@ -308,7 +463,8 @@ function parseSimpleStandardsYaml(content, categoryFallback = "general") {
       autofix: rawAutofix,
       autofix_class: autofixClass,
       evidence_requirements: getField("evidence_requirements") || "File path, line number, and matched pattern.",
-      exception_process: getField("exception_process") || "Record approved exception in engineering/exceptions/approved-exceptions.yaml.",
+      exception_process:
+        getField("exception_process") || "Record approved exception in engineering/exceptions/approved-exceptions.yaml.",
       verification: getField("verification") || "npm test",
     });
   }
@@ -326,6 +482,7 @@ export async function loadProjectStandards(projectDir) {
   }
 
   const yamlFiles = [];
+  const loadErrors = [];
   if (existsSync(standardsDir)) {
     try {
       const entries = await fs.readdir(standardsDir);
@@ -345,8 +502,8 @@ export async function loadProjectStandards(projectDir) {
           });
         }
       }
-    } catch {
-      // fallback to built-in rules
+    } catch (err) {
+      loadErrors.push(`Failed reading standards directory: ${err.message}`);
     }
   }
 
@@ -370,8 +527,8 @@ export async function loadProjectStandards(projectDir) {
           expires_at: getF("expires_at"),
         });
       }
-    } catch {
-      // ignore unreadable exceptions
+    } catch (err) {
+      loadErrors.push(`Failed reading approved-exceptions.yaml: ${err.message}`);
     }
   }
 
@@ -381,129 +538,832 @@ export async function loadProjectStandards(projectDir) {
     yamlFiles,
     standards: Array.from(loadedRules.values()),
     exceptions,
+    loadErrors,
   };
 }
 
-function isExceptionApproved(exceptions, ruleId, relPath) {
+function findMatchingApprovedException(exceptions, ruleId, relPath) {
   const norm = relPath.replaceAll("\\", "/").replace(/^\.\//, "");
   const nowMs = Date.now();
-  return exceptions.some((e) => {
-    if (e.rule_id !== ruleId || !e.file) return false;
-    if (e.expires_at) {
-      const exp = Date.parse(e.expires_at);
-      if (Number.isFinite(exp) && exp < nowMs) return false;
-    }
-    return norm.endsWith(e.file.replaceAll("\\", "/"));
-  });
+  return (
+    exceptions.find((e) => {
+      if (e.rule_id !== ruleId || !e.file) return false;
+      if (e.expires_at) {
+        const exp = Date.parse(e.expires_at);
+        if (Number.isFinite(exp) && exp < nowMs) return false;
+      }
+      return norm.endsWith(e.file.replaceAll("\\", "/"));
+    }) || null
+  );
+}
+
+function isValidGitRefToken(ref) {
+  if (typeof ref !== "string" || !ref.trim()) return false;
+  const trimmed = ref.trim();
+  if (trimmed.startsWith("-")) return false;
+  return /^[A-Za-z0-9._/@~^-]+$/.test(trimmed);
 }
 
 /**
- * Discover changed and untracked files in a Git repository when `audit_changes`
- * is invoked without an explicit `files` array.
+ * Parse NUL-delimited `git status --porcelain=v1 -z -uall` output safely.
+ * Handles spaces in paths, renames (`R`/`C` followed by origin path), and deletions (`D`).
  */
-export async function discoverGitChangedFiles(root) {
-  const discovered = new Set();
+function parsePorcelainZ(stdout) {
+  const tokens = String(stdout || "").split("\0");
+  const changed = new Set();
+  const deleted = new Set();
+  const renamed = [];
+
+  for (let i = 0; i < tokens.length; i++) {
+    const entry = tokens[i];
+    if (!entry || entry.length < 4) continue;
+    const x = entry[0];
+    const y = entry[1];
+    const targetPath = entry.slice(3).replaceAll("\\", "/");
+
+    if (x === "R" || y === "R" || x === "C" || y === "C") {
+      const origPath = (tokens[i + 1] || "").replaceAll("\\", "/");
+      i += 1;
+      if (x === "R" || y === "R") {
+        renamed.push({ from: origPath, to: targetPath });
+      }
+      if (targetPath) changed.add(targetPath);
+    } else if (x === "D" || y === "D") {
+      if (targetPath) deleted.add(targetPath);
+    } else if (targetPath) {
+      changed.add(targetPath);
+    }
+  }
+
+  for (const d of deleted) {
+    changed.delete(d);
+  }
+
+  return {
+    changed_files: Array.from(changed),
+    deleted_files: Array.from(deleted),
+    renamed_files: renamed,
+  };
+}
+
+/**
+ * Parse NUL-delimited `git diff --name-status -z -M` output safely.
+ */
+function parseDiffNameStatusZ(stdout) {
+  const tokens = String(stdout || "").split("\0").filter((t) => t.length > 0);
+  const changed = new Set();
+  const deleted = new Set();
+  const renamed = [];
+
+  let i = 0;
+  while (i < tokens.length) {
+    const status = tokens[i];
+    const code = status[0];
+    if (code === "R" || code === "C") {
+      const fromPath = (tokens[i + 1] || "").replaceAll("\\", "/");
+      const toPath = (tokens[i + 2] || "").replaceAll("\\", "/");
+      i += 3;
+      if (code === "R") {
+        renamed.push({ from: fromPath, to: toPath, similarity: status.slice(1) || "100" });
+      }
+      if (toPath) changed.add(toPath);
+    } else if (code === "D") {
+      const delPath = (tokens[i + 1] || "").replaceAll("\\", "/");
+      i += 2;
+      if (delPath) deleted.add(delPath);
+    } else if (code === "A" || code === "M" || code === "T") {
+      const modPath = (tokens[i + 1] || "").replaceAll("\\", "/");
+      i += 2;
+      if (modPath) changed.add(modPath);
+    } else {
+      i += 1;
+    }
+  }
+
+  for (const d of deleted) {
+    changed.delete(d);
+  }
+
+  return {
+    changed_files: Array.from(changed),
+    deleted_files: Array.from(deleted),
+    renamed_files: renamed,
+  };
+}
+
+async function resolveGitHeadRevision(root) {
   try {
-    const { stdout: statusOut } = await execFileAsync("git", ["status", "--porcelain", "-uall"], {
+    const { stdout } = await execFileAsync("git", ["rev-parse", "HEAD"], {
+      cwd: root,
+      timeout: 3000,
+      windowsHide: true,
+    });
+    return String(stdout || "").trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+async function verifyGitCommitRef(root, ref) {
+  if (!isValidGitRefToken(ref)) return null;
+  try {
+    const { stdout } = await execFileAsync("git", ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], {
+      cwd: root,
+      timeout: 3000,
+      windowsHide: true,
+    });
+    return String(stdout || "").trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Multi-Mode Git Change Scope Resolver (CRITICAL FINDING A — AR-01..AR-04, AR-18).
+ *
+ * Supports:
+ * - "working_tree": uncommitted modified, staged, and untracked files
+ * - "staged": staged index changes (`git diff --cached`)
+ * - "commit_range": explicit `baseRef..headRef` or `commitRange`
+ * - "pr": pull request merge-base diff (`git merge-base <baseRef> <headRef>` .. `<headRef>`) + working tree
+ * - "auto": working tree changes if dirty; otherwise falls back to PR/branch diff against baseRef / main / HEAD~1
+ */
+export async function resolveGitChangeScope(
+  root,
+  {
+    changeMode = "auto",
+    baseRef = null,
+    headRef = "HEAD",
+    commitRange = null,
+  } = {}
+) {
+  const mode = String(changeMode || "auto").toLowerCase();
+  const effectiveHeadRef = headRef || "HEAD";
+
+  let effectiveBaseRef = baseRef || null;
+  if (!effectiveBaseRef && commitRange && typeof commitRange === "string") {
+    const parts = commitRange.split(/\.\.\.?/);
+    if (parts.length === 2 && parts[0] && parts[1]) {
+      effectiveBaseRef = parts[0].trim();
+    } else {
+      return {
+        ok: false,
+        mode,
+        error: "INVALID_COMMIT_RANGE",
+        message: `Invalid commitRange '${commitRange}'. Expected '<base>..<head>'.`,
+      };
+    }
+  }
+
+  // If explicit baseRef or headRef is supplied, validate format against option injection
+  if (effectiveBaseRef && !isValidGitRefToken(effectiveBaseRef)) {
+    return {
+      ok: false,
+      mode,
+      error: "INVALID_GIT_BASE_REF",
+      message: `Invalid Git base reference '${effectiveBaseRef}'.`,
+      base_ref: effectiveBaseRef,
+      head_ref: effectiveHeadRef,
+    };
+  }
+  if (!isValidGitRefToken(effectiveHeadRef)) {
+    return {
+      ok: false,
+      mode,
+      error: "INVALID_GIT_HEAD_REF",
+      message: `Invalid Git head reference '${effectiveHeadRef}'.`,
+      base_ref: effectiveBaseRef,
+      head_ref: effectiveHeadRef,
+    };
+  }
+
+  // 1. Staged mode
+  if (mode === "staged") {
+    try {
+      const { stdout } = await execFileAsync("git", ["diff", "--name-status", "-z", "-M", "--cached"], {
+        cwd: root,
+        timeout: 5000,
+        windowsHide: true,
+      });
+      const parsed = parseDiffNameStatusZ(stdout);
+      return {
+        ok: true,
+        mode: "staged",
+        base_ref: "INDEX",
+        head_ref: "STAGED",
+        merge_base: null,
+        ...parsed,
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        mode: "staged",
+        error: "GIT_STAGED_DIFF_FAILED",
+        message: `Failed reading staged changes: ${err.message}`,
+      };
+    }
+  }
+
+  // 2. Working tree inspection
+  let workingTree = { changed_files: [], deleted_files: [], renamed_files: [] };
+  let gitAvailable = true;
+  try {
+    const { stdout } = await execFileAsync("git", ["status", "--porcelain=v1", "-z", "-uall"], {
       cwd: root,
       timeout: 5000,
       windowsHide: true,
     });
-    for (const rawLine of String(statusOut || "").split(/\r?\n/)) {
-      if (!rawLine || rawLine.length < 4) continue;
-      const status = rawLine.slice(0, 2);
-      if (status.includes("D")) continue;
-      let rel = rawLine.slice(3).trim();
-      if (rel.includes(" -> ")) {
-        rel = rel.split(" -> ").pop().trim();
-      }
-      rel = rel.replace(/^"|"$/g, "").replaceAll("\\", "/");
-      if (rel) discovered.add(rel);
+    workingTree = parsePorcelainZ(stdout);
+  } catch (err) {
+    gitAvailable = false;
+    if (mode === "working_tree" || mode === "pr" || mode === "commit_range" || effectiveBaseRef) {
+      return {
+        ok: false,
+        mode,
+        error: "GIT_REPOSITORY_UNAVAILABLE",
+        message: `Git status failed in '${root}': ${err.message}`,
+      };
     }
-  } catch {
-    // not a git repo or git unavailable
   }
-  return Array.from(discovered);
+
+  if (mode === "working_tree") {
+    return {
+      ok: true,
+      mode: "working_tree",
+      base_ref: "HEAD",
+      head_ref: "WORKTREE",
+      merge_base: null,
+      ...workingTree,
+    };
+  }
+
+  // 3. Explicit PR / Commit-Range comparison (or when baseRef is explicitly provided)
+  if (mode === "pr" || mode === "commit_range" || effectiveBaseRef) {
+    const targetBase =
+      effectiveBaseRef ||
+      process.env.GITHUB_BASE_REF ||
+      process.env.CI_MERGE_REQUEST_TARGET_BRANCH_NAME ||
+      null;
+
+    if (!targetBase) {
+      return {
+        ok: false,
+        mode: mode === "auto" ? "pr" : mode,
+        error: "MISSING_GIT_BASE_REF",
+        message: "PR / commit-range audit requires a valid baseRef (or GITHUB_BASE_REF).",
+        base_ref: null,
+        head_ref: effectiveHeadRef,
+      };
+    }
+
+    let resolvedBaseSha = await verifyGitCommitRef(root, targetBase);
+    if (!resolvedBaseSha && !targetBase.startsWith("origin/")) {
+      resolvedBaseSha = await verifyGitCommitRef(root, `origin/${targetBase}`);
+    }
+    const resolvedHeadSha = await verifyGitCommitRef(root, effectiveHeadRef);
+
+    if (!resolvedBaseSha || !resolvedHeadSha) {
+      return {
+        ok: false,
+        mode: mode === "auto" ? "pr" : mode,
+        error: "MISSING_GIT_BASE_REF",
+        message: `Cannot resolve Git comparison references (base='${targetBase}' [${resolvedBaseSha || "MISSING"}], head='${effectiveHeadRef}' [${resolvedHeadSha || "MISSING"}]).`,
+        base_ref: targetBase,
+        head_ref: effectiveHeadRef,
+      };
+    }
+
+    let mergeBaseSha = resolvedBaseSha;
+    try {
+      const { stdout: mbOut } = await execFileAsync("git", ["merge-base", resolvedBaseSha, resolvedHeadSha], {
+        cwd: root,
+        timeout: 5000,
+        windowsHide: true,
+      });
+      mergeBaseSha = String(mbOut || "").trim() || resolvedBaseSha;
+    } catch (err) {
+      return {
+        ok: false,
+        mode: mode === "auto" ? "pr" : mode,
+        error: "MERGE_BASE_UNRESOLVABLE",
+        message: `Could not compute Git merge-base between '${targetBase}' and '${effectiveHeadRef}' (possible shallow clone): ${err.message}`,
+        base_ref: targetBase,
+        head_ref: effectiveHeadRef,
+      };
+    }
+
+    try {
+      const { stdout: diffOut } = await execFileAsync(
+        "git",
+        ["diff", "--name-status", "-z", "-M", `${mergeBaseSha}..${resolvedHeadSha}`],
+        { cwd: root, timeout: 5000, windowsHide: true }
+      );
+      const prDiff = parseDiffNameStatusZ(diffOut);
+      const mergedChanged = new Set([...prDiff.changed_files, ...workingTree.changed_files]);
+      const mergedDeleted = new Set([...prDiff.deleted_files, ...workingTree.deleted_files]);
+      for (const d of mergedDeleted) mergedChanged.delete(d);
+
+      return {
+        ok: true,
+        mode: mode === "commit_range" ? "commit_range" : "pr",
+        base_ref: targetBase,
+        head_ref: effectiveHeadRef,
+        merge_base: mergeBaseSha,
+        changed_files: Array.from(mergedChanged),
+        deleted_files: Array.from(mergedDeleted),
+        renamed_files: [...prDiff.renamed_files, ...workingTree.renamed_files],
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        mode: mode === "auto" ? "pr" : mode,
+        error: "GIT_DIFF_EXECUTION_FAILED",
+        message: `Git diff failed for '${mergeBaseSha}..${resolvedHeadSha}': ${err.message}`,
+        base_ref: targetBase,
+        head_ref: effectiveHeadRef,
+      };
+    }
+  }
+
+  // 4. Auto mode: if working tree has changes/deletions/renames, use working tree.
+  //    If working tree is clean (e.g., clean CI checkout or committed PR branch — AR-01 & AR-02),
+  //    compare against main/master merge-base (if on a feature branch) or HEAD~1!
+  if (
+    workingTree.changed_files.length > 0 ||
+    workingTree.deleted_files.length > 0 ||
+    workingTree.renamed_files.length > 0
+  ) {
+    return {
+      ok: true,
+      mode: "working_tree",
+      base_ref: "HEAD",
+      head_ref: "WORKTREE",
+      merge_base: null,
+      ...workingTree,
+    };
+  }
+
+  if (gitAvailable) {
+    const headSha = await verifyGitCommitRef(root, "HEAD");
+    for (const candidateBase of ["origin/main", "main", "origin/master", "master"]) {
+      const baseSha = await verifyGitCommitRef(root, candidateBase);
+      if (baseSha && headSha && baseSha !== headSha) {
+        try {
+          const { stdout: mbOut } = await execFileAsync("git", ["merge-base", baseSha, headSha], {
+            cwd: root,
+            timeout: 3000,
+            windowsHide: true,
+          });
+          const mb = String(mbOut || "").trim();
+          if (mb && mb !== headSha) {
+            const { stdout: diffOut } = await execFileAsync(
+              "git",
+              ["diff", "--name-status", "-z", "-M", `${mb}..${headSha}`],
+              { cwd: root, timeout: 5000, windowsHide: true }
+            );
+            return {
+              ok: true,
+              mode: "pr",
+              base_ref: candidateBase,
+              head_ref: "HEAD",
+              merge_base: mb,
+              ...parseDiffNameStatusZ(diffOut),
+            };
+          }
+        } catch {
+          // try next fallback
+        }
+      }
+    }
+
+    // Clean commit directly on main/master: diff against HEAD~1 if parent commit exists
+    const parentSha = await verifyGitCommitRef(root, "HEAD~1");
+    if (parentSha && headSha) {
+      try {
+        const { stdout: diffOut } = await execFileAsync(
+          "git",
+          ["diff", "--name-status", "-z", "-M", `${parentSha}..${headSha}`],
+          { cwd: root, timeout: 5000, windowsHide: true }
+        );
+        return {
+          ok: true,
+          mode: "commit_range",
+          base_ref: "HEAD~1",
+          head_ref: "HEAD",
+          merge_base: parentSha,
+          ...parseDiffNameStatusZ(diffOut),
+        };
+      } catch {
+        // fallback below
+      }
+    }
+  }
+
+  return {
+    ok: true,
+    mode: "working_tree",
+    base_ref: "HEAD",
+    head_ref: "WORKTREE",
+    merge_base: null,
+    changed_files: [],
+    deleted_files: [],
+    renamed_files: [],
+  };
 }
 
-async function collectAuditFiles(root, targetPaths = [], maxFiles = 250) {
-  const results = [];
-  const skipDirs = new Set([".git", "node_modules", "vendor", "public", "storage", "dist", "build", ".state", ".worktrees"]);
+/**
+ * Backward-compatible helper returning discovered changed files array.
+ */
+export async function discoverGitChangedFiles(root, options = {}) {
+  const scope = await resolveGitChangeScope(root, options);
+  return scope.ok ? scope.changed_files : [];
+}
 
-  if (Array.isArray(targetPaths) && targetPaths.length > 0) {
+/**
+ * Bounded Repository & File Scanner with Coverage Telemetry & Symlink/Traversal Safety
+ * (FINDING D — AR-11, AR-12).
+ */
+async function collectAuditFiles(
+  root,
+  targetPaths = [],
+  { maxFiles = 1000, maxDepth = 12, explicitFilesProvided = false } = {}
+) {
+  const effectiveMaxFiles = Math.max(1, Math.min(5000, Number(maxFiles) || 1000));
+  const effectiveMaxDepth = Math.max(1, Math.min(32, Number(maxDepth) || 12));
+  const realRoot = await fs.realpath(root).catch(() => path.resolve(root));
+
+  const results = [];
+  let filesDiscovered = 0;
+  let filesExcluded = 0;
+  let filesSkipped = 0;
+  let directoriesSkipped = 0;
+  let symlinksSkipped = 0;
+  let unscannedFilesCount = 0;
+  let limitReached = false;
+  let limitReason = null;
+  const scannerErrors = [];
+
+  const skipDirs = new Set([
+    ".git",
+    "node_modules",
+    "vendor",
+    "public",
+    "storage",
+    "dist",
+    "build",
+    ".state",
+    ".worktrees",
+  ]);
+
+  const isInsideRealRoot = (candidateRealPath) => {
+    const rel = path.relative(realRoot, candidateRealPath);
+    return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+  };
+
+  if (explicitFilesProvided) {
     for (const rel of targetPaths) {
-      const abs = path.isAbsolute(rel) ? rel : path.join(root, rel);
+      const abs = path.isAbsolute(rel) ? path.resolve(rel) : path.resolve(root, rel);
       try {
-        const st = await fs.stat(abs);
-        if (st.isFile() && st.size <= 512 * 1024) {
-          results.push(path.relative(root, abs).replaceAll("\\", "/"));
+        const lst = lstatSync(abs);
+        if (lst.isSymbolicLink()) {
+          symlinksSkipped += 1;
+          const targetReal = await fs.realpath(abs).catch(() => null);
+          if (!targetReal || !isInsideRealRoot(targetReal)) {
+            filesExcluded += 1;
+            scannerErrors.push({
+              code: "SYMLINK_OUTSIDE_WORKSPACE",
+              file: String(rel),
+              message: `Refused symlink pointing outside workspace root: '${rel}'`,
+            });
+            continue;
+          }
         }
+        const realAbs = await fs.realpath(abs).catch(() => abs);
+        if (!isInsideRealRoot(realAbs)) {
+          filesExcluded += 1;
+          scannerErrors.push({
+            code: "PATH_OUTSIDE_WORKSPACE",
+            file: String(rel),
+            message: `Refused file outside authorized workspace root: '${rel}'`,
+          });
+          continue;
+        }
+        const st = await fs.stat(abs);
+        if (!st.isFile()) continue;
+        filesDiscovered += 1;
+        if (st.size > 512 * 1024) {
+          filesSkipped += 1;
+          continue;
+        }
+        if (results.length >= effectiveMaxFiles) {
+          limitReached = true;
+          limitReason = "MAX_FILES_REACHED";
+          unscannedFilesCount += 1;
+          continue;
+        }
+        results.push(path.relative(root, abs).replaceAll("\\", "/"));
       } catch {
-        // skip missing file
+        filesSkipped += 1;
       }
     }
-    return results;
+
+    const coverageStatus = limitReached ? "PARTIAL" : "COMPLETE";
+    return {
+      files: results,
+      coverage: {
+        status: coverageStatus,
+        files_discovered: filesDiscovered,
+        files_scanned: results.length,
+        files_excluded: filesExcluded,
+        files_skipped: filesSkipped,
+        directories_skipped: directoriesSkipped,
+        symlinks_skipped: symlinksSkipped,
+        limit_reached: limitReached,
+        limit_reason: limitReason,
+        unscanned_files_count: unscannedFilesCount,
+        max_files: effectiveMaxFiles,
+        max_depth: effectiveMaxDepth,
+        scanner_errors: scannerErrors,
+      },
+    };
   }
 
+  const visitedRealDirs = new Set([realRoot]);
+
   async function walk(current, depth = 0) {
-    if (depth > 8 || results.length >= maxFiles) return;
     let entries = [];
     try {
       entries = await fs.readdir(current, { withFileTypes: true });
-    } catch {
+    } catch (err) {
+      scannerErrors.push({
+        code: "DIRECTORY_READ_ERROR",
+        path: path.relative(root, current).replaceAll("\\", "/"),
+        message: err.message,
+      });
       return;
     }
+
     for (const entry of entries) {
-      if (results.length >= maxFiles) break;
-      if (entry.isSymbolicLink()) continue;
       const full = path.join(current, entry.name);
+
+      if (entry.isSymbolicLink()) {
+        symlinksSkipped += 1;
+        directoriesSkipped += 1;
+        continue;
+      }
+
       if (entry.isDirectory()) {
-        if (!skipDirs.has(entry.name)) {
-          await walk(full, depth + 1);
+        if (skipDirs.has(entry.name)) {
+          directoriesSkipped += 1;
+          continue;
         }
-      } else if (/\.(?:php|js|mjs|cjs|jsx|ts|tsx|py|yaml|yml)$/i.test(entry.name) && !entry.name.endsWith(".min.js")) {
+        if (depth + 1 > effectiveMaxDepth) {
+          limitReached = true;
+          if (!limitReason) limitReason = "MAX_DEPTH_REACHED";
+          directoriesSkipped += 1;
+          continue;
+        }
+        const realDir = await fs.realpath(full).catch(() => null);
+        if (!realDir || !isInsideRealRoot(realDir) || visitedRealDirs.has(realDir)) {
+          directoriesSkipped += 1;
+          continue;
+        }
+        visitedRealDirs.add(realDir);
+        await walk(full, depth + 1);
+      } else if (
+        /\.(?:php|js|mjs|cjs|jsx|ts|tsx|py|yaml|yml)$/i.test(entry.name) &&
+        !entry.name.endsWith(".min.js")
+      ) {
         try {
           const st = await fs.stat(full);
-          if (st.size <= 512 * 1024) {
-            results.push(path.relative(root, full).replaceAll("\\", "/"));
+          if (st.size > 512 * 1024) {
+            filesSkipped += 1;
+            continue;
           }
+          filesDiscovered += 1;
+          if (results.length >= effectiveMaxFiles) {
+            limitReached = true;
+            if (!limitReason) limitReason = "MAX_FILES_REACHED";
+            unscannedFilesCount += 1;
+            continue;
+          }
+          results.push(path.relative(root, full).replaceAll("\\", "/"));
         } catch {
-          // ignore
+          filesSkipped += 1;
         }
+      } else {
+        filesExcluded += 1;
       }
     }
   }
 
-  await walk(root);
-  return results;
+  await walk(root, 0);
+
+  const coverageStatus = limitReached ? "PARTIAL" : "COMPLETE";
+  return {
+    files: results,
+    coverage: {
+      status: coverageStatus,
+      files_discovered: filesDiscovered,
+      files_scanned: results.length,
+      files_excluded: filesExcluded,
+      files_skipped: filesSkipped,
+      directories_skipped: directoriesSkipped,
+      symlinks_skipped: symlinksSkipped,
+      limit_reached: limitReached,
+      limit_reason: limitReason,
+      unscanned_files_count: unscannedFilesCount,
+      max_files: effectiveMaxFiles,
+      max_depth: effectiveMaxDepth,
+      scanner_errors: scannerErrors,
+    },
+  };
 }
 
 async function loadAuditBaseline(root, { baseline = null, baselineFile = null } = {}) {
   if (Array.isArray(baseline)) {
-    return { active: true, items: baseline };
+    return { active: true, items: baseline, error: null };
   }
   if (baseline && Array.isArray(baseline.findings)) {
-    return { active: true, items: baseline.findings };
+    return { active: true, items: baseline.findings, error: null };
   }
+  const explicitRequested = Boolean(baselineFile);
   const candidateFile = baselineFile
     ? path.isAbsolute(baselineFile)
       ? baselineFile
       : path.join(root, baselineFile)
     : path.join(root, "engineering", "reports", "audit-baseline.json");
+
   if (existsSync(candidateFile)) {
     try {
       const parsed = JSON.parse(await fs.readFile(candidateFile, "utf8"));
-      const items = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.findings) ? parsed.findings : [];
-      return { active: true, items };
-    } catch {
-      return { active: false, items: [] };
+      const items = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.findings) ? parsed.findings : null;
+      if (!items) {
+        return {
+          active: false,
+          items: [],
+          error: {
+            code: "INVALID_BASELINE_SCHEMA",
+            file: candidateFile,
+            message: `Baseline file '${candidateFile}' does not contain a valid findings array.`,
+          },
+        };
+      }
+      return { active: true, items, error: null, file: candidateFile };
+    } catch (err) {
+      return {
+        active: false,
+        items: [],
+        error: {
+          code: "CORRUPTED_BASELINE_FILE",
+          file: candidateFile,
+          message: `Failed parsing baseline JSON '${candidateFile}': ${err.message}`,
+        },
+      };
     }
+  } else if (explicitRequested) {
+    return {
+      active: false,
+      items: [],
+      error: {
+        code: "MISSING_BASELINE_FILE",
+        file: candidateFile,
+        message: `Requested baselineFile '${candidateFile}' does not exist.`,
+      },
+    };
   }
-  return { active: false, items: [] };
+  return { active: false, items: [], error: null };
 }
 
 /**
- * Core Automatic Code Audit Engine (Section 4, 5, 16)
+ * Match current findings against baseline items using Finding Identity v2.0:
+ * - Multiplicity-aware matching by `(rule_id, file, evidence_fingerprint)` (AR-05, AR-06, AR-07).
+ * - Safe fallback for legacy v1 baseline items (`{ rule_id, file, line }` without `evidence_fingerprint`):
+ *   consumes at most 1 entry per legacy baseline item (exact line match first; single unambiguous shifted
+ *   finding in file second; ambiguous multi-violation files default conservatively to "new").
+ */
+function classifyFindingsAgainstBaseline(rawFindings, baselineData, renamedFiles = []) {
+  if (!baselineData.active) {
+    return rawFindings.map((f) => ({
+      ...f,
+      is_new: true,
+      baseline_status: "new",
+    }));
+  }
+
+  // Map renamed target paths back to their pre-rename baseline paths if needed
+  const renameToFrom = new Map();
+  for (const r of renamedFiles || []) {
+    if (r.to && r.from) {
+      renameToFrom.set(r.to.replaceAll("\\", "/"), r.from.replaceAll("\\", "/"));
+    }
+  }
+
+  // 1. Separate v2 fingerprinted baseline items from legacy v1 line-only items
+  const v2FpCounts = new Map();
+  const v1ItemsByRuleFile = new Map();
+
+  for (const item of baselineData.items) {
+    if (!item || !item.rule_id || !item.file) continue;
+    const normFile = String(item.file).replaceAll("\\", "/").replace(/^\.\//, "");
+    const itemFp =
+      item.evidence_fingerprint ||
+      (item.evidence ? computeFindingFingerprint(item.rule_id, normFile, item.evidence) : null);
+
+    if (itemFp) {
+      const key = `${item.rule_id}::${normFile}::${itemFp}`;
+      v2FpCounts.set(key, (v2FpCounts.get(key) || 0) + 1);
+    } else {
+      const rfKey = `${item.rule_id}::${normFile}`;
+      if (!v1ItemsByRuleFile.has(rfKey)) v1ItemsByRuleFile.set(rfKey, []);
+      v1ItemsByRuleFile.get(rfKey).push({ line: Number(item.line) || 1, consumed: false });
+    }
+  }
+
+  // Count how many findings per (rule_id, file) exist in the current scan (for v1 ambiguity checks)
+  const currentCountsByRuleFile = new Map();
+  for (const f of rawFindings) {
+    const normFile = f.file.replaceAll("\\", "/");
+    const rfKey = `${f.rule_id}::${normFile}`;
+    currentCountsByRuleFile.set(rfKey, (currentCountsByRuleFile.get(rfKey) || 0) + 1);
+  }
+
+  // First pass: match v2 fingerprinted items and exact-line v1 items
+  const results = rawFindings.map((f) => ({ ...f, _matched: false, _uncertainty: false }));
+
+  for (const f of results) {
+    if (f.rule_id === "ZET-SEC-001") continue; // Critical secret leaks are never suppressed as historical
+    const normFile = f.file.replaceAll("\\", "/");
+    const candidateFiles = [normFile];
+    if (renameToFrom.has(normFile)) {
+      candidateFiles.push(renameToFrom.get(normFile));
+    }
+
+    // Try v2 fingerprint match (supports line movement & exact multiplicity!)
+    let matchedV2 = false;
+    for (const cf of candidateFiles) {
+      const fp = computeFindingFingerprint(f.rule_id, cf, f.evidence);
+      const fpKey = `${f.rule_id}::${cf}::${fp}`;
+      const count = v2FpCounts.get(fpKey) || 0;
+      if (count > 0) {
+        v2FpCounts.set(fpKey, count - 1);
+        f._matched = true;
+        matchedV2 = true;
+        break;
+      }
+    }
+    if (matchedV2) continue;
+
+    // Try exact-line match against unconsumed v1 legacy items
+    for (const cf of candidateFiles) {
+      const rfKey = `${f.rule_id}::${cf}`;
+      const v1List = v1ItemsByRuleFile.get(rfKey);
+      if (!v1List) continue;
+      const exactEntry = v1List.find((e) => !e.consumed && e.line === f.line);
+      if (exactEntry) {
+        exactEntry.consumed = true;
+        f._matched = true;
+        break;
+      }
+    }
+  }
+
+  // Second pass: for remaining unmatched findings, allow line-moved v1 fallback ONLY when
+  // there is an unambiguous 1-to-1 correspondence in that file (single finding in file & single unconsumed v1 entry).
+  for (const f of results) {
+    if (f._matched || f.rule_id === "ZET-SEC-001") continue;
+    const normFile = f.file.replaceAll("\\", "/");
+    const candidateFiles = [normFile];
+    if (renameToFrom.has(normFile)) candidateFiles.push(renameToFrom.get(normFile));
+
+    for (const cf of candidateFiles) {
+      const rfKey = `${f.rule_id}::${cf}`;
+      const v1List = v1ItemsByRuleFile.get(rfKey);
+      if (!v1List) continue;
+      const unconsumed = v1List.filter((e) => !e.consumed);
+      const totalCurrentInFile = currentCountsByRuleFile.get(`${f.rule_id}::${normFile}`) || 0;
+      if (unconsumed.length === 1 && totalCurrentInFile === 1) {
+        unconsumed[0].consumed = true;
+        f._matched = true;
+        break;
+      } else if (unconsumed.length > 0 && totalCurrentInFile > 1) {
+        // Ambiguous legacy v1 baseline without evidence_fingerprint when multiple violations exist in same file:
+        // conservatively classify as NEW and flag uncertainty (Section 3).
+        f._uncertainty = true;
+      }
+    }
+  }
+
+  return results.map(({ _matched, _uncertainty, ...rest }) => ({
+    ...rest,
+    is_new: !_matched,
+    baseline_status: _matched ? "historical" : "new",
+    ...(_uncertainty ? { baseline_uncertainty: true } : {}),
+  }));
+}
+
+/**
+ * Core Automatic Code Audit Engine (Sections 2–8, 15)
  */
 export async function runEngineeringAudit({
   projectDir,
@@ -511,29 +1371,159 @@ export async function runEngineeringAudit({
   categoryFilter = null,
   scopeLabel = "Repository",
   discoverGitChanges = false,
+  changeMode = null,
+  baseRef = null,
+  headRef = "HEAD",
+  commitRange = null,
   baseline = null,
   baselineFile = null,
+  maxFiles = 1000,
+  maxDepth = 12,
 } = {}) {
   const loaded = await loadProjectStandards(projectDir);
   const root = loaded.projectDir;
+  const repoRevision = await resolveGitHeadRevision(root);
 
-  let effectiveFiles = Array.isArray(files) ? [...files] : [];
-  if (effectiveFiles.length === 0 && discoverGitChanges) {
-    effectiveFiles = await discoverGitChangedFiles(root);
+  const explicitFilesProvided = Array.isArray(files) && files.length > 0;
+  let effectiveFiles = explicitFilesProvided ? [...files] : [];
+  let gitScopeMeta = {
+    ok: true,
+    mode: explicitFilesProvided ? "explicit_files" : "repository",
+    base_ref: null,
+    head_ref: null,
+    merge_base: null,
+    changed_files: effectiveFiles,
+    deleted_files: [],
+    renamed_files: [],
+  };
+
+  const shouldResolveGitDiff =
+    !explicitFilesProvided &&
+    (discoverGitChanges || Boolean(changeMode) || Boolean(baseRef) || Boolean(commitRange));
+
+  if (shouldResolveGitDiff) {
+    gitScopeMeta = await resolveGitChangeScope(root, {
+      changeMode: changeMode || "auto",
+      baseRef,
+      headRef,
+      commitRange,
+    });
+
+    if (!gitScopeMeta.ok) {
+      // CRITICAL FINDING A (AR-04): Never report PASS when requested PR/diff comparison failed!
+      return sanitize({
+        repository: path.basename(root),
+        project_dir: root,
+        repository_revision: repoRevision,
+        standards_version: STANDARDS_REGISTRY_VERSION,
+        requested_scope: scopeLabel,
+        audit_mode: gitScopeMeta.mode || changeMode || "pr",
+        resolved_scope: {
+          mode: gitScopeMeta.mode || changeMode || "pr",
+          base_ref: gitScopeMeta.base_ref || baseRef || null,
+          head_ref: gitScopeMeta.head_ref || headRef || "HEAD",
+          merge_base: null,
+          files_discovered: 0,
+          files_scanned: 0,
+          changed_files: [],
+          renamed_files: [],
+          deleted_files: [],
+        },
+        detection_status: "FAILED",
+        coverage_status: "FAILED",
+        policy_status: "UNKNOWN",
+        overall_verdict: "INCOMPLETE",
+        scan_completeness: "FAILED",
+        scope: scopeLabel,
+        files_audited: 0,
+        standards_loaded: loaded.standards.length,
+        baseline_active: false,
+        result: "FAIL",
+        quality_gate: "FAILED",
+        errors: [
+          {
+            code: gitScopeMeta.error || "GIT_SCOPE_RESOLUTION_FAILED",
+            message: gitScopeMeta.message || "Could not resolve requested Git comparison scope.",
+          },
+        ],
+        warnings: [],
+        summary: {
+          critical: 0,
+          high: 0,
+          medium: 0,
+          low: 0,
+          new_violations: 0,
+          historical_debt: 0,
+          safe_autofix_candidates: 0,
+          manual_review_required: 0,
+        },
+        findings: [],
+        new_findings: [],
+        historical_findings: [],
+      });
+    }
+
+    effectiveFiles = gitScopeMeta.changed_files;
   }
 
-  const isScopedAudit = effectiveFiles.length > 0;
-  const targetFiles = await collectAuditFiles(root, effectiveFiles);
+  const isScopedAudit = explicitFilesProvided || shouldResolveGitDiff;
+  const collected =
+    shouldResolveGitDiff && effectiveFiles.length === 0
+      ? {
+          files: [],
+          coverage: {
+            status: "COMPLETE",
+            files_discovered: 0,
+            files_scanned: 0,
+            files_excluded: 0,
+            files_skipped: 0,
+            directories_skipped: 0,
+            symlinks_skipped: 0,
+            limit_reached: false,
+            limit_reason: null,
+            unscanned_files_count: 0,
+            max_files: maxFiles,
+            max_depth: maxDepth,
+            scanner_errors: [],
+          },
+        }
+      : await collectAuditFiles(root, effectiveFiles, {
+          maxFiles,
+          maxDepth,
+          explicitFilesProvided: isScopedAudit,
+        });
+
+  const targetFiles = collected.files;
   const rawFindings = [];
   const seenFindingKeys = new Set();
+  const occurrenceCounters = new Map();
+  const appliedExceptions = [];
+
+  const recordAppliedException = (exc, relPath) => {
+    if (!exc) return;
+    if (!appliedExceptions.some((a) => a.id === exc.id && a.file === relPath)) {
+      appliedExceptions.push({ id: exc.id, rule_id: exc.rule_id, file: relPath, reason: exc.reason });
+    }
+  };
 
   const pushFinding = (finding) => {
     const key = `${finding.rule_id}::${finding.file}::${finding.line || 1}`;
     if (seenFindingKeys.has(key)) return;
     seenFindingKeys.add(key);
+
+    const redactedEvidence = redactSecretValues(String(finding.evidence || ""));
+    const fp = computeFindingFingerprint(finding.rule_id, finding.file, redactedEvidence);
+    const occKey = `${finding.rule_id}::${finding.file}::${fp}`;
+    const occIdx = (occurrenceCounters.get(occKey) || 0) + 1;
+    occurrenceCounters.set(occKey, occIdx);
+
     rawFindings.push({
       ...finding,
-      evidence: redactSecretValues(String(finding.evidence || "")),
+      evidence: redactedEvidence,
+      evidence_fingerprint: fp,
+      fingerprint_version: FINDING_FINGERPRINT_VERSION,
+      occurrence_index: occIdx,
+      finding_id: `${finding.rule_id}:${finding.file}:${fp}#${occIdx}`,
       detection_type: finding.detection_type || "deterministic",
     });
   };
@@ -546,7 +1536,6 @@ export async function runEngineeringAudit({
     (f) => /(?:^|\/)tests?\//i.test(f) || /(?:\.test|_test|Test)\.(?:js|ts|php|py)$/i.test(f)
   );
 
-  // Rules handled by specialized context-aware analyzers below
   const specializedRuleIds = new Set([
     "ZET-SEC-001",
     "ZET-CODE-002",
@@ -565,6 +1554,12 @@ export async function runEngineeringAudit({
       continue;
     }
 
+    // Skip binary files containing NUL bytes
+    if (content.includes("\0")) {
+      collected.coverage.files_skipped += 1;
+      continue;
+    }
+
     const isTestFile = /(?:^|\/)tests?\//i.test(relPath) || /(?:\.test|_test|Test)\.(?:js|ts|php|py)$/i.test(relPath);
     const isMigrationFile = /database\/migrations\/.*\.php$/i.test(relPath);
     const isControllerOrViewFile =
@@ -573,7 +1568,7 @@ export async function runEngineeringAudit({
     const lines = content.split(/\r?\n/);
 
     // 1. Secret scanning (ZET-SEC-001) with line-accurate detection & full credential redaction
-    if (!categoryFilter || categoryFilter === "security") {
+    if ((!categoryFilter || categoryFilter === "security") && !isTestFile) {
       const literalSecretTypes = new Set([
         "private_key",
         "ssh_key",
@@ -595,24 +1590,26 @@ export async function runEngineeringAudit({
       }
       SECRET_TOKEN_REGEX.lastIndex = 0;
       const hasEmbeddedToken = SECRET_TOKEN_REGEX.test(content);
-      if (
-        (secretHits.length > 0 || hasEmbeddedToken) &&
-        !isExceptionApproved(loaded.exceptions, "ZET-SEC-001", relPath)
-      ) {
-        pushFinding({
-          rule_id: "ZET-SEC-001",
-          title: "No embedded credentials, private keys, or live tokens",
-          category: "security",
-          severity: "critical",
-          enforcement: "blocking",
-          file: relPath,
-          line: secretLine,
-          evidence: `Detected embedded secret pattern (${secretHits.map((h) => h.type).join(", ") || "token_pattern"}) at line ${secretLine} [<REDACTED_SECRET>]`,
-          autofix_eligible: false,
-          autofix_class: "AF-3",
-          recommended_fix:
-            "Remove embedded secret immediately, rotate credential, and load from environment or Secret Manager.",
-        });
+      const exc = findMatchingApprovedException(loaded.exceptions, "ZET-SEC-001", relPath);
+      if (secretHits.length > 0 || hasEmbeddedToken) {
+        if (exc) {
+          recordAppliedException(exc, relPath);
+        } else {
+          pushFinding({
+            rule_id: "ZET-SEC-001",
+            title: "No embedded credentials, private keys, or live tokens",
+            category: "security",
+            severity: "critical",
+            enforcement: "blocking",
+            file: relPath,
+            line: secretLine,
+            evidence: `Detected embedded secret pattern (${secretHits.map((h) => h.type).join(", ") || "token_pattern"}) [<REDACTED_SECRET>]`,
+            autofix_eligible: false,
+            autofix_class: "AF-3",
+            recommended_fix:
+              "Remove embedded secret immediately, rotate credential, and load from environment or Secret Manager.",
+          });
+        }
       }
     }
 
@@ -654,13 +1651,14 @@ export async function runEngineeringAudit({
       }
     }
 
-    // 3. Leftover debug dumps in non-test code (ZET-CODE-001)
-    if ((!categoryFilter || categoryFilter === "code-quality") && !isTestFile) {
-      for (let idx = 0; idx < lines.length; idx++) {
-        if (
-          /^\s*(?:dd|var_dump)\s*\([^)]*\)\s*;\s*$/.test(lines[idx]) &&
-          !isExceptionApproved(loaded.exceptions, "ZET-CODE-001", relPath)
-        ) {
+    // 3. Leftover debug dumps in non-test code (ZET-CODE-001 — comment/string-safe & semantic risk classification, FINDING E)
+    if ((!categoryFilter || categoryFilter === "code-quality") && !isTestFile && !/\.(?:yaml|yml)$/i.test(relPath)) {
+      const exc = findMatchingApprovedException(loaded.exceptions, "ZET-CODE-001", relPath);
+      const debugHits = analyzeDebugStatementsInSource(content);
+      if (debugHits.length > 0 && exc) {
+        recordAppliedException(exc, relPath);
+      } else {
+        for (const hit of debugHits) {
           pushFinding({
             rule_id: "ZET-CODE-001",
             title: "Avoid leftover debug dump statements in production code",
@@ -668,11 +1666,14 @@ export async function runEngineeringAudit({
             severity: "medium",
             enforcement: "warning",
             file: relPath,
-            line: idx + 1,
-            evidence: lines[idx].trim().slice(0, 100),
-            autofix_eligible: true,
-            autofix_class: "AF-1",
-            recommended_fix: "Remove debug dump statement or use helper_apply_safe_fix (AF-1).",
+            line: hit.line,
+            evidence: hit.rawLine,
+            autofix_eligible: hit.autofixEligible,
+            autofix_class: hit.autofixClass,
+            semantic_risk: hit.semanticRisk,
+            recommended_fix: hit.autofixEligible
+              ? "Remove standalone debug dump statement or use helper_apply_safe_fix (AF-1)."
+              : "Manual review required (AF-2 proposal-only): debug call is embedded in control flow or expression.",
           });
         }
       }
@@ -681,44 +1682,54 @@ export async function runEngineeringAudit({
     // 4. Destructive migration operations in up() method (ZET-DB-001)
     if ((!categoryFilter || categoryFilter === "database") && isMigrationFile) {
       const upSection = content.split(/public\s+function\s+down\s*\(/i)[0] || content;
-      if (
-        /\b(?:dropColumn|dropIfExists|dropTable)\s*\(/.test(upSection) &&
-        !isExceptionApproved(loaded.exceptions, "ZET-DB-001", relPath)
-      ) {
-        pushFinding({
-          rule_id: "ZET-DB-001",
-          title: "Destructive schema operation in migration up() method",
-          category: "database",
-          severity: "critical",
-          enforcement: "blocking",
-          file: relPath,
-          line: 1,
-          evidence: "Detected dropColumn / dropIfExists / dropTable in migration up() body",
-          autofix_eligible: false,
-          autofix_class: "AF-3",
-          recommended_fix:
-            "Use additive N-1 compatible migration steps and require a verified pre-deployment GCS database backup before running destructive DDL.",
-        });
+      if (/\b(?:dropColumn|dropIfExists|dropTable)\s*\(/.test(upSection)) {
+        const exc = findMatchingApprovedException(loaded.exceptions, "ZET-DB-001", relPath);
+        if (exc) {
+          recordAppliedException(exc, relPath);
+        } else {
+          pushFinding({
+            rule_id: "ZET-DB-001",
+            title: "Destructive schema operation in migration up() method",
+            category: "database",
+            severity: "critical",
+            enforcement: "blocking",
+            file: relPath,
+            line: 1,
+            evidence: "Detected dropColumn / dropIfExists / dropTable in migration up() body",
+            autofix_eligible: false,
+            autofix_class: "AF-3",
+            recommended_fix:
+              "Use additive N-1 compatible migration steps and require a verified pre-deployment GCS database backup before running destructive DDL.",
+          });
+        }
       }
     }
 
     // 5. Architecture boundary check: raw DB query in Controller/View (ZET-ARCH-001)
     if ((!categoryFilter || categoryFilter === "architecture") && isControllerOrViewFile) {
-      if (/\bDB::raw\s*\(/.test(content) && !isExceptionApproved(loaded.exceptions, "ZET-ARCH-001", relPath)) {
-        const lineIdx = lines.findIndex((l) => /\bDB::raw\s*\(/.test(l));
-        pushFinding({
-          rule_id: "ZET-ARCH-001",
-          title: "Controller embeds raw SQL instead of delegating to a deep Service/Domain module",
-          category: "architecture",
-          severity: "medium",
-          enforcement: "advisory",
-          file: relPath,
-          line: lineIdx >= 0 ? lineIdx + 1 : 1,
-          evidence: "Controller contains DB::raw() call",
-          autofix_eligible: false,
-          autofix_class: "AF-2",
-          recommended_fix: "Extract raw query logic into an App\\Services or App\\Domain class.",
-        });
+      if (/\bDB::raw\s*\(/.test(content)) {
+        const exc = findMatchingApprovedException(loaded.exceptions, "ZET-ARCH-001", relPath);
+        if (exc) {
+          recordAppliedException(exc, relPath);
+        } else {
+          for (let idx = 0; idx < lines.length; idx++) {
+            if (/\bDB::raw\s*\(/.test(lines[idx])) {
+              pushFinding({
+                rule_id: "ZET-ARCH-001",
+                title: "Controller embeds raw SQL instead of delegating to a deep Service/Domain module",
+                category: "architecture",
+                severity: "medium",
+                enforcement: "advisory",
+                file: relPath,
+                line: idx + 1,
+                evidence: lines[idx].trim().slice(0, 120),
+                autofix_eligible: false,
+                autofix_class: "AF-2",
+                recommended_fix: "Extract raw query logic into an App\\Services or App\\Domain class.",
+              });
+            }
+          }
+        }
       }
     }
 
@@ -750,14 +1761,17 @@ export async function runEngineeringAudit({
     if (!isTestFile && !/\.(?:yaml|yml)$/i.test(relPath)) {
       for (const rule of applicableStandards) {
         if (!rule.pattern) continue;
-        // If a custom YAML rule overrode ZET-ARCH-001 or another specialized rule with a custom pattern, evaluate it on non-controller files too
         const isDefaultArch001 =
           rule.id === "ZET-ARCH-001" &&
           (rule.pattern === "\\b(?:DB::raw|mysqli_query)\\s*\\(" || rule.pattern === "DB::raw\\(|mysqli_query\\(");
         if (specializedRuleIds.has(rule.id) && (rule.id !== "ZET-ARCH-001" || isDefaultArch001)) {
           continue;
         }
-        if (isExceptionApproved(loaded.exceptions, rule.id, relPath)) continue;
+        const exc = findMatchingApprovedException(loaded.exceptions, rule.id, relPath);
+        if (exc) {
+          recordAppliedException(exc, relPath);
+          continue;
+        }
 
         let regex;
         try {
@@ -783,34 +1797,24 @@ export async function runEngineeringAudit({
               autofix_class: rule.autofix_class || "AF-2",
               recommended_fix: `Remediate ${rule.id} (${rule.title}) and verify with: ${rule.verification || "npm test"}`,
             });
-            break;
           }
         }
       }
     }
   }
 
-  // Baseline comparison (Section 4 & Scenario 10: distinguish new violations from historical technical debt)
+  // Baseline comparison (CRITICAL FINDING B — AR-05, AR-06, AR-07)
   const baselineData = await loadAuditBaseline(root, { baseline, baselineFile });
-  const baselineKeys = new Set(
-    baselineData.items.map((item) => {
-      const f = String(item.file || "").replaceAll("\\", "/");
-      return `${item.rule_id}::${f}`;
-    })
-  );
+  const warnings = [];
+  const errors = (collected.coverage.scanner_errors || []).map((e) => ({ ...e }));
+  if (baselineData.error) {
+    warnings.push(baselineData.error);
+  }
+  for (const le of loaded.loadErrors || []) {
+    warnings.push({ code: "STANDARDS_LOAD_WARNING", message: le });
+  }
 
-  const findings = rawFindings.map((f) => {
-    const isHistorical =
-      baselineData.active &&
-      f.rule_id !== "ZET-SEC-001" &&
-      baselineKeys.has(`${f.rule_id}::${f.file.replaceAll("\\", "/")}`);
-    return {
-      ...f,
-      is_new: !isHistorical,
-      baseline_status: isHistorical ? "historical" : "new",
-    };
-  });
-
+  const findings = classifyFindingsAgainstBaseline(rawFindings, baselineData, gitScopeMeta.renamed_files);
   const newFindings = findings.filter((f) => f.is_new);
   const historicalFindings = findings.filter((f) => !f.is_new);
 
@@ -825,22 +1829,80 @@ export async function runEngineeringAudit({
     manual_review_required: findings.filter((f) => !f.autofix_eligible).length,
   };
 
-  // Quality gate blocks on NEW critical/high blocking findings (or any critical secret leak)
   const gatingFindings = baselineData.active ? newFindings : findings;
   const hasBlockingFailure = gatingFindings.some(
     (f) => f.enforcement === "blocking" && (f.severity === "critical" || f.severity === "high")
   );
-  const qualityGate = hasBlockingFailure ? "FAIL" : findings.length > 0 ? "WARN" : "PASS";
+
+  // Formal 4-Dimension Audit Reliability Contract (Section 7 & FINDING D — AR-11)
+  const detectionStatus = "COMPLETED";
+  const coverageStatus = collected.coverage.status; // "COMPLETE" | "PARTIAL"
+  const policyStatus = hasBlockingFailure
+    ? "NON_COMPLIANT"
+    : findings.length > 0
+      ? "WARNING"
+      : "COMPLIANT";
+
+  let overallVerdict;
+  let qualityGate;
+  if (hasBlockingFailure) {
+    overallVerdict = "FAIL";
+    qualityGate = "FAILED";
+  } else if (coverageStatus === "PARTIAL") {
+    // Never report PASS when repository scan reached limits and is PARTIAL (AR-11)!
+    overallVerdict = "PARTIAL";
+    qualityGate = "INCOMPLETE_PARTIAL_SCAN";
+  } else if (findings.length > 0) {
+    overallVerdict = "WARN";
+    qualityGate = "WARNING";
+  } else {
+    overallVerdict = "PASS";
+    qualityGate = "PASSED";
+  }
 
   return sanitize({
     repository: path.basename(root),
     project_dir: root,
+    repository_revision: repoRevision,
+    standards_version: STANDARDS_REGISTRY_VERSION,
+    requested_scope: scopeLabel,
+    audit_mode: gitScopeMeta.mode,
+    resolved_scope: {
+      mode: gitScopeMeta.mode,
+      base_ref: gitScopeMeta.base_ref,
+      head_ref: gitScopeMeta.head_ref,
+      merge_base: gitScopeMeta.merge_base,
+      files_discovered: collected.coverage.files_discovered,
+      files_scanned: collected.coverage.files_scanned,
+      changed_files: gitScopeMeta.changed_files,
+      renamed_files: gitScopeMeta.renamed_files,
+      deleted_files: gitScopeMeta.deleted_files,
+    },
+    detection_status: detectionStatus,
+    coverage_status: coverageStatus,
+    policy_status: policyStatus,
+    overall_verdict: overallVerdict,
+    scan_completeness: coverageStatus,
+    scan_coverage: collected.coverage,
+    applied_exceptions: appliedExceptions,
+    scanners_executed: [
+      "secret-scanner",
+      "conflict-whitespace-scanner",
+      "debug-statement-context-analyzer",
+      "migration-safety-scanner",
+      "architecture-boundary-scanner",
+      "change-impact-test-scanner",
+      "dynamic-standards-pattern-scanner",
+    ],
+    scanners_skipped: [],
     scope: scopeLabel,
     files_audited: targetFiles.length,
     standards_loaded: applicableStandards.length,
     baseline_active: baselineData.active,
-    result: qualityGate,
-    quality_gate: qualityGate === "FAIL" ? "FAILED" : qualityGate === "WARN" ? "WARNING" : "PASSED",
+    result: overallVerdict,
+    quality_gate: qualityGate,
+    errors,
+    warnings,
     summary,
     findings,
     new_findings: newFindings.map((f) => ({ ...f })),
@@ -873,6 +1935,10 @@ export async function validateStandardsRegistry(projectDir) {
     }
   }
 
+  for (const err of loaded.loadErrors || []) {
+    issues.push({ type: "registry_load_error", rule_id: null, detail: err });
+  }
+
   return {
     valid: issues.length === 0,
     project_dir: loaded.projectDir,
@@ -886,7 +1952,7 @@ export async function validateStandardsRegistry(projectDir) {
 
 /**
  * Verify worktree ownership and kernel mutex fencing before applying a mutating autofix
- * (Section 9 & Acceptance Scenarios 7 & 8).
+ * (Section 9 & Acceptance Scenarios AR-14, AR-15).
  */
 async function enforceAutofixOwnershipFence({
   root,
@@ -900,13 +1966,11 @@ async function enforceAutofixOwnershipFence({
     workflowState?.sessionId ||
     null;
 
-  // 1. If a WorkflowState with requireKernelMutex is provided, assert its live ownership directly
   if (workflowState && (workflowState.requireKernelMutex || workflowState.boundKernelCapability || requireOwnership)) {
     const cap = workflowState._assertKernelOwnership("helper_apply_safe_fix");
     return { fencedCapability: cap, temporaryCapability: null };
   }
 
-  // 2. Check if another session in the same process holds the worktree capability
   const heldCap = getHeldWorktreeCapability(root);
   if (heldCap) {
     if (callerSessionKey && heldCap.ownerKey && heldCap.ownerKey !== callerSessionKey) {
@@ -922,7 +1986,6 @@ async function enforceAutofixOwnershipFence({
     return { fencedCapability: heldCap, temporaryCapability: null };
   }
 
-  // 3. If strict ownership was explicitly required but no capability is held, fail closed
   if (requireOwnership) {
     throw new ProjectOwnershipLostError(
       "Project ownership lost before helper_apply_safe_fix: missing OS kernel mutex capability.",
@@ -930,7 +1993,6 @@ async function enforceAutofixOwnershipFence({
     );
   }
 
-  // 4. If root is a valid Git worktree, probe the OS kernel mutex to ensure no foreign OS process holds it
   const wt = resolveCanonicalWorktreeRoot(root);
   if (wt.ok) {
     const probe = await acquireWorktreeMutex({
@@ -956,13 +2018,23 @@ async function enforceAutofixOwnershipFence({
   return { fencedCapability: null, temporaryCapability: null };
 }
 
+function validateApprovedVerifyCommand(verifyCommand) {
+  if (!verifyCommand) return null;
+  if (!Array.isArray(verifyCommand) || verifyCommand.length === 0) {
+    throw new Error("verifyCommand must be a non-empty array of strings.");
+  }
+  const rawBin = String(verifyCommand[0] || "").trim();
+  const baseBin = path.basename(rawBin).replace(/\.(?:exe|cmd|bat)$/i, "").toLowerCase();
+  if (!ALLOWED_VERIFY_BINARIES.has(baseBin) || rawBin.includes("..")) {
+    throw new Error(
+      `Untrusted verifyCommand executable '${rawBin}'. Allowed executables: ${Array.from(ALLOWED_VERIFY_BINARIES).join(", ")}.`
+    );
+  }
+  return verifyCommand.map((arg) => String(arg));
+}
+
 /**
- * Bounded Self-Healing Autofix Engine (`helper_apply_safe_fix`, Section 7, 9, 16)
- *
- * - Enforces worktree kernel mutex ownership & concurrency fencing (fails closed on lost/foreign ownership).
- * - Supports allowlisted deterministic AF-0 (trailing whitespace/CRLF) and AF-1 (leftover dd()/var_dump() removal).
- * - Never touches PROTECTED_GOVERNANCE_PREFIXES.
- * - Captures pre-change snapshot, runs optional verification callback/command, and restores exact snapshot on verification failure.
+ * Bounded Self-Healing Autofix Engine (`helper_apply_safe_fix`, CRITICAL FINDING C & E — AR-08..AR-10, AR-13..AR-15)
  */
 export async function applyBoundedSafeFix({
   projectDir,
@@ -970,6 +2042,7 @@ export async function applyBoundedSafeFix({
   ruleId = "ZET-CODE-002",
   verifyCommand = null,
   simulateVerificationFailure = false,
+  simulateConcurrentEditBeforeRollback = null,
   workflowState = null,
   requireOwnership = false,
   sessionId = null,
@@ -978,6 +2051,8 @@ export async function applyBoundedSafeFix({
   if (!file || typeof file !== "string") {
     throw new Error("A target file path is required for helper_apply_safe_fix.");
   }
+
+  const approvedCmd = validateApprovedVerifyCommand(verifyCommand);
 
   const absTarget = path.isAbsolute(file) ? path.resolve(file) : path.resolve(root, file);
   const relTarget = path.relative(root, absTarget).replaceAll("\\", "/");
@@ -1004,6 +2079,8 @@ export async function applyBoundedSafeFix({
       return {
         applied: false,
         status: "NOT_ELIGIBLE",
+        verification_level: "NONE",
+        tests_executed: false,
         rule_id: ruleId,
         autofix_class: "AF-2/AF-3",
         file: relTarget,
@@ -1013,7 +2090,7 @@ export async function applyBoundedSafeFix({
 
     const originalContent = await fs.readFile(absTarget, "utf8");
     let updatedContent = originalContent;
-    const autofixClass = ruleId === "ZET-CODE-002" ? "AF-0" : "AF-1";
+    let autofixClass = ruleId === "ZET-CODE-002" ? "AF-0" : "AF-1";
 
     if (ruleId === "ZET-CODE-002") {
       updatedContent = originalContent
@@ -1021,9 +2098,28 @@ export async function applyBoundedSafeFix({
         .map((line) => line.replace(/[ \t]+$/, ""))
         .join("\n");
     } else if (ruleId === "ZET-CODE-001") {
+      // FINDING E (AR-13): Check for complex / inline-conditional / expression-embedded debug statements
+      const debugHits = analyzeDebugStatementsInSource(originalContent);
+      const complexHits = debugHits.filter((h) => !h.isSimpleStandalone);
+      if (complexHits.length > 0) {
+        return {
+          applied: false,
+          status: "PROPOSAL_ONLY_BEHAVIOR_SENSITIVE",
+          verification_level: "NONE",
+          tests_executed: false,
+          rule_id: ruleId,
+          autofix_class: "AF-2",
+          file: relTarget,
+          complex_occurrences: complexHits,
+          reason:
+            "Debug statement is embedded in control flow, an expression, or a multiline call; automatic removal could alter runtime behavior. Returning proposal for manual review.",
+        };
+      }
+
+      const standaloneLineNumbers = new Set(debugHits.map((h) => h.line));
       updatedContent = originalContent
         .split(/\r?\n/)
-        .filter((line) => !/^\s*(?:dd|var_dump)\s*\([^)]*\)\s*;\s*$/.test(line))
+        .filter((_, idx) => !standaloneLineNumbers.has(idx + 1))
         .join("\n");
     }
 
@@ -1031,21 +2127,45 @@ export async function applyBoundedSafeFix({
       return {
         applied: false,
         status: "NO_CHANGES_NEEDED",
+        verification_level: "NONE",
+        tests_executed: false,
         rule_id: ruleId,
         autofix_class: autofixClass,
         file: relTarget,
       };
     }
 
+    // Verify local mechanical invariant before writing
+    if (ruleId === "ZET-CODE-002") {
+      const stripAllTrailing = (s) =>
+        s
+          .split(/\r?\n/)
+          .map((l) => l.replace(/[ \t]+$/, ""))
+          .join("\n");
+      if (stripAllTrailing(originalContent) !== updatedContent) {
+        throw new Error("AF-0 mechanical invariant violation: non-whitespace content changed.");
+      }
+    }
+
     await fs.writeFile(absTarget, updatedContent, "utf8");
 
     let verificationPassed = !simulateVerificationFailure;
-    let verificationDetail = "Deterministic syntax & post-fix audit check passed.";
+    let testsExecuted = false;
+    let verificationDetail = "Local deterministic transformation & invariant check passed (no external test command executed).";
 
-    if (verificationPassed && verifyCommand && Array.isArray(verifyCommand) && verifyCommand.length > 0) {
+    if (typeof simulateConcurrentEditBeforeRollback === "string") {
+      await fs.writeFile(absTarget, simulateConcurrentEditBeforeRollback, "utf8");
+    }
+
+    if (verificationPassed && approvedCmd) {
+      testsExecuted = true;
       try {
-        await execFileAsync(verifyCommand[0], verifyCommand.slice(1), { cwd: root, timeout: 15000 });
-        verificationDetail = `Verification command '${verifyCommand.join(" ")}' passed.`;
+        await execFileAsync(approvedCmd[0], approvedCmd.slice(1), {
+          cwd: root,
+          timeout: 15000,
+          windowsHide: true,
+        });
+        verificationDetail = `Approved verification command '${approvedCmd.join(" ")}' passed.`;
       } catch (err) {
         verificationPassed = false;
         verificationDetail = `Verification command failed: ${err.message}`;
@@ -1053,12 +2173,32 @@ export async function applyBoundedSafeFix({
     }
 
     if (!verificationPassed) {
-      // Restore exact pre-change snapshot preserving user work
+      // CRITICAL FINDING C (AR-10): Guard rollback against overwriting concurrent developer edits!
+      const currentDiskContent = await fs.readFile(absTarget, "utf8");
+      if (currentDiskContent !== updatedContent) {
+        return {
+          applied: false,
+          restored_snapshot: false,
+          concurrent_modification_detected: true,
+          status: "ROLLBACK_ABORTED_CONCURRENT_MODIFICATION",
+          verification_level: "ROLLED_BACK_ABORTED_CONCURRENT_EDIT",
+          tests_executed: testsExecuted,
+          rule_id: ruleId,
+          autofix_class: autofixClass,
+          file: relTarget,
+          verification_detail:
+            "Target file was modified concurrently after autofix write; aborted snapshot overwrite to preserve concurrent developer changes.",
+        };
+      }
+
       await fs.writeFile(absTarget, originalContent, "utf8");
       return {
         applied: false,
         restored_snapshot: true,
+        concurrent_modification_detected: false,
         status: "ROLLED_BACK_ON_VERIFICATION_FAILURE",
+        verification_level: "ROLLED_BACK",
+        tests_executed: testsExecuted,
         rule_id: ruleId,
         autofix_class: autofixClass,
         file: relTarget,
@@ -1066,10 +2206,16 @@ export async function applyBoundedSafeFix({
       };
     }
 
+    // Truthful verification level (CRITICAL FINDING C — AR-08):
+    // Distinguish MECHANICALLY_VERIFIED (no external tests run) from TEST_VERIFIED (external test suite passed).
+    const verificationLevel = testsExecuted ? "TEST_VERIFIED" : "MECHANICALLY_VERIFIED";
+
     return {
       applied: true,
       restored_snapshot: false,
       status: "VERIFIED_APPLIED",
+      verification_level: verificationLevel,
+      tests_executed: testsExecuted,
       rule_id: ruleId,
       autofix_class: autofixClass,
       file: relTarget,
@@ -1105,10 +2251,18 @@ export function formatAuditReportText(report) {
     "DEVWORKFLOW AUTOMATIC CODE AUDIT",
     "",
     `Repository: ${report.repository}`,
-    `Scope: ${report.scope}`,
+    `Scope: ${report.scope} (Mode: ${report.audit_mode || "repository"})`,
+    `Detection: ${report.detection_status || "COMPLETED"} | Coverage: ${report.coverage_status || "COMPLETE"} | Policy: ${report.policy_status || "COMPLIANT"}`,
     `Result: ${report.result}`,
     "",
   ];
+  if (Array.isArray(report.errors) && report.errors.length > 0) {
+    lines.push("Errors:");
+    for (const err of report.errors) {
+      lines.push(`- [${err.code || "ERROR"}] ${err.message}`);
+    }
+    lines.push("");
+  }
   if (report.findings.length === 0) {
     lines.push("Findings: None (0 violations detected).");
   } else {
@@ -1117,7 +2271,7 @@ export function formatAuditReportText(report) {
       const statusTag = f.baseline_status === "historical" ? " [HISTORICAL DEBT]" : "";
       lines.push(`[${f.severity.toUpperCase()}] ${f.rule_id}${statusTag}`);
       lines.push(f.title);
-      lines.push(`File: ${f.file}${f.line ? `:${f.line}` : ""}`);
+      lines.push(`File: ${f.file}${f.line ? `:${f.line}` : ""} (Fingerprint: ${f.evidence_fingerprint || "n/a"})`);
       lines.push(`Evidence: ${redactSecretValues(f.evidence)}`);
       lines.push(`Autofix: ${f.autofix_eligible ? `Eligible (${f.autofix_class})` : `Manual Review (${f.autofix_class})`}`);
       lines.push(`Action: ${f.recommended_fix}`, "");
@@ -1194,11 +2348,13 @@ export async function analyzeChangeImpact({ projectDir, files = [] } = {}) {
       riskLevel = "HIGH";
     } else if (norm.includes("process-lock") || norm.includes("workflow-state") || norm.includes("commit-handlers")) {
       affectedModules.add("DevWorkflow Lock & Lifecycle Core");
-      recommendedTests.add("node --import ./tests/setup-env.js --test tests/project-lock-lifecycle-termination.test.js tests/process-lock.test.js");
+      recommendedTests.add(
+        "node --import ./tests/setup-env.js --test tests/project-lock-lifecycle-termination.test.js tests/process-lock.test.js"
+      );
       riskLevel = "HIGH";
     } else if (norm.startsWith("agent_worker/")) {
       affectedModules.add("Python Coding Agent Worker");
-      recommendedTests.add("python -m unittest discover -s agent_worker -p \"test_*.py\"");
+      recommendedTests.add('python -m unittest discover -s agent_worker -p "test_*.py"');
       if (riskLevel === "LOW") riskLevel = "MEDIUM";
     } else if (norm.startsWith("database/migrations/")) {
       affectedModules.add("Database Schema & Migrations");
@@ -1232,7 +2388,7 @@ export async function analyzeChangeImpact({ projectDir, files = [] } = {}) {
 }
 
 /**
- * Helper 11: `helper_propose_standard` (Never auto-activates blocking rules; Scenario 9)
+ * Helper 11: `helper_propose_standard` (Never auto-activates blocking rules)
  */
 export async function proposeEngineeringStandard({
   projectDir = null,
@@ -1289,7 +2445,7 @@ export async function proposeEngineeringStandard({
 }
 
 /**
- * Unified dispatcher for all DevWorkflow V2.0/V2.1 tools (Sections 4–10, 16).
+ * Unified dispatcher for all DevWorkflow V2.0/V2.1 tools.
  */
 export const DEVWORKFLOW_V2_TOOL_DEFINITIONS = [
   {
@@ -1301,18 +2457,24 @@ export const DEVWORKFLOW_V2_TOOL_DEFINITIONS = [
         projectDir: { type: "string" },
         files: { type: "array", items: { type: "string" } },
         baselineFile: { type: "string" },
+        maxFiles: { type: "number" },
+        maxDepth: { type: "number" },
       },
       additionalProperties: false,
     },
   },
   {
     name: "audit_changes",
-    description: "[READ_ONLY] Audit changed files or a Git diff against engineering standards, focusing on newly introduced violations.",
+    description: "[READ_ONLY] Audit changed files or a Git diff (working_tree, staged, commit_range, or PR merge-base) against engineering standards.",
     inputSchema: {
       type: "object",
       properties: {
         projectDir: { type: "string" },
         files: { type: "array", items: { type: "string" } },
+        changeMode: { type: "string" },
+        baseRef: { type: "string" },
+        headRef: { type: "string" },
+        commitRange: { type: "string" },
         baselineFile: { type: "string" },
       },
       additionalProperties: false,
@@ -1320,12 +2482,14 @@ export const DEVWORKFLOW_V2_TOOL_DEFINITIONS = [
   },
   {
     name: "audit_repository",
-    description: "[READ_ONLY] Run a comprehensive repository-wide engineering audit across architecture, code quality, security, testing, API, database, and docs.",
+    description: "[READ_ONLY] Run a comprehensive repository-wide engineering audit with explicit scan completeness telemetry (COMPLETE vs PARTIAL).",
     inputSchema: {
       type: "object",
       properties: {
         projectDir: { type: "string" },
         baselineFile: { type: "string" },
+        maxFiles: { type: "number" },
+        maxDepth: { type: "number" },
       },
       additionalProperties: false,
     },
@@ -1403,14 +2567,20 @@ export const DEVWORKFLOW_V2_TOOL_DEFINITIONS = [
   },
   {
     name: "audit_report",
-    description: "[READ_ONLY] Generate an evidence-backed consolidated engineering audit report in both human-readable and JSON format.",
+    description: "[READ_ONLY] Generate an evidence-backed consolidated engineering audit report with 4-dimension reliability status.",
     inputSchema: {
       type: "object",
       properties: {
         projectDir: { type: "string" },
         files: { type: "array", items: { type: "string" } },
         scope: { type: "string" },
+        changeMode: { type: "string" },
+        baseRef: { type: "string" },
+        headRef: { type: "string" },
+        commitRange: { type: "string" },
         baselineFile: { type: "string" },
+        maxFiles: { type: "number" },
+        maxDepth: { type: "number" },
       },
       additionalProperties: false,
     },
@@ -1445,7 +2615,7 @@ export const DEVWORKFLOW_V2_TOOL_DEFINITIONS = [
   },
   {
     name: "helper_autofix_candidates",
-    description: "[READ_ONLY] Find deterministic AF-0 and AF-1 findings eligible for bounded automatic remediation.",
+    description: "[READ_ONLY] Find deterministic AF-0 and standalone AF-1 findings eligible for bounded automatic remediation.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1457,7 +2627,7 @@ export const DEVWORKFLOW_V2_TOOL_DEFINITIONS = [
   },
   {
     name: "helper_apply_safe_fix",
-    description: "[LOCAL_WRITE] Apply an allowlisted deterministic AF-0/AF-1 fix to an authorized workspace file under worktree mutex fencing with automatic snapshot rollback on verification failure.",
+    description: "[LOCAL_WRITE] Apply an allowlisted deterministic AF-0/AF-1 fix under worktree mutex fencing with truthful verification levels and concurrent rollback protection.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1586,6 +2756,8 @@ export async function handleDevWorkflowV2Tool(name, args = {}, workflowState = n
   const files = Array.isArray(args.files) ? args.files : [];
   const baseline = args.baseline || null;
   const baselineFile = args.baselineFile || null;
+  const maxFiles = args.maxFiles || 1000;
+  const maxDepth = args.maxDepth || 12;
 
   switch (name) {
     case "audit_code":
@@ -1595,6 +2767,8 @@ export async function handleDevWorkflowV2Tool(name, args = {}, workflowState = n
         scopeLabel: files.length ? "Selected Files" : "Repository",
         baseline,
         baselineFile,
+        maxFiles,
+        maxDepth,
       });
     case "audit_changes":
       return await runEngineeringAudit({
@@ -1602,8 +2776,14 @@ export async function handleDevWorkflowV2Tool(name, args = {}, workflowState = n
         files,
         scopeLabel: "Pull Request / Changed Files",
         discoverGitChanges: true,
+        changeMode: args.changeMode || null,
+        baseRef: args.baseRef || null,
+        headRef: args.headRef || "HEAD",
+        commitRange: args.commitRange || null,
         baseline,
         baselineFile,
+        maxFiles,
+        maxDepth,
       });
     case "audit_repository":
       return await runEngineeringAudit({
@@ -1612,6 +2792,8 @@ export async function handleDevWorkflowV2Tool(name, args = {}, workflowState = n
         scopeLabel: "Full Repository",
         baseline,
         baselineFile,
+        maxFiles,
+        maxDepth,
       });
     case "audit_architecture":
       return await runEngineeringAudit({
@@ -1621,6 +2803,8 @@ export async function handleDevWorkflowV2Tool(name, args = {}, workflowState = n
         scopeLabel: "Architecture",
         baseline,
         baselineFile,
+        maxFiles,
+        maxDepth,
       });
     case "audit_security":
       return await runEngineeringAudit({
@@ -1630,6 +2814,8 @@ export async function handleDevWorkflowV2Tool(name, args = {}, workflowState = n
         scopeLabel: "Security",
         baseline,
         baselineFile,
+        maxFiles,
+        maxDepth,
       });
     case "audit_tests":
       return await runEngineeringAudit({
@@ -1639,6 +2825,8 @@ export async function handleDevWorkflowV2Tool(name, args = {}, workflowState = n
         scopeLabel: "Testing",
         baseline,
         baselineFile,
+        maxFiles,
+        maxDepth,
       });
     case "audit_api_contracts":
       return await runEngineeringAudit({
@@ -1648,6 +2836,8 @@ export async function handleDevWorkflowV2Tool(name, args = {}, workflowState = n
         scopeLabel: "API Contracts",
         baseline,
         baselineFile,
+        maxFiles,
+        maxDepth,
       });
     case "audit_database_changes":
       return await runEngineeringAudit({
@@ -1657,17 +2847,27 @@ export async function handleDevWorkflowV2Tool(name, args = {}, workflowState = n
         scopeLabel: "Database Migrations",
         baseline,
         baselineFile,
+        maxFiles,
+        maxDepth,
       });
     case "audit_standards":
       return await validateStandardsRegistry(projectDir);
     case "audit_report": {
+      const isPrScope =
+        args.scope === "Pull Request" || Boolean(args.changeMode) || Boolean(args.baseRef) || Boolean(args.commitRange);
       const report = await runEngineeringAudit({
         projectDir,
         files,
-        scopeLabel: args.scope || (files.length ? "Pull Request" : "Repository"),
-        discoverGitChanges: args.scope === "Pull Request" && files.length === 0,
+        scopeLabel: args.scope || (files.length || isPrScope ? "Pull Request" : "Repository"),
+        discoverGitChanges: isPrScope && files.length === 0,
+        changeMode: args.changeMode || null,
+        baseRef: args.baseRef || null,
+        headRef: args.headRef || "HEAD",
+        commitRange: args.commitRange || null,
         baseline,
         baselineFile,
+        maxFiles,
+        maxDepth,
       });
       return {
         ...report,
@@ -1684,6 +2884,11 @@ export async function handleDevWorkflowV2Tool(name, args = {}, workflowState = n
         files,
         scopeLabel: "Autofix Candidate Scan",
         discoverGitChanges: files.length === 0,
+        changeMode: args.changeMode || null,
+        baseRef: args.baseRef || null,
+        headRef: args.headRef || "HEAD",
+        maxFiles,
+        maxDepth,
       });
       return {
         project_dir: audit.project_dir,
@@ -1697,6 +2902,7 @@ export async function handleDevWorkflowV2Tool(name, args = {}, workflowState = n
         ruleId: args.ruleId || "ZET-CODE-002",
         verifyCommand: args.verifyCommand || null,
         simulateVerificationFailure: Boolean(args.simulateVerificationFailure),
+        simulateConcurrentEditBeforeRollback: args.simulateConcurrentEditBeforeRollback || null,
         workflowState,
         requireOwnership: Boolean(args.requireOwnership),
         sessionId: args.sessionId || null,
