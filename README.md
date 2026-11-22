@@ -29,7 +29,7 @@ Install → Connect AI Client → Start Task → Design Flow → Implement → T
 - **Prevents Hallucination & Scope Creep:** Enforces explicit Task Contracts (`plan`, `definitionOfDone`, and Mermaid flow gates) before implementation.
 - **Worktree & Session Isolation:** Prevents concurrent AI sessions from overwriting each other's files.
 - **Empirical Quality Gates:** Requires real test runs, documentation updates, and clean Git state before `commit_and_push`.
-- **Automatic Code Audit & Safe Fixes (V2.0+):** Built-in `audit_*` and `helper_*` MCP tools detect security, database, architecture, and quality violations and apply bounded `AF-0`/`AF-1` autofixes with automatic snapshot rollback.
+- **Automatic Code Audit & Safe Fixes (V3.0+):** Built-in canonical `audit`, `analyze_change`, `plan_fix`, and `apply_safe_fix` MCP tools detect security, database, architecture, and quality violations and apply bounded `AF-0`/`AF-1` autofixes with automatic snapshot rollback.
 - **Strict Secret Isolation:** `DEV_WORKFLOW_SECURITY_MODE=strict` blocks raw secret writes and scrubs sensitive tokens from outputs.
 
 ---
@@ -111,7 +111,7 @@ devwf zettly disconnect --confirm
 - **Cross-Machine Handoff Contracts:** `checkpoint_task`, `fetch_task`, `handoff_task`, and `acknowledge_handover` coordinate safe handoffs across workstations. A handoff requires an explicit `reason`, the returning machine must call `acknowledge_handover`, and reverts are recorded — **never executed automatically**.
 - **Monitor Hygiene:** **Junk sessions are not recorded** — a monitor card requires **both** a task **and** a project (`monitor-server/cleanup-empty-sessions.cjs` cleans up legacy empty rows).
 - **Optional Zettly Tags for Zettelkasten Relations:** When Zettly sync is enabled, tasks can be tagged across four axes (`proyek:`, `tipe:`, `area:`, `sumber:`) scoped **per owner**. The tag API returns top-level `{ tags }` / `deletedTags` and HTTP `409` when a tag already exists. Maintenance commands `zettly:backfill-tags --dry-run` and `zettly:normalise-tags` migrate legacy tags safely (legacy tags are **deleted only after every record** has been moved to the canonical axis tag).
-- **Engineering Standards & Autofix:** DevWorkflow ships built-in standards (`ZET-ARCH`, `ZET-CODE`, `ZET-SEC`, `ZET-TEST`, `ZET-API`, `ZET-DB`, `ZET-DOC`, `ZET-REL`) plus `audit_standards`, `audit_changes`, `audit_code`, `audit_report`, and `helper_apply_safe_fix` (`AF-0`/`AF-1` deterministic fixes with snapshot rollback; protected governance paths are strictly blocked as `AF-3`).
+- **Engineering Standards & Autofix:** DevWorkflow ships built-in standards (`ZET-ARCH`, `ZET-CODE`, `ZET-SEC`, `ZET-TEST`, `ZET-API`, `ZET-DB`, `ZET-DOC`, `ZET-REL`) plus canonical `audit` (`category: 'code'|'changes'|'repository'|'architecture'|'security'|'tests'|'api'|'database'|'standards'|'catalog'`), `analyze_change`, `plan_fix`, and `apply_safe_fix` (`AF-0`/`AF-1` deterministic fixes with snapshot rollback; protected governance paths are strictly blocked as `AF-3`).
 
 ---
 

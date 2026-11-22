@@ -12,16 +12,19 @@ import { getToolList } from "../tools/definitions.js";
 
 const REPO_ROOT = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 
-test("DevWorkflow V2.0/V2.1 registers all core audit and helper tools in MCP tool catalog", () => {
+test("DevWorkflow V3.0 registers the 4 canonical engineering audit and helper tools (audit, analyze_change, plan_fix, apply_safe_fix) with zero legacy duplicate names", () => {
   const catalogNames = new Set(getToolList().map((t) => t.name));
-  assert.ok(DEVWORKFLOW_V2_TOOL_DEFINITIONS.length >= 22);
+  assert.equal(DEVWORKFLOW_V2_TOOL_DEFINITIONS.length, 4);
   for (const def of DEVWORKFLOW_V2_TOOL_DEFINITIONS) {
-    assert.ok(catalogNames.has(def.name), `Missing V2 tool '${def.name}' in getToolList()`);
+    assert.ok(catalogNames.has(def.name), `Missing canonical V3 tool '${def.name}' in getToolList()`);
+  }
+  for (const removed of ["audit_code", "audit_changes", "audit_repository", "helper_suggest_tests", "helper_change_impact", "helper_apply_safe_fix", "project_summary_data", "project_summary_db"]) {
+    assert.equal(catalogNames.has(removed), false, `Removed legacy tool '${removed}' must not appear in getToolList()`);
   }
 });
 
-test("audit_standards validates Engineering Standards Registry without errors", async () => {
-  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "devwf-v2-standards-"));
+test("audit ({ category: 'standards' }) validates Engineering Standards Registry without errors", async () => {
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "devwf-v3-standards-"));
   try {
     await fs.mkdir(path.join(tmpDir, "engineering", "standards"), { recursive: true });
     await fs.mkdir(path.join(tmpDir, "engineering", "exceptions"), { recursive: true });
@@ -50,7 +53,7 @@ test("audit_standards validates Engineering Standards Registry without errors", 
       "utf8"
     );
 
-    const res = await handleDevWorkflowV2Tool("audit_standards", { projectDir: tmpDir });
+    const res = await handleDevWorkflowV2Tool("audit", { category: "standards", projectDir: tmpDir });
     assert.equal(res.valid, true, `Expected valid registry, got issues: ${JSON.stringify(res.issues)}`);
     assert.equal(res.has_registry_directory, true);
     assert.ok(res.rules_count >= 11);
@@ -60,28 +63,25 @@ test("audit_standards validates Engineering Standards Registry without errors", 
   }
 });
 
-test("Automatic Code Audit Engine detects seeded violations across categories and generates formatted report", async () => {
-  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "devwf-v2-audit-"));
+test("Automatic Code Audit Engine (canonical 'audit' & 'plan_fix') detects seeded violations across categories and generates formatted report", async () => {
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "devwf-v3-audit-"));
   try {
     await fs.mkdir(path.join(tmpDir, "app", "Http", "Controllers"), { recursive: true });
     await fs.mkdir(path.join(tmpDir, "database", "migrations"), { recursive: true });
     await fs.mkdir(path.join(tmpDir, "app", "Services", "ReleaseSafety"), { recursive: true });
 
-    // Seed 1: Controller with DB::raw (ZET-ARCH-001) + dd() debug leftover (ZET-CODE-001) + trailing whitespace (ZET-CODE-002)
     await fs.writeFile(
       path.join(tmpDir, "app", "Http", "Controllers", "SampleController.php"),
       "<?php\nclass SampleController {\n  public function index() {\n    dd($request);\n    return DB::raw('SELECT 1');   \n  }\n}\n",
       "utf8"
     );
 
-    // Seed 2: Destructive migration in up() (ZET-DB-001)
     await fs.writeFile(
       path.join(tmpDir, "database", "migrations", "2026_11_22_000001_drop_users_col.php"),
       "<?php\nreturn new class {\n  public function up() {\n    Schema::dropIfExists('legacy_users');\n  }\n  public function down() {}\n};\n",
       "utf8"
     );
 
-    // Seed 3: Critical ReleaseSafety service modified without test change (ZET-TEST-001)
     await fs.writeFile(
       path.join(tmpDir, "app", "Services", "ReleaseSafety", "Gate.php"),
       "<?php\nclass Gate {}\n",
@@ -94,7 +94,7 @@ test("Automatic Code Audit Engine detects seeded violations across categories an
       "app/Services/ReleaseSafety/Gate.php",
     ];
 
-    const report = await handleDevWorkflowV2Tool("audit_report", {
+    const report = await handleDevWorkflowV2Tool("audit", {
       projectDir: tmpDir,
       files: changedFiles,
       scope: "Pull Request",
@@ -112,8 +112,8 @@ test("Automatic Code Audit Engine detects seeded violations across categories an
     assert.ok(ruleIds.has("ZET-DB-001"), "Should detect destructive migration");
     assert.ok(ruleIds.has("ZET-TEST-001"), "Should detect critical service change without test");
 
-    // Verify helper_autofix_candidates
-    const candidates = await handleDevWorkflowV2Tool("helper_autofix_candidates", {
+    const candidates = await handleDevWorkflowV2Tool("plan_fix", {
+      mode: "candidates",
       projectDir: tmpDir,
       files: changedFiles,
     });
@@ -123,15 +123,14 @@ test("Automatic Code Audit Engine detects seeded violations across categories an
   }
 });
 
-test("Bounded Self-Healing Autofix applies AF-0/AF-1 fixes, restores snapshot on verification failure, and blocks protected paths", async () => {
-  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "devwf-v2-fix-"));
+test("Bounded Self-Healing Autofix (canonical 'apply_safe_fix') applies AF-0/AF-1 fixes, restores snapshot on verification failure, and blocks protected paths", async () => {
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "devwf-v3-fix-"));
   try {
     const sampleFile = path.join(tmpDir, "sample.php");
     const initial = "<?php\n  dd($debug);\n$x = 1;   \n";
     await fs.writeFile(sampleFile, initial, "utf8");
 
-    // 1. Simulated verification failure -> must restore exact original content!
-    const rolledBack = await handleDevWorkflowV2Tool("helper_apply_safe_fix", {
+    const rolledBack = await handleDevWorkflowV2Tool("apply_safe_fix", {
       projectDir: tmpDir,
       file: "sample.php",
       ruleId: "ZET-CODE-001",
@@ -142,8 +141,7 @@ test("Bounded Self-Healing Autofix applies AF-0/AF-1 fixes, restores snapshot on
     assert.equal(rolledBack.status, "ROLLED_BACK_ON_VERIFICATION_FAILURE");
     assert.equal(await fs.readFile(sampleFile, "utf8"), initial);
 
-    // 2. AF-1 fix (remove dd()) succeeds and persists
-    const fixedAf1 = await handleDevWorkflowV2Tool("helper_apply_safe_fix", {
+    const fixedAf1 = await handleDevWorkflowV2Tool("apply_safe_fix", {
       projectDir: tmpDir,
       file: "sample.php",
       ruleId: "ZET-CODE-001",
@@ -153,8 +151,7 @@ test("Bounded Self-Healing Autofix applies AF-0/AF-1 fixes, restores snapshot on
     const afterAf1 = await fs.readFile(sampleFile, "utf8");
     assert.ok(!afterAf1.includes("dd($debug)"));
 
-    // 3. AF-0 fix (strip trailing whitespace) succeeds
-    const fixedAf0 = await handleDevWorkflowV2Tool("helper_apply_safe_fix", {
+    const fixedAf0 = await handleDevWorkflowV2Tool("apply_safe_fix", {
       projectDir: tmpDir,
       file: "sample.php",
       ruleId: "ZET-CODE-002",
@@ -162,10 +159,9 @@ test("Bounded Self-Healing Autofix applies AF-0/AF-1 fixes, restores snapshot on
     assert.equal(fixedAf0.applied, true);
     assert.equal(await fs.readFile(sampleFile, "utf8"), "<?php\n$x = 1;\n");
 
-    // 4. Protected governance file is strictly rejected
     await assert.rejects(
       () =>
-        handleDevWorkflowV2Tool("helper_apply_safe_fix", {
+        handleDevWorkflowV2Tool("apply_safe_fix", {
           projectDir: tmpDir,
           file: "engineering/policies/enforcement.yaml",
           ruleId: "ZET-CODE-002",
@@ -177,27 +173,31 @@ test("Bounded Self-Healing Autofix applies AF-0/AF-1 fixes, restores snapshot on
   }
 });
 
-test("Helper tools explain violations, plan fixes, analyze change impact, and propose standards without auto-activating blocking rules", async () => {
-  const explained = await handleDevWorkflowV2Tool("helper_explain_violation", {
+test("Canonical 'analyze_change' and 'plan_fix' explain violations, plan fixes, analyze change impact, and propose standards without auto-activating blocking rules", async () => {
+  const explained = await handleDevWorkflowV2Tool("analyze_change", {
+    mode: "explain",
     ruleId: "ZET-DB-001",
     file: "database/migrations/2026_11_21_drop.php",
   });
   assert.equal(explained.rule_id, "ZET-DB-001");
   assert.ok(explained.engineering_principle.includes("Reversible Changes"));
 
-  const plan = await handleDevWorkflowV2Tool("helper_plan_fix", {
+  const plan = await handleDevWorkflowV2Tool("plan_fix", {
+    mode: "plan",
     ruleId: "ZET-ARCH-001",
     files: ["app/Http/Controllers/TodoController.php"],
   });
   assert.equal(plan.rule_id, "ZET-ARCH-001");
 
-  const impact = await handleDevWorkflowV2Tool("helper_change_impact", {
+  const impact = await handleDevWorkflowV2Tool("analyze_change", {
+    mode: "impact",
     files: ["app/Services/ReleaseSafety/AutonomousDeploymentPolicy.php"],
   });
   assert.equal(impact.risk_level, "HIGH");
   assert.ok(impact.recommended_tests.some((t) => t.includes("V16ReleaseSafetyAndAiOrgTest")));
 
-  const proposed = await handleDevWorkflowV2Tool("helper_propose_standard", {
+  const proposed = await handleDevWorkflowV2Tool("analyze_change", {
+    mode: "propose_standard",
     proposedId: "ZET-PERF-001",
     title: "Avoid N+1 queries in Todo controllers",
     problemDescription: "Repeated eager-loading omissions in list endpoints.",
@@ -206,8 +206,9 @@ test("Helper tools explain violations, plan fixes, analyze change impact, and pr
   assert.equal(proposed.proposed_enforcement, "advisory");
 });
 
-test("DevWorkflow V2.0 self-audits its own codebase cleanly", async () => {
-  const selfAudit = await handleDevWorkflowV2Tool("audit_code", {
+test("DevWorkflow V3.0 self-audits its own codebase cleanly via canonical 'audit'", async () => {
+  const selfAudit = await handleDevWorkflowV2Tool("audit", {
+    category: "code",
     projectDir: REPO_ROOT,
     files: [
       "src/engineering-audit.js",

@@ -479,14 +479,14 @@ test("run_full_workflow uses provided branch for release push when commit is cle
   });
 });
 
-test("project_summary_data reads persisted file and falls back", async () => {
+test("project_summary with source:file reads persisted file and falls back", async () => {
   await withWorkflowState(async (workflowState) => {
     // Seed some history
     workflowState.addToHistory({ taskDescription: "Add login feature", taskType: "feature", commitMessage: "feat: login" });
     await workflowState.save(); // This should create project-summary.json
 
     const response = await handleToolCall({
-      request: createRequest("project_summary_data", {}),
+      request: createRequest("project_summary", { source: "file" }),
       normalizeRequestArgs,
       workflowState,
       exec: async () => ({ stdout: "" }),

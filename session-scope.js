@@ -40,8 +40,6 @@ export const NON_SESSION_SCOPED_TOOLS = new Set([
   "recommend_mcp_tools",
   "build_report",
   "project_summary",
-  "project_summary_data",
-  "project_summary_db",
   "security_audit",
   "search_project",
   ...DEVWORKFLOW_V2_TOOL_NAMES,

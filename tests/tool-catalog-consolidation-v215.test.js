@@ -10,12 +10,10 @@ import { getToolList } from "../tools/definitions.js";
 import { NON_SESSION_SCOPED_TOOLS, resolveRequestSession } from "../session-scope.js";
 import { handleDevWorkflowV2Tool } from "../src/engineering-audit.js";
 import {
-  auditToolCatalog,
-  buildToolInventory,
   validateToolRegistrationGate,
-  generateConsolidationPlan,
   selectCanonicalToolForScenario,
   TOOL_ALIASES,
+  REMOVED_LEGACY_TOOLS,
   CANONICAL_TOOL_METADATA,
   SEMANTIC_DUPLICATION_MATRIX,
   AGENT_TOOL_SELECTION_BENCHMARK,
@@ -44,7 +42,7 @@ const utils = {
   createCommitMessageParts,
 };
 
-async function createTempGitRepo(prefix = "dwf-v215-") {
+async function createTempGitRepo(prefix = "dwf-v300-") {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
   execFileSync("git", ["init", "-q", "-b", "main"], { cwd: dir, stdio: "ignore" });
   execFileSync("git", ["config", "user.name", "Catalog Auditor"], { cwd: dir, stdio: "ignore" });
@@ -55,23 +53,35 @@ async function createTempGitRepo(prefix = "dwf-v215-") {
   return dir;
 }
 
-test("TC-01: Complete registration inventory accounts for all 74 public MCP tools, prompts, and CLI commands with zero unmapped tools", async () => {
+test("TC-01: Radical simplification inventory accounts for all 63 canonical public MCP tools with zero compatibility aliases and zero unmapped tools", async () => {
   const tools = getToolList();
-  const report = await handleDevWorkflowV2Tool("audit_tool_catalog", {
+  const report = await handleDevWorkflowV2Tool("audit", {
+    category: "catalog",
     includeMatrix: true,
     includeInventory: true,
     includeConsolidationPlan: true,
   });
 
-  assert.equal(tools.length, 84, "Expected exactly 84 registered public MCP tools in v2.1.5");
-  assert.equal(report.summary.total_public_tools, 84);
-  assert.equal(report.summary.canonical_public_tools, 80);
-  assert.equal(report.summary.compatibility_aliases, 4);
+  assert.equal(tools.length, 63, "Expected exactly 63 canonical public MCP tools in v3.0.0 (down from 84)");
+  assert.equal(report.summary.total_public_tools, 63);
+  assert.equal(report.summary.canonical_public_tools, 63);
+  assert.equal(report.summary.compatibility_aliases, 0, "Zero compatibility aliases permitted in v3.0.0");
+  assert.equal(Object.keys(TOOL_ALIASES).length, 0);
+  assert.equal(Object.keys(REMOVED_LEGACY_TOOLS).length, 25);
   assert.equal(report.summary.unmapped_tools_count, 0, `Unmapped tools: ${report.unmapped_tools.join(", ")}`);
   assert.equal(report.summary.untested_tools_count, 0, `Untested tools: ${report.untested_tools.join(", ")}`);
   assert.equal(report.summary.mcp_prompts_count, 2);
   assert.equal(report.summary.cli_commands_count, 14);
   assert.ok(report.consolidation_plan);
+
+  const registeredNames = new Set(tools.map((t) => t.name));
+  for (const legacyName of Object.keys(REMOVED_LEGACY_TOOLS)) {
+    assert.equal(
+      registeredNames.has(legacyName),
+      false,
+      `Removed legacy tool '${legacyName}' must NOT be registered in getToolList()`
+    );
+  }
 
   for (const tool of tools) {
     assert.ok(
@@ -81,44 +91,38 @@ test("TC-01: Complete registration inventory accounts for all 74 public MCP tool
   }
 });
 
-test("TC-02 & TC-12: Catalog regression gate detects duplicate tool IDs, missing descriptions/schemas, and redundant new tool registrations", () => {
+test("TC-02 & TC-12: Catalog regression gate blocks duplicate tool IDs, missing descriptions/schemas, and flags redundant new tool registrations", () => {
   const tools = getToolList();
 
-  // 1. Live catalog passes regression gate with 0 blocking violations
   const baselineGate = validateToolRegistrationGate({ tools });
   assert.equal(baselineGate.passed, true);
   assert.equal(baselineGate.blocking_violations_count, 0);
 
-  // 2. TC-02: Duplicate tool ID is deterministically blocked
   const duplicateGate = validateToolRegistrationGate({
     tools,
     proposedTools: [
       {
-        name: "audit_code",
-        description: "Duplicate registration of audit_code tool ID.",
+        name: "audit",
+        description: "Duplicate registration of canonical audit tool ID.",
         inputSchema: { type: "object", properties: {} },
       },
     ],
   });
   assert.equal(duplicateGate.passed, false);
   assert.equal(duplicateGate.status, "BLOCKED");
-  assert.ok(duplicateGate.blocking_violations.some((v) => v.code === "DUPLICATE_TOOL_ID" && v.toolId === "audit_code"));
+  assert.ok(duplicateGate.blocking_violations.some((v) => v.code === "DUPLICATE_TOOL_ID" && v.toolId === "audit"));
 
-  // 3. TC-12: New redundant tool registration sharing same handler/service triggers REDUNDANT_HANDLER_OR_SERVICE_CANDIDATE warning
   const redundantGate = validateToolRegistrationGate({
     tools,
     proposedTools: [
       {
         name: "helper_recommend_test_suite_v2",
-        description: "[READ_ONLY] Recommend characterization and regression test suites based on changed files and risk.",
-        handler: "handleDevWorkflowV2Tool('helper_change_impact')",
-        domainService: "analyzeChangeImpact",
+        description: "[READ_ONLY] Canonical change analysis tool: evaluate change impact & recommended regression tests.",
+        handler: "handleDevWorkflowV2Tool('analyze_change')",
+        domainService: "analyzeChangeImpact / explainViolation / proposeEngineeringStandard",
         inputSchema: {
           type: "object",
-          properties: {
-            projectDir: { type: "string" },
-            files: { type: "array", items: { type: "string" } },
-          },
+          properties: {},
         },
       },
     ],
@@ -130,50 +134,43 @@ test("TC-02 & TC-12: Catalog regression gate detects duplicate tool IDs, missing
       (w) =>
         w.code === "REDUNDANT_HANDLER_OR_SERVICE_CANDIDATE" &&
         (w.toolA === "helper_recommend_test_suite_v2" || w.toolB === "helper_recommend_test_suite_v2")
-    ),
-    "Expected redundant handler/service review warning for proposed duplicate tool"
+    )
   );
 });
 
-test("TC-03, TC-06 & TC-07: Semantic duplication matrix detects D0 exact duplicates, D1 semantic duplicates, D2 partial overlaps, and D3 wrapper redundancy", () => {
-  // TC-03: Different names, equivalent handlers (D0 helper_suggest_tests <-> helper_change_impact, D1 project_summary_data/db <-> project_summary)
-  const d0 = SEMANTIC_DUPLICATION_MATRIX.find((m) => m.pairId === "DUP-01");
-  assert.ok(d0);
-  assert.equal(d0.classification, "D0");
-  assert.equal(d0.toolA, "helper_suggest_tests");
-  assert.equal(d0.toolB, "helper_change_impact");
+test("TC-03, TC-06 & TC-07: Removed legacy tools fail closed at dispatch with no silent alias forwarding", async () => {
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "dwf-no-alias-"));
+  try {
+    const ws = new WorkflowState(path.join(tmpDir, "state.json"));
+    await ws.load();
+    await bindTaskToRepo(ws);
 
-  const d1Data = SEMANTIC_DUPLICATION_MATRIX.find((m) => m.pairId === "DUP-02");
-  const d1Db = SEMANTIC_DUPLICATION_MATRIX.find((m) => m.pairId === "DUP-03");
-  assert.equal(d1Data.classification, "D1");
-  assert.equal(d1Db.classification, "D1");
-
-  // TC-06: Wrapper-only tool identified (D3 audit_repository -> audit_code)
-  const d3 = SEMANTIC_DUPLICATION_MATRIX.find((m) => m.pairId === "DUP-04");
-  assert.ok(d3);
-  assert.equal(d3.classification, "D3");
-  assert.equal(d3.toolA, "audit_repository");
-  assert.equal(d3.toolB, "audit_code");
-
-  // TC-07: Shared handler/engine with different workflows classified as D2 PARTIAL_OVERLAP
-  const d2Category = SEMANTIC_DUPLICATION_MATRIX.find((m) => m.pairId === "DUP-05");
-  assert.ok(d2Category);
-  assert.equal(d2Category.classification, "D2");
+    for (const removedTool of ["audit_code", "helper_suggest_tests", "project_summary_data", "project_summary_db"]) {
+      await assert.rejects(
+        () => handleDevWorkflowV2Tool(removedTool, { projectDir: REPO_ROOT }),
+        /Unsupported DevWorkflow V3\.0 tool/
+      );
+      const mcpRes = await handleToolCall({
+        request: { params: { name: removedTool, arguments: {} } },
+        normalizeRequestArgs,
+        workflowState: ws,
+        exec: async () => ({ stdout: "" }),
+        git: {},
+        utils,
+      });
+      assert.match(mcpRes.content[0].text, /Internal server error|Unknown tool/);
+    }
+    await ws.close();
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  }
 });
 
 test("TC-04 & TC-05: False duplicates (D6) and distinct authorization boundaries (D4) are preserved and never merged unsafely", () => {
-  // TC-04: Similar names, distinct behavior (security_audit vs audit_security, site_audit vs audit_code)
   const d6Sec = SEMANTIC_DUPLICATION_MATRIX.find((m) => m.pairId === "DUP-07");
   assert.ok(d6Sec);
   assert.equal(d6Sec.classification, "D6");
-  assert.equal(d6Sec.toolA, "security_audit");
-  assert.equal(d6Sec.toolB, "audit_security");
 
-  const d6Site = SEMANTIC_DUPLICATION_MATRIX.find((m) => m.pairId === "DUP-08");
-  assert.ok(d6Site);
-  assert.equal(d6Site.classification, "D6");
-
-  // TC-05: Equivalent descriptions with different authorization boundaries or unfenced read+write merging are caught
   const d4Term = SEMANTIC_DUPLICATION_MATRIX.find((m) => m.pairId === "DUP-09");
   assert.equal(d4Term.classification, "D4");
 
@@ -194,57 +191,51 @@ test("TC-04 & TC-05: False duplicates (D6) and distinct authorization boundaries
   assert.ok(
     unsafeMergeGate.blocking_violations.some((v) => v.code === "UNSAFE_PERMISSION_BOUNDARY_MERGE")
   );
-
-  // Also verify warning when a proposed read-write tool has high description overlap with a read-only tool
-  const diffPermGate = validateToolRegistrationGate({
-    tools: [
-      {
-        name: "custom_scan_policy",
-        description: "Evaluate engineering policy rules across repository source files and return findings report.",
-        permissionLevel: "READ_ONLY",
-        inputSchema: { type: "object", properties: {} },
-      },
-    ],
-    proposedTools: [
-      {
-        name: "custom_mutate_policy",
-        description: "Evaluate engineering policy rules across repository source files and write findings report.",
-        permissionLevel: "LOCAL_WRITE_FENCED",
-        inputSchema: { type: "object", properties: {} },
-      },
-    ],
-  });
-  assert.equal(diffPermGate.passed, true);
-  assert.ok(
-    diffPermGate.review_warnings.some((w) => w.code === "SIMILAR_DESCRIPTION_DIFFERENT_AUTHORIZATION")
-  );
 });
 
-test("TC-08, TC-09 & TC-10: Compatibility aliases preserve input schemas and output contracts with zero breaking regressions", async () => {
-  // 1. helper_suggest_tests (alias) vs helper_change_impact (canonical)
+test("TC-08, TC-09 & TC-10: Canonical tools (audit, analyze_change, plan_fix, apply_safe_fix, project_summary) preserve 100% of capabilities", async () => {
+  // 1. analyze_change (modes: impact, tests, explain, root_cause, refactor, docs, debt, opportunities, propose_standard)
   const files = ["app/Services/ReleaseSafety/DeploymentGate.php"];
-  const resAlias = await handleDevWorkflowV2Tool("helper_suggest_tests", {
+  const impact = await handleDevWorkflowV2Tool("analyze_change", {
+    mode: "impact",
     projectDir: REPO_ROOT,
     files,
   });
-  const resCanonical = await handleDevWorkflowV2Tool("helper_change_impact", {
-    projectDir: REPO_ROOT,
-    files,
-  });
-  assert.deepEqual(resAlias, resCanonical, "helper_suggest_tests alias must return exact same output contract as helper_change_impact");
-  assert.equal(resCanonical.risk_level, "HIGH");
+  assert.equal(impact.risk_level, "HIGH");
+  assert.ok(impact.recommended_tests.length > 0);
 
-  // 2. project_summary_data & project_summary_db (aliases) vs project_summary({ source }) (canonical)
-  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "dwf-summary-compat-"));
+  const rca = await handleDevWorkflowV2Tool("analyze_change", {
+    mode: "root_cause",
+    errorMessage: "AssertionError: expected 200 to equal 500",
+    files,
+  });
+  assert.equal(rca.error_message, "AssertionError: expected 200 to equal 500");
+  assert.ok(rca.hypotheses.length > 0);
+
+  const refactor = await handleDevWorkflowV2Tool("analyze_change", {
+    mode: "refactor",
+    projectDir: REPO_ROOT,
+    files,
+  });
+  assert.ok(Array.isArray(refactor.refactoring_steps));
+
+  const debt = await handleDevWorkflowV2Tool("analyze_change", {
+    mode: "debt",
+    projectDir: REPO_ROOT,
+  });
+  assert.equal(debt.priorities.length, 4);
+
+  // 2. project_summary with source: 'memory' | 'file' | 'db' | 'auto'
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "dwf-summary-v3-"));
   try {
     const stateFile = path.join(tmpDir, "state.json");
     const ws = new WorkflowState(stateFile);
     await ws.load();
     await bindTaskToRepo(ws);
     ws.addToHistory({
-      taskDescription: "Consolidate MCP tools",
+      taskDescription: "Radical tool simplification v3.0.0",
       taskType: "refactor",
-      commitMessage: "refactor(mcp): consolidate tool handlers",
+      commitMessage: "feat!: simplify MCP tool catalog to 63 canonical tools",
     });
     await ws.save();
 
@@ -258,29 +249,18 @@ test("TC-08, TC-09 & TC-10: Compatibility aliases preserve input schemas and out
         utils,
       });
 
-    const memRes = await callTool("project_summary", {});
+    const memRes = await callTool("project_summary", { source: "memory" });
     assert.match(memRes.content[0].text, /Project Knowledge Summary/);
     assert.match(memRes.content[0].text, /Total tasks completed: 1/);
 
-    const fileViaCanonical = await callTool("project_summary", { source: "file" });
-    const fileViaAlias = await callTool("project_summary_data", {});
-    assert.equal(
-      fileViaAlias.content[0].text,
-      fileViaCanonical.content[0].text,
-      "project_summary_data must produce identical output to project_summary({ source: 'file' })"
-    );
-    assert.match(fileViaAlias.content[0].text, /from persisted data/);
+    const fileRes = await callTool("project_summary", { source: "file" });
+    assert.match(fileRes.content[0].text, /from persisted data/);
 
-    const dbViaCanonical = await callTool("project_summary", { source: "db" });
-    const dbViaAlias = await callTool("project_summary_db", {});
-    assert.equal(
-      dbViaAlias.content[0].text,
-      dbViaCanonical.content[0].text,
-      "project_summary_db must produce identical output to project_summary({ source: 'db' })"
-    );
+    const dbRes = await callTool("project_summary", { source: "db" });
+    assert.match(dbRes.content[0].text, /Project Knowledge Summary|No project summary in database yet/);
 
-    // 3. audit_code with category filter matches domain-specific audit_architecture
-    const repo = await createTempGitRepo("dwf-tc09-");
+    // 3. audit with category: 'architecture'
+    const repo = await createTempGitRepo("dwf-tc09-v3-");
     try {
       await fs.mkdir(path.join(repo, "app", "Http", "Controllers"), { recursive: true });
       await fs.writeFile(
@@ -288,18 +268,13 @@ test("TC-08, TC-09 & TC-10: Compatibility aliases preserve input schemas and out
         "<?php\nclass RawController { public function run() { return DB::raw('SELECT 1'); } }\n",
         "utf8"
       );
-      const viaCategory = await handleDevWorkflowV2Tool("audit_code", {
-        projectDir: repo,
-        files: ["app/Http/Controllers/RawController.php"],
+      const archRes = await handleDevWorkflowV2Tool("audit", {
         category: "architecture",
-      });
-      const viaArchTool = await handleDevWorkflowV2Tool("audit_architecture", {
         projectDir: repo,
         files: ["app/Http/Controllers/RawController.php"],
       });
-      assert.equal(viaCategory.findings.length, 1);
-      assert.equal(viaArchTool.findings.length, 1);
-      assert.equal(viaCategory.findings[0].rule_id, viaArchTool.findings[0].rule_id);
+      assert.equal(archRes.findings.length, 1);
+      assert.equal(archRes.findings[0].rule_id, "ZET-ARCH-001");
     } finally {
       await fs.rm(repo, { recursive: true, force: true });
     }
@@ -310,32 +285,26 @@ test("TC-08, TC-09 & TC-10: Compatibility aliases preserve input schemas and out
   }
 });
 
-test("TC-11 & TC-18: Tool discovery and session-scope attribution work cleanly for MCP clients", () => {
+test("TC-11 & TC-18: Tool discovery and session-scope attribution work cleanly for canonical v3.0.0 tools", () => {
   const tools = getToolList();
-  assert.ok(tools.some((t) => t.name === "audit_tool_catalog"));
-  assert.ok(NON_SESSION_SCOPED_TOOLS.has("audit_tool_catalog"));
+  for (const canonical of ["audit", "analyze_change", "plan_fix", "apply_safe_fix", "project_summary"]) {
+    assert.ok(tools.some((t) => t.name === canonical), `Expected canonical tool ${canonical}`);
+    assert.ok(NON_SESSION_SCOPED_TOOLS.has(canonical), `Expected ${canonical} in NON_SESSION_SCOPED_TOOLS`);
+    const gate = resolveRequestSession({ params: { name: canonical, arguments: {} } });
+    assert.equal(gate.ok, true);
+  }
 
-  // Non-session tools work without session metadata
-  const gateCatalog = resolveRequestSession({
-    params: { name: "audit_tool_catalog", arguments: {} },
-  });
-  assert.equal(gateCatalog.ok, true);
-
-  // Session-scoped tools still fail closed without session metadata
-  const gateStart = resolveRequestSession({
-    params: { name: "start_task", arguments: {} },
-  });
+  const gateStart = resolveRequestSession({ params: { name: "start_task", arguments: {} } });
   assert.equal(gateStart.ok, false);
 });
 
-test("TC-13, TC-14 & TC-15: Task lifecycle, cross-client worktree mutex concurrency, and safe autofix authorization remain intact", async () => {
-  const repo = await createTempGitRepo("dwf-tc13-");
+test("TC-13, TC-14 & TC-15: Task lifecycle, cross-client worktree mutex concurrency, and apply_safe_fix authorization remain intact", async () => {
+  const repo = await createTempGitRepo("dwf-tc13-v3-");
   try {
     const targetFile = "src/sample.js";
     await fs.mkdir(path.join(repo, "src"), { recursive: true });
     await fs.writeFile(path.join(repo, targetFile), "export const v = 1;   \n", "utf8");
 
-    // Client A acquires mutex
     const lockA = await acquireWorktreeMutex({
       projectDir: repo,
       ownerKey: "session-tc14-a",
@@ -344,7 +313,6 @@ test("TC-13, TC-14 & TC-15: Task lifecycle, cross-client worktree mutex concurre
     assert.equal(lockA.ok, true);
 
     try {
-      // Client B cannot acquire mutex on same worktree (TC-14)
       const lockB = await acquireWorktreeMutex({
         projectDir: repo,
         ownerKey: "session-tc14-b",
@@ -352,10 +320,9 @@ test("TC-13, TC-14 & TC-15: Task lifecycle, cross-client worktree mutex concurre
       });
       assert.equal(lockB.ok, false);
 
-      // Client B cannot run helper_apply_safe_fix on Client A's worktree (TC-15)
       await assert.rejects(
         () =>
-          handleDevWorkflowV2Tool("helper_apply_safe_fix", {
+          handleDevWorkflowV2Tool("apply_safe_fix", {
             projectDir: repo,
             file: targetFile,
             ruleId: "ZET-CODE-002",
@@ -364,8 +331,7 @@ test("TC-13, TC-14 & TC-15: Task lifecycle, cross-client worktree mutex concurre
         (err) => err instanceof ProjectOwnershipLostError || err?.code === "PROJECT_OWNERSHIP_LOST"
       );
 
-      // Client A (owner) applies safe fix cleanly
-      const fixA = await handleDevWorkflowV2Tool("helper_apply_safe_fix", {
+      const fixA = await handleDevWorkflowV2Tool("apply_safe_fix", {
         projectDir: repo,
         file: targetFile,
         ruleId: "ZET-CODE-002",
@@ -377,7 +343,6 @@ test("TC-13, TC-14 & TC-15: Task lifecycle, cross-client worktree mutex concurre
       await releaseWorktreeMutex(lockA.capability);
     }
 
-    // After mutex release, Client B can acquire worktree mutex cleanly (TC-13)
     const lockBAfter = await acquireWorktreeMutex({
       projectDir: repo,
       ownerKey: "session-tc14-b",
@@ -390,14 +355,15 @@ test("TC-13, TC-14 & TC-15: Task lifecycle, cross-client worktree mutex concurre
   }
 });
 
-test("TC-16: CLI compatibility — devwf audit catalog, devwf audit standards, and devwf audit code work end-to-end", async () => {
+test("TC-16: CLI compatibility — devwf audit catalog, devwf audit standards, and devwf audit code work end-to-end via canonical audit tool", async () => {
   const outCat = { lines: [], write(line) { this.lines.push(line); } };
   const argsCat = parseArgs(["audit", "catalog", "--json"]);
   const resCat = await runCommand({ args: argsCat, env: {}, out: outCat });
   assert.equal(resCat.ok, true);
   const parsedCat = JSON.parse(outCat.lines.join("\n"));
   assert.equal(parsedCat.regression_gate.passed, true);
-  assert.equal(parsedCat.summary.total_public_tools, 84);
+  assert.equal(parsedCat.summary.total_public_tools, 63);
+  assert.equal(parsedCat.summary.compatibility_aliases, 0);
 
   const outHuman = { lines: [], write(line) { this.lines.push(line); } };
   const argsHuman = parseArgs(["audit", "catalog"]);
@@ -406,7 +372,7 @@ test("TC-16: CLI compatibility — devwf audit catalog, devwf audit standards, a
   assert.match(outHuman.lines.join("\n"), /DevWorkflow MCP Tool Catalog Audit/);
 });
 
-test("TC-17 & TC-19: Representative AI agent tool selection benchmark resolves all 10 scenarios with zero selection errors", () => {
+test("TC-17 & TC-19: Representative AI agent tool selection benchmark resolves all 10 scenarios to the 63-tool canonical catalog with zero selection errors", () => {
   const tools = getToolList();
   assert.equal(AGENT_TOOL_SELECTION_BENCHMARK.length, 10);
 
@@ -425,7 +391,7 @@ test("TC-17 & TC-19: Representative AI agent tool selection benchmark resolves a
       `Scenario ${bench.scenarioId} selected wrong tool`
     );
     assert.equal(decision.isRegistered, true, `Tool ${decision.selectedTool} must be registered`);
-    assert.equal(decision.isCanonical, true, `Selected tool ${decision.selectedTool} must be canonical, not an alias`);
+    assert.equal(decision.isCanonical, true, `Selected tool ${decision.selectedTool} must be canonical`);
   }
 
   assert.equal(totalCallsBefore, 16);
