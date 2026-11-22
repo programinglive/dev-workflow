@@ -14,6 +14,7 @@ import { evaluateGovernanceGate, loadPolicies } from "../../governance/engine.js
 import { collectGitContext } from "../../governance/ci-validator.js";
 import { validateForceOverrideAuthorization } from "../../governance/exceptions.js";
 import { releaseWorktreeMutex, getHeldWorktreeCapability } from "../../process-lock.js";
+import { inspectFocusCompletionStatus, formatFocusClosureGuidance } from "../../focus-workflow.js";
 
 /**
  * Release the canonical worktree mutex when a task reaches a terminal state.
@@ -801,11 +802,18 @@ export async function handleCompleteTask(args, workflowState, context = {}) {
   );
   // Captured before reset, because reset clears it and the cleanup needs it.
   const projectDir = workflowState.state.projectDir || "";
+  const linkedFocusId = Number(workflowState.state.focus?.id || workflowState.state.zettly?.focusId || 0);
   const zettlyResult = await closeZettlyTask(workflowState,'completed',args,context.zettlyOptions);
   const zettlyNote = zettlyResult.note ? `\n\n${zettlyResult.ok?'✅':'⚠️'} ${zettlyResult.note}` : '';
   workflowState.reset();
   await workflowState.save();
   await releaseTerminalTaskMutex(workflowState, projectDir);
+
+  let focusClosureNote = "";
+  if (Number.isSafeInteger(linkedFocusId) && linkedFocusId > 0) {
+    const focusStatus = await inspectFocusCompletionStatus(linkedFocusId, context.zettlyOptions || {});
+    focusClosureNote = formatFocusClosureGuidance(focusStatus);
+  }
 
   const askForSuggestions = aiSuggestions.length === 0
     ? `\n\n💡 Kirim 'nextSteps' saat 'complete_task' kalau ada yang Anda lihat selama ` +
@@ -846,7 +854,7 @@ export async function handleCompleteTask(args, workflowState, context = {}) {
   return textResponse(
     `✅ Task completed!\n\nCommit message: ${args.commitMessage}\n` +
       `DoD: ${dod.done}/${dod.total} terbukti, ${dod.waived} dikecualikan.\nHistory recorded.` +
-      `${zettlyNote}\n\n` +
+      `${zettlyNote}${focusClosureNote}\n\n` +
       `${renderRecommendations(recommendations)}${diffNote}${askForSuggestions}${cleanupNote}`
   );
 }
