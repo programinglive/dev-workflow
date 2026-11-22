@@ -1,0 +1,51 @@
+version: "2.1"
+scope:
+  - backend
+  - frontend
+  - agent_worker
+  - mcp_server
+standards:
+  - id: ZET-ARCH-001
+    title: Deep modules with clear responsibility boundaries and no controller-to-DB bypass
+    description: Controllers, UI views, and thin transport handlers must delegate domain orchestration to deep service/domain modules rather than embedding raw SQL or direct database queries.
+    rationale: Deep modules hide internal complexity behind simple interfaces and reduce cognitive load.
+    principle: Deep Modules & Information Hiding
+    source: A Philosophy of Software Design (John Ousterhout)
+    scope: [backend, mcp_server]
+    severity: medium
+    enforcement: advisory
+    detection: static-pattern
+    pattern: "\\b(?:DB::raw|mysqli_query)\\s*\\("
+    autofix: proposal-only
+    verification: npm test
+    exception_process: Record approved exception in engineering/exceptions/approved-exceptions.yaml with owner and expiry.
+
+  - id: ZET-ARCH-002
+    title: Enforce role permission, lock ownership, and release safety boundaries in server code
+    description: Autonomous coding agent roles, worker endpoints, and mutating MCP tools must enforce read-only, ownership fencing, and protected-path boundaries in server code.
+    rationale: Prompt-only security boundaries can be bypassed by model hallucinations or tool output injection.
+    principle: Design by Contract & Least Privilege
+    source: The Pragmatic Programmer (David Thomas & Andrew Hunt)
+    scope: [backend, agent_worker, mcp_server]
+    severity: critical
+    enforcement: blocking
+    detection: architecture-boundary
+    pattern: "allow_auto_merge\\s*=>\\s*true|bypass_safety_policy\\s*=\\s*true"
+    autofix: disabled
+    verification: npm test
+    exception_process: No exceptions permitted for blocking security boundary rules.
+
+  - id: ZET-ARCH-003
+    title: Respect layered dependency direction and prevent forbidden cross-layer imports
+    description: Presentation/UI views and read-only modules must not directly import raw database adapters, internal secret vaults, or unguarded shell execution primitives.
+    rationale: Unidirectional dependencies prevent circular coupling and preserve architectural layering.
+    principle: Acyclic Dependencies & Information Hiding
+    source: A Philosophy of Software Design (John Ousterhout) & The Pragmatic Programmer
+    scope: [backend, frontend, mcp_server]
+    severity: high
+    enforcement: blocking
+    detection: dependency-analysis
+    pattern: "from\\s+[\"'](?:\\.\\.\\/)+db\\/adapters\\/|require\\s*\\(\\s*[\"'](?:\\.\\.\\/)+db\\/adapters\\/"
+    autofix: proposal-only
+    verification: npm test
+    exception_process: Record approved architectural exception with migration target.

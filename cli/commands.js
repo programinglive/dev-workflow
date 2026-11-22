@@ -33,6 +33,7 @@ import { runCiGovernanceValidation } from "../governance/ci-validator.js";
 import { loadPolicies } from "../governance/engine.js";
 import { auditSite } from "../audit/site-audit.js";
 import { formatHumanReport } from "../audit/report.js";
+import { handleDevWorkflowV2Tool } from "../src/engineering-audit.js";
 import { writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import os from "node:os";
@@ -767,11 +768,58 @@ export async function runCommand({
   }
 
   if (command === "audit") {
-    const url = requireValue(args.url, "--url <url>", "audit");
     const failOn = args.failOn || "error";
     if (!["error", "warn", "none"].includes(failOn)) {
       throw new CliError('--fail-on must be "error", "warn", or "none". Nothing was audited.', 2);
     }
+
+    if (args.auditVerb && args.auditVerb !== "site") {
+      const targetDir = args.dir || process.cwd();
+      if (args.auditVerb === "standards") {
+        const report = await handleDevWorkflowV2Tool("audit_standards", { projectDir: targetDir });
+        if (args.out) {
+          await writeFile(args.out, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+        }
+        if (args.json) {
+          out.write(JSON.stringify(report, null, 2));
+        } else {
+          out.write(
+            `Engineering Standards Registry (${report.project_dir}): ${report.valid ? "VALID" : "INVALID"} (${report.rules_count} rules, ${report.approved_exceptions_count} approved exceptions)`
+          );
+        }
+        return { ok: Boolean(report.valid), report };
+      }
+
+      const scope =
+        args.auditVerb === "changes"
+          ? "Pull Request"
+          : args.auditVerb === "repository"
+            ? "Full Repository"
+            : "Selected Files";
+      const report = await handleDevWorkflowV2Tool("audit_report", {
+        projectDir: targetDir,
+        scope,
+      });
+
+      if (args.out) {
+        await writeFile(args.out, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+      }
+      if (args.json) {
+        out.write(JSON.stringify(report, null, 2));
+      } else {
+        out.write(report.formatted_report);
+      }
+
+      const failed =
+        failOn === "error"
+          ? report.result === "FAIL"
+          : failOn === "warn"
+            ? report.result === "FAIL" || report.result === "WARN"
+            : false;
+      return { ok: !failed, report };
+    }
+
+    const url = requireValue(args.url, "--url <url>", "audit");
     if (args.maxPages !== undefined && (!Number.isFinite(args.maxPages) || args.maxPages < 1)) {
       throw new CliError("--max-pages must be a positive number. Nothing was audited.", 2);
     }

@@ -1,0 +1,80 @@
+version: "2.1"
+scope:
+  - backend
+  - frontend
+  - agent_worker
+  - mcp_server
+  - database
+  - documentation
+  - release
+standards:
+  - id: ZET-TEST-001
+    title: Protect critical behavior with characterization and regression tests before risky changes
+    description: Any modification to release safety, lock lifecycle, security boundaries, or coding-agent orchestration must include automated regression test coverage.
+    rationale: Modifying critical services without corresponding test coverage risks silent regressions.
+    principle: Legacy Code Safety & Characterization Tests
+    source: Working Effectively with Legacy Code (Michael Feathers)
+    scope: [backend, frontend, agent_worker, mcp_server]
+    severity: high
+    enforcement: conditional
+    detection: change-impact-analysis
+    autofix: proposal-only
+    verification: npm test
+    exception_process: Requires explicit waiver reason in task Definition of Done.
+
+  - id: ZET-API-001
+    title: Backward-compatible API contracts and defensive input validation
+    description: API endpoints and MCP tool definitions must validate incoming inputs using explicit schemas and preserve backward-compatible response envelopes.
+    rationale: Design by Contract prevents invalid state propagation across distributed workers and clients.
+    principle: Design by Contract
+    source: The Pragmatic Programmer
+    scope: [backend, mcp_server]
+    severity: high
+    enforcement: blocking
+    detection: api-contract-analysis
+    autofix: proposal-only
+    verification: npm test
+    exception_process: Versioned API endpoint migration plan required.
+
+  - id: ZET-DB-001
+    title: Additive N-1 compatible database migrations and no unapproved destructive schema changes
+    description: Database migrations must be N-1 compatible; destructive operations (dropColumn, dropIfExists, dropTable) are blocked without verified pre-deploy backup and approval.
+    rationale: Destructive schema migrations break N-1 application rollback and risk irreversible data loss.
+    principle: Reversible Changes & Database Safety
+    source: The Pragmatic Programmer & Zettly V1.6 Policy
+    scope: [database]
+    severity: critical
+    enforcement: blocking
+    detection: migration-safety-scanner
+    pattern: "\\b(?:dropColumn|dropIfExists|dropTable)\\s*\\("
+    autofix: disabled
+    verification: npm test
+    exception_process: Requires verified GCS backup sha256 and human approval.
+
+  - id: ZET-DOC-001
+    title: Synchronized architectural and operational documentation
+    description: Significant architectural, API, or release-safety changes must update AGENTS.md, README.md, or canonical engineering documentation.
+    rationale: Outdated instructions cause AI coding agents and developers to repeat historical mistakes.
+    principle: Living Documentation
+    source: The Pragmatic Programmer
+    scope: [documentation]
+    severity: low
+    enforcement: advisory
+    detection: doc-drift-analysis
+    autofix: proposal-only
+    verification: devwf audit standards
+    exception_process: Waive with explicit justification when changes are purely internal.
+
+  - id: ZET-REL-001
+    title: 8-Dimension PR Reversibility & 15-Condition Autonomous Release Gate
+    description: Every release must satisfy 8-dimension reversibility and forward-only fleet rotation verification before production promotion.
+    rationale: git revert alone never proves production rollback safety.
+    principle: Continuous Integration & Sustainable Release Practices
+    source: Extreme Programming Explained & Zettly V1.6 Policy
+    scope: [release]
+    severity: critical
+    enforcement: blocking
+    detection: release-readiness-check
+    autofix: disabled
+    verification: npm test
+    exception_process: Explicit human owner override with verified recovery runbook.

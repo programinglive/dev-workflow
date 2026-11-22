@@ -18,6 +18,7 @@ const COMMANDS = ["list", "close", "share", "drop", "complete", "checkpoint", "h
 const FLEET_VERBS = ["status", "check", "plan", "stage", "activate", "verify", "rollback", "doctor", "upgrade"];
 const ZETTLY_VERBS = ["status", "skip", "connect", "switch", "disconnect", "doctor"];
 const GOVERNANCE_VERBS = ["validate", "policies"];
+const AUDIT_VERBS = ["code", "changes", "standards", "repository", "site"];
 
 /** A refusal the CLI reports to the user and turns into a non-zero exit. */
 export class CliError extends Error {
@@ -159,6 +160,17 @@ export function parseArgs(argv = []) {
     }
     args.governanceVerb = verb;
     index = words[1] && !words[1].startsWith("--") ? 2 : 1;
+  } else if (command === "audit") {
+    if (words[1] && !words[1].startsWith("--")) {
+      const verb = words[1];
+      if (!AUDIT_VERBS.includes(verb)) {
+        throw new CliError(
+          `"audit" verb must be one of: ${AUDIT_VERBS.join(", ")}.`
+        );
+      }
+      args.auditVerb = verb;
+      index = 2;
+    }
   }
 
   for (; index < words.length; index += 1) {
