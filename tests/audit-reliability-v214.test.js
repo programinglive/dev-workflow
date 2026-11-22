@@ -35,7 +35,7 @@ async function createTempGitRepo(prefix = "dwf-ar-") {
 test("AR-01: Clean PR checkout with committed changes detects changed files and violations", async () => {
   const repo = await createTempGitRepo("dwf-ar01-");
   try {
-    execFileSync("git", ["checkout", "-q", "-b", "feat/pr-clean"], { cwd: dirOr(repo), stdio: "ignore" });
+    execFileSync("git", ["checkout", "-q", "-b", "feat/pr-clean"], { cwd: repo, stdio: "ignore" });
     await fs.mkdir(path.join(repo, "app", "Http", "Controllers"), { recursive: true });
     const prFile = "app/Http/Controllers/PrController.php";
     await fs.writeFile(
@@ -46,11 +46,10 @@ test("AR-01: Clean PR checkout with committed changes detects changed files and 
     execFileSync("git", ["add", "."], { cwd: repo, stdio: "ignore" });
     execFileSync("git", ["commit", "-q", "-m", "feat: add pr controller"], { cwd: repo, stdio: "ignore" });
 
-    // Working tree is 100% clean, yet audit_changes must detect the committed PR change against main
     const statusOut = execFileSync("git", ["status", "--porcelain"], { cwd: repo, encoding: "utf8" }).trim();
     assert.equal(statusOut, "", "Fixture working tree must be completely clean");
 
-    const audit = await handleDevWorkflowV2Tool("audit_changes", { projectDir: repo });
+    const audit = await handleDevWorkflowV2Tool("audit", { category: "changes", projectDir: repo });
     assert.equal(audit.detection_status, "COMPLETED");
     assert.equal(audit.audit_mode, "pr");
     assert.ok(audit.resolved_scope.changed_files.includes(prFile));
@@ -60,16 +59,11 @@ test("AR-01: Clean PR checkout with committed changes detects changed files and 
   }
 });
 
-function dirOr(d) {
-  return d;
-}
-
 test("AR-02: Multiple commits in PR (including merge commit & detached HEAD) audit full comparison scope", async () => {
   const repo = await createTempGitRepo("dwf-ar02-");
   try {
     execFileSync("git", ["checkout", "-q", "-b", "feat/multi-commit"], { cwd: repo, stdio: "ignore" });
 
-    // Commit 1 on PR branch
     await fs.mkdir(path.join(repo, "app", "Http", "Controllers"), { recursive: true });
     const file1 = "app/Http/Controllers/FirstController.php";
     await fs.writeFile(
@@ -80,7 +74,6 @@ test("AR-02: Multiple commits in PR (including merge commit & detached HEAD) aud
     execFileSync("git", ["add", "."], { cwd: repo, stdio: "ignore" });
     execFileSync("git", ["commit", "-q", "-m", "feat: commit 1"], { cwd: repo, stdio: "ignore" });
 
-    // Commit 2 on PR branch
     const file2 = "app/Http/Controllers/SecondController.php";
     await fs.writeFile(
       path.join(repo, file2),
@@ -90,11 +83,11 @@ test("AR-02: Multiple commits in PR (including merge commit & detached HEAD) aud
     execFileSync("git", ["add", "."], { cwd: repo, stdio: "ignore" });
     execFileSync("git", ["commit", "-q", "-m", "feat: commit 2"], { cwd: repo, stdio: "ignore" });
 
-    // Detach HEAD to simulate CI detached checkout
     const headSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
     execFileSync("git", ["checkout", "-q", headSha], { cwd: repo, stdio: "ignore" });
 
-    const audit = await handleDevWorkflowV2Tool("audit_changes", {
+    const audit = await handleDevWorkflowV2Tool("audit", {
+      category: "changes",
       projectDir: repo,
       changeMode: "pr",
       baseRef: "main",
@@ -135,7 +128,8 @@ test("AR-03: Renamed files, deleted files, and filenames with spaces are handled
       stdio: "ignore",
     });
 
-    const audit = await handleDevWorkflowV2Tool("audit_changes", {
+    const audit = await handleDevWorkflowV2Tool("audit", {
+      category: "changes",
       projectDir: repo,
       changeMode: "pr",
       baseRef: "main",
@@ -159,7 +153,8 @@ test("AR-03: Renamed files, deleted files, and filenames with spaces are handled
 test("AR-04: Missing Git base reference fails closed with INCOMPLETE/FAILED and never reports PASS", async () => {
   const repo = await createTempGitRepo("dwf-ar04-");
   try {
-    const audit = await handleDevWorkflowV2Tool("audit_changes", {
+    const audit = await handleDevWorkflowV2Tool("audit", {
+      category: "changes",
       projectDir: repo,
       changeMode: "pr",
       baseRef: "nonexistent-base-branch-xyz",
@@ -172,8 +167,8 @@ test("AR-04: Missing Git base reference fails closed with INCOMPLETE/FAILED and 
     assert.equal(audit.quality_gate, "FAILED");
     assert.ok(audit.errors.some((e) => e.code === "MISSING_GIT_BASE_REF"));
 
-    // Also verify option injection starting with '-' is rejected
-    const injected = await handleDevWorkflowV2Tool("audit_changes", {
+    const injected = await handleDevWorkflowV2Tool("audit", {
+      category: "changes",
       projectDir: repo,
       changeMode: "pr",
       baseRef: "--upload-pack=evil",
@@ -211,14 +206,14 @@ test("AR-05: New violation in historically affected file (same ruleId, same file
       "utf8"
     );
 
-    // File contains BOTH the old violation AND a newly introduced violation of the SAME rule ZET-CODE-001!
     await fs.writeFile(
       path.join(repo, file),
       "<?php\nclass SameFileController {\n  public function index() {\n    dd($old);\n    var_dump($newlyIntroduced);\n  }\n}\n",
       "utf8"
     );
 
-    const report = await handleDevWorkflowV2Tool("audit_report", {
+    const report = await handleDevWorkflowV2Tool("audit", {
+      category: "report",
       projectDir: repo,
       files: [file],
     });
@@ -241,7 +236,6 @@ test("AR-06: Historical violation moved by line changes retains stable HISTORICA
     const file = "app/Http/Controllers/MovedLineController.php";
 
     const fp = computeFindingFingerprint("ZET-ARCH-001", file, "return DB::raw('SELECT 1');");
-    // Baseline recorded at line 4
     await fs.writeFile(
       path.join(repo, "engineering", "reports", "audit-baseline.json"),
       JSON.stringify({
@@ -259,7 +253,6 @@ test("AR-06: Historical violation moved by line changes retains stable HISTORICA
       "utf8"
     );
 
-    // Refactoring adds 6 comment/code lines above, shifting the violation from line 4 to line 10
     await fs.writeFile(
       path.join(repo, file),
       [
@@ -280,7 +273,8 @@ test("AR-06: Historical violation moved by line changes retains stable HISTORICA
       "utf8"
     );
 
-    const report = await handleDevWorkflowV2Tool("audit_report", {
+    const report = await handleDevWorkflowV2Tool("audit", {
+      category: "report",
       projectDir: repo,
       files: [file],
     });
@@ -303,7 +297,6 @@ test("AR-07: Duplicate identical violation occurrences enforce exact multiplicit
     const file = "app/Http/Controllers/DuplicateController.php";
 
     const fp = computeFindingFingerprint("ZET-CODE-001", file, "dd($same);");
-    // Baseline has only ONE occurrence of `dd($same);`
     await fs.writeFile(
       path.join(repo, "engineering", "reports", "audit-baseline.json"),
       JSON.stringify({
@@ -321,14 +314,14 @@ test("AR-07: Duplicate identical violation occurrences enforce exact multiplicit
       "utf8"
     );
 
-    // Source file now has TWO identical occurrences of `dd($same);`
     await fs.writeFile(
       path.join(repo, file),
       "<?php\nclass DuplicateController {\n  public function index() {\n    dd($same);\n    dd($same);\n  }\n}\n",
       "utf8"
     );
 
-    const report = await handleDevWorkflowV2Tool("audit_report", {
+    const report = await handleDevWorkflowV2Tool("audit", {
+      category: "report",
       projectDir: repo,
       files: [file],
     });
@@ -350,8 +343,7 @@ test("AR-08: Autofix without external tests reports MECHANICALLY_VERIFIED (not T
     await fs.mkdir(path.join(repo, "src"), { recursive: true });
     await fs.writeFile(path.join(repo, file), "export const v = 1;   \n", "utf8");
 
-    // 1. Without verifyCommand -> MECHANICALLY_VERIFIED, tests_executed: false
-    const mech = await handleDevWorkflowV2Tool("helper_apply_safe_fix", {
+    const mech = await handleDevWorkflowV2Tool("apply_safe_fix", {
       projectDir: repo,
       file,
       ruleId: "ZET-CODE-002",
@@ -360,9 +352,8 @@ test("AR-08: Autofix without external tests reports MECHANICALLY_VERIFIED (not T
     assert.equal(mech.verification_level, "MECHANICALLY_VERIFIED");
     assert.equal(mech.tests_executed, false);
 
-    // 2. With approved verifyCommand -> TEST_VERIFIED, tests_executed: true
     await fs.writeFile(path.join(repo, file), "export const v = 2;   \n", "utf8");
-    const testVer = await handleDevWorkflowV2Tool("helper_apply_safe_fix", {
+    const testVer = await handleDevWorkflowV2Tool("apply_safe_fix", {
       projectDir: repo,
       file,
       ruleId: "ZET-CODE-002",
@@ -372,10 +363,9 @@ test("AR-08: Autofix without external tests reports MECHANICALLY_VERIFIED (not T
     assert.equal(testVer.verification_level, "TEST_VERIFIED");
     assert.equal(testVer.tests_executed, true);
 
-    // 3. Untrusted verifyCommand binary is rejected before modifying file
     await assert.rejects(
       () =>
-        handleDevWorkflowV2Tool("helper_apply_safe_fix", {
+        handleDevWorkflowV2Tool("apply_safe_fix", {
           projectDir: repo,
           file,
           ruleId: "ZET-CODE-002",
@@ -396,8 +386,7 @@ test("AR-09 & AR-10: Failed autofix rolls back safely, and concurrent edit durin
     const original = "<?php\n  dd($x);\nreturn 1;\n";
     await fs.writeFile(path.join(repo, file), original, "utf8");
 
-    // AR-09: Normal rollback when verification fails
-    const rb = await handleDevWorkflowV2Tool("helper_apply_safe_fix", {
+    const rb = await handleDevWorkflowV2Tool("apply_safe_fix", {
       projectDir: repo,
       file,
       ruleId: "ZET-CODE-001",
@@ -408,9 +397,8 @@ test("AR-09 & AR-10: Failed autofix rolls back safely, and concurrent edit durin
     assert.equal(rb.verification_level, "ROLLED_BACK");
     assert.equal(await fs.readFile(path.join(repo, file), "utf8"), original);
 
-    // AR-10: Concurrent developer edit occurs after autofix write but before rollback
     const concurrentDeveloperContent = "<?php\n// Concurrent developer edit!\nreturn 999;\n";
-    const abortedRb = await handleDevWorkflowV2Tool("helper_apply_safe_fix", {
+    const abortedRb = await handleDevWorkflowV2Tool("apply_safe_fix", {
       projectDir: repo,
       file,
       ruleId: "ZET-CODE-001",
@@ -440,8 +428,8 @@ test("AR-11 & AR-12: Repository scan exceeding limits returns PARTIAL (never PAS
       await fs.writeFile(path.join(repo, "src", `mod${i}.js`), `export const m${i} = ${i};\n`, "utf8");
     }
 
-    // AR-11: Scan with maxFiles=2 on a 5-file repo -> must return PARTIAL, never PASS!
-    const partialAudit = await handleDevWorkflowV2Tool("audit_repository", {
+    const partialAudit = await handleDevWorkflowV2Tool("audit", {
+      category: "repository",
       projectDir: repo,
       maxFiles: 2,
     });
@@ -455,10 +443,10 @@ test("AR-11 & AR-12: Repository scan exceeding limits returns PARTIAL (never PAS
     assert.equal(partialAudit.scan_coverage.files_discovered, 5);
     assert.equal(partialAudit.scan_coverage.unscanned_files_count, 3);
 
-    // AR-12: Attempting to audit a file outside the workspace root is refused and excluded
     const outsideFile = path.join(outsideDir, "outside.js");
     await fs.writeFile(outsideFile, "export const secret = 1;\n", "utf8");
-    const traversalAudit = await handleDevWorkflowV2Tool("audit_code", {
+    const traversalAudit = await handleDevWorkflowV2Tool("audit", {
+      category: "code",
       projectDir: repo,
       files: [outsideFile],
     });
@@ -476,7 +464,6 @@ test("AR-13: Complex debug statements (inline conditionals, expressions) are pro
   try {
     await fs.mkdir(path.join(repo, "app"), { recursive: true });
 
-    // 1. Comments and strings containing dd() / var_dump() must NOT trigger false positives
     const benignFile = "app/BenignComments.php";
     await fs.writeFile(
       path.join(repo, benignFile),
@@ -491,7 +478,8 @@ test("AR-13: Complex debug statements (inline conditionals, expressions) are pro
       "utf8"
     );
 
-    const benignAudit = await handleDevWorkflowV2Tool("audit_code", {
+    const benignAudit = await handleDevWorkflowV2Tool("audit", {
+      category: "code",
       projectDir: repo,
       files: [benignFile],
     });
@@ -501,7 +489,6 @@ test("AR-13: Complex debug statements (inline conditionals, expressions) are pro
       "Comments and string literals containing dd()/var_dump() must not produce false positives"
     );
 
-    // 2. Complex debug call inside inline conditional (`if ($err) dd($err);`) or braceless if
     const complexFile = "app/ComplexDebug.php";
     const complexContent = [
       "<?php",
@@ -515,7 +502,8 @@ test("AR-13: Complex debug statements (inline conditionals, expressions) are pro
     ].join("\n");
     await fs.writeFile(path.join(repo, complexFile), complexContent, "utf8");
 
-    const complexAudit = await handleDevWorkflowV2Tool("audit_code", {
+    const complexAudit = await handleDevWorkflowV2Tool("audit", {
+      category: "code",
       projectDir: repo,
       files: [complexFile],
     });
@@ -524,8 +512,7 @@ test("AR-13: Complex debug statements (inline conditionals, expressions) are pro
     assert.equal(finding.autofix_eligible, false, "Inline conditional dd() must NOT be autofix-eligible");
     assert.equal(finding.autofix_class, "AF-2");
 
-    // 3. helper_apply_safe_fix must refuse automatic modification of complex debug call
-    const fixAttempt = await handleDevWorkflowV2Tool("helper_apply_safe_fix", {
+    const fixAttempt = await handleDevWorkflowV2Tool("apply_safe_fix", {
       projectDir: repo,
       file: complexFile,
       ruleId: "ZET-CODE-001",
@@ -547,7 +534,6 @@ test("AR-14 & AR-15: Worktree ownership loss and concurrent client mutations are
     const initial = "export const k = 1;   \n";
     await fs.writeFile(path.join(repo, file), initial, "utf8");
 
-    // AR-14: Invalid/missing worktree ownership
     const ws = new WorkflowState(path.join(repo, ".state", "workflow-state.json"), {
       sessionId: "sess-unowned",
       requireKernelMutex: true,
@@ -558,7 +544,7 @@ test("AR-14 & AR-15: Worktree ownership loss and concurrent client mutations are
     await assert.rejects(
       () =>
         handleDevWorkflowV2Tool(
-          "helper_apply_safe_fix",
+          "apply_safe_fix",
           { projectDir: repo, file, ruleId: "ZET-CODE-002" },
           ws
         ),
@@ -566,13 +552,12 @@ test("AR-14 & AR-15: Worktree ownership loss and concurrent client mutations are
     );
     await ws.close();
 
-    // AR-15: Concurrent MCP clients
     const acqA = await acquireWorktreeMutex({ projectDir: repo, ownerKey: "client-A", timeoutMs: 100 });
     assert.equal(acqA.ok, true);
     try {
       await assert.rejects(
         () =>
-          handleDevWorkflowV2Tool("helper_apply_safe_fix", {
+          handleDevWorkflowV2Tool("apply_safe_fix", {
             projectDir: repo,
             file,
             ruleId: "ZET-CODE-002",
@@ -590,8 +575,8 @@ test("AR-14 & AR-15: Worktree ownership loss and concurrent client mutations are
 });
 
 test("AR-16, AR-17 & AR-18: Self-audit contract, Zettly compatibility, and real CLI PR audit verification", async () => {
-  // AR-16: Self-audit verifies 4-dimension reliability contract
-  const selfReport = await handleDevWorkflowV2Tool("audit_report", {
+  const selfReport = await handleDevWorkflowV2Tool("audit", {
+    category: "report",
     projectDir: REPO_ROOT,
     files: ["src/engineering-audit.js", "cli/commands.js", "cli/args.js"],
   });
@@ -600,18 +585,16 @@ test("AR-16, AR-17 & AR-18: Self-audit contract, Zettly compatibility, and real 
   assert.equal(selfReport.policy_status, "COMPLIANT");
   assert.equal(selfReport.overall_verdict, "PASS");
 
-  // AR-17: Zettly standards registry validation (if D:/code/zettly is present on workstation)
   const zettlyDir = "D:/code/zettly";
   try {
     await fs.access(zettlyDir);
-    const zettlyStd = await handleDevWorkflowV2Tool("audit_standards", { projectDir: zettlyDir });
+    const zettlyStd = await handleDevWorkflowV2Tool("audit", { category: "standards", projectDir: zettlyDir });
     assert.equal(zettlyStd.valid, true);
     assert.ok(zettlyStd.rules_count >= 13);
   } catch {
     // skip if zettly repo not checked out on current test host
   }
 
-  // AR-18: Real CLI PR audit (`devwf audit changes --base main --dir <repo> --json`)
   const repo = await createTempGitRepo("dwf-ar18-");
   try {
     execFileSync("git", ["checkout", "-q", "-b", "feat/ci-pr-check"], { cwd: repo, stdio: "ignore" });
@@ -631,7 +614,6 @@ test("AR-16, AR-17 & AR-18: Self-audit contract, Zettly compatibility, and real 
     assert.deepEqual(parsedPass.resolved_scope.changed_files, ["src/clean.js"]);
     assert.equal(parsedPass.overall_verdict, "PASS");
 
-    // Missing base ref via CLI must return ok: false
     const outFail = { lines: [], write(l) { this.lines.push(l); } };
     const argsFail = parseArgs(["audit", "changes", "--dir", repo, "--base", "missing-branch-ref", "--json"]);
     const resFail = await runCommand({ args: argsFail, env: {}, out: outFail });

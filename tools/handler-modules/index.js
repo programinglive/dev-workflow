@@ -12,7 +12,7 @@ import { sessionKeyFromRequest } from "../../workflow-state.js";
 import { handleStartTask, handleMarkBugFixed, handleCreateTests, handleSkipTests, handleRunTests, handleCreateDocumentation, handleCreateFeatureFlow, handleWaiveDocumentation, handleRecommendMcpTools, handleReportBuildStatus } from "./workflow-handlers.js";
 import { handleSkipRelease, handlePerformRelease, handleRecordDeployment, handleAcquireReleaseLock, handleReleaseReleaseLock } from "./release-handlers.js";
 import { handleCommitAndPush, handleCompleteTask, handleForceCompleteTask, handleDropTask } from "./commit-handlers.js";
-import { handleProjectSummary, handleProjectSummaryData, handleProjectSummaryDb, handleViewHistory } from "./summary-handlers.js";
+import { handleProjectSummary, handleViewHistory } from "./summary-handlers.js";
 import { handleGetWorkflowStatus, handleReadyCheck, handleContinueWorkflow, handleRerunWorkflow, handleListActiveSessions, handleBuildReport, handleBuildEstimate } from "./status-handlers.js";
 import { handleSetDefinitionOfDone, handleMarkDodItem, handleWaiveDodItem } from "./dod-handlers.js";
 import { handleNextSteps } from "./next-steps-handlers.js";
@@ -510,10 +510,6 @@ async function dispatchToolCall({
         return handleViewHistory(args, workflowState);
       case "project_summary":
         return handleProjectSummary(workflowState, args);
-      case "project_summary_data":
-        return handleProjectSummaryData(workflowState);
-      case "project_summary_db":
-        return handleProjectSummaryDb(workflowState);
       case "list_active_sessions":
         return await handleListActiveSessions(args, { workflowState });
       case "build_report":

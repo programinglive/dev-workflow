@@ -1065,24 +1065,6 @@ export function getToolList() {
       },
     },
     {
-      name: "project_summary_data",
-      description:
-        "[COMPATIBILITY_ALIAS -> project_summary({ source: 'file' })] Get the persisted project knowledge summary from a structured JSON file (project-summary.json). Falls back to in-memory if the file doesn't exist.",
-      inputSchema: {
-        type: "object",
-        properties: {},
-      },
-    },
-    {
-      name: "project_summary_db",
-      description:
-        "[COMPATIBILITY_ALIAS -> project_summary({ source: 'db' })] Get the per-user project knowledge summary from SQLite. Use DEV_WORKFLOW_USER_ID env var to isolate users.",
-      inputSchema: {
-        type: "object",
-        properties: {},
-      },
-    },
-    {
       name: "list_active_sessions",
       description:
         "List active workflow sessions across all machines from the central dev-workflow monitor dashboard (DEVWF_MONITOR_URL). Shows machine, project, task, current phase, DoD progress, and plan progress.",

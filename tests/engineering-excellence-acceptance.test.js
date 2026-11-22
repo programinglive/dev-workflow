@@ -35,8 +35,7 @@ test("Scenario 1 — Formatting Violation: detects trailing whitespace and marks
     await fs.mkdir(path.join(repo, "src"), { recursive: true });
     await fs.writeFile(path.join(repo, file), "export const x = 1;    \n", "utf8");
 
-    // Verify audit_changes auto-discovers git modified/untracked files without explicit files[]
-    const audit = await handleDevWorkflowV2Tool("audit_changes", { projectDir: repo });
+    const audit = await handleDevWorkflowV2Tool("audit", { category: "changes", projectDir: repo });
     const finding = audit.findings.find((f) => f.rule_id === "ZET-CODE-002" && f.file === file);
     assert.ok(finding, "Expected ZET-CODE-002 formatting violation on trailing whitespace");
     assert.equal(finding.autofix_eligible, true);
@@ -57,7 +56,8 @@ test("Scenario 2 — Forbidden Dependency: detects architecture boundary violati
       "utf8"
     );
 
-    const audit = await handleDevWorkflowV2Tool("audit_architecture", {
+    const audit = await handleDevWorkflowV2Tool("audit", {
+      category: "architecture",
       projectDir: repo,
       files: [uiFile],
     });
@@ -76,7 +76,6 @@ test("Scenario 3 — Secret Detection: detects synthetic credential without expo
   try {
     const secretFile = "config/client.js";
     await fs.mkdir(path.join(repo, "config"), { recursive: true });
-    // Construct synthetic credential dynamically so the test file itself has no literal token
     const syntheticToken = ["ghp", "_1234567890abcdefghijklmnopqrstuvwx"].join("");
     await fs.writeFile(
       path.join(repo, secretFile),
@@ -84,7 +83,8 @@ test("Scenario 3 — Secret Detection: detects synthetic credential without expo
       "utf8"
     );
 
-    const report = await handleDevWorkflowV2Tool("audit_report", {
+    const report = await handleDevWorkflowV2Tool("audit", {
+      category: "report",
       projectDir: repo,
       files: [secretFile],
     });
@@ -114,7 +114,8 @@ test("Scenario 4 — Missing Regression Protection: flags critical module modifi
     await fs.mkdir(path.join(repo, "app", "Services", "ReleaseSafety"), { recursive: true });
     await fs.writeFile(path.join(repo, critFile), "<?php\nclass DeploymentGate {}\n", "utf8");
 
-    const audit = await handleDevWorkflowV2Tool("audit_tests", {
+    const audit = await handleDevWorkflowV2Tool("audit", {
+      category: "tests",
       projectDir: repo,
       files: [critFile],
     });
@@ -122,7 +123,8 @@ test("Scenario 4 — Missing Regression Protection: flags critical module modifi
     assert.ok(testGap, "Expected ZET-TEST-001 finding when critical module changed without tests");
     assert.equal(testGap.severity, "high");
 
-    const impact = await handleDevWorkflowV2Tool("helper_suggest_tests", {
+    const impact = await handleDevWorkflowV2Tool("analyze_change", {
+      mode: "tests",
       projectDir: repo,
       files: [critFile],
     });
@@ -146,7 +148,7 @@ test("Scenario 5 — Safe Autofix: applies deterministic fix in authorized works
       "utf8"
     );
 
-    const fixAf1 = await handleDevWorkflowV2Tool("helper_apply_safe_fix", {
+    const fixAf1 = await handleDevWorkflowV2Tool("apply_safe_fix", {
       projectDir: repo,
       file: targetFile,
       ruleId: "ZET-CODE-001",
@@ -154,7 +156,7 @@ test("Scenario 5 — Safe Autofix: applies deterministic fix in authorized works
     assert.equal(fixAf1.applied, true);
     assert.equal(fixAf1.status, "VERIFIED_APPLIED");
 
-    const fixAf0 = await handleDevWorkflowV2Tool("helper_apply_safe_fix", {
+    const fixAf0 = await handleDevWorkflowV2Tool("apply_safe_fix", {
       projectDir: repo,
       file: targetFile,
       ruleId: "ZET-CODE-002",
@@ -180,7 +182,7 @@ test("Scenario 6 — Failed Autofix: forces post-fix verification failure and re
     const original = "<?php\n  var_dump($payload);\nreturn true;\n";
     await fs.writeFile(path.join(repo, targetFile), original, "utf8");
 
-    const res = await handleDevWorkflowV2Tool("helper_apply_safe_fix", {
+    const res = await handleDevWorkflowV2Tool("apply_safe_fix", {
       projectDir: repo,
       file: targetFile,
       ruleId: "ZET-CODE-001",
@@ -203,7 +205,6 @@ test("Scenario 7 — Ownership Loss: mutating helper without valid worktree owne
     const original = "export const a = 1;   \n";
     await fs.writeFile(path.join(repo, targetFile), original, "utf8");
 
-    // 1. WorkflowState with requireKernelMutex=true but no bound capability must fail closed
     const stateFile = path.join(repo, ".state", "workflow-state.json");
     const ws = new WorkflowState(stateFile, {
       sessionId: "sess-ownerless",
@@ -215,17 +216,16 @@ test("Scenario 7 — Ownership Loss: mutating helper without valid worktree owne
     await assert.rejects(
       () =>
         handleDevWorkflowV2Tool(
-          "helper_apply_safe_fix",
+          "apply_safe_fix",
           { projectDir: repo, file: targetFile, ruleId: "ZET-CODE-002" },
           ws
         ),
       (err) => err instanceof ProjectOwnershipLostError || err?.code === "PROJECT_OWNERSHIP_LOST"
     );
 
-    // 2. Direct call with requireOwnership: true and no held capability also fails closed
     await assert.rejects(
       () =>
-        handleDevWorkflowV2Tool("helper_apply_safe_fix", {
+        handleDevWorkflowV2Tool("apply_safe_fix", {
           projectDir: repo,
           file: targetFile,
           ruleId: "ZET-CODE-002",
@@ -234,7 +234,6 @@ test("Scenario 7 — Ownership Loss: mutating helper without valid worktree owne
       (err) => err instanceof ProjectOwnershipLostError || err?.code === "PROJECT_OWNERSHIP_LOST"
     );
 
-    // File must remain completely untouched
     assert.equal(await fs.readFile(path.join(repo, targetFile), "utf8"), original);
     await ws.close();
   } finally {
@@ -250,7 +249,6 @@ test("Scenario 8 — Concurrent Clients: two clients attempting conflicting muta
     const original = "export const shared = 1;   \n";
     await fs.writeFile(path.join(repo, targetFile), original, "utf8");
 
-    // Client A acquires worktree mutex for session-client-a
     const acqA = await acquireWorktreeMutex({
       projectDir: repo,
       ownerKey: "session-client-a",
@@ -259,10 +257,9 @@ test("Scenario 8 — Concurrent Clients: two clients attempting conflicting muta
     assert.equal(acqA.ok, true);
 
     try {
-      // Client B (different session) attempts helper_apply_safe_fix on the same worktree -> MUST fail closed!
       await assert.rejects(
         () =>
-          handleDevWorkflowV2Tool("helper_apply_safe_fix", {
+          handleDevWorkflowV2Tool("apply_safe_fix", {
             projectDir: repo,
             file: targetFile,
             ruleId: "ZET-CODE-002",
@@ -276,8 +273,7 @@ test("Scenario 8 — Concurrent Clients: two clients attempting conflicting muta
         "Client B must not mutate file owned by Client A"
       );
 
-      // Client A (rightful owner) applies fix -> succeeds!
-      const resA = await handleDevWorkflowV2Tool("helper_apply_safe_fix", {
+      const resA = await handleDevWorkflowV2Tool("apply_safe_fix", {
         projectDir: repo,
         file: targetFile,
         ruleId: "ZET-CODE-002",
@@ -296,7 +292,8 @@ test("Scenario 8 — Concurrent Clients: two clients attempting conflicting muta
 test("Scenario 9 — Standards Change: proposing a blocking standard without authorization records proposal but never activates rule", async () => {
   const repo = await createTempGitRepo("dwf-scen9-");
   try {
-    const proposal = await handleDevWorkflowV2Tool("helper_propose_standard", {
+    const proposal = await handleDevWorkflowV2Tool("analyze_change", {
+      mode: "propose_standard",
       projectDir: repo,
       proposedId: "ZET-CUSTOM-999",
       title: "Forbid raw array returns in domain services",
@@ -314,9 +311,8 @@ test("Scenario 9 — Standards Change: proposing a blocking standard without aut
     assert.equal(proposal.status, "PROPOSED_PENDING_REVIEW");
     assert.ok(proposal.proposal_file);
 
-    // Verify rule is NOT active in the project's standards registry
-    const standards = await handleDevWorkflowV2Tool("audit_standards", { projectDir: repo });
-    const loadedAudit = await handleDevWorkflowV2Tool("audit_repository", { projectDir: repo });
+    const standards = await handleDevWorkflowV2Tool("audit", { category: "standards", projectDir: repo });
+    const loadedAudit = await handleDevWorkflowV2Tool("audit", { category: "repository", projectDir: repo });
     assert.equal(
       loadedAudit.findings.some((f) => f.rule_id === "ZET-CUSTOM-999"),
       false,
@@ -348,7 +344,6 @@ test("Scenario 10 — Existing Technical Debt: baseline-aware audit distinguishe
       "utf8"
     );
 
-    // Save baseline containing only the legacy warning
     const baselinePath = path.join(repo, "engineering", "reports", "audit-baseline.json");
     await fs.writeFile(
       baselinePath,
@@ -358,7 +353,8 @@ test("Scenario 10 — Existing Technical Debt: baseline-aware audit distinguishe
       "utf8"
     );
 
-    const report = await handleDevWorkflowV2Tool("audit_report", {
+    const report = await handleDevWorkflowV2Tool("audit", {
+      category: "report",
       projectDir: repo,
       files: [legacyFile, newFile],
     });

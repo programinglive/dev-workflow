@@ -776,7 +776,10 @@ export async function runCommand({
     if (args.auditVerb && args.auditVerb !== "site") {
       const targetDir = args.dir || process.cwd();
       if (args.auditVerb === "standards") {
-        const report = await handleDevWorkflowV2Tool("audit_standards", { projectDir: targetDir });
+        const report = await handleDevWorkflowV2Tool("audit", {
+          category: "standards",
+          projectDir: targetDir,
+        });
         if (args.out) {
           await writeFile(args.out, `${JSON.stringify(report, null, 2)}\n`, "utf8");
         }
@@ -791,7 +794,8 @@ export async function runCommand({
       }
 
       if (args.auditVerb === "catalog") {
-        const report = await handleDevWorkflowV2Tool("audit_tool_catalog", {
+        const report = await handleDevWorkflowV2Tool("audit", {
+          category: "catalog",
           includeMatrix: true,
           includeInventory: true,
           includeConsolidationPlan: true,
@@ -815,7 +819,8 @@ export async function runCommand({
           : args.auditVerb === "repository"
             ? "Full Repository"
             : "Selected Files";
-      const report = await handleDevWorkflowV2Tool("audit_report", {
+      const report = await handleDevWorkflowV2Tool("audit", {
+        category: args.auditVerb,
         projectDir: targetDir,
         scope,
         changeMode: args.mode || (args.auditVerb === "changes" ? "auto" : null),

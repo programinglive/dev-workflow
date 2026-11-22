@@ -22,7 +22,7 @@ import {
 
 const execFileAsync = promisify(execFile);
 
-export const STANDARDS_REGISTRY_VERSION = "2.1.5";
+export const STANDARDS_REGISTRY_VERSION = "3.0.0";
 export const FINDING_FINGERPRINT_VERSION = "2.0";
 
 const ALLOWED_VERIFY_BINARIES = new Set([
@@ -2450,154 +2450,60 @@ export async function proposeEngineeringStandard({
 }
 
 /**
- * Unified dispatcher for all DevWorkflow V2.0/V2.1 tools.
+ * Unified dispatcher for all DevWorkflow V3.0 canonical engineering audit & helper tools.
+ *
+ * Radical Simplification (v3.0.0):
+ * - 11 legacy `audit_*` tools are consolidated into one canonical `audit` MCP tool.
+ * - 12 legacy `helper_*` tools are consolidated into 3 canonical MCP tools:
+ *   `analyze_change`, `plan_fix`, and `apply_safe_fix`.
+ * - Zero public compatibility aliases are registered in `DEVWORKFLOW_V2_TOOL_DEFINITIONS`.
  */
 export const DEVWORKFLOW_V2_TOOL_DEFINITIONS = [
   {
-    name: "audit_code",
-    description: "[READ_ONLY_STATIC] Canonical code audit entry point: evaluate Zettly & DevWorkflow V2.1 engineering standards across selected files or the full repository (optional category filter).",
+    name: "audit",
+    description:
+      "[READ_ONLY_STATIC] Canonical engineering audit tool: evaluate code, Git/PR changes, full repository, specific categories (architecture, security, tests, api, database), standards registry, or MCP tool catalog with 4-dimension reliability verdicts and formatted_report.",
     inputSchema: {
       type: "object",
       properties: {
+        category: {
+          type: "string",
+          enum: [
+            "code",
+            "changes",
+            "repository",
+            "architecture",
+            "security",
+            "tests",
+            "testing",
+            "api",
+            "api-contracts",
+            "database",
+            "code-quality",
+            "standards",
+            "report",
+            "catalog",
+          ],
+          description:
+            "Audit category or mode: 'code' (default for files/repo), 'changes' (Git working_tree/staged/commit_range/PR merge-base), 'repository' (full repository scan), 'architecture', 'security', 'tests', 'api', 'database', 'standards' (validate YAML standards registry), 'report' (code/PR audit with formatted_report), or 'catalog' (audit MCP tool catalog).",
+        },
+        scope: {
+          type: "string",
+          description:
+            "Optional scope label ('Selected Files', 'Pull Request', 'Full Repository'). Automatically selects PR diff discovery when set to 'Pull Request'.",
+        },
         projectDir: { type: "string" },
         files: { type: "array", items: { type: "string" } },
-        category: { type: "string" },
-        baselineFile: { type: "string" },
-        maxFiles: { type: "number" },
-        maxDepth: { type: "number" },
-      },
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "audit_changes",
-    description: "[READ_ONLY_STATIC] Audit Git-changed files or a Pull Request diff (working_tree, staged, commit_range, or PR merge-base) against engineering standards.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        projectDir: { type: "string" },
-        files: { type: "array", items: { type: "string" } },
-        category: { type: "string" },
-        changeMode: { type: "string" },
-        baseRef: { type: "string" },
-        headRef: { type: "string" },
-        commitRange: { type: "string" },
-        baselineFile: { type: "string" },
-      },
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "audit_repository",
-    description: "[READ_ONLY_STATIC] Full-repository wrapper around audit_code with explicit scan completeness telemetry (COMPLETE vs PARTIAL).",
-    inputSchema: {
-      type: "object",
-      properties: {
-        projectDir: { type: "string" },
-        baselineFile: { type: "string" },
-        maxFiles: { type: "number" },
-        maxDepth: { type: "number" },
-      },
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "audit_architecture",
-    description: "[READ_ONLY_STATIC] Evaluate ZET-ARCH-* architectural boundaries, deep-module encapsulation, dependency direction, and role/permission enforcement.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        projectDir: { type: "string" },
-        files: { type: "array", items: { type: "string" } },
-      },
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "audit_security",
-    description: "[READ_ONLY_STATIC] Scan application source files for ZET-SEC-* violations (embedded secrets with redaction, unsafe shell/deserialization). Distinct from runtime/DB security_audit.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        projectDir: { type: "string" },
-        files: { type: "array", items: { type: "string" } },
-      },
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "audit_tests",
-    description: "[READ_ONLY_STATIC] Evaluate ZET-TEST-001 regression test protection when critical modules change. To record test runs use run_tests; for error RCA use helper_root_cause.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        projectDir: { type: "string" },
-        files: { type: "array", items: { type: "string" } },
-      },
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "audit_api_contracts",
-    description: "[READ_ONLY_STATIC] Check API controllers and tool definitions for ZET-API-001 input validation and contract compatibility.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        projectDir: { type: "string" },
-        files: { type: "array", items: { type: "string" } },
-      },
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "audit_database_changes",
-    description: "[READ_ONLY_STATIC] Inspect database migrations for ZET-DB-001 destructive operations (dropColumn/dropTable) and N-1 rollback compatibility.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        projectDir: { type: "string" },
-        files: { type: "array", items: { type: "string" } },
-      },
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "audit_standards",
-    description: "[READ_ONLY_STATIC] Validate the engineering/standards YAML registry (duplicate IDs, missing rationales, schema validity, approved exceptions).",
-    inputSchema: {
-      type: "object",
-      properties: {
-        projectDir: { type: "string" },
-      },
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "audit_report",
-    description: "[READ_ONLY_STATIC] Run engineering standards audit and generate both structured 4-dimension JSON and a human-readable formatted_report block.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        projectDir: { type: "string" },
-        files: { type: "array", items: { type: "string" } },
-        scope: { type: "string" },
-        changeMode: { type: "string" },
+        changeMode: {
+          type: "string",
+          description: "Git change detection mode: 'auto', 'working_tree', 'staged', 'commit_range', or 'pr'.",
+        },
         baseRef: { type: "string" },
         headRef: { type: "string" },
         commitRange: { type: "string" },
         baselineFile: { type: "string" },
         maxFiles: { type: "number" },
         maxDepth: { type: "number" },
-      },
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "audit_tool_catalog",
-    description: "[READ_ONLY_CATALOG] Audit registered DevWorkflow MCP tools for duplicate IDs, semantic overlap (D0..D6), shared handlers, wrapper redundancy, and catalog regression gate status.",
-    inputSchema: {
-      type: "object",
-      properties: {
         includeMatrix: { type: "boolean" },
         includeInventory: { type: "boolean" },
         includeConsolidationPlan: { type: "boolean" },
@@ -2606,48 +2512,71 @@ export const DEVWORKFLOW_V2_TOOL_DEFINITIONS = [
     },
   },
   {
-    name: "helper_explain_violation",
-    description: "[READ_ONLY] Explain a standard violation, its software design principle (Ousterhout/Pragmatic/Feathers/Fowler/Beck), risks, and remediation.",
+    name: "analyze_change",
+    description:
+      "[READ_ONLY] Canonical change analysis tool: evaluate change impact & recommended regression tests, explain rule violations, structure failing test/error root causes, advise incremental refactoring, recommend documentation updates, prioritize technical debt, or propose advisory engineering standards.",
     inputSchema: {
       type: "object",
       properties: {
+        mode: {
+          type: "string",
+          enum: [
+            "impact",
+            "tests",
+            "explain",
+            "root_cause",
+            "refactor",
+            "docs",
+            "debt",
+            "opportunities",
+            "propose_standard",
+          ],
+          description:
+            "Analysis mode (defaults to 'impact', or auto-inferred from ruleId / errorMessage / title+problemDescription).",
+        },
         projectDir: { type: "string" },
-        ruleId: { type: "string" },
+        files: { type: "array", items: { type: "string" } },
         file: { type: "string" },
+        ruleId: { type: "string" },
+        errorMessage: { type: "string" },
+        proposedId: { type: "string" },
+        title: { type: "string" },
+        problemDescription: { type: "string" },
+        recurrenceEvidence: { type: "array", items: { type: "string" } },
+        proposedSeverity: { type: "string" },
+        proposedEnforcement: { type: "string" },
+        persistProposal: { type: "boolean" },
       },
-      required: ["ruleId"],
       additionalProperties: false,
     },
   },
   {
-    name: "helper_plan_fix",
-    description: "[READ_ONLY] Generate a bounded remediation plan with risk assessment, required tests, and rollback instructions.",
+    name: "plan_fix",
+    description:
+      "[READ_ONLY] Canonical remediation planner: generate a bounded fix plan with risk assessment, required tests, and rollback instructions for a ruleId, and/or discover deterministic AF-0/AF-1 autofix candidates across files or Git changes.",
     inputSchema: {
       type: "object",
       properties: {
+        mode: {
+          type: "string",
+          enum: ["plan", "candidates", "all"],
+          description:
+            "Planning mode: 'plan' (remediation plan for ruleId), 'candidates' (scan for AF-0/AF-1 autofix-eligible findings), or 'all' (auto-inferred when omitted).",
+        },
         projectDir: { type: "string" },
         ruleId: { type: "string" },
         files: { type: "array", items: { type: "string" } },
-      },
-      required: ["ruleId"],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "helper_autofix_candidates",
-    description: "[READ_ONLY] Discover deterministic AF-0 and standalone AF-1 findings eligible for bounded automatic remediation via helper_apply_safe_fix.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        projectDir: { type: "string" },
-        files: { type: "array", items: { type: "string" } },
+        changeMode: { type: "string" },
+        baseRef: { type: "string" },
+        headRef: { type: "string" },
       },
       additionalProperties: false,
     },
   },
   {
-    name: "helper_apply_safe_fix",
-    description: "[LOCAL_WRITE_FENCED] Apply an allowlisted deterministic AF-0/AF-1 fix under worktree mutex fencing with truthful verification levels and concurrent rollback protection.",
+    name: "apply_safe_fix",
+    description:
+      "[LOCAL_WRITE_FENCED] Canonical safe autofix tool: apply an allowlisted deterministic AF-0/AF-1 fix under OS worktree mutex fencing with truthful verification levels (MECHANICALLY_VERIFIED vs TEST_VERIFIED) and concurrent rollback protection.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2663,113 +2592,22 @@ export const DEVWORKFLOW_V2_TOOL_DEFINITIONS = [
       additionalProperties: false,
     },
   },
-  {
-    name: "helper_suggest_tests",
-    description: "[READ_ONLY] [COMPATIBILITY_ALIAS -> helper_change_impact] Recommend characterization and regression tests based on changed files and risk.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        projectDir: { type: "string" },
-        files: { type: "array", items: { type: "string" } },
-      },
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "helper_change_impact",
-    description: "[READ_ONLY] Canonical change-impact and test-recommendation analyzer: identify affected modules, risk level, and required test suites for a change set.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        projectDir: { type: "string" },
-        files: { type: "array", items: { type: "string" } },
-      },
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "helper_refactor_advice",
-    description: "[READ_ONLY] Provide incremental, behavior-preserving refactoring recommendations under test protection.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        projectDir: { type: "string" },
-        files: { type: "array", items: { type: "string" } },
-      },
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "helper_prioritize_debt",
-    description: "[READ_ONLY] Rank technical debt items (P0..P3) by actual engineering and business impact.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        projectDir: { type: "string" },
-      },
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "helper_root_cause",
-    description: "[READ_ONLY] Correlate failing tests, error messages, and recent file changes into hypotheses vs confirmed root causes.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        errorMessage: { type: "string" },
-        files: { type: "array", items: { type: "string" } },
-      },
-      required: ["errorMessage"],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "helper_docs_update",
-    description: "[READ_ONLY] Identify documentation files (AGENTS.md, README.md, engineering/standards) that should be updated after a code change.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        projectDir: { type: "string" },
-        files: { type: "array", items: { type: "string" } },
-      },
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "helper_propose_standard",
-    description: "[READ_ONLY] Propose a new engineering standard from recurring findings without auto-activating blocking enforcement.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        projectDir: { type: "string" },
-        proposedId: { type: "string" },
-        title: { type: "string" },
-        problemDescription: { type: "string" },
-        recurrenceEvidence: { type: "array", items: { type: "string" } },
-        proposedSeverity: { type: "string" },
-        proposedEnforcement: { type: "string" },
-        persistProposal: { type: "boolean" },
-      },
-      required: ["title", "problemDescription"],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "helper_improvement_opportunities",
-    description: "[READ_ONLY] Identify high-leverage workflow, testing, CI, and architecture improvement opportunities.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        projectDir: { type: "string" },
-      },
-      additionalProperties: false,
-    },
-  },
 ];
 
 export const DEVWORKFLOW_V2_TOOL_NAMES = new Set(
   DEVWORKFLOW_V2_TOOL_DEFINITIONS.map((t) => t.name)
 );
+
+const CATEGORY_FILTER_MAP = Object.freeze({
+  architecture: { filter: "architecture", label: "Architecture" },
+  security: { filter: "security", label: "Security" },
+  tests: { filter: "testing", label: "Testing" },
+  testing: { filter: "testing", label: "Testing" },
+  api: { filter: "api-contracts", label: "API Contracts" },
+  "api-contracts": { filter: "api-contracts", label: "API Contracts" },
+  database: { filter: "database", label: "Database Migrations" },
+  "code-quality": { filter: "code-quality", label: "Code Quality" },
+});
 
 export async function handleDevWorkflowV2Tool(name, args = {}, workflowState = null) {
   const projectDir = args.projectDir || workflowState?.state?.projectDir || process.cwd();
@@ -2780,108 +2618,61 @@ export async function handleDevWorkflowV2Tool(name, args = {}, workflowState = n
   const maxDepth = args.maxDepth || 12;
 
   switch (name) {
-    case "audit_code":
-      return await runEngineeringAudit({
-        projectDir,
-        files,
-        categoryFilter: args.category || null,
-        scopeLabel: files.length ? "Selected Files" : "Repository",
-        baseline,
-        baselineFile,
-        maxFiles,
-        maxDepth,
-      });
-    case "audit_changes":
-      return await runEngineeringAudit({
-        projectDir,
-        files,
-        categoryFilter: args.category || null,
-        scopeLabel: "Pull Request / Changed Files",
-        discoverGitChanges: true,
-        changeMode: args.changeMode || null,
-        baseRef: args.baseRef || null,
-        headRef: args.headRef || "HEAD",
-        commitRange: args.commitRange || null,
-        baseline,
-        baselineFile,
-        maxFiles,
-        maxDepth,
-      });
-    case "audit_repository":
-      return await runEngineeringAudit({
-        projectDir,
-        files: [],
-        scopeLabel: "Full Repository",
-        baseline,
-        baselineFile,
-        maxFiles,
-        maxDepth,
-      });
-    case "audit_architecture":
-      return await runEngineeringAudit({
-        projectDir,
-        files,
-        categoryFilter: "architecture",
-        scopeLabel: "Architecture",
-        baseline,
-        baselineFile,
-        maxFiles,
-        maxDepth,
-      });
-    case "audit_security":
-      return await runEngineeringAudit({
-        projectDir,
-        files,
-        categoryFilter: "security",
-        scopeLabel: "Security",
-        baseline,
-        baselineFile,
-        maxFiles,
-        maxDepth,
-      });
-    case "audit_tests":
-      return await runEngineeringAudit({
-        projectDir,
-        files,
-        categoryFilter: "testing",
-        scopeLabel: "Testing",
-        baseline,
-        baselineFile,
-        maxFiles,
-        maxDepth,
-      });
-    case "audit_api_contracts":
-      return await runEngineeringAudit({
-        projectDir,
-        files,
-        categoryFilter: "api-contracts",
-        scopeLabel: "API Contracts",
-        baseline,
-        baselineFile,
-        maxFiles,
-        maxDepth,
-      });
-    case "audit_database_changes":
-      return await runEngineeringAudit({
-        projectDir,
-        files,
-        categoryFilter: "database",
-        scopeLabel: "Database Migrations",
-        baseline,
-        baselineFile,
-        maxFiles,
-        maxDepth,
-      });
-    case "audit_standards":
-      return await validateStandardsRegistry(projectDir);
-    case "audit_report": {
-      const isPrScope =
-        args.scope === "Pull Request" || Boolean(args.changeMode) || Boolean(args.baseRef) || Boolean(args.commitRange);
+    case "audit": {
+      const rawCat = String(args.category || "").trim().toLowerCase();
+
+      if (rawCat === "standards") {
+        return await validateStandardsRegistry(projectDir);
+      }
+
+      if (rawCat === "catalog") {
+        const { getToolList } = await import("../tools/definitions.js");
+        const { NON_SESSION_SCOPED_TOOLS } = await import("../session-scope.js");
+        const tools = getToolList();
+        const report = auditToolCatalog({
+          tools,
+          nonSessionTools: NON_SESSION_SCOPED_TOOLS,
+          proposedTools: Array.isArray(args.proposedTools) ? args.proposedTools : [],
+          includeMatrix: args.includeMatrix !== false,
+          includeInventory: args.includeInventory !== false,
+        });
+        if (args.includeConsolidationPlan) {
+          report.consolidation_plan = generateConsolidationPlan({
+            tools,
+            nonSessionTools: NON_SESSION_SCOPED_TOOLS,
+          });
+        }
+        return sanitize(report);
+      }
+
+      const isChangesMode =
+        rawCat === "changes" ||
+        args.scope === "Pull Request" ||
+        Boolean(args.changeMode) ||
+        Boolean(args.baseRef) ||
+        Boolean(args.commitRange);
+      const isFullRepoMode = rawCat === "repository" || args.scope === "Full Repository";
+      const mappedCategory = CATEGORY_FILTER_MAP[rawCat] || null;
+
+      const effectiveFiles = isFullRepoMode ? [] : files;
+      const scopeLabel =
+        args.scope ||
+        (isFullRepoMode
+          ? "Full Repository"
+          : isChangesMode
+            ? "Pull Request / Changed Files"
+            : mappedCategory
+              ? mappedCategory.label
+              : effectiveFiles.length
+                ? "Selected Files"
+                : "Repository");
+
       const report = await runEngineeringAudit({
         projectDir,
-        files,
-        scopeLabel: args.scope || (files.length || isPrScope ? "Pull Request" : "Repository"),
-        discoverGitChanges: isPrScope && files.length === 0,
+        files: effectiveFiles,
+        categoryFilter: mappedCategory ? mappedCategory.filter : null,
+        scopeLabel,
+        discoverGitChanges: isChangesMode && effectiveFiles.length === 0,
         changeMode: args.changeMode || null,
         baseRef: args.baseRef || null,
         headRef: args.headRef || "HEAD",
@@ -2891,62 +2682,139 @@ export async function handleDevWorkflowV2Tool(name, args = {}, workflowState = n
         maxFiles,
         maxDepth,
       });
+
       return {
         ...report,
         formatted_report: formatAuditReportText(report),
       };
     }
-    case "audit_tool_catalog": {
-      const { getToolList } = await import("../tools/definitions.js");
-      const { NON_SESSION_SCOPED_TOOLS } = await import("../session-scope.js");
-      const tools = getToolList();
-      const report = auditToolCatalog({
-        tools,
-        nonSessionTools: NON_SESSION_SCOPED_TOOLS,
-        proposedTools: Array.isArray(args.proposedTools) ? args.proposedTools : [],
-        includeMatrix: args.includeMatrix !== false,
-        includeInventory: args.includeInventory !== false,
-      });
-      if (args.includeConsolidationPlan) {
-        report.consolidation_plan = generateConsolidationPlan({
-          tools,
-          nonSessionTools: NON_SESSION_SCOPED_TOOLS,
-        });
+
+    case "analyze_change": {
+      const rawMode = String(args.mode || "").trim().toLowerCase();
+      const effectiveMode =
+        rawMode ||
+        (args.title && args.problemDescription
+          ? "propose_standard"
+          : args.errorMessage
+            ? "root_cause"
+            : args.ruleId
+              ? "explain"
+              : "impact");
+
+      if (effectiveMode === "explain") {
+        return await explainViolation({ projectDir, ruleId: args.ruleId, file: args.file });
       }
-      return sanitize(report);
-    }
-    case "helper_consolidation_plan": {
-      const { getToolList } = await import("../tools/definitions.js");
-      const { NON_SESSION_SCOPED_TOOLS } = await import("../session-scope.js");
-      return sanitize(
-        generateConsolidationPlan({
-          tools: getToolList(),
-          nonSessionTools: NON_SESSION_SCOPED_TOOLS,
-        })
-      );
-    }
-    case "helper_explain_violation":
-      return await explainViolation({ projectDir, ruleId: args.ruleId, file: args.file });
-    case "helper_plan_fix":
-      return await planSafeFix({ projectDir, ruleId: args.ruleId, files });
-    case "helper_autofix_candidates": {
-      const audit = await runEngineeringAudit({
-        projectDir,
-        files,
-        scopeLabel: "Autofix Candidate Scan",
-        discoverGitChanges: files.length === 0,
-        changeMode: args.changeMode || null,
-        baseRef: args.baseRef || null,
-        headRef: args.headRef || "HEAD",
-        maxFiles,
-        maxDepth,
-      });
+      if (effectiveMode === "propose_standard") {
+        return await proposeEngineeringStandard({ ...args, projectDir: args.projectDir || null });
+      }
+      if (effectiveMode === "root_cause") {
+        return {
+          error_message: args.errorMessage,
+          affected_files: files,
+          confirmed_facts: [`Observed error: ${args.errorMessage}`],
+          hypotheses: [
+            "Contract or schema mismatch between caller and callee.",
+            "Stale or missing environment/fixture state during test execution.",
+          ],
+          next_verification_step: "Run targeted test covering the failing file and inspect exact stack trace line.",
+        };
+      }
+      if (effectiveMode === "refactor") {
+        const impact = await analyzeChangeImpact({ projectDir, files });
+        return {
+          ...impact,
+          refactoring_steps: [
+            "1. Verify characterization tests pass before touching structure.",
+            "2. Extract deep service/domain methods with small, clear parameter lists (Ousterhout).",
+            "3. Run automated test suite after each small behavior-preserving step (Fowler & Beck).",
+          ],
+        };
+      }
+      if (effectiveMode === "debt") {
+        const debtFile = path.join(path.resolve(projectDir), "engineering", "reports", "technical-debt-register.yaml");
+        let rawDebt = null;
+        if (existsSync(debtFile)) {
+          rawDebt = await fs.readFile(debtFile, "utf8");
+        }
+        return {
+          project_dir: path.resolve(projectDir),
+          has_register_file: Boolean(rawDebt),
+          priorities: [
+            "P0: Security & Data Integrity",
+            "P1: High-Risk Architecture & Regression Coverage",
+            "P2: Maintainability",
+            "P3: Cosmetic",
+          ],
+          register_preview: rawDebt
+            ? rawDebt.slice(0, 2000)
+            : "No technical-debt-register.yaml found; run audit with category:'repository' to baseline.",
+        };
+      }
+      if (effectiveMode === "docs") {
+        return {
+          changed_files: files,
+          recommended_docs: ["AGENTS.md", "README.md", "engineering/reports/technical-debt-register.yaml"],
+        };
+      }
+      if (effectiveMode === "opportunities") {
+        return {
+          project_dir: path.resolve(projectDir),
+          opportunities: [
+            "Use Adaptive Role Routing (FAST 2-role / STANDARD 4-role / FULL 6-role) to save 33-67% token cost on low/normal-risk changes.",
+            "Run devworkflow.audit ({ category: 'changes' }) before commit_and_push to catch ZET-SEC-001, ZET-DB-001, and ZET-CODE-002 deterministically.",
+            "Keep staging database parity on PostgreSQL (dev_zettly) for migration-sensitive releases.",
+          ],
+        };
+      }
+
+      // Default: 'impact' or 'tests'
+      const impact = await analyzeChangeImpact({ projectDir, files });
       return {
-        project_dir: audit.project_dir,
-        candidates: audit.findings.filter((f) => f.autofix_eligible),
+        ...impact,
+        recommended_docs: ["AGENTS.md", "README.md", "engineering/reports/technical-debt-register.yaml"],
       };
     }
-    case "helper_apply_safe_fix":
+
+    case "plan_fix": {
+      const rawMode = String(args.mode || "").trim().toLowerCase();
+      const wantCandidates = rawMode === "candidates" || rawMode === "all" || !args.ruleId;
+      const wantPlan = rawMode === "plan" || rawMode === "all" || Boolean(args.ruleId);
+
+      let planResult = null;
+      if (wantPlan && args.ruleId) {
+        planResult = await planSafeFix({ projectDir, ruleId: args.ruleId, files });
+      }
+
+      let candidatesResult = null;
+      if (wantCandidates) {
+        const audit = await runEngineeringAudit({
+          projectDir,
+          files,
+          scopeLabel: "Autofix Candidate Scan",
+          discoverGitChanges: files.length === 0,
+          changeMode: args.changeMode || null,
+          baseRef: args.baseRef || null,
+          headRef: args.headRef || "HEAD",
+          maxFiles,
+          maxDepth,
+        });
+        candidatesResult = {
+          project_dir: audit.project_dir,
+          candidates: audit.findings.filter((f) => f.autofix_eligible),
+        };
+      }
+
+      if (planResult && candidatesResult) {
+        return {
+          ...planResult,
+          ...candidatesResult,
+        };
+      }
+      if (planResult) return planResult;
+      return candidatesResult;
+    }
+
+    case "apply_safe_fix":
       return await applyBoundedSafeFix({
         projectDir,
         file: args.file,
@@ -2958,68 +2826,8 @@ export async function handleDevWorkflowV2Tool(name, args = {}, workflowState = n
         requireOwnership: Boolean(args.requireOwnership),
         sessionId: args.sessionId || null,
       });
-    case "helper_suggest_tests":
-    case "helper_change_impact":
-      return await analyzeChangeImpact({ projectDir, files });
-    case "helper_refactor_advice": {
-      const impact = await analyzeChangeImpact({ projectDir, files });
-      return {
-        ...impact,
-        refactoring_steps: [
-          "1. Verify characterization tests pass before touching structure.",
-          "2. Extract deep service/domain methods with small, clear parameter lists (Ousterhout).",
-          "3. Run automated test suite after each small behavior-preserving step (Fowler & Beck).",
-        ],
-      };
-    }
-    case "helper_prioritize_debt": {
-      const debtFile = path.join(path.resolve(projectDir), "engineering", "reports", "technical-debt-register.yaml");
-      let rawDebt = null;
-      if (existsSync(debtFile)) {
-        rawDebt = await fs.readFile(debtFile, "utf8");
-      }
-      return {
-        project_dir: path.resolve(projectDir),
-        has_register_file: Boolean(rawDebt),
-        priorities: [
-          "P0: Security & Data Integrity",
-          "P1: High-Risk Architecture & Regression Coverage",
-          "P2: Maintainability",
-          "P3: Cosmetic",
-        ],
-        register_preview: rawDebt
-          ? rawDebt.slice(0, 2000)
-          : "No technical-debt-register.yaml found; run audit_repository to baseline.",
-      };
-    }
-    case "helper_root_cause":
-      return {
-        error_message: args.errorMessage,
-        affected_files: files,
-        confirmed_facts: [`Observed error: ${args.errorMessage}`],
-        hypotheses: [
-          "Contract or schema mismatch between caller and callee.",
-          "Stale or missing environment/fixture state during test execution.",
-        ],
-        next_verification_step: "Run targeted test covering the failing file and inspect exact stack trace line.",
-      };
-    case "helper_docs_update":
-      return {
-        changed_files: files,
-        recommended_docs: ["AGENTS.md", "README.md", "engineering/reports/technical-debt-register.yaml"],
-      };
-    case "helper_propose_standard":
-      return await proposeEngineeringStandard({ ...args, projectDir: args.projectDir || null });
-    case "helper_improvement_opportunities":
-      return {
-        project_dir: path.resolve(projectDir),
-        opportunities: [
-          "Use Adaptive Role Routing (FAST 2-role / STANDARD 4-role / FULL 6-role) to save 33-67% token cost on low/normal-risk changes.",
-          "Run devworkflow.audit_changes before commit_and_push to catch ZET-SEC-001, ZET-DB-001, and ZET-CODE-002 deterministically.",
-          "Keep staging database parity on PostgreSQL (dev_zettly) for migration-sensitive releases.",
-        ],
-      };
+
     default:
-      throw new Error(`Unsupported DevWorkflow V2.0 tool: ${name}`);
+      throw new Error(`Unsupported DevWorkflow V3.0 tool: ${name}`);
   }
 }
