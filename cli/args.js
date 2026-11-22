@@ -18,7 +18,7 @@ const COMMANDS = ["list", "close", "share", "drop", "complete", "checkpoint", "h
 const FLEET_VERBS = ["status", "check", "plan", "stage", "activate", "verify", "rollback", "doctor", "upgrade"];
 const ZETTLY_VERBS = ["status", "skip", "connect", "switch", "disconnect", "doctor"];
 const GOVERNANCE_VERBS = ["validate", "policies"];
-const AUDIT_VERBS = ["code", "changes", "standards", "repository", "site"];
+const AUDIT_VERBS = ["code", "changes", "standards", "repository", "catalog", "site"];
 
 /** A refusal the CLI reports to the user and turns into a non-zero exit. */
 export class CliError extends Error {

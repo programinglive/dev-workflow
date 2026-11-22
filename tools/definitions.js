@@ -42,12 +42,12 @@ export function getToolList() {
     },
     {
       name:'security_audit',
-      description:'Audit current project knowledge, files, runtime configuration metadata and scoped database rows. Returns sanitized findings only; does not resolve credentials or read protected file contents.',
+      description:'[READ_ONLY_RUNTIME_DB] Audit DevWorkflow runtime state, protected file permissions, runtime configuration metadata and scoped SQLite/Postgres/MySQL workflow rows. Returns sanitized findings only; does not resolve credentials. (For static ZET-SEC-* source-code scanning, use audit_security.)',
       inputSchema:{type:'object',properties:{},additionalProperties:false},
     },
     {
       name:'site_audit',
-      description:'Audit a website read-only with a bounded same-origin HTTP crawl. Reports reachability, security headers, SEO and social metadata, broken links, static accessibility heuristics, and language route parity, each with severity and remediation. Read-only: no browser, no form submission, and no workflow state writes.',
+      description:'[READ_ONLY_HTTP] Audit a website read-only with a bounded same-origin HTTP crawl. Reports reachability, security headers, SEO and social metadata, broken links, static accessibility heuristics, and language route parity, each with severity and remediation. Read-only: no browser, no form submission, and no workflow state writes.',
       inputSchema:{
         type:'object',
         properties:{
@@ -1052,16 +1052,22 @@ export function getToolList() {
     {
       name: "project_summary",
       description:
-        "Get a project knowledge summary that aggregates completed tasks, task types, and recent activity to help understand the project and fix bugs faster over time.",
+        "Canonical tool to get a project knowledge summary that aggregates completed tasks, task types, and recent activity (supports optional source: 'memory' | 'file' | 'db' | 'auto').",
       inputSchema: {
         type: "object",
-        properties: {},
+        properties: {
+          source: {
+            type: "string",
+            enum: ["memory", "file", "db", "auto"],
+            description: "Optional backing store: 'memory' (default in-memory history), 'file' (persisted project-summary.json), 'db' (per-user SQLite table), or 'auto' (file with memory fallback).",
+          },
+        },
       },
     },
     {
       name: "project_summary_data",
       description:
-        "Get the persisted project knowledge summary from a structured JSON file (project-summary.json). Falls back to in-memory if the file doesn't exist. This file can be used as a simple database for future features.",
+        "[COMPATIBILITY_ALIAS -> project_summary({ source: 'file' })] Get the persisted project knowledge summary from a structured JSON file (project-summary.json). Falls back to in-memory if the file doesn't exist.",
       inputSchema: {
         type: "object",
         properties: {},
@@ -1070,7 +1076,7 @@ export function getToolList() {
     {
       name: "project_summary_db",
       description:
-        "Get the per-user project knowledge summary from SQLite. Use DEV_WORKFLOW_USER_ID env var to isolate users.",
+        "[COMPATIBILITY_ALIAS -> project_summary({ source: 'db' })] Get the per-user project knowledge summary from SQLite. Use DEV_WORKFLOW_USER_ID env var to isolate users.",
       inputSchema: {
         type: "object",
         properties: {},

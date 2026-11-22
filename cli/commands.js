@@ -790,6 +790,25 @@ export async function runCommand({
         return { ok: Boolean(report.valid), report };
       }
 
+      if (args.auditVerb === "catalog") {
+        const report = await handleDevWorkflowV2Tool("audit_tool_catalog", {
+          includeMatrix: true,
+          includeInventory: true,
+          includeConsolidationPlan: true,
+        });
+        if (args.out) {
+          await writeFile(args.out, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+        }
+        if (args.json) {
+          out.write(JSON.stringify(report, null, 2));
+        } else {
+          out.write(
+            `DevWorkflow MCP Tool Catalog Audit (${report.regression_gate.status}): ${report.summary.total_public_tools} public tools (${report.summary.canonical_public_tools} canonical, ${report.summary.compatibility_aliases} compatibility aliases), ${report.regression_gate.blocking_violations_count} blocking violations`
+          );
+        }
+        return { ok: Boolean(report.regression_gate.passed), report };
+      }
+
       const scope =
         args.auditVerb === "changes"
           ? "Pull Request"

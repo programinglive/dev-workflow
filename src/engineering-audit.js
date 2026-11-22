@@ -14,10 +14,15 @@ import {
   useWorktreeCapability,
   resolveCanonicalWorktreeRoot,
 } from "../process-lock.js";
+import {
+  auditToolCatalog,
+  generateConsolidationPlan,
+  TOOL_ALIASES,
+} from "./tool-catalog-auditor.js";
 
 const execFileAsync = promisify(execFile);
 
-export const STANDARDS_REGISTRY_VERSION = "2.1.4";
+export const STANDARDS_REGISTRY_VERSION = "2.1.5";
 export const FINDING_FINGERPRINT_VERSION = "2.0";
 
 const ALLOWED_VERIFY_BINARIES = new Set([
@@ -2450,12 +2455,13 @@ export async function proposeEngineeringStandard({
 export const DEVWORKFLOW_V2_TOOL_DEFINITIONS = [
   {
     name: "audit_code",
-    description: "[READ_ONLY] Run Zettly & DevWorkflow V2.1 engineering standards against selected files or the repository.",
+    description: "[READ_ONLY_STATIC] Canonical code audit entry point: evaluate Zettly & DevWorkflow V2.1 engineering standards across selected files or the full repository (optional category filter).",
     inputSchema: {
       type: "object",
       properties: {
         projectDir: { type: "string" },
         files: { type: "array", items: { type: "string" } },
+        category: { type: "string" },
         baselineFile: { type: "string" },
         maxFiles: { type: "number" },
         maxDepth: { type: "number" },
@@ -2465,12 +2471,13 @@ export const DEVWORKFLOW_V2_TOOL_DEFINITIONS = [
   },
   {
     name: "audit_changes",
-    description: "[READ_ONLY] Audit changed files or a Git diff (working_tree, staged, commit_range, or PR merge-base) against engineering standards.",
+    description: "[READ_ONLY_STATIC] Audit Git-changed files or a Pull Request diff (working_tree, staged, commit_range, or PR merge-base) against engineering standards.",
     inputSchema: {
       type: "object",
       properties: {
         projectDir: { type: "string" },
         files: { type: "array", items: { type: "string" } },
+        category: { type: "string" },
         changeMode: { type: "string" },
         baseRef: { type: "string" },
         headRef: { type: "string" },
@@ -2482,7 +2489,7 @@ export const DEVWORKFLOW_V2_TOOL_DEFINITIONS = [
   },
   {
     name: "audit_repository",
-    description: "[READ_ONLY] Run a comprehensive repository-wide engineering audit with explicit scan completeness telemetry (COMPLETE vs PARTIAL).",
+    description: "[READ_ONLY_STATIC] Full-repository wrapper around audit_code with explicit scan completeness telemetry (COMPLETE vs PARTIAL).",
     inputSchema: {
       type: "object",
       properties: {
@@ -2496,7 +2503,7 @@ export const DEVWORKFLOW_V2_TOOL_DEFINITIONS = [
   },
   {
     name: "audit_architecture",
-    description: "[READ_ONLY] Evaluate architectural boundaries, deep-module encapsulation, dependency direction, and role/permission enforcement.",
+    description: "[READ_ONLY_STATIC] Evaluate ZET-ARCH-* architectural boundaries, deep-module encapsulation, dependency direction, and role/permission enforcement.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2508,7 +2515,7 @@ export const DEVWORKFLOW_V2_TOOL_DEFINITIONS = [
   },
   {
     name: "audit_security",
-    description: "[READ_ONLY] Scan for embedded secrets (with credential redaction), unsafe shell/deserialization calls, and security boundary violations.",
+    description: "[READ_ONLY_STATIC] Scan application source files for ZET-SEC-* violations (embedded secrets with redaction, unsafe shell/deserialization). Distinct from runtime/DB security_audit.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2520,7 +2527,7 @@ export const DEVWORKFLOW_V2_TOOL_DEFINITIONS = [
   },
   {
     name: "audit_tests",
-    description: "[READ_ONLY] Evaluate regression test protection and change-impact test requirements.",
+    description: "[READ_ONLY_STATIC] Evaluate ZET-TEST-001 regression test protection when critical modules change. To record test runs use run_tests; for error RCA use helper_root_cause.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2532,7 +2539,7 @@ export const DEVWORKFLOW_V2_TOOL_DEFINITIONS = [
   },
   {
     name: "audit_api_contracts",
-    description: "[READ_ONLY] Check API controllers and tool definitions for input validation and contract compatibility.",
+    description: "[READ_ONLY_STATIC] Check API controllers and tool definitions for ZET-API-001 input validation and contract compatibility.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2544,7 +2551,7 @@ export const DEVWORKFLOW_V2_TOOL_DEFINITIONS = [
   },
   {
     name: "audit_database_changes",
-    description: "[READ_ONLY] Inspect database migrations for destructive operations (dropColumn/dropTable) and N-1 rollback compatibility.",
+    description: "[READ_ONLY_STATIC] Inspect database migrations for ZET-DB-001 destructive operations (dropColumn/dropTable) and N-1 rollback compatibility.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2556,7 +2563,7 @@ export const DEVWORKFLOW_V2_TOOL_DEFINITIONS = [
   },
   {
     name: "audit_standards",
-    description: "[READ_ONLY] Validate the engineering standards registry (duplicate IDs, missing rationales, schema validity, approved exceptions).",
+    description: "[READ_ONLY_STATIC] Validate the engineering/standards YAML registry (duplicate IDs, missing rationales, schema validity, approved exceptions).",
     inputSchema: {
       type: "object",
       properties: {
@@ -2567,7 +2574,7 @@ export const DEVWORKFLOW_V2_TOOL_DEFINITIONS = [
   },
   {
     name: "audit_report",
-    description: "[READ_ONLY] Generate an evidence-backed consolidated engineering audit report with 4-dimension reliability status.",
+    description: "[READ_ONLY_STATIC] Run engineering standards audit and generate both structured 4-dimension JSON and a human-readable formatted_report block.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2581,6 +2588,19 @@ export const DEVWORKFLOW_V2_TOOL_DEFINITIONS = [
         baselineFile: { type: "string" },
         maxFiles: { type: "number" },
         maxDepth: { type: "number" },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "audit_tool_catalog",
+    description: "[READ_ONLY_CATALOG] Audit registered DevWorkflow MCP tools for duplicate IDs, semantic overlap (D0..D6), shared handlers, wrapper redundancy, and catalog regression gate status.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        includeMatrix: { type: "boolean" },
+        includeInventory: { type: "boolean" },
+        includeConsolidationPlan: { type: "boolean" },
       },
       additionalProperties: false,
     },
@@ -2615,7 +2635,7 @@ export const DEVWORKFLOW_V2_TOOL_DEFINITIONS = [
   },
   {
     name: "helper_autofix_candidates",
-    description: "[READ_ONLY] Find deterministic AF-0 and standalone AF-1 findings eligible for bounded automatic remediation.",
+    description: "[READ_ONLY] Discover deterministic AF-0 and standalone AF-1 findings eligible for bounded automatic remediation via helper_apply_safe_fix.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2627,7 +2647,7 @@ export const DEVWORKFLOW_V2_TOOL_DEFINITIONS = [
   },
   {
     name: "helper_apply_safe_fix",
-    description: "[LOCAL_WRITE] Apply an allowlisted deterministic AF-0/AF-1 fix under worktree mutex fencing with truthful verification levels and concurrent rollback protection.",
+    description: "[LOCAL_WRITE_FENCED] Apply an allowlisted deterministic AF-0/AF-1 fix under worktree mutex fencing with truthful verification levels and concurrent rollback protection.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2645,7 +2665,7 @@ export const DEVWORKFLOW_V2_TOOL_DEFINITIONS = [
   },
   {
     name: "helper_suggest_tests",
-    description: "[READ_ONLY] Recommend characterization and regression tests based on changed files and risk.",
+    description: "[READ_ONLY] [COMPATIBILITY_ALIAS -> helper_change_impact] Recommend characterization and regression tests based on changed files and risk.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2657,7 +2677,7 @@ export const DEVWORKFLOW_V2_TOOL_DEFINITIONS = [
   },
   {
     name: "helper_change_impact",
-    description: "[READ_ONLY] Identify affected modules, services, APIs, and required test suites for a change set.",
+    description: "[READ_ONLY] Canonical change-impact and test-recommendation analyzer: identify affected modules, risk level, and required test suites for a change set.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2764,6 +2784,7 @@ export async function handleDevWorkflowV2Tool(name, args = {}, workflowState = n
       return await runEngineeringAudit({
         projectDir,
         files,
+        categoryFilter: args.category || null,
         scopeLabel: files.length ? "Selected Files" : "Repository",
         baseline,
         baselineFile,
@@ -2774,6 +2795,7 @@ export async function handleDevWorkflowV2Tool(name, args = {}, workflowState = n
       return await runEngineeringAudit({
         projectDir,
         files,
+        categoryFilter: args.category || null,
         scopeLabel: "Pull Request / Changed Files",
         discoverGitChanges: true,
         changeMode: args.changeMode || null,
@@ -2873,6 +2895,35 @@ export async function handleDevWorkflowV2Tool(name, args = {}, workflowState = n
         ...report,
         formatted_report: formatAuditReportText(report),
       };
+    }
+    case "audit_tool_catalog": {
+      const { getToolList } = await import("../tools/definitions.js");
+      const { NON_SESSION_SCOPED_TOOLS } = await import("../session-scope.js");
+      const tools = getToolList();
+      const report = auditToolCatalog({
+        tools,
+        nonSessionTools: NON_SESSION_SCOPED_TOOLS,
+        proposedTools: Array.isArray(args.proposedTools) ? args.proposedTools : [],
+        includeMatrix: args.includeMatrix !== false,
+        includeInventory: args.includeInventory !== false,
+      });
+      if (args.includeConsolidationPlan) {
+        report.consolidation_plan = generateConsolidationPlan({
+          tools,
+          nonSessionTools: NON_SESSION_SCOPED_TOOLS,
+        });
+      }
+      return sanitize(report);
+    }
+    case "helper_consolidation_plan": {
+      const { getToolList } = await import("../tools/definitions.js");
+      const { NON_SESSION_SCOPED_TOOLS } = await import("../session-scope.js");
+      return sanitize(
+        generateConsolidationPlan({
+          tools: getToolList(),
+          nonSessionTools: NON_SESSION_SCOPED_TOOLS,
+        })
+      );
     }
     case "helper_explain_violation":
       return await explainViolation({ projectDir, ruleId: args.ruleId, file: args.file });
