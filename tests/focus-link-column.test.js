@@ -14,6 +14,7 @@ function fixture(todos) {
   calls.push({method,route,body});
   if(route==='/user')return {id:1,name:'Owner'};
   if(method==='GET'&&route==='/focus')return {data:structuredClone(focuses)};
+  if(method==='GET'&&/^\/focus\/\d+\/board$/.test(route)){const fid=Number(route.split('/')[2]);const linked=rows.filter(t=>Number(t.focus_id)===fid||String(t.description||'').includes('<!-- dev-workflow-focus:'+fid+' -->'));return {success:true,data:{todos:structuredClone(linked)}};}
   if(method==='GET'&&route==='/todos?type=todo')return {data:structuredClone(rows)};
   if(method==='GET'&&route==='/todos/20')return {data:structuredClone(rows[0])};
   if(method==='PATCH'&&route==='/todos/20'){rows[0]={...rows[0],...body};return {data:rows[0]};}
