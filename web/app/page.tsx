@@ -41,37 +41,38 @@ export default function Home() {
       <section className="max-w-3xl space-y-5">
         <div className="inline-flex flex-wrap items-center gap-2 text-xs font-mono text-slate-600">
           <span className="px-2 py-0.5 rounded border border-slate-200 bg-slate-50">
-            Runtime v{WEB_VERSION}
+            v{WEB_VERSION}
           </span>
-          <span className="px-2 py-0.5 rounded border border-slate-200 bg-slate-50">
-            Baseline {GENERATED_CATALOG.ossBaselineTag}
+          <span className="px-2 py-0.5 rounded border border-emerald-200 bg-emerald-50 text-emerald-800">
+            npm: {GENERATED_CATALOG.packageName}
           </span>
-          <span className="px-2 py-0.5 rounded border border-amber-200 bg-amber-50 text-amber-800">
-            Repo: {GENERATED_CATALOG.repositoryVisibility} (npm public release pending)
+          <span className="px-2 py-0.5 rounded border border-blue-200 bg-blue-50 text-blue-800">
+            {GENERATED_CATALOG.mcpToolCount} MCP Tools · {GENERATED_CATALOG.cli.commands.length} CLI Commands
           </span>
         </div>
 
         <h1 className="text-3xl sm:text-4xl font-semibold tracking-tight text-slate-900">
-          Engineering workflow infrastructure for AI coding agents.
+          Governed AI Development. From Task to Verified Release.
         </h1>
 
         <p className="text-base sm:text-lg text-slate-600 leading-relaxed">
-          Local-first task state, evidence-driven workflows, and release checks for developers working across coding
-          agents and machines.
+          Connect your AI coding agent (Claude Code, Codex, OpenCode, Antigravity, or any MCP client) to a local-first
+          engineering workflow with task contracts, automated tests, code quality gates, and release safety. No cloud
+          account required.
         </p>
 
         <div className="flex flex-wrap items-center gap-3 pt-1">
           <Link
-            href="/docs/"
+            href="/developers/getting-started/"
             className="inline-flex items-center px-4 py-2 rounded-md bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-colors"
           >
-            Documentation
+            Get Started
           </Link>
           <Link
-            href="/developers/getting-started/"
+            href="/docs/"
             className="inline-flex items-center px-4 py-2 rounded-md border border-slate-300 bg-white text-slate-800 text-sm font-medium hover:bg-slate-50 transition-colors"
           >
-            Developer Guide
+            Documentation
           </Link>
           <a
             href={GENERATED_CATALOG.repositoryUrl}
@@ -79,7 +80,7 @@ export default function Home() {
             rel="noopener noreferrer"
             className="inline-flex items-center px-3 py-2 text-sm text-slate-600 hover:text-slate-900 underline underline-offset-4"
           >
-            GitHub ({GENERATED_CATALOG.repositoryVisibility} access required)
+            View on GitHub
           </a>
         </div>
       </section>
@@ -87,24 +88,36 @@ export default function Home() {
       {/* Quick Start */}
       <section className="border border-slate-200 rounded-lg bg-slate-50 p-5 sm:p-6 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-base font-semibold text-slate-900">Quick Start</h2>
+          <h2 className="text-base font-semibold text-slate-900">Quick Start (Standalone Local-First)</h2>
           <span className="text-xs font-mono text-slate-500">
-            Node.js {GENERATED_CATALOG.nodeEngine} · Source checkout ({GENERATED_CATALOG.repositoryVisibility})
+            Node.js {GENERATED_CATALOG.nodeEngine} · MIT License · Zero External Accounts Required
           </span>
         </div>
         <p className="text-sm text-slate-600">
-          Public npm publication is not yet active for{" "}
+          Install{" "}
           <code className="text-xs bg-white border border-slate-200 px-1.5 py-0.5 rounded">
             {GENERATED_CATALOG.packageName}
-          </code>
-          . Clone the repository with authorized access and verify your local runtime:
+          </code>{" "}
+          globally from npm, initialize your local-first profile, and verify your environment:
         </p>
         <pre className="p-4 rounded-md bg-slate-900 text-slate-100 text-xs sm:text-sm leading-relaxed overflow-x-auto">
-          <code>{`git clone ${GENERATED_CATALOG.repositoryUrl}.git
-cd dev-workflow
-npm ci
-npx devwf doctor`}</code>
+          <code>{`npm install -g ${GENERATED_CATALOG.packageName}
+devwf setup
+devwf doctor`}</code>
         </pre>
+        <p className="text-xs text-slate-500">
+          Optional integrations — <strong>Zettly</strong> (planning &amp; retrospectives) and{" "}
+          <strong>DevWorkflow Android Companion</strong> (remote engineering cockpit for supported Android devices) —
+          can be enabled anytime without changing your core local workflow.
+        </p>
+      </section>
+
+      {/* How It Works */}
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold text-slate-900">How It Works</h2>
+        <div className="p-4 rounded-lg border border-slate-200 bg-white text-xs sm:text-sm font-mono text-slate-700 overflow-x-auto">
+          Install → Connect AI Client → Start Task → Implement → Test → Audit &amp; Review → Release
+        </div>
       </section>
 
       {/* Core Capabilities */}

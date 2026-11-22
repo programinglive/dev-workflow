@@ -104,8 +104,9 @@ async function main() {
     license: pkg.license || "MIT",
     ossBaselineTag: "v1.31.0-oss.0",
     repositoryUrl: "https://github.com/programinglive/dev-workflow",
-    repositoryVisibility: "PRIVATE",
-    npmPubliclyPublished: false,
+    repositoryVisibility: "PUBLIC",
+    npmPubliclyPublished: true,
+    npmRegistryUrl: `https://www.npmjs.com/package/${pkg.name}`,
     mcpToolCount: mcpTools.length,
     mcpTools,
     mcpPrompts: [

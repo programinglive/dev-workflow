@@ -52,15 +52,14 @@ export default function ReleasesPage() {
             </tr>
             <tr>
               <td className="py-3 px-4 font-medium text-slate-900">Public npm Registry</td>
-              <td className="py-3 px-4 font-mono text-xs">{GENERATED_CATALOG.packageName}</td>
+              <td className="py-3 px-4 font-mono text-xs">{GENERATED_CATALOG.packageName}@{WEB_VERSION}</td>
               <td className="py-3 px-4">
-                <span className="px-2 py-0.5 rounded text-xs font-mono bg-amber-50 text-amber-800 border border-amber-200">
-                  NOT_PUBLISHED_PUBLICLY
+                <span className="px-2 py-0.5 rounded text-xs font-mono bg-emerald-50 text-emerald-800 border border-emerald-200">
+                  PUBLISHED_OIDC_PROVENANCE
                 </span>
               </td>
               <td className="py-3 px-4 text-slate-600">
-                Requires explicit release tag <code className="text-xs font-mono">vX.Y.Z</code> (excluding{" "}
-                <code className="text-xs font-mono">*-oss*</code>)
+                Automated via GitHub Actions OIDC Trusted Publisher on tag <code className="text-xs font-mono">vX.Y.Z</code>
               </td>
             </tr>
             <tr>

@@ -57,12 +57,11 @@ export default function Navbar() {
               href={GENERATED_CATALOG.repositoryUrl}
               target="_blank"
               rel="noopener noreferrer"
-              aria-label="GitHub repository (currently private)"
+              aria-label="GitHub repository"
               className="inline-flex items-center gap-1.5 text-sm text-slate-700 hover:text-slate-900 border border-slate-200 rounded-md px-2.5 py-1 bg-slate-50 hover:bg-slate-100 transition-colors"
             >
               <GithubIcon className="w-3.5 h-3.5" />
               <span>GitHub</span>
-              <span className="text-[11px] font-mono text-slate-500">({GENERATED_CATALOG.repositoryVisibility})</span>
             </a>
           </nav>
 
