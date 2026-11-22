@@ -103,7 +103,7 @@ export async function resolveZettlyConfig(env=process.env,{platform=process.plat
 export function createZettlyClient(config,{fetchImpl=fetch,timeoutMs=8000}={}) {
   let ownerCheck;
   async function request(method,route,body) {
-    if(!/^\/(?:user|tags(?:\/[1-9]\d*)?|todos(?:\/\d+(?:\/queue-state)?)?|priority\/(?:main-work|plan(?:\/items(?:\/\d+)?)?|queue)|drawings(?:\/[1-9]\d*)?|focus(?:\/(?:current|[1-9]\d*(?:\/complete)?))?|journal\/entries)(?:\?[^#]*)?$/.test(route)) throw new Error('Use a supported relative Zettly API path');
+    if(!/^\/(?:user|tags(?:\/[1-9]\d*)?|todos(?:\/\d+(?:\/queue-state)?)?|priority\/(?:main-work|plan(?:\/items(?:\/\d+)?)?|queue)|drawings(?:\/[1-9]\d*)?|focus(?:\/(?:current|[1-9]\d*(?:\/(?:complete|board))?))?|journal\/entries)(?:\?[^#]*)?$/.test(route)) throw new Error('Use a supported relative Zettly API path');
     let response;
     try {
       response=await fetchImpl(config.base+'/api/v1'+route,{method,redirect:'error',signal:AbortSignal.timeout(timeoutMs),

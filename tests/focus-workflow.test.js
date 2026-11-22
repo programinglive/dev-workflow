@@ -9,7 +9,7 @@ function fixture() {
  let todos=[{id:20,user_id:1,title:'Current work',description:'Existing owner description',is_completed:false}];
  const calls=[];
  const state={state:{workflowTaskId:'workflow-1',taskDescription:'Current work',currentPhase:'coding',zettly:{todoId:20},taskOrigin:{system:'sentry',id:'123'}},async save(){return {verified:true};}};
- const client={async request(method,route,body){calls.push({method,route,body});if(route==='/user')return {id:1,name:'Owner'};if(method==='GET'&&route==='/focus')return {data:structuredClone(focuses)};if(method==='GET'&&route==='/todos?type=todo')return {data:structuredClone(todos)};if(method==='GET'&&route==='/todos/20')return {data:structuredClone(todos[0])};if(method==='PATCH'&&route==='/todos/20'){todos[0]={...todos[0],...body};return {data:todos[0]};}if(method==='POST'&&route==='/focus'){const f={id:8,user_id:1,completed_at:null,...body};focuses.push(f);return {data:f};}if(method==='POST'&&route==='/focus/7/complete'){focuses[0].completed_at='2026-11-05T00:00:00Z';return {success:true,data:focuses[0]};}throw Error('Unexpected route');}};
+ const client={async request(method,route,body){calls.push({method,route,body});if(route==='/user')return {id:1,name:'Owner'};if(method==='GET'&&route==='/focus')return {data:structuredClone(focuses)};if(method==='GET'&&/^\/focus\/\d+\/board$/.test(route)){const fid=Number(route.split('/')[2]);const linked=todos.filter(t=>Number(t.focus_id)===fid||String(t.description||'').includes('<!-- dev-workflow-focus:'+fid+' -->'));return {success:true,data:{todos:structuredClone(linked)}};}if(method==='GET'&&route==='/todos?type=todo')return {data:structuredClone(todos)};if(method==='GET'&&route==='/todos/20')return {data:structuredClone(todos[0])};if(method==='PATCH'&&route==='/todos/20'){todos[0]={...todos[0],...body};return {data:todos[0]};}if(method==='POST'&&route==='/focus'){const f={id:8,user_id:1,completed_at:null,...body};focuses.push(f);return {data:f};}if(method==='POST'&&route==='/focus/7/complete'){focuses[0].completed_at='2026-11-05T00:00:00Z';return {success:true,data:focuses[0]};}throw Error('Unexpected route');}};
  return {state,calls,client,options:{client,env:{},expectedUserId:1},setFocuses:v=>{focuses=v;},getTodos:()=>todos};
 }
 const data=r=>JSON.parse(r.content[0].text);
@@ -141,6 +141,47 @@ test('ambiguous focus error includes activeFoci and focusIds',async()=>{
  assert.deepEqual(d.focusIds,[7,8]);
  assert.equal(d.activeFoci.length,2);
  assert.equal(d.activeFoci[0].title,'One');
+});
+
+test('completion uses the server-filtered focus board instead of scanning every Todo',async()=>{
+  const f=fixture();
+  f.getTodos().push({id:25,user_id:1,focus_id:7,is_completed:true,title:'Completed focus work'});
+  f.state.state.taskDescription=null;f.state.state.currentPhase='idle';
+  const r=await handleFocusTool('complete_focus',{focusId:7,evidence:'Focus board response was verified before closing'},f.state,f.options);
+  assert.equal(data(r).completed,true);
+  assert.ok(f.calls.some(c=>c.method==='GET'&&c.route==='/focus/7/board'));
+  assert.ok(!f.calls.some(c=>c.route==='/todos?type=todo'),'must not fetch the whole Todo collection');
+});
+
+test('completion falls back to the legacy Todo scan only when the board endpoint is unavailable',async()=>{
+  const f=fixture(),original=f.client.request;
+  f.client.request=async(method,route,body)=>{if(method==='GET'&&route==='/focus/7/board')throw Object.assign(new Error('Zettly HTTP 404'),{status:404});return original(method,route,body);};
+  f.getTodos().push({id:25,user_id:1,focus_id:7,is_completed:true,title:'Completed legacy focus work'});
+  f.state.state.taskDescription=null;f.state.state.currentPhase='idle';
+  const r=await handleFocusTool('complete_focus',{focusId:7,evidence:'Legacy Zettly server fallback was verified'},f.state,f.options);
+  assert.equal(data(r).completed,true);
+  assert.ok(f.calls.some(c=>c.route==='/todos?type=todo'));
+});
+
+test('malformed or foreign board rows cannot close a focus',async()=>{
+  const f=fixture(),original=f.client.request;
+  f.getTodos().push({id:25,user_id:1,focus_id:7,is_completed:true,title:'Completed work'});
+  f.state.state.taskDescription=null;f.state.state.currentPhase='idle';
+  f.client.request=async(method,route,body)=>method==='GET'&&route==='/focus/7/board'?{success:true,data:{todos:[{id:25,user_id:2,is_completed:true}]}}:original(method,route,body);
+  const foreign=await handleFocusTool('complete_focus',{focusId:7,evidence:'Foreign board rows must be rejected'},f.state,f.options);
+  assert.equal(data(foreign).error,'FOCUS_TASK_SCAN_INCOMPLETE');
+  f.client.request=async(method,route,body)=>method==='GET'&&route==='/focus/7/board'?{success:true,data:{todos:{}}}:original(method,route,body);
+  const malformed=await handleFocusTool('complete_focus',{focusId:7,evidence:'Malformed board rows must be rejected'},f.state,f.options);
+  assert.equal(data(malformed).error,'FOCUS_TASK_SCAN_INCOMPLETE');
+});
+
+test('the legacy scan still refuses an oversized Todo collection',async()=>{
+  const f=fixture(),original=f.client.request;
+  const many=Array.from({length:1001},(_,i)=>({id:100+i,user_id:1,focus_id:7,is_completed:true,title:'Bulk '+i}));
+  f.client.request=async(method,route,body)=>{if(method==='GET'&&route==='/focus/7/board')throw Object.assign(new Error('Zettly HTTP 404'),{status:404});if(method==='GET'&&route==='/todos?type=todo')return {data:many};return original(method,route,body);};
+  f.state.state.taskDescription=null;f.state.state.currentPhase='idle';
+  const r=await handleFocusTool('complete_focus',{focusId:7,evidence:'Oversized legacy collections must stay rejected'},f.state,f.options);
+  assert.equal(data(r).error,'FOCUS_TASK_SCAN_INCOMPLETE');
 });
 
 test('completion allows closing one focus when local task belongs to a different focus',async()=>{
