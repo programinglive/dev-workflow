@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {handleFocusTool,prepareTaskFocus} from '../focus-workflow.js';
+import {handleFocusTool,prepareTaskFocus,inspectFocusCompletionStatus,formatFocusClosureGuidance} from '../focus-workflow.js';
 import {getToolList} from '../tools/definitions.js';
 import {buildTaskProvenance} from '../task-provenance.js';
 
@@ -192,4 +192,45 @@ test('completion allows closing one focus when local task belongs to a different
  f.getTodos().push({id:25,user_id:1,focus_id:7,is_completed:true,title:'Completed work for focus 7'});
  const r=await handleFocusTool('complete_focus',{focusId:7,evidence:'Tests and deployed version were verified'},f.state,f.options);
  assert.equal(data(r).completed,true);
+});
+
+test('inspectFocusCompletionStatus reports readyToClose when all linked todos are completed',async()=>{
+ const f=fixture();
+ f.getTodos().push({id:25,user_id:1,focus_id:7,is_completed:true,title:'Done item'});
+ const status=await inspectFocusCompletionStatus(7,f.options);
+ assert.equal(status.checked,true);
+ assert.equal(status.active,true);
+ assert.equal(status.total,1);
+ assert.equal(status.completed,1);
+ assert.equal(status.open,0);
+ assert.equal(status.readyToClose,true);
+ const guidance=formatFocusClosureGuidance(status);
+ assert.match(guidance,/Focus Ready to Close/);
+ assert.match(guidance,/complete_focus/);
+ assert.match(guidance,/focusId:\s*7/);
+});
+
+test('inspectFocusCompletionStatus reports remaining open tasks and keeps focus active',async()=>{
+ const f=fixture();
+ f.getTodos().push(
+  {id:25,user_id:1,focus_id:7,is_completed:true,title:'Done item'},
+  {id:26,user_id:1,focus_id:7,is_completed:false,title:'Still open'},
+ );
+ const status=await inspectFocusCompletionStatus(7,f.options);
+ assert.equal(status.checked,true);
+ assert.equal(status.total,2);
+ assert.equal(status.completed,1);
+ assert.equal(status.open,1);
+ assert.equal(status.readyToClose,false);
+ const guidance=formatFocusClosureGuidance(status);
+ assert.match(guidance,/still has 1 open task/);
+ assert.doesNotMatch(guidance,/Focus Ready to Close/);
+});
+
+test('inspectFocusCompletionStatus fails soft when Zettly is unreachable',async()=>{
+ const f=fixture();
+ f.client.request=async()=>{throw new Error('network down');};
+ const status=await inspectFocusCompletionStatus(7,f.options);
+ assert.equal(status.checked,false);
+ assert.equal(formatFocusClosureGuidance(status),'');
 });

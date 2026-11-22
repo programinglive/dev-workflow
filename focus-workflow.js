@@ -82,6 +82,40 @@ export async function prepareTaskFocus(args,options={}) {
  }catch(error){return {response:focusError(error)};}
 }
 
+export async function inspectFocusCompletionStatus(focusId,options={}) {
+ const id=Number(focusId);
+ if(!positive(id))return {checked:false};
+ try {
+  const ctx=await context({},options);
+  const all=await activeFoci(ctx);
+  const focus=all.find(item=>Number(item.id)===id);
+  if(!focus)return {checked:true,focusId:id,title:'',active:false,total:0,completed:0,open:0,readyToClose:false};
+  const tasks=await linkedTasks(ctx,id);
+  const total=tasks.length;
+  const completed=tasks.filter(task=>task.is_completed===true).length;
+  const open=total-completed;
+  return {checked:true,focusId:id,title:text(focus.title,255),active:true,total,completed,open,readyToClose:total>0&&open===0};
+ }catch{
+  return {checked:false};
+ }
+}
+
+export function formatFocusClosureGuidance(status) {
+ if(!status||status.checked!==true||!status.active)return '';
+ const label=status.title?`Focus #${status.focusId} ("${status.title}")`:`Focus #${status.focusId}`;
+ if(status.readyToClose){
+  return (
+   `\n\n🎯 Focus Ready to Close: ${label} now has 0 open tasks (${status.completed}/${status.total} completed).\n` +
+   `   Call 'complete_focus' { focusId: ${status.focusId}, evidence: "<concrete verification evidence>" } before telling the user everything is finished, so this focus does not remain open on the Today dashboard with "Needs Next Action".\n` +
+   `   (Keep it active only if you are immediately adding follow-up tasks to this focus.)`
+  );
+ }
+ if(status.open>0){
+  return `\n\n📌 ${label} still has ${status.open} open task(s) (${status.completed}/${status.total} completed); keeping focus active.`;
+ }
+ return '';
+}
+
 function focusError(error) {
  const known=typeof error.code==='string'&&/^FOCUS_[A-Z_]+$/.test(error.code);
  return {...result({error:known?error.code:'FOCUS_UNAVAILABLE',message:known?error.message:'The focus operation could not be verified. Read current focus before retrying.',...(known&&error.ownerId?{ownerId:error.ownerId,expectedOwnerId:error.expectedOwnerId}:{}),...(known&&error.focusIds?{focusIds:error.focusIds}:{}),...(known&&error.focuses?{activeFoci:error.focuses}:{})}),isError:true};

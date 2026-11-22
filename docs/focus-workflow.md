@@ -25,6 +25,13 @@ Finish the normal workflow and verify its Zettly outcome before calling:
 node index.js call complete_focus --args '{"focusId":7,"expectedOwnerId":42,"evidence":"Regression tests passed and the affected deployed revision was verified."}'
 ```
 
+## Automatic focus-closure check on `complete_task`
+
+When a task linked to an active focus finishes via `complete_task`, DevWorkflow inspects the focus's linked Todos (via `/focus/:id/board`, failing soft when Zettly is unreachable):
+
+- If the focus now has **0 open tasks** (`readyToClose`), `complete_task` appends a **`Focus Ready to Close`** action banner instructing the agent to call `complete_focus` with concrete verification evidence before reporting everything as finished, preventing completed 100% focuses from lingering on the Today dashboard with `Needs Next Action`.
+- If open tasks remain, `complete_task` reports the remaining open count and keeps the focus active.
+
 ## Task guards and compatibility
 
 `start_task` and `claim_factory_task` accept `focusId`, `requireFocus` and `expectedOwnerId`. The guard runs before resetting or claiming work. An accepted start automatically links its resulting canonical Todo. A rejected Factory claim never changes the previous task's focus.

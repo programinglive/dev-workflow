@@ -125,3 +125,51 @@ test('a verified Sentry source survives automatic Zettly tracking and a failed s
   assert.equal(rejected.isError,true);assert.deepEqual(state.state,before);assert.equal(client.tasks.size,1);
  });
 });
+
+test('complete_task surfaces complete_focus guidance when linked focus reaches 0 open tasks',async()=>{
+ await withWorkflowState(async state=>{
+  const client=mockApi(),original=client.request;
+  client.request=async(method,route,body)=>{
+   if(route==='/user')return {id:1,name:'Owner'};
+   if(route==='/focus')return {data:[{id:7,user_id:1,title:'Finish focus hygiene',description:'Focus context',completed_at:null}]};
+   if(method==='GET'&&route==='/focus/7/board'){
+    const linked=[...client.tasks.values()].filter(t=>Number(t.focus_id)===7);
+    return {success:true,data:{todos:structuredClone(linked)}};
+   }
+   const value=await original(method,route,body);
+   if(method==='POST'&&route==='/todos'){client.tasks.get(value.data.id).user_id=1;value.data.user_id=1;}
+   return value;
+  };
+  const ctx=context(state,client);
+  await handleToolCall({...ctx,request:createRequest('start_task',{...startArgs,focusId:7,requireFocus:true})});
+  await handleToolCall({...ctx,request:createRequest('mark_dod_item',{id:'dod-1',evidence:'Focus closure guidance verified'})});
+  const done=await handleToolCall({...ctx,request:createRequest('complete_task',{commitMessage:'feat: add focus closure guidance'})});
+  assert.match(done.content[0].text,/Focus Ready to Close/);
+  assert.match(done.content[0].text,/complete_focus/);
+  assert.match(done.content[0].text,/focusId:\s*7/);
+ });
+});
+
+test('complete_task reports remaining open tasks when linked focus still has unfinished work',async()=>{
+ await withWorkflowState(async state=>{
+  const client=mockApi(),original=client.request;
+  client.tasks.set(99,{id:99,user_id:1,type:'todo',focus_id:7,title:'Other open task',is_completed:false,description:'Still pending'});
+  client.request=async(method,route,body)=>{
+   if(route==='/user')return {id:1,name:'Owner'};
+   if(route==='/focus')return {data:[{id:7,user_id:1,title:'Multi-task focus',description:'Focus context',completed_at:null}]};
+   if(method==='GET'&&route==='/focus/7/board'){
+    const linked=[...client.tasks.values()].filter(t=>Number(t.focus_id)===7);
+    return {success:true,data:{todos:structuredClone(linked)}};
+   }
+   const value=await original(method,route,body);
+   if(method==='POST'&&route==='/todos'){client.tasks.get(value.data.id).user_id=1;value.data.user_id=1;}
+   return value;
+  };
+  const ctx=context(state,client);
+  await handleToolCall({...ctx,request:createRequest('start_task',{...startArgs,focusId:7,requireFocus:true})});
+  await handleToolCall({...ctx,request:createRequest('mark_dod_item',{id:'dod-1',evidence:'Multi-task focus verified'})});
+  const done=await handleToolCall({...ctx,request:createRequest('complete_task',{commitMessage:'feat: finish one task in focus'})});
+  assert.match(done.content[0].text,/still has 1 open task/);
+  assert.doesNotMatch(done.content[0].text,/Focus Ready to Close/);
+ });
+});
