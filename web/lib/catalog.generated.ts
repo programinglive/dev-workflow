@@ -6,8 +6,9 @@ export const GENERATED_CATALOG = {
   "license": "MIT",
   "ossBaselineTag": "v1.31.0-oss.0",
   "repositoryUrl": "https://github.com/programinglive/dev-workflow",
-  "repositoryVisibility": "PRIVATE",
-  "npmPubliclyPublished": false,
+  "repositoryVisibility": "PUBLIC",
+  "npmPubliclyPublished": true,
+  "npmRegistryUrl": "https://www.npmjs.com/package/@programinglive/dev-workflow",
   "mcpToolCount": 82,
   "mcpTools": [
     {

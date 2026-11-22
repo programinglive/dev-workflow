@@ -49,7 +49,8 @@ test("website generated catalog matches runtime MCP definitions, CLI args, and p
     catalog.mcpTools.map((t) => t.name),
     runtimeTools,
   );
-  assert.equal(catalog.npmPubliclyPublished, false);
+  assert.equal(catalog.repositoryVisibility, "PUBLIC");
+  assert.equal(catalog.npmPubliclyPublished, true);
   assert.equal(catalog.ossBaselineTag, "v1.31.0-oss.0");
   assert.ok(catalog.cli.commands.includes("doctor"));
   assert.ok(catalog.cli.commands.includes("fleet"));
