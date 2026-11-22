@@ -44,7 +44,7 @@ export const HOW_TO_USE_STEPS: OnboardingStep[] = [
       "Requires Node.js >= 20.0.0. The global installation provides both the `devwf` command-line executable and the headless MCP server entry point.",
     ],
     command: "npm install -g @programinglive/dev-workflow",
-    expectedOutput: `+ @programinglive/dev-workflow@3.1.1
+    expectedOutput: `+ @programinglive/dev-workflow@3.1.2
 added 1 package in 2.4s`,
     tips: [
       "Ensure Node.js 20 or newer is in your PATH (`node --version`).",
@@ -403,5 +403,86 @@ devwf pair --url http://your-monitor-host:3100 --json`,
       "Fleet status view showing connected machines (workstation, laptop, server)",
       "Zero interference with local coding: companion runs in read-only telemetry mode",
     ],
+  },
+  {
+    name: "Zettly Code v1.0 (Persistent Code Memory)",
+    badge: "Optional · Private / Local Knowledge Graph",
+    summary:
+      "Connect the optional Zettly Code engine via DevWorkflow's canonical `code_index` and `code_context` MCP tools to maintain a local SQLite WAL source-code knowledge graph and enforce mandatory `@zettly-code` bug-fix knowledge comments.",
+    standaloneNote:
+      "Zettly Code is maintained in a private repository and resolved optionally at runtime. DevWorkflow's public npm package works 100% standalone without it.",
+    setupCommands: `# Optional: point DevWorkflow to a local Zettly Code checkout
+export ZETTLY_CODE_MODULE_PATH="/path/to/zettly-code/src/index.js"`,
+    verificationCommands: "code_index ({ mode: 'status' })",
+    benefits: [
+      "Incremental SQLite WAL knowledge graph with revision-aware freshness checks",
+      "Bounded `code_context` retrieval (debug, symbol, dependencies, callers, tests, impact, history)",
+      "Enforces `@zettly-code` bug-fix comments via `audit({ category: 'bugfix_knowledge' })`",
+      "Strict workspace containment and secret/PII redaction",
+    ],
+  },
+];
+
+export const ZETTLY_CODE_DEBUGGING_JOURNEY: OnboardingStep[] = [
+  {
+    step: 1,
+    slug: "zc-start-bugfix",
+    title: "1. Start Bug-Fix Task",
+    shortTitle: "Start Bugfix",
+    summary: "Open a governed bug-fix task with `start_task` (`type: 'bugfix'`) and concrete Definition of Done.",
+    actor: "AI Agent (MCP)",
+    explanation: ["Pin the target repository and declare the bug reproduction and regression test criteria."],
+    codeSample: `// AI Tool Call: start_task
+{ "description": "Fix negative invoice discount calculation", "type": "bugfix", "projectDir": "/path/to/repo" }`,
+  },
+  {
+    step: 2,
+    slug: "zc-query-context",
+    title: "2. Query `code_context` Before Scanning Files",
+    shortTitle: "Query Context",
+    summary: "Retrieve relevant symbols, invariants, past bug fixes, and covering tests from the knowledge graph.",
+    actor: "AI Agent (MCP)",
+    explanation: ["Avoid blind full-repository grep by querying persistent code memory first."],
+    codeSample: `// AI Tool Call: code_context
+{ "mode": "debug", "query": "calculateInvoice" }`,
+  },
+  {
+    step: 3,
+    slug: "zc-check-freshness",
+    title: "3. Check `code_index` Freshness",
+    shortTitle: "Check Index",
+    summary: "Verify the local SQLite knowledge graph is fresh or incrementally update changed files.",
+    actor: "AI Agent (MCP)",
+    explanation: ["Run `code_index` with `mode: 'status'` or `mode: 'update'` so graph edges match current HEAD."],
+    codeSample: `// AI Tool Call: code_index
+{ "mode": "status" }`,
+  },
+  {
+    step: 4,
+    slug: "zc-fix-and-document",
+    title: "4. Fix, Test & Add `@zettly-code` Knowledge Comment",
+    shortTitle: "Fix & Annotate",
+    summary: "Apply the minimal verified fix, run regression tests, and record `@purpose`, `@bug-fix`, `@root-cause` (or `@hypothesis`), and `@fix`.",
+    actor: "AI Agent (MCP)",
+    explanation: ["Every verified bug fix leaves behind traceable knowledge for future debugging sessions."],
+    codeSample: `/**
+ * @zettly-code ZC-BILLING-001
+ * @purpose Calculate monthly invoice amount safely
+ * @bug-fix BUG-1001
+ * @root-cause Unclamped discount produced negative invoice totals
+ * @fix Clamped discount to subtotal maximum
+ * @tests billing.test.js
+ */`,
+  },
+  {
+    step: 5,
+    slug: "zc-refresh-and-gate",
+    title: "5. Refresh Index & Pass `bugfix_knowledge` Audit",
+    shortTitle: "Verify Gate",
+    summary: "Incrementally update the index and verify the mandatory bug-fix knowledge gate before closing.",
+    actor: "AI Agent (MCP)",
+    explanation: ["Run `code_index({ mode: 'update' })` followed by `audit({ category: 'bugfix_knowledge' })`, then close with `complete_task`."],
+    codeSample: `// AI Tool Call: audit
+{ "category": "bugfix_knowledge", "files": ["src/billing.js"], "taskType": "BUG_FIX", "bugId": "BUG-1001" }`,
   },
 ];

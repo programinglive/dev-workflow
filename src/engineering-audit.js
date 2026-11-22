@@ -2512,8 +2512,13 @@ export const DEVWORKFLOW_V2_TOOL_DEFINITIONS = [
         zettlyTodoId: { type: "number" },
         requireFreshGraph: { type: "boolean" },
         repoName: { type: "string", description: "Optional repository name for release_docs gate." },
+        stage: { type: "string", enum: ["pre_publish", "post_publish", "both"], description: "Two-stage release gate mode: pre_publish (default), post_publish, or both." },
         expectedVersion: { type: "string", description: "Optional expected release version for release_docs gate." },
         expectedToolCount: { type: "number" },
+        githubReleaseVersion: { type: "string" },
+        npmPublishedVersion: { type: "string" },
+        npmLatestVersion: { type: "string" },
+        runtimeVersion: { type: "string" },
         checkLiveWebsite: { type: "boolean" },
         liveWebsiteHtml: { type: "string" },
         changeMode: {
@@ -2708,8 +2713,13 @@ export async function handleDevWorkflowV2Tool(name, args = {}, workflowState = n
         return await evaluateReleaseDocsGate({
           projectDir,
           repoName: args.repoName || null,
+          stage: args.stage || "pre_publish",
           expectedVersion: args.expectedVersion || null,
           expectedToolCount: args.expectedToolCount ?? null,
+          githubReleaseVersion: args.githubReleaseVersion ?? null,
+          npmPublishedVersion: args.npmPublishedVersion ?? null,
+          npmLatestVersion: args.npmLatestVersion ?? null,
+          runtimeVersion: args.runtimeVersion ?? null,
           checkLiveWebsite: Boolean(args.checkLiveWebsite),
           liveWebsiteHtml: args.liveWebsiteHtml || null,
         });
