@@ -4198,8 +4198,18 @@ export class WorkflowState {
       }
       await this.load();
       if (this.state?.projectDir) {
-        const cap = getHeldWorktreeCapability(this.state.projectDir);
         const sKey = this._sessionKey()?.key || this.sessionId || "";
+        let cap = getHeldWorktreeCapability(this.state.projectDir);
+        if (!cap && this.requireKernelMutex && sKey && this.state.currentPhase !== "idle") {
+          const acq = await acquireWorktreeMutex({
+            projectDir: this.state.projectDir,
+            ownerKey: sKey,
+            timeoutMs: 0,
+          });
+          if (acq.ok && acq.capability) {
+            cap = acq.capability;
+          }
+        }
         if (cap && sKey && cap.ownerKey === sKey) {
           this.boundKernelCapability = cap;
         }
@@ -4675,9 +4685,14 @@ export class WorkflowState {
 
   async save(options = {}) {
     return await this.runSerialized(async () => {
+      const isOrphanedIdle =
+        this.state?.currentPhase === "idle" &&
+        !this.boundKernelCapability &&
+        !options?.allowReplaceRunningTask;
+      const allowOrphanedReset = Boolean(options?.allowOrphanedReset || isOrphanedIdle);
       return await this._withOwnershipFence("save", async () => {
-        return await this._saveUnderFence(options);
-      }, { allowOrphanedReset: Boolean(options?.allowOrphanedReset) });
+        return await this._saveUnderFence({ ...options, allowOrphanedReset });
+      }, { allowOrphanedReset });
     });
   }
 
