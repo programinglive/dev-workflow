@@ -44,7 +44,7 @@ export const HOW_TO_USE_STEPS: OnboardingStep[] = [
       "Requires Node.js >= 20.0.0. The global installation provides both the `devwf` command-line executable and the headless MCP server entry point.",
     ],
     command: "npm install -g @programinglive/dev-workflow",
-    expectedOutput: `+ @programinglive/dev-workflow@2.1.1
+    expectedOutput: `+ @programinglive/dev-workflow@3.1.0
 added 1 package in 2.4s`,
     tips: [
       "Ensure Node.js 20 or newer is in your PATH (`node --version`).",
@@ -145,7 +145,7 @@ All core health checks PASSED.`,
   "mcpStdio": {
     "handshake": "OK",
     "protocolVersion": "2024-11-05",
-    "toolsDiscovered": 64
+    "toolsDiscovered": 65
   }
 }`,
     tips: [
@@ -239,9 +239,9 @@ Changes not staged for commit:
     actor: "AI Agent (MCP)",
     explanation: [
       "Before changes can be committed, tests must pass. The AI invokes `run_tests` (or executes your project test runner).",
-      "Next, invoke `audit_code` or `audit_security` to inspect git diffs for leaked secrets, dead branches, high cyclomatic complexity, or missing error handlers.",
+      "Next, invoke `audit` (`category: 'changes'` or `category: 'security'`) to inspect git diffs for leaked secrets, dead branches, high cyclomatic complexity, or missing error handlers.",
     ],
-    codeTitle: "AI Tool Call: run_tests & audit_code",
+    codeTitle: "AI Tool Call: run_tests & audit",
     codeSample: `{
   "command": "npm test"
 }
@@ -332,7 +332,7 @@ export const ROLE_COMPARISON_TABLE: RoleComparison[] = [
     keyResponsibilities: [
       "Task contracts, plans, and Definition of Done gates (`start_task`, `set_plan`, `mark_dod_item`)",
       "Architecture diagram recording and visual flow sync (`create_feature_flow`)",
-      "Quality enforcement, test execution, and code auditing (`run_tests`, `audit_code`, `audit_security`)",
+      "Quality enforcement, test execution, and code auditing (`run_tests`, `audit`, `code_context`)",
       "Release locking, pre-commit readiness checks, and task completion (`check_ready_to_commit`, `complete_task`)",
     ],
     exampleOperations: ["start_task", "create_feature_flow", "run_tests", "complete_task"],

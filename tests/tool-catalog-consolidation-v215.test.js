@@ -53,7 +53,7 @@ async function createTempGitRepo(prefix = "dwf-v300-") {
   return dir;
 }
 
-test("TC-01: Radical simplification inventory accounts for all 63 canonical public MCP tools with zero compatibility aliases and zero unmapped tools", async () => {
+test("TC-01: Radical simplification inventory accounts for all 65 canonical public MCP tools with zero compatibility aliases and zero unmapped tools", async () => {
   const tools = getToolList();
   const report = await handleDevWorkflowV2Tool("audit", {
     category: "catalog",
@@ -62,9 +62,9 @@ test("TC-01: Radical simplification inventory accounts for all 63 canonical publ
     includeConsolidationPlan: true,
   });
 
-  assert.equal(tools.length, 63, "Expected exactly 63 canonical public MCP tools in v3.0.0 (down from 84)");
-  assert.equal(report.summary.total_public_tools, 63);
-  assert.equal(report.summary.canonical_public_tools, 63);
+  assert.equal(tools.length, 65, "Expected exactly 65 canonical public MCP tools in v3.1.0 (63 + code_index + code_context)");
+  assert.equal(report.summary.total_public_tools, 65);
+  assert.equal(report.summary.canonical_public_tools, 65);
   assert.equal(report.summary.compatibility_aliases, 0, "Zero compatibility aliases permitted in v3.0.0");
   assert.equal(Object.keys(TOOL_ALIASES).length, 0);
   assert.equal(Object.keys(REMOVED_LEGACY_TOOLS).length, 25);
@@ -148,7 +148,7 @@ test("TC-03, TC-06 & TC-07: Removed legacy tools fail closed at dispatch with no
     for (const removedTool of ["audit_code", "helper_suggest_tests", "project_summary_data", "project_summary_db"]) {
       await assert.rejects(
         () => handleDevWorkflowV2Tool(removedTool, { projectDir: REPO_ROOT }),
-        /Unsupported DevWorkflow V3\.0 tool/
+        /Unsupported DevWorkflow V3\.1 tool/
       );
       const mcpRes = await handleToolCall({
         request: { params: { name: removedTool, arguments: {} } },
@@ -362,7 +362,7 @@ test("TC-16: CLI compatibility — devwf audit catalog, devwf audit standards, a
   assert.equal(resCat.ok, true);
   const parsedCat = JSON.parse(outCat.lines.join("\n"));
   assert.equal(parsedCat.regression_gate.passed, true);
-  assert.equal(parsedCat.summary.total_public_tools, 63);
+  assert.equal(parsedCat.summary.total_public_tools, 65);
   assert.equal(parsedCat.summary.compatibility_aliases, 0);
 
   const outHuman = { lines: [], write(line) { this.lines.push(line); } };

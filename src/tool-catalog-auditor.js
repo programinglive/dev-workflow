@@ -15,7 +15,7 @@
  *   unauthorized read/write merging) and flags suspected semantic duplicates for review.
  */
 
-export const CATALOG_AUDITOR_VERSION = "3.0.0";
+export const CATALOG_AUDITOR_VERSION = "3.1.0";
 
 /**
  * Compatibility alias map (`TOOL_ALIASES`).
@@ -190,6 +190,38 @@ export const CANONICAL_TOOL_METADATA = Object.freeze({
     tests: ["tests/engineering-audit-v2.test.js", "tests/engineering-excellence-acceptance.test.js", "tests/audit-reliability-v214.test.js"],
     stability: "stable",
     capability: "Apply worktree-fenced deterministic AF-0/AF-1 autofix with snapshot rollback",
+  },
+
+  // --- Domain C2: Persistent Code Memory & Knowledge Graph (Zettly Code v1.0) ---
+  code_index: {
+    category: "code_intelligence",
+    handler: "handleDevWorkflowV2Tool('code_index')",
+    module: "src/zettly-code-adapter.js",
+    domainService: "runCodeIndex (@programinglive/zettly-code)",
+    dependencies: ["src/zettly-code-adapter.js", "@programinglive/zettly-code"],
+    sideEffects: "Creates or incrementally updates local SQLite code knowledge graph (.zettly-code/knowledge-graph.db) on initialize/update/rebuild; read-only on status/verify",
+    permissionLevel: "LOCAL_INDEX_WRITE_OR_READ",
+    sessionScoped: false,
+    workflowRole: "Bootstrap, incrementally update, verify, or rebuild the persistent Zettly Code knowledge graph",
+    errorContract: "Returns structured JSON with freshnessStatus, stats, and knowledgeValidation (or ZETTLY_CODE_UNAVAILABLE)",
+    tests: ["tests/zettly-code-and-release-governance-v310.test.js"],
+    stability: "stable",
+    capability: "Manage persistent Zettly Code knowledge graph index and freshness",
+  },
+  code_context: {
+    category: "code_intelligence",
+    handler: "handleDevWorkflowV2Tool('code_context')",
+    module: "src/zettly-code-adapter.js",
+    domainService: "runCodeContext (@programinglive/zettly-code)",
+    dependencies: ["src/zettly-code-adapter.js", "@programinglive/zettly-code"],
+    sideEffects: "Read-only bounded graph traversal and debugging memory lookup (may auto-refresh stale local index if enabled)",
+    permissionLevel: "READ_ONLY",
+    sessionScoped: false,
+    workflowRole: "Retrieve targeted symbols, @zettly-code bug-fix notes, invariants, callers, dependencies, tests, impact, and bug history before scanning source files",
+    errorContract: "Returns bounded candidateFiles, knowledgeAnnotations, bugFixes, dependencies, callers, and relatedTests",
+    tests: ["tests/zettly-code-and-release-governance-v310.test.js"],
+    stability: "stable",
+    capability: "Query persistent Zettly Code debugging memory and bounded code graph",
   },
 
   // --- Domain D: External Integrations (Zettly & Sentry) ---
