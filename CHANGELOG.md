@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [3.1.3](https://github.com/programinglive/dev-workflow/compare/v3.1.2...v3.1.3) (2026-11-22)
+
+### 🐛 Bug Fixes
+* **ci:** use `node:module` `stripTypeScriptTypes` with CJS `typescript.transpileModule` fallback in `tests/opencode-guard-plugin.test.js` for Node 22.16 compatibility on the Linux CI runner.
+
 ## [3.1.2](https://github.com/programinglive/dev-workflow/compare/v3.1.1...v3.1.2) (2026-11-22)
 
 ### ✨ Features

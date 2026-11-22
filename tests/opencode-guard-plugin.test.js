@@ -3,27 +3,32 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { createRequire } from 'node:module';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
 const pluginPath = path.join(repoRoot, 'managed', 'plugins', 'dev-workflow-guard.ts');
 
 // Node 22.18+ strips TypeScript types natively; older Node 20/22.x runners
-// fall back to typescript.transpileModule so CI passes on every Node >= 20.
+// fall back to stripTypeScriptTypes or CJS typescript.transpileModule.
 let pluginModule;
 try {
   pluginModule = await import(pathToFileURL(pluginPath).href);
 } catch (err) {
   if (err?.code !== 'ERR_UNKNOWN_FILE_EXTENSION') throw err;
-  const ts = (await import('typescript')).default;
   const source = fs.readFileSync(pluginPath, 'utf8');
-  const transpiled = ts.transpileModule(source, {
-    compilerOptions: {
-      module: ts.ModuleKind.ESNext,
-      target: ts.ScriptTarget.ES2022,
-    },
-  });
-  const encoded = Buffer.from(transpiled.outputText, 'utf8').toString('base64');
+  let jsCode;
+  const mod = await import('node:module');
+  if (typeof mod.stripTypeScriptTypes === 'function') {
+    jsCode = mod.stripTypeScriptTypes(source);
+  } else {
+    const req = createRequire(import.meta.url);
+    const ts = req('typescript');
+    jsCode = ts.transpileModule(source, {
+      compilerOptions: { module: 99, target: 9 },
+    }).outputText;
+  }
+  const encoded = Buffer.from(jsCode, 'utf8').toString('base64');
   pluginModule = await import(`data:text/javascript;base64,${encoded}`);
 }
 const {

@@ -29,8 +29,8 @@ Install → Connect AI Client → Start Task → Design Flow → Implement → T
 - **Prevents Hallucination & Scope Creep:** Enforces explicit Task Contracts (`plan`, `definitionOfDone`, and Mermaid flow gates) before implementation.
 - **Worktree & Session Isolation:** Prevents concurrent AI sessions from overwriting each other's files.
 - **Empirical Quality Gates:** Requires real test runs, documentation updates, and clean Git state before `commit_and_push`.
-- **Automatic Code Audit & Safe Fixes (v3.1.2 — 65 Canonical Tools):** Built-in canonical `audit`, `analyze_change`, `plan_fix`, and `apply_safe_fix` MCP tools detect security, database, architecture, quality, bug-fix knowledge (`category: "bugfix_knowledge"`), and open-source release documentation drift (`category: "release_docs"`), and apply bounded `AF-0`/`AF-1` autofixes with automatic snapshot rollback.
-- **Persistent Code Memory & Debugging Context (v3.1.2):** Canonical `code_index` and `code_context` MCP tools integrate with Zettly Code to maintain an incremental SQLite code knowledge graph and enforce mandatory `@zettly-code` bug-fix knowledge comments. See [docs/guides/zettly-code-integration.md](docs/guides/zettly-code-integration.md).
+- **Automatic Code Audit & Safe Fixes (v3.1.3 — 65 Canonical Tools):** Built-in canonical `audit`, `analyze_change`, `plan_fix`, and `apply_safe_fix` MCP tools detect security, database, architecture, quality, bug-fix knowledge (`category: "bugfix_knowledge"`), and open-source release documentation drift (`category: "release_docs"`), and apply bounded `AF-0`/`AF-1` autofixes with automatic snapshot rollback.
+- **Persistent Code Memory & Debugging Context (v3.1.3):** Canonical `code_index` and `code_context` MCP tools integrate with Zettly Code to maintain an incremental SQLite code knowledge graph and enforce mandatory `@zettly-code` bug-fix knowledge comments. See [docs/guides/zettly-code-integration.md](docs/guides/zettly-code-integration.md).
 - **Strict Secret Isolation:** `DEV_WORKFLOW_SECURITY_MODE=strict` blocks raw secret writes and scrubs sensitive tokens from outputs.
 
 ---
