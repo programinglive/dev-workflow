@@ -104,7 +104,12 @@ devwf zettly disconnect --confirm
 ## MCP Tools, CLI Commands & Engineering Standards
 
 - **Live Reference & Tool Explorer:** [https://devworkflow.programinglive.com/](https://devworkflow.programinglive.com/)
-- **CLI Help:** Run `devwf --help` (includes `setup`, `doctor`, `zettly`, `pair`, `governance`, `audit`, `fleet`, `list`, `checkpoint`, `complete`, `drop`, `close`, `share`, `identity`).
+- **CLI Subcommands & Scripting Contracts (`devwf --help`):**
+  - Core & Optional Commands: `devwf setup`, `devwf doctor`, `devwf zettly`, `devwf pair`, `devwf governance`, `devwf audit`, `devwf fleet`, `devwf identity`, `devwf checkpoint`, `devwf list`, `devwf close`, `devwf share`, `devwf drop`, `devwf complete`.
+  - Operational rules: `--session` is mandatory for mutating session commands; `--dry-run` prints planned changes without writing; **No process is ever signalled** by the CLI; **Exit code 0 means it really happened** (exit code 1 on refusal or failure). Monitor commands optionally use `DEVWF_MONITOR_URL` and `DEVWF_MONITOR_TOKEN`.
+- **Cross-Machine Handoff Contracts:** `checkpoint_task`, `fetch_task`, `handoff_task`, and `acknowledge_handover` coordinate safe handoffs across workstations. A handoff requires an explicit `reason`, the returning machine must call `acknowledge_handover`, and reverts are recorded — **never executed automatically**.
+- **Monitor Hygiene:** **Junk sessions are not recorded** — a monitor card requires **both** a task **and** a project (`monitor-server/cleanup-empty-sessions.cjs` cleans up legacy empty rows).
+- **Optional Zettly Tags for Zettelkasten Relations:** When Zettly sync is enabled, tasks can be tagged across four axes (`proyek:`, `tipe:`, `area:`, `sumber:`) scoped **per owner**. The tag API returns top-level `{ tags }` / `deletedTags` and HTTP `409` when a tag already exists. Maintenance commands `zettly:backfill-tags --dry-run` and `zettly:normalise-tags` migrate legacy tags safely (legacy tags are **deleted only after every record** has been moved to the canonical axis tag).
 - **Engineering Standards & Autofix:** DevWorkflow ships built-in standards (`ZET-ARCH`, `ZET-CODE`, `ZET-SEC`, `ZET-TEST`, `ZET-API`, `ZET-DB`, `ZET-DOC`, `ZET-REL`) plus `audit_standards`, `audit_changes`, `audit_code`, `audit_report`, and `helper_apply_safe_fix` (`AF-0`/`AF-1` deterministic fixes with snapshot rollback; protected governance paths are strictly blocked as `AF-3`).
 
 ---
