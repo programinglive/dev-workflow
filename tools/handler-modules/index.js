@@ -509,7 +509,7 @@ async function dispatchToolCall({
       case "view_history":
         return handleViewHistory(args, workflowState);
       case "project_summary":
-        return handleProjectSummary(workflowState);
+        return handleProjectSummary(workflowState, args);
       case "project_summary_data":
         return handleProjectSummaryData(workflowState);
       case "project_summary_db":

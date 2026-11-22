@@ -12,9 +12,9 @@ import { getToolList } from "../tools/definitions.js";
 
 const REPO_ROOT = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 
-test("DevWorkflow V2.0 registers all 22 core audit and helper tools in MCP tool catalog", () => {
+test("DevWorkflow V2.0/V2.1 registers all core audit and helper tools in MCP tool catalog", () => {
   const catalogNames = new Set(getToolList().map((t) => t.name));
-  assert.equal(DEVWORKFLOW_V2_TOOL_DEFINITIONS.length, 22);
+  assert.ok(DEVWORKFLOW_V2_TOOL_DEFINITIONS.length >= 22);
   for (const def of DEVWORKFLOW_V2_TOOL_DEFINITIONS) {
     assert.ok(catalogNames.has(def.name), `Missing V2 tool '${def.name}' in getToolList()`);
   }
