@@ -192,6 +192,26 @@ process.once('exit', () => releaseActiveProcessLock({ fallbackDir: lockDir }));
 
 ---
 
+## 7. DevWorkflow v2.1.2: Zero-Dangling-Locks Lifecycle & Safe Takeover Hardening
+
+### 7.1 Clean Mutex Release on Task Termination
+- In previous versions (`<= v2.1.1`), `handleCompleteTask`, `handleDropTask`, and `handleForceCompleteTask` called `workflowState.reset()` without calling `releaseWorktreeMutex()` or unbinding the kernel capability from the process registry. As a result, long-running MCP processes held onto the OS named pipe / socket endpoint even after a task had completed, blocking successor sessions or concurrent test runs.
+- In `v2.1.2`, all terminal handlers explicitly:
+  1. Durably save the completed/dropped state under the live capability fence.
+  2. Call `releaseWorktreeMutex(activeCap)` to drain in-flight operations and close the server socket/pipe.
+  3. Unbind the capability via `workflowState.bindKernelCapability(null)`.
+  4. Reset the in-memory state and persist the idle state with `{ allowOrphanedReset: true }`.
+
+### 7.2 Safe Re-Acquisition Across Server Restarts
+- In `useSession(sessionId)`, when an active session (`currentPhase !== 'idle'`) is loaded by a newly spawned or restarted MCP server process where in-memory capability is not yet bound, the server attempts safe re-acquisition via `acquireWorktreeMutex({ projectDir, ownerKey: sessionKey, timeoutMs: 0 })`.
+- If the former process is dead, the OS pipe endpoint is free and the new process safely takes over the worktree mutex. If another live process is still running, the acquisition fails closed without corrupting state.
+
+### 7.3 Scoped Orphaned Idle Save Enforcement
+- `WorkflowState.prototype.save` permits orphaned saves without requiring a live kernel capability **only** when `currentPhase === "idle" && !this.boundKernelCapability && !options?.allowReplaceRunningTask`. This allows post-termination outbox flushes and idle resets to persist cleanly while continuing to strictly fail closed if an invalid or ownerless capability is bound during active task phases.
+
+
+---
+
 ## 5. Round 2 Concurrency & Durability Hardening (`R2-1` – `R2-5`)
 
 ### 5.1 R2-1: Fail-Closed Gate Acquisition & Controlled Abandoned-Gate Recovery
