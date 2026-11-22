@@ -13,6 +13,37 @@ import { assertPreflightScope } from "../../preflight.js";
 import { evaluateGovernanceGate, loadPolicies } from "../../governance/engine.js";
 import { collectGitContext } from "../../governance/ci-validator.js";
 import { validateForceOverrideAuthorization } from "../../governance/exceptions.js";
+import { releaseWorktreeMutex, getHeldWorktreeCapability } from "../../process-lock.js";
+
+/**
+ * Release the canonical worktree mutex when a task reaches a terminal state.
+ *
+ * start_task acquires the mutex and binds it to WorkflowState, but the terminal
+ * handlers used to only reset/save the state. A long-lived MCP process therefore
+ * kept the repository locked after finishing, so the next session in the same
+ * repo was refused with "another task is running in MCP process PID ...".
+ * Release must happen AFTER the final state write so the write stays fenced.
+ */
+async function releaseTerminalTaskMutex(workflowState, projectDir) {
+  const capability =
+    (typeof workflowState._resolveKernelCapability === "function"
+      ? workflowState._resolveKernelCapability()
+      : null) ||
+    workflowState.boundKernelCapability ||
+    (projectDir ? getHeldWorktreeCapability(projectDir) : null);
+  if (!capability) return false;
+
+  try {
+    await releaseWorktreeMutex(capability);
+  } catch {
+    return false;
+  }
+  if (typeof workflowState.bindKernelCapability === "function") {
+    workflowState.bindKernelCapability(null);
+  }
+  workflowState.requireKernelMutex = false;
+  return true;
+}
 
 /**
  * Check whether test updates exist in the working tree or in recent commits on HEAD
@@ -774,6 +805,7 @@ export async function handleCompleteTask(args, workflowState, context = {}) {
   const zettlyNote = zettlyResult.note ? `\n\n${zettlyResult.ok?'✅':'⚠️'} ${zettlyResult.note}` : '';
   workflowState.reset();
   await workflowState.save();
+  await releaseTerminalTaskMutex(workflowState, projectDir);
 
   const askForSuggestions = aiSuggestions.length === 0
     ? `\n\n💡 Kirim 'nextSteps' saat 'complete_task' kalau ada yang Anda lihat selama ` +
@@ -906,8 +938,10 @@ export async function handleForceCompleteTask(args, workflowState, context = {})
     zettlyResult = { ok: false, note: `Zettly sync skipped during orphaned force-complete: ${error?.message || error}` };
   }
   const zettlyNote = zettlyResult.note ? `\n${zettlyResult.ok?'✅':'⚠️'} ${zettlyResult.note}` : '';
+  const terminalProjectDir = workflowState.state.projectDir || "";
   workflowState.reset();
   await workflowState.save({ allowOrphanedReset: true });
+  await releaseTerminalTaskMutex(workflowState, terminalProjectDir);
 
   const reasonText = reason ? reason : "(none provided)";
 
@@ -938,8 +972,10 @@ export async function handleDropTask(args, workflowState, context = {}) {
     zettlyResult = { ok: false, note: `Zettly sync skipped during orphaned drop: ${error?.message || error}` };
   }
   const zettlyNote = zettlyResult.note ? `\n${zettlyResult.ok?'✅':'⚠️'} ${zettlyResult.note}` : '';
+  const terminalProjectDir = workflowState.state.projectDir || "";
   workflowState.reset();
   await workflowState.save({ allowOrphanedReset: true });
+  await releaseTerminalTaskMutex(workflowState, terminalProjectDir);
 
   return textResponse(`⚠️ Task dropped. Workflow state reset.${zettlyNote}`);
 }

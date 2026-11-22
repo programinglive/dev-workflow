@@ -23,6 +23,8 @@ import {
   findActiveLegacyWriter,
   verifyLegacyFleetQuiescence,
   projectLockDir,
+  readTakeoverRequest,
+  clearTakeoverRequest,
   HEARTBEAT_MS,
 } from "./process-lock.js";
 import { exec, setActiveProjectDir, resolveProjectDir } from "./exec.js";
@@ -37,6 +39,7 @@ import { resolveRequestSession } from "./session-scope.js";
 import { getToolList } from "./tools/definitions.js";
 import { WORKFLOW_INSTRUCTIONS, ENGLISH_IMPLEMENTATION_RULE } from './workflow-guidance.js';
 import { handleToolCall } from "./tools/handlers.js";
+import { handleDropTask } from "./tools/handler-modules/commit-handlers.js";
 import { setToolchain } from "./monitor.js";
 import { toolchainOnce, createToolchainProbe } from "./toolchain.js";
 
@@ -305,8 +308,44 @@ export async function refreshWorktreeLockMetadata(
 export async function runWorktreeHeartbeatTick(state, options = {}) {
   const capability = state?.boundKernelCapability;
   if (!capability || !capability.active) return { ok: false, skipped: true };
-  return refreshWorktreeLockMetadata(state, capability, { operation: "heartbeat", ...options });
+  const result = refreshWorktreeLockMetadata(state, capability, { operation: "heartbeat", ...options });
+
+  // Cooperative takeover: a live process cannot have its kernel mutex stolen
+  // from outside. The holder ends its own task through the normal terminal
+  // path, which closes its Zettly Todo and releases the mutex.
+  try {
+    const dir = projectLockDir(state.stateFile);
+    const request = readTakeoverRequest({ dir });
+    if (
+      request &&
+      request.ownerPid === process.pid &&
+      state.state?.taskDescription &&
+      state.state.currentPhase !== "idle" &&
+      !takeoverInProgress
+    ) {
+      takeoverInProgress = true;
+      void handleDropTask(
+        {
+          reason:
+            `cooperative takeover requested by PID ${request.requesterPid}: ${request.reason}`,
+        },
+        state,
+        {},
+      )
+        .catch((error) =>
+          safeLog("error", `cooperative takeover failed: ${error?.message || error}`),
+        )
+        .finally(() => {
+          clearTakeoverRequest({ dir });
+          takeoverInProgress = false;
+        });
+    }
+  } catch {
+    // A failed takeover check must never take the heartbeat down.
+  }
+  return result;
 }
+let takeoverInProgress = false;
 
 export async function initStartupWorktreeMutex(state, { heartbeat = false } = {}) {
   state.requireKernelMutex = true;

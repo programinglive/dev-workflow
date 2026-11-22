@@ -9,7 +9,7 @@ export const GENERATED_CATALOG = {
   "repositoryVisibility": "PUBLIC",
   "npmPubliclyPublished": true,
   "npmRegistryUrl": "https://www.npmjs.com/package/@programinglive/dev-workflow",
-  "mcpToolCount": 82,
+  "mcpToolCount": 83,
   "mcpTools": [
     {
       "name": "acknowledge_handover",
@@ -2127,6 +2127,46 @@ export const GENERATED_CATALOG = {
       ]
     },
     {
+      "name": "take_over_task",
+      "description": "Request a cooperative takeover of a repository whose task is held by a LIVE but idle MCP process. A kernel mutex owned by a live process cannot be stolen safely, so this writes a confirmed request into the holder's lock directory; the holder's heartbeat then drops its own task through the normal terminal path, closing its Zettly Todo and releasing the mutex. Requires the owner PID, a reason, and explicit confirmation. Retry start_task after one heartbeat.",
+      "required": [
+        "projectDir",
+        "ownerPid",
+        "reason",
+        "confirmation"
+      ],
+      "params": [
+        {
+          "name": "projectDir",
+          "type": "string",
+          "description": "Repository whose lock should be taken over.",
+          "required": true,
+          "enumValues": []
+        },
+        {
+          "name": "ownerPid",
+          "type": "number",
+          "description": "PID of the live MCP process currently recorded as the task owner.",
+          "required": true,
+          "enumValues": []
+        },
+        {
+          "name": "reason",
+          "type": "string",
+          "description": "Why the takeover is needed. Recorded for the owner and in history.",
+          "required": true,
+          "enumValues": []
+        },
+        {
+          "name": "confirmation",
+          "type": "string",
+          "description": "Must be exactly 'CONFIRM TAKE_OVER <ownerPid>'.",
+          "required": true,
+          "enumValues": []
+        }
+      ]
+    },
+    {
       "name": "view_history",
       "description": "View workflow history of completed tasks.",
       "required": [],
@@ -2225,6 +2265,10 @@ export const GENERATED_CATALOG = {
   },
   "changelogEntries": [
     {
+      "version": "Unreleased",
+      "date": ""
+    },
+    {
       "version": "1.33.0",
       "date": ""
     },
@@ -2242,10 +2286,6 @@ export const GENERATED_CATALOG = {
     },
     {
       "version": "1.28.0",
-      "date": ""
-    },
-    {
-      "version": "1.27.0",
       "date": ""
     }
   ]
