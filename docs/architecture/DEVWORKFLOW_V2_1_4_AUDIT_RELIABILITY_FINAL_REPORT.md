@@ -6,7 +6,7 @@
 > **Zettly Repository Commit:** `f103148` (`main` — migrated `engineering/reports/audit-baseline.json` to Finding Identity v2.0 fingerprints)  
 > **Zettly Tracking:** Focus `#186` · Completed Todo `#1095` (Task ID `c5843636-36d1-49d2-ab27-bb7db25a88af`, Zettly Draw `#751`) · Preserved historical Todos `#1090`, `#1093`, `#1094`  
 > **Verified Test Count:** **167 / 167** DevWorkflow tests + **141 / 141** Zettly JS tests = **308 / 308 (100% PASS, 0 FAIL)**  
-> **Fleet Rollout:** Promoted forward-only to `bw-tools` (`100.77.138.14:3101`) and verified across **HELLOWORLD**, **MMCH**, and **Mac** (`offline: false`).
+> **Fleet Rollout:** Promoted forward-only to central release host (`bw-tools`) and verified across fleet workstations (`offline: false`).
 
 ---
 
@@ -172,7 +172,7 @@ Following the independent code review of `@programinglive/dev-workflow@2.1.3`, w
 
 ## O. Fleet Rollout Evidence
 
-- Promoted `@programinglive/dev-workflow@2.1.4` forward-only to `bw-tools` (`100.77.138.14:3101`) via `node managed/rollout.cjs`.
+- Promoted `@programinglive/dev-workflow@2.1.4` forward-only to central release host (`bw-tools`) via `node managed/rollout.cjs`.
 - Verified runtime prewarm (`offline: false`) and restarted ManagedMCP across **HELLOWORLD**, **Mac**, and **MMCH**.
 
 ---

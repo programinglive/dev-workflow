@@ -585,7 +585,7 @@ Audit: 0 critical vulnerabilities · 0 contract breaks · 1 refactor opportunity
         explanation: "Bump version via conventional commiter and push tag to origin to trigger CI/CD deployment.",
         command: "npm run release:patch",
         expectedOutput: `Generating v2.1.2 from HEAD
-✔ bumping version in package.json from 2.1.1 to 2.1.2
+✔ bumping version in package.json from 3.1.0 to 3.1.1
 ✔ outputting changes to CHANGELOG.md
 ✅ Release v2.1.2 complete; annotated tag verified on origin.`,
       },
@@ -919,11 +919,11 @@ Connection verified successfully.`,
         command: "devwf fleet status --json",
         expectedOutput: `{
   "converged": true,
-  "fleetRelease": "v3.1.0",
+  "fleetRelease": "v3.1.1",
   "machines": [
-    { "name": "workstation-main", "status": "online", "version": "3.1.0" },
-    { "name": "workstation-mac", "status": "online", "version": "3.1.0" },
-    { "name": "workstation-server", "status": "online", "version": "3.1.0" }
+    { "name": "workstation-main", "status": "online", "version": "3.1.1" },
+    { "name": "workstation-mac", "status": "online", "version": "3.1.1" },
+    { "name": "workstation-server", "status": "online", "version": "3.1.1" }
   ]
 }`,
       },

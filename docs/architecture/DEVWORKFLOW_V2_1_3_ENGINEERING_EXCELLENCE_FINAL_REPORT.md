@@ -5,7 +5,7 @@
 > **DevWorkflow Release:** `@programinglive/dev-workflow@2.1.3` (Commit `5c84282`, Tag `v2.1.3`)  
 > **Zettly Repository Commit:** `94f09dd` (`main` — AF-0 formatting fixes, historical migration exception `EXC-2026-002`, `DEBT-ZET-004`, and `audit-baseline.json`)  
 > **Zettly Tracking:** Focus `#186` & `#191` · Completed Todos `#1090`, `#1093`, `#1094` · Outcomes `#882`, `#883`, `#884` · Zettly Draw `#746`, `#749`, `#750`  
-> **Fleet Rollout:** Promoted forward-only (`21985247efdb` → `5c84282`) to `bw-tools` (`100.77.138.14:3101`) and verified across **HELLOWORLD**, **MMCH**, and **Mac**.
+> **Fleet Rollout:** Promoted forward-only (`21985247efdb` → `5c84282`) to central release host (`bw-tools`) and verified across fleet workstations.
 
 ---
 
@@ -183,7 +183,7 @@ All 10 required acceptance scenarios in [engineering-excellence-acceptance.test.
 ## L. Fleet Rollout Verification
 
 - **Git Commit & Tag:** `5c84282` (`v2.1.3`) pushed to `origin/main`.
-- **Central Promotion (`node managed/rollout.cjs`):** Promoted forward-only to `bw-tools` (`100.77.138.14:3101`) and prewarmed across **HELLOWORLD**, **Mac**, and **MMCH**.
+- **Central Promotion (`node managed/rollout.cjs`):** Promoted forward-only to central release host (`bw-tools`) and prewarmed across fleet workstations.
 
 ---
 
