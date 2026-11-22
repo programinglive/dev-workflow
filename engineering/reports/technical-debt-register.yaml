@@ -1,0 +1,28 @@
+version: "2.1"
+updated_at: "2026-11-22T16:10:00+07:00"
+items:
+  - id: DEBT-DEVWF-001
+    priority: P0
+    component: "Worktree Kernel Mutex Lifecycle (commit-handlers.js, workflow-state.js)"
+    problem: "Terminal handlers previously left worktree mutex pipes open after completion/drop, and post-restart useSession did not re-acquire free kernel mutexes for active tasks."
+    source_evidence: "tools/handler-modules/commit-handlers.js, workflow-state.js"
+    engineering_impact: "Blocked subsequent sessions or post-restart tool calls with missing OS kernel mutex capability errors."
+    business_impact: "Interrupted multi-session AI development across fleet nodes."
+    severity: critical
+    estimated_risk: high
+    suggested_resolution: "Release worktree mutex in all terminal handlers, auto-reacquire on useSession after restart, and allow scoped orphaned idle saves."
+    status: RESOLVED_IN_V2.1.2
+    related_commit_or_pr: "21985247efdb (v2.1.2)"
+
+  - id: DEBT-DEVWF-002
+    priority: P1
+    component: "Automatic Code Audit Engine & Safe Autofix Ownership Fencing (src/engineering-audit.js)"
+    problem: "runEngineeringAudit previously evaluated only 6 hardcoded rules without iterating loaded YAML standards, lacked baseline-aware new-vs-historical comparison and git diff auto-discovery, and helper_apply_safe_fix did not enforce worktree kernel mutex ownership."
+    source_evidence: "src/engineering-audit.js:362-707"
+    engineering_impact: "Custom YAML standards were ignored, historical warnings could not be distinguished from new PR violations, and mutating autofixes could bypass worktree ownership checks."
+    business_impact: "Reduced audit accuracy and incomplete concurrency fencing on helper_apply_safe_fix."
+    severity: high
+    estimated_risk: medium
+    suggested_resolution: "Evaluate all dynamic YAML and built-in rules, add baseline comparison, auto-discover Git diff files in audit_changes, and enforce kernel mutex ownership on helper_apply_safe_fix."
+    status: RESOLVED_IN_V2.1.3
+    related_commit_or_pr: "feat/engineering-excellence-quality-system-v213"

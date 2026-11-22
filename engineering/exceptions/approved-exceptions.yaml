@@ -1,0 +1,9 @@
+version: "2.1"
+approved_exceptions:
+  - id: EXC-DEVWF-001
+    rule_id: ZET-SEC-002
+    file: src/engineering-audit.js
+    reason: "Contains regex pattern literal matching shell_exec/passthru/unserialize for static analysis detection."
+    approved_by: mahatma.mahardhika@programinglive.com
+    approved_at: "2026-11-22T09:00:00Z"
+    expires_at: "2027-11-22T09:00:00Z"

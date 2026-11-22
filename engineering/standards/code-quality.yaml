@@ -1,0 +1,36 @@
+version: "2.1"
+scope:
+  - backend
+  - frontend
+  - agent_worker
+  - mcp_server
+standards:
+  - id: ZET-CODE-001
+    title: Avoid duplicated business knowledge and leftover debug statements
+    description: Production source files must not leave debug dump statements (dd(), var_dump()) in non-test code.
+    rationale: Leftover debug dumps leak internal state and halt execution unexpectedly.
+    principle: DRY & Clean Production Code
+    source: The Pragmatic Programmer & Refactoring (Martin Fowler)
+    scope: [backend, frontend, agent_worker, mcp_server]
+    severity: medium
+    enforcement: warning
+    detection: regex
+    pattern: "^\\s*(?:dd|var_dump)\\s*\\([^)]*\\)\\s*;\\s*$"
+    autofix: AF-1
+    verification: npm test
+    exception_process: Approved test or CLI diagnostic files only.
+
+  - id: ZET-CODE-002
+    title: Deterministic formatting and no unresolved merge conflict markers or trailing whitespace
+    description: Source files must not contain unresolved Git merge conflict markers or trailing whitespace pollution.
+    rationale: Conflict markers break runtime parsing and trailing whitespace pollutes diffs.
+    principle: Continuous Integration & Small Clean Changes
+    source: Extreme Programming Explained (Kent Beck)
+    scope: [backend, frontend, agent_worker, mcp_server]
+    severity: high
+    enforcement: blocking
+    detection: regex
+    pattern: "^(?:<<<<<<<|=======|>>>>>>>)(?:\\s|$)"
+    autofix: AF-0
+    verification: git diff --check
+    exception_process: None.
