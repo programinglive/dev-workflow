@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## Unreleased
+
+### 🐛 Bug Fixes
+
+* **focus:** `complete_focus` no longer reports `FOCUS_TASK_SCAN_INCOMPLETE` on owners with more than 1000 Todos. Root cause: `linkedTasks` fetched the entire unfiltered Todo collection to find the tasks linked to a focus, and the bounded 1000-row safety guard correctly refused to decide on incomplete data. The focus-completion flow now reads the server-side filtered, owner-checked `GET /focus/{id}/board` endpoint, validates the returned rows, and keeps the old collection scan only as a fallback for Zettly servers that do not expose the board route.
+
 ### [1.33.1](https://github.com/programinglive/dev-workflow/compare/v1.33.0...v1.33.1) (2026-11-19)
 
 
