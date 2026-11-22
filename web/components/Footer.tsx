@@ -16,6 +16,12 @@ export default function Footer() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-4">
+          <Link href="/how-to-use/" className="hover:text-slate-900">
+            How to Use
+          </Link>
+          <Link href="/use-cases/" className="hover:text-slate-900">
+            Use Cases
+          </Link>
           <Link href="/docs/" className="hover:text-slate-900">
             Docs
           </Link>

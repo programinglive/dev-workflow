@@ -17,6 +17,36 @@ export default function DocsHubPage() {
         </p>
       </header>
 
+      {/* Practical Guides Banner */}
+      <section className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <Link
+          href="/how-to-use/"
+          className="p-5 rounded-lg border-2 border-blue-200 bg-blue-50/50 hover:bg-blue-50 hover:border-blue-300 transition-colors space-y-2 block"
+        >
+          <div className="flex items-center justify-between text-xs font-mono">
+            <span className="text-blue-700 bg-blue-100/80 px-2 py-0.5 rounded font-semibold">User Guide</span>
+            <span className="text-slate-500">10 Steps</span>
+          </div>
+          <h2 className="text-base font-semibold text-slate-900">How to Use DevWorkflow →</h2>
+          <p className="text-sm text-slate-600">
+            End-to-end practical onboarding guide from npm installation to verified task completion.
+          </p>
+        </Link>
+        <Link
+          href="/use-cases/"
+          className="p-5 rounded-lg border-2 border-emerald-200 bg-emerald-50/50 hover:bg-emerald-50 hover:border-emerald-300 transition-colors space-y-2 block"
+        >
+          <div className="flex items-center justify-between text-xs font-mono">
+            <span className="text-emerald-700 bg-emerald-100/80 px-2 py-0.5 rounded font-semibold">Tutorials</span>
+            <span className="text-slate-500">13 Real-World Scenarios</span>
+          </div>
+          <h2 className="text-base font-semibold text-slate-900">Real-World Use Cases →</h2>
+          <p className="text-sm text-slate-600">
+            Practical tutorials for solo coding, bugfixes, legacy refactoring, security audits, and multi-agent coordination.
+          </p>
+        </Link>
+      </section>
+
       <section className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {PORTAL_SECTIONS.map((section) => (
           <Link

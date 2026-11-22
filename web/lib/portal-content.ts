@@ -22,6 +22,7 @@ export const PORTAL_SECTIONS: PortalSection[] = [
         heading: "1. What DevWorkflow Does",
         body: [
           "DevWorkflow is local-first engineering workflow infrastructure for AI coding agents. It persists task contracts, ordered execution plans, Definition of Done evidence, and session checkpoints in local SQLite WAL storage.",
+          "For a hands-on walkthrough, follow the interactive 10-Step How to Use Guide (/how-to-use/) or explore 13 Real-World Use Cases (/use-cases/).",
         ],
       },
       {
