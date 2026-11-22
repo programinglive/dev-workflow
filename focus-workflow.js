@@ -46,8 +46,23 @@ function selected(foci,id) {
 }
 
 async function linkedTasks(ctx,id) {
- const response=await ctx.client.request('GET','/todos?type=todo');
- const rows=response.data;
+ // The global Todo endpoint has no filter or pagination. On accounts with more
+ // than 1000 Todos the bounded scan below is the only thing standing between an
+ // unsafe completion and an incomplete answer. Zettly already exposes a
+ // server-side filtered, owner-checked board per focus, so use it as the
+ // authoritative source and keep the old scan only for servers that lack it.
+ let rows;
+ try {
+  const response=await ctx.client.request('GET',`/focus/${id}/board`);
+  if(response?.success===false)throw fail('FOCUS_TASK_SCAN_INCOMPLETE','The focus board was not accepted by Zettly.');
+  const payload=response?.data;
+  if(!payload||typeof payload!=='object'||!Array.isArray(payload.todos))throw fail('FOCUS_TASK_SCAN_INCOMPLETE','The focus board Todo collection is malformed.');
+  rows=payload.todos;
+ }catch(error){
+  if(error?.status!==404&&error?.status!==405)throw error;
+  const response=await ctx.client.request('GET','/todos?type=todo');
+  rows=response.data;
+ }
  if(!Array.isArray(rows)||rows.length>1000)throw fail('FOCUS_TASK_SCAN_INCOMPLETE','Cannot prove focus completion from an incomplete Todo collection.');
  const ids=new Set();
  for(const row of rows){if(!positive(Number(row.id))||Number(row.user_id)!==ctx.owner.id||typeof row.is_completed!=='boolean'||ids.has(Number(row.id)))throw fail('FOCUS_TASK_SCAN_INCOMPLETE','Todo identity or completion status is unavailable.');ids.add(Number(row.id));}
