@@ -22,6 +22,8 @@ import {
   findActiveLegacyWriter,
   verifyLegacyFleetQuiescence,
   projectLockDir,
+  readTakeoverRequest,
+  clearTakeoverRequest,
   HEARTBEAT_MS,
 } from "./process-lock.js";
 import { exec, setActiveProjectDir, resolveProjectDir } from "./exec.js";
@@ -36,6 +38,7 @@ import { resolveRequestSession } from "./session-scope.js";
 import { getToolList } from "./tools/definitions.js";
 import { WORKFLOW_INSTRUCTIONS, ENGLISH_IMPLEMENTATION_RULE } from './workflow-guidance.js';
 import { handleToolCall } from "./tools/handlers.js";
+import { handleDropTask } from "./tools/handler-modules/commit-handlers.js";
 import { setToolchain } from "./monitor.js";
 import { toolchainOnce } from "./toolchain.js";
 
@@ -328,15 +331,50 @@ export async function initStartupWorktreeMutex(state, { heartbeat = false } = {}
   process.once('exit', () => releaseAllWorktreeMutexesSync());
 
   if (heartbeat) {
+    let takeoverInProgress = false;
     const hb = setInterval(() => {
       const cap = state?.boundKernelCapability;
-      if (cap && cap.active) {
+      if (!cap || !cap.active) return;
+      try {
         writeKernelLockMetadata({
           dir: projectLockDir(state.stateFile),
           capability: cap,
           projectDir: cap.worktreeRoot,
         });
+      } catch {
+        // A transient metadata write failure must not stop takeover handling.
       }
+
+      // Cooperative takeover: a live process cannot have its kernel mutex
+      // stolen from outside, so the holder ends its own task through the normal
+      // terminal path. That closes its Zettly Todo and releases the mutex.
+      const dir = projectLockDir(state.stateFile);
+      const request = readTakeoverRequest({ dir });
+      if (
+        !request ||
+        takeoverInProgress ||
+        request.ownerPid !== process.pid ||
+        !state.state?.taskDescription ||
+        state.state.currentPhase === "idle"
+      ) {
+        return;
+      }
+      takeoverInProgress = true;
+      void handleDropTask(
+        {
+          reason:
+            `cooperative takeover requested by PID ${request.requesterPid}: ${request.reason}`,
+        },
+        state,
+        {},
+      )
+        .catch((error) =>
+          safeLog("error", `cooperative takeover failed: ${error?.message || error}`),
+        )
+        .finally(() => {
+          clearTakeoverRequest({ dir });
+          takeoverInProgress = false;
+        });
     }, HEARTBEAT_MS);
     hb.unref?.();
   }

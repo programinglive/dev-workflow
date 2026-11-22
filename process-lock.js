@@ -3333,6 +3333,74 @@ export function rememberLockDir(dir, leaseId = null, pid = process.pid) {
   rememberLockLease({ dir, pid, leaseId });
 }
 
+/**
+ * Cooperative takeover request.
+ *
+ * A kernel mutex held by a LIVE process cannot be stolen safely from outside.
+ * A requester therefore leaves a durable request in the holder's lock directory.
+ * The holder's heartbeat sees it and drops its own task through the normal
+ * terminal path, which closes the Zettly Todo and releases the mutex (fail-closed,
+ * never a force kill). The requester retries start_task after one heartbeat.
+ */
+export const TAKEOVER_REQUEST_FILENAME = "takeover-request.json";
+
+export function writeTakeoverRequest({ dir, ownerPid, requesterPid, reason }) {
+  if (!dir || !Number.isFinite(ownerPid) || !Number.isFinite(requesterPid)) {
+    return { ok: false, error: "missing_args" };
+  }
+  const text = String(reason || "").trim();
+  if (text.length < 5) return { ok: false, error: "reason_required" };
+  try {
+    mkdirSync(dir, { recursive: true });
+    const target = path.join(dir, TAKEOVER_REQUEST_FILENAME);
+    const tmp = `${target}.${process.pid}.${Date.now()}.tmp`;
+    writeFileSync(
+      tmp,
+      JSON.stringify(
+        {
+          ownerPid,
+          requesterPid,
+          reason: text,
+          requestedAt: new Date().toISOString(),
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+    renameSync(tmp, target);
+    return { ok: true, path: target };
+  } catch (error) {
+    return { ok: false, error: error?.code || String(error?.message || error) };
+  }
+}
+
+export function readTakeoverRequest({ dir }) {
+  if (!dir) return null;
+  try {
+    const target = path.join(dir, TAKEOVER_REQUEST_FILENAME);
+    if (!existsSync(target)) return null;
+    const parsed = JSON.parse(readFileSync(target, "utf8"));
+    if (!parsed || typeof parsed !== "object") return null;
+    if (!Number.isFinite(parsed.ownerPid) || !Number.isFinite(parsed.requesterPid)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export function clearTakeoverRequest({ dir }) {
+  if (!dir) return false;
+  try {
+    const target = path.join(dir, TAKEOVER_REQUEST_FILENAME);
+    if (!existsSync(target)) return false;
+    unlinkSync(target);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function setIsAliveForTests(fn) {
   isAliveOverride = typeof fn === "function" ? fn : null;
 }

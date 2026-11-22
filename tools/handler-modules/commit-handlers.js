@@ -11,6 +11,37 @@ import fs from "fs";
 import { updateTaskStatus, isConfigured, readFactoryConfig } from "../../factory-client.js";
 import { cleanupWorkBranches } from "../../branch-cleanup.js";
 import { assertPreflightScope } from "../../preflight.js";
+import { releaseWorktreeMutex, getHeldWorktreeCapability } from "../../process-lock.js";
+
+/**
+ * Release the canonical worktree mutex when a task reaches a terminal state.
+ *
+ * start_task acquires the mutex and binds it to WorkflowState, but the terminal
+ * handlers used to only reset/save the state. A long-lived MCP process therefore
+ * kept the repository locked after finishing, so the next session in the same
+ * repo was refused with "another task is running in MCP process PID ...".
+ * Release must happen AFTER the final state write so the write stays fenced.
+ */
+async function releaseTerminalTaskMutex(workflowState, projectDir) {
+  const capability =
+    (typeof workflowState._resolveKernelCapability === "function"
+      ? workflowState._resolveKernelCapability()
+      : null) ||
+    workflowState.boundKernelCapability ||
+    (projectDir ? getHeldWorktreeCapability(projectDir) : null);
+  if (!capability) return false;
+
+  try {
+    await releaseWorktreeMutex(capability);
+  } catch {
+    return false;
+  }
+  if (typeof workflowState.bindKernelCapability === "function") {
+    workflowState.bindKernelCapability(null);
+  }
+  workflowState.requireKernelMutex = false;
+  return true;
+}
 
 /**
  * Tutup task Factory yang di-claim saat workflow berakhir, supaya board tidak
@@ -751,6 +782,7 @@ export async function handleCompleteTask(args, workflowState, context = {}) {
   const zettlyNote = zettlyResult.note ? `\n\n${zettlyResult.ok?'✅':'⚠️'} ${zettlyResult.note}` : '';
   workflowState.reset();
   await workflowState.save();
+  await releaseTerminalTaskMutex(workflowState, projectDir);
 
   // Tutup task Factory-nya supaya board tidak penuh gantung. Kegagalan tidak
   // boleh menggagalkan state lokal yang sudah ditutup - cukup diberi tahu.
@@ -836,8 +868,10 @@ export async function handleForceCompleteTask(args, workflowState, context = {})
   const zettlyResult = await closeZettlyTask(workflowState,'closed_with_exceptions',args,context.zettlyOptions);
   const zettlyNote = zettlyResult.note ? `\n${zettlyResult.ok?'✅':'⚠️'} ${zettlyResult.note}` : '';
   const factoryTaskId = workflowState.state.dodFactoryTaskId;
+  const terminalProjectDir = workflowState.state.projectDir || "";
   workflowState.reset();
   await workflowState.save();
+  await releaseTerminalTaskMutex(workflowState, terminalProjectDir);
 
   const factoryNote = factoryTaskId
     ? await closeFactoryTask(
@@ -877,8 +911,10 @@ export async function handleDropTask(args, workflowState, context = {}) {
   const zettlyResult = await closeZettlyTask(workflowState,'cancelled',args,context.zettlyOptions);
   const zettlyNote = zettlyResult.note ? `\n${zettlyResult.ok?'✅':'⚠️'} ${zettlyResult.note}` : '';
   const factoryTaskId = workflowState.state.dodFactoryTaskId;
+  const terminalProjectDir = workflowState.state.projectDir || "";
   workflowState.reset();
   await workflowState.save();
+  await releaseTerminalTaskMutex(workflowState, terminalProjectDir);
 
   const factoryNote = factoryTaskId
     ? await closeFactoryTask(

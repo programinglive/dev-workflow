@@ -19,6 +19,7 @@ import { handleResumeSession } from "./resume-handlers.js";
 import { handleAcknowledgeInstructions } from "./preflight-handlers.js";
 import { handleSetPlan, handleMarkPlanStep } from "./workflow-handlers.js";
 import { handleCheckpointTask, handleHandoffTask, handleAcknowledgeHandover } from "./checkpoint-handlers.js";
+import { handleTakeOverTask } from "./takeover-handlers.js";
 import { handleFetchTask } from "./remote-checkpoint.js";
 import { renderPlanShort } from "./plan.js";
 import { openItems, MIN_EVIDENCE } from "./dod.js";
@@ -473,6 +474,8 @@ async function dispatchToolCall({
             })
           )
         );
+      case "take_over_task":
+        return handleTakeOverTask(args, workflowState);
       case "fetch_task":
         return textResponse(
           JSON.stringify(

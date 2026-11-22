@@ -8,7 +8,7 @@ export const GENERATED_CATALOG = {
   "repositoryUrl": "https://github.com/programinglive/dev-workflow-mcp-server",
   "repositoryVisibility": "PRIVATE",
   "npmPubliclyPublished": false,
-  "mcpToolCount": 58,
+  "mcpToolCount": 81,
   "mcpTools": [
     {
       "name": "acknowledge_handover",
@@ -56,6 +56,209 @@ export const GENERATED_CATALOG = {
           "name": "projectDir",
           "type": "string",
           "description": "Absolute path to the repository. Overrides the repo pinned by 'start_task'.",
+          "required": false,
+          "enumValues": []
+        }
+      ]
+    },
+    {
+      "name": "audit_api_contracts",
+      "description": "[READ_ONLY] Check API controllers and tool definitions for input validation and contract compatibility.",
+      "required": [],
+      "params": [
+        {
+          "name": "projectDir",
+          "type": "string",
+          "description": "",
+          "required": false,
+          "enumValues": []
+        },
+        {
+          "name": "files",
+          "type": "array",
+          "description": "",
+          "required": false,
+          "enumValues": []
+        }
+      ]
+    },
+    {
+      "name": "audit_architecture",
+      "description": "[READ_ONLY] Evaluate architectural boundaries, deep-module encapsulation, and role/permission enforcement.",
+      "required": [],
+      "params": [
+        {
+          "name": "projectDir",
+          "type": "string",
+          "description": "",
+          "required": false,
+          "enumValues": []
+        },
+        {
+          "name": "files",
+          "type": "array",
+          "description": "",
+          "required": false,
+          "enumValues": []
+        }
+      ]
+    },
+    {
+      "name": "audit_changes",
+      "description": "[READ_ONLY] Audit changed files or a Git diff against engineering standards, focusing on newly introduced violations.",
+      "required": [],
+      "params": [
+        {
+          "name": "projectDir",
+          "type": "string",
+          "description": "",
+          "required": false,
+          "enumValues": []
+        },
+        {
+          "name": "files",
+          "type": "array",
+          "description": "",
+          "required": false,
+          "enumValues": []
+        }
+      ]
+    },
+    {
+      "name": "audit_code",
+      "description": "[READ_ONLY] Run Zettly & DevWorkflow V2.0 engineering standards against selected files or the repository.",
+      "required": [],
+      "params": [
+        {
+          "name": "projectDir",
+          "type": "string",
+          "description": "",
+          "required": false,
+          "enumValues": []
+        },
+        {
+          "name": "files",
+          "type": "array",
+          "description": "",
+          "required": false,
+          "enumValues": []
+        }
+      ]
+    },
+    {
+      "name": "audit_database_changes",
+      "description": "[READ_ONLY] Inspect database migrations for destructive operations (dropColumn/dropTable) and N-1 rollback compatibility.",
+      "required": [],
+      "params": [
+        {
+          "name": "projectDir",
+          "type": "string",
+          "description": "",
+          "required": false,
+          "enumValues": []
+        },
+        {
+          "name": "files",
+          "type": "array",
+          "description": "",
+          "required": false,
+          "enumValues": []
+        }
+      ]
+    },
+    {
+      "name": "audit_report",
+      "description": "[READ_ONLY] Generate an evidence-backed consolidated engineering audit report in both human-readable and JSON format.",
+      "required": [],
+      "params": [
+        {
+          "name": "projectDir",
+          "type": "string",
+          "description": "",
+          "required": false,
+          "enumValues": []
+        },
+        {
+          "name": "files",
+          "type": "array",
+          "description": "",
+          "required": false,
+          "enumValues": []
+        },
+        {
+          "name": "scope",
+          "type": "string",
+          "description": "",
+          "required": false,
+          "enumValues": []
+        }
+      ]
+    },
+    {
+      "name": "audit_repository",
+      "description": "[READ_ONLY] Run a comprehensive repository-wide engineering audit across architecture, code quality, security, testing, API, database, and docs.",
+      "required": [],
+      "params": [
+        {
+          "name": "projectDir",
+          "type": "string",
+          "description": "",
+          "required": false,
+          "enumValues": []
+        }
+      ]
+    },
+    {
+      "name": "audit_security",
+      "description": "[READ_ONLY] Scan for embedded secrets, unsafe shell/deserialization calls, and security boundary violations.",
+      "required": [],
+      "params": [
+        {
+          "name": "projectDir",
+          "type": "string",
+          "description": "",
+          "required": false,
+          "enumValues": []
+        },
+        {
+          "name": "files",
+          "type": "array",
+          "description": "",
+          "required": false,
+          "enumValues": []
+        }
+      ]
+    },
+    {
+      "name": "audit_standards",
+      "description": "[READ_ONLY] Validate the engineering standards registry (duplicate IDs, missing rationales, schema validity, approved exceptions).",
+      "required": [],
+      "params": [
+        {
+          "name": "projectDir",
+          "type": "string",
+          "description": "",
+          "required": false,
+          "enumValues": []
+        }
+      ]
+    },
+    {
+      "name": "audit_tests",
+      "description": "[READ_ONLY] Evaluate regression test protection and change-impact test requirements.",
+      "required": [],
+      "params": [
+        {
+          "name": "projectDir",
+          "type": "string",
+          "description": "",
+          "required": false,
+          "enumValues": []
+        },
+        {
+          "name": "files",
+          "type": "array",
+          "description": "",
           "required": false,
           "enumValues": []
         }
@@ -484,6 +687,311 @@ export const GENERATED_CATALOG = {
           "type": "string",
           "description": "Why the task is leaving this machine. Mandatory, shown to the receiving machine.",
           "required": true,
+          "enumValues": []
+        }
+      ]
+    },
+    {
+      "name": "helper_apply_safe_fix",
+      "description": "[LOCAL_WRITE] Apply an allowlisted deterministic AF-0/AF-1 fix to an authorized workspace file with automatic snapshot rollback on verification failure.",
+      "required": [
+        "file"
+      ],
+      "params": [
+        {
+          "name": "projectDir",
+          "type": "string",
+          "description": "",
+          "required": false,
+          "enumValues": []
+        },
+        {
+          "name": "file",
+          "type": "string",
+          "description": "",
+          "required": true,
+          "enumValues": []
+        },
+        {
+          "name": "ruleId",
+          "type": "string",
+          "description": "",
+          "required": false,
+          "enumValues": []
+        },
+        {
+          "name": "verifyCommand",
+          "type": "array",
+          "description": "",
+          "required": false,
+          "enumValues": []
+        },
+        {
+          "name": "simulateVerificationFailure",
+          "type": "boolean",
+          "description": "",
+          "required": false,
+          "enumValues": []
+        }
+      ]
+    },
+    {
+      "name": "helper_autofix_candidates",
+      "description": "[READ_ONLY] Find deterministic AF-0 and AF-1 findings eligible for bounded automatic remediation.",
+      "required": [],
+      "params": [
+        {
+          "name": "projectDir",
+          "type": "string",
+          "description": "",
+          "required": false,
+          "enumValues": []
+        },
+        {
+          "name": "files",
+          "type": "array",
+          "description": "",
+          "required": false,
+          "enumValues": []
+        }
+      ]
+    },
+    {
+      "name": "helper_change_impact",
+      "description": "[READ_ONLY] Identify affected modules, services, APIs, and required test suites for a change set.",
+      "required": [],
+      "params": [
+        {
+          "name": "projectDir",
+          "type": "string",
+          "description": "",
+          "required": false,
+          "enumValues": []
+        },
+        {
+          "name": "files",
+          "type": "array",
+          "description": "",
+          "required": false,
+          "enumValues": []
+        }
+      ]
+    },
+    {
+      "name": "helper_docs_update",
+      "description": "[READ_ONLY] Identify documentation files (AGENTS.md, README.md, engineering/standards) that should be updated after a code change.",
+      "required": [],
+      "params": [
+        {
+          "name": "projectDir",
+          "type": "string",
+          "description": "",
+          "required": false,
+          "enumValues": []
+        },
+        {
+          "name": "files",
+          "type": "array",
+          "description": "",
+          "required": false,
+          "enumValues": []
+        }
+      ]
+    },
+    {
+      "name": "helper_explain_violation",
+      "description": "[READ_ONLY] Explain a standard violation, its software design principle (Ousterhout/Pragmatic/Feathers/Fowler/Beck), risks, and remediation.",
+      "required": [
+        "ruleId"
+      ],
+      "params": [
+        {
+          "name": "projectDir",
+          "type": "string",
+          "description": "",
+          "required": false,
+          "enumValues": []
+        },
+        {
+          "name": "ruleId",
+          "type": "string",
+          "description": "",
+          "required": true,
+          "enumValues": []
+        },
+        {
+          "name": "file",
+          "type": "string",
+          "description": "",
+          "required": false,
+          "enumValues": []
+        }
+      ]
+    },
+    {
+      "name": "helper_improvement_opportunities",
+      "description": "[READ_ONLY] Identify high-leverage workflow, testing, CI, and architecture improvement opportunities.",
+      "required": [],
+      "params": [
+        {
+          "name": "projectDir",
+          "type": "string",
+          "description": "",
+          "required": false,
+          "enumValues": []
+        }
+      ]
+    },
+    {
+      "name": "helper_plan_fix",
+      "description": "[READ_ONLY] Generate a bounded remediation plan with risk assessment, required tests, and rollback instructions.",
+      "required": [
+        "ruleId"
+      ],
+      "params": [
+        {
+          "name": "projectDir",
+          "type": "string",
+          "description": "",
+          "required": false,
+          "enumValues": []
+        },
+        {
+          "name": "ruleId",
+          "type": "string",
+          "description": "",
+          "required": true,
+          "enumValues": []
+        },
+        {
+          "name": "files",
+          "type": "array",
+          "description": "",
+          "required": false,
+          "enumValues": []
+        }
+      ]
+    },
+    {
+      "name": "helper_prioritize_debt",
+      "description": "[READ_ONLY] Rank technical debt items (P0..P3) by actual engineering and business impact.",
+      "required": [],
+      "params": [
+        {
+          "name": "projectDir",
+          "type": "string",
+          "description": "",
+          "required": false,
+          "enumValues": []
+        }
+      ]
+    },
+    {
+      "name": "helper_propose_standard",
+      "description": "[READ_ONLY] Propose a new engineering standard from recurring findings without auto-activating blocking enforcement.",
+      "required": [
+        "title",
+        "problemDescription"
+      ],
+      "params": [
+        {
+          "name": "proposedId",
+          "type": "string",
+          "description": "",
+          "required": false,
+          "enumValues": []
+        },
+        {
+          "name": "title",
+          "type": "string",
+          "description": "",
+          "required": true,
+          "enumValues": []
+        },
+        {
+          "name": "problemDescription",
+          "type": "string",
+          "description": "",
+          "required": true,
+          "enumValues": []
+        },
+        {
+          "name": "recurrenceEvidence",
+          "type": "array",
+          "description": "",
+          "required": false,
+          "enumValues": []
+        },
+        {
+          "name": "proposedSeverity",
+          "type": "string",
+          "description": "",
+          "required": false,
+          "enumValues": []
+        }
+      ]
+    },
+    {
+      "name": "helper_refactor_advice",
+      "description": "[READ_ONLY] Provide incremental, behavior-preserving refactoring recommendations under test protection.",
+      "required": [],
+      "params": [
+        {
+          "name": "projectDir",
+          "type": "string",
+          "description": "",
+          "required": false,
+          "enumValues": []
+        },
+        {
+          "name": "files",
+          "type": "array",
+          "description": "",
+          "required": false,
+          "enumValues": []
+        }
+      ]
+    },
+    {
+      "name": "helper_root_cause",
+      "description": "[READ_ONLY] Correlate failing tests, error messages, and recent file changes into hypotheses vs confirmed root causes.",
+      "required": [
+        "errorMessage"
+      ],
+      "params": [
+        {
+          "name": "errorMessage",
+          "type": "string",
+          "description": "",
+          "required": true,
+          "enumValues": []
+        },
+        {
+          "name": "files",
+          "type": "array",
+          "description": "",
+          "required": false,
+          "enumValues": []
+        }
+      ]
+    },
+    {
+      "name": "helper_suggest_tests",
+      "description": "[READ_ONLY] Recommend characterization and regression tests based on changed files and risk.",
+      "required": [],
+      "params": [
+        {
+          "name": "projectDir",
+          "type": "string",
+          "description": "",
+          "required": false,
+          "enumValues": []
+        },
+        {
+          "name": "files",
+          "type": "array",
+          "description": "",
+          "required": false,
           "enumValues": []
         }
       ]
@@ -1489,6 +1997,46 @@ export const GENERATED_CATALOG = {
           "type": "integer",
           "description": "Existing Zettly Todo ID to link to the current workflow task.",
           "required": false,
+          "enumValues": []
+        }
+      ]
+    },
+    {
+      "name": "take_over_task",
+      "description": "Request a cooperative takeover of a repository whose task is held by a LIVE but idle MCP process. A kernel mutex owned by a live process cannot be stolen safely, so this writes a confirmed request into the holder's lock directory; the holder's heartbeat then drops its own task through the normal terminal path, closing its Zettly Todo and releasing the mutex. Requires the owner PID, a reason, and explicit confirmation. Retry start_task after one heartbeat.",
+      "required": [
+        "projectDir",
+        "ownerPid",
+        "reason",
+        "confirmation"
+      ],
+      "params": [
+        {
+          "name": "projectDir",
+          "type": "string",
+          "description": "Repository whose lock should be taken over.",
+          "required": true,
+          "enumValues": []
+        },
+        {
+          "name": "ownerPid",
+          "type": "number",
+          "description": "PID of the live MCP process currently recorded as the task owner.",
+          "required": true,
+          "enumValues": []
+        },
+        {
+          "name": "reason",
+          "type": "string",
+          "description": "Why the takeover is needed. Recorded for the owner and in history.",
+          "required": true,
+          "enumValues": []
+        },
+        {
+          "name": "confirmation",
+          "type": "string",
+          "description": "Must be exactly 'CONFIRM TAKE_OVER <ownerPid>'.",
+          "required": true,
           "enumValues": []
         }
       ]

@@ -360,6 +360,33 @@ export function getToolList() {
       },
     },
     {
+      name: "take_over_task",
+      description:
+        "Request a cooperative takeover of a repository whose task is held by a LIVE but idle MCP process. A kernel mutex owned by a live process cannot be stolen safely, so this writes a confirmed request into the holder's lock directory; the holder's heartbeat then drops its own task through the normal terminal path, closing its Zettly Todo and releasing the mutex. Requires the owner PID, a reason, and explicit confirmation. Retry start_task after one heartbeat.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          projectDir: {
+            type: "string",
+            description: "Repository whose lock should be taken over.",
+          },
+          ownerPid: {
+            type: "number",
+            description: "PID of the live MCP process currently recorded as the task owner.",
+          },
+          reason: {
+            type: "string",
+            description: "Why the takeover is needed. Recorded for the owner and in history.",
+          },
+          confirmation: {
+            type: "string",
+            description: "Must be exactly 'CONFIRM TAKE_OVER <ownerPid>'.",
+          },
+        },
+        required: ["projectDir", "ownerPid", "reason", "confirmation"],
+      },
+    },
+    {
       name: "fetch_task",
       description:
         "Take a task over from another machine by refreshing that machine's checkpoint over SSH and " +
