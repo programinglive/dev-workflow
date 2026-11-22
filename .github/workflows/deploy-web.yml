@@ -121,9 +121,9 @@ jobs:
           fi
           for route in "/how-to-use/" "/use-cases/" "/docs/"; do
             route_html=$(curl -fsSL -H "Cache-Control: no-cache" "https://devworkflow.programinglive.com${route}?smoke=$(date +%s)")
-            echo "$route_html" | grep -qF "$expected" || { echo "FAIL: live ${route} HTML missing expected version $expected" >&2; exit 1; }
+            grep -qF "$expected" <<< "$route_html" || { echo "FAIL: live ${route} HTML missing expected version $expected" >&2; exit 1; }
             for removed in "audit_code" "audit_security" "helper_change_impact" "helper_suggest_tests"; do
-              if echo "$route_html" | grep -qw "$removed"; then
+              if grep -qw "$removed" <<< "$route_html"; then
                 echo "FAIL: live ${route} HTML still advertises removed MCP tool: $removed" >&2
                 exit 1
               fi
