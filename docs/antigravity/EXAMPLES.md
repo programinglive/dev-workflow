@@ -301,11 +301,11 @@ Each project gets its own `.state/workflow-state.json`:
 ```bash
 # Project A
 cd ~/projects/frontend-app
-npm install @programinglive/dev-workflow-mcp-server
+npm install @programinglive/dev-workflow
 
 # Project B  
 cd ~/projects/backend-api
-npm install @programinglive/dev-workflow-mcp-server
+npm install @programinglive/dev-workflow
 ```
 
 ### Usage
@@ -361,7 +361,7 @@ Set unique user IDs for each developer:
   "mcpServers": {
     "dev-workflow": {
       "command": "node",
-      "args": ["d:\\code\\dev-workflow-mcp-server\\index.js"],
+      "args": ["d:\\code\\dev-workflow\\index.js"],
       "env": {
         "DEV_WORKFLOW_USER_ID": "alice"
       }
@@ -376,7 +376,7 @@ Set unique user IDs for each developer:
   "mcpServers": {
     "dev-workflow": {
       "command": "node",
-      "args": ["d:\\code\\dev-workflow-mcp-server\\index.js"],
+      "args": ["d:\\code\\dev-workflow\\index.js"],
       "env": {
         "DEV_WORKFLOW_USER_ID": "bob"
       }
