@@ -169,14 +169,15 @@ export function detectRepositoryEntry(projectDir, explicitRepoName = null) {
 }
 
 /**
- * Evaluate the Permanent Two-Stage Open-Source Release Governance Gate.
- *
- * Stages:
- *   - "pre_publish"  : verifies source version, README, CHANGELOG, website source &
- *                      generated catalog locally (never circularly requires unpublished npm/GH).
- *   - "post_publish" : verifies external published artifacts (GitHub Release, npm published
- *                      version, npm `latest` dist-tag, runtime CLI version, and live website HTML).
- *   - "both"         : runs Stage A (pre_publish) and Stage B (post_publish).
+ * @zettly-code ZC-DW-RELGATE-001
+ * @purpose Enforce Two-Stage Open-Source Release Governance (PRE_PUBLISH and POST_PUBLISH) across README, CHANGELOG, npm, GitHub Release, and live website
+ * @domain release-governance
+ * @invariant Pre-publish checks must never circularly require unpublished npm/GitHub versions, and post-publish checks must fail closed when live website content lags behind published packages
+ * @bug-fix BUG-DW-RELGATE-312
+ * @root-cause Single-stage local source checks passed while CI failures left npm, GitHub Releases, and live Netlify pages stuck on v2.1.1
+ * @fix Split evaluateReleaseDocsGate into Stage A (pre_publish) and Stage B (post_publish) with Canonical Release Identity separation and wired both into CI workflows
+ * @related OPEN_SOURCE_RELEASE_REGISTRY, detectRepositoryEntry
+ * @tests release-recovery-and-two-stage-governance.test.js
  */
 export async function evaluateReleaseDocsGate({
   projectDir,

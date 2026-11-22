@@ -82,3 +82,5 @@ tmp-probe.db
 # Python bytecode from managed/install-device.py
 __pycache__/
 *.pyc
+
+.zettly-code/
