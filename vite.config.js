@@ -19,11 +19,16 @@ export default defineConfig({
         entryFileNames: 'index.mjs',
         format: 'es',
       },
+      onwarn(warning, warn) {
+        if (warning.code === 'INEFFECTIVE_DYNAMIC_IMPORT') return;
+        warn(warning);
+      },
       external: [
         ...builtinModules,
         ...builtinModules.map(name=>`node:${name}`),
         'pg','mysql2','mysql2/promise','better-sqlite3',
         '@modelcontextprotocol/sdk',
+        '@programinglive/zettly-code',
         // dotenv ships CommonJS only (dist/index.cjs). Bundling it into an ES
         // module leaks its `require.main === module` guard, which throws
         // "require is not defined in ES module scope" at startup. Keeping it

@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [3.1.1](https://github.com/programinglive/dev-workflow/compare/v3.1.0...v3.1.1) (2026-11-22)
+
+### 🐛 Bug Fixes
+* **ci/build:** mark optional `@programinglive/zettly-code` external and silence expected `INEFFECTIVE_DYNAMIC_IMPORT` warnings in `vite.config.js` so `tests/build.test.js` and GitHub Release / npm publish pipelines pass cleanly.
+* **docs:** scrub internal Tailscale IP literals from historical v2.1.3/v2.1.4 architecture reports so `tests/security-oss-public-surface.test.js` passes 100% on CI.
+* **web:** synchronize onboarding journey, use-cases, and generated catalog to `v3.1.1` (`65` canonical tools) with zero remaining `2.1.1` references.
+
 ## [3.1.0](https://github.com/programinglive/dev-workflow/compare/v3.0.0...v3.1.0) (2026-11-22)
 
 ### ✨ Features
