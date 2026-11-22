@@ -388,6 +388,59 @@ function syncRules() {
       console.error(`      ⚠️ ${device.label} rule sync failed: ${err.message}`);
     }
   }
+
+  syncOpenCodePlugins();
+}
+
+function syncOpenCodePlugins() {
+  const pluginSrc = path.join(MANAGED_DIR, 'plugins', 'dev-workflow-guard.ts');
+  if (!fs.existsSync(pluginSrc)) return;
+
+  console.log('      Installing OpenCode start_task guard plugin across fleet...');
+  const content = fs.readFileSync(pluginSrc, 'utf8');
+
+  // 1. Local device
+  const localPluginDir = path.join(os.homedir(), '.config', 'opencode', 'plugins');
+  const localPluginDest = path.join(localPluginDir, 'dev-workflow-guard.ts');
+  if (fs.existsSync(path.join(os.homedir(), '.config', 'opencode'))) {
+    fs.mkdirSync(localPluginDir, { recursive: true });
+    const before = fs.existsSync(localPluginDest) ? fs.readFileSync(localPluginDest, 'utf8') : '';
+    if (before !== content) {
+      fs.writeFileSync(localPluginDest, content, 'utf8');
+      console.log(`      ✅ ${LOCAL_LABEL} OpenCode guard plugin installed`);
+    } else {
+      console.log(`      ✅ ${LOCAL_LABEL} OpenCode guard plugin up to date`);
+    }
+  }
+
+  // 2. Remote fleet workstations
+  const payload = Buffer.from(content, 'utf8').toString('base64');
+  const script = [
+    'import base64, os',
+    `body = base64.b64decode('${payload}').decode('utf-8')`,
+    "base = os.path.join(os.path.expanduser('~'), '.config', 'opencode')",
+    'if not os.path.isdir(base):',
+    '    print("SKIPPED")',
+    'else:',
+    "    pdir = os.path.join(base, 'plugins')",
+    '    os.makedirs(pdir, exist_ok=True)',
+    "    dest = os.path.join(pdir, 'dev-workflow-guard.ts')",
+    '    prev = open(dest, "r", encoding="utf-8").read() if os.path.exists(dest) else ""',
+    '    if prev == body:',
+    '        print("UNCHANGED")',
+    '    else:',
+    '        open(dest, "w", encoding="utf-8").write(body)',
+    '        print("UPDATED")',
+  ].join('\n');
+
+  for (const device of remoteTargets()) {
+    try {
+      const out = run('ssh', ['-o', 'BatchMode=yes', device.host, `${device.python} -`], { input: `${script}\n` });
+      console.log(`      ✅ ${device.label} OpenCode guard plugin (${out.trim() || 'ok'})`);
+    } catch (err) {
+      console.error(`      ⚠️ ${device.label} OpenCode guard plugin sync failed: ${err.message}`);
+    }
+  }
 }
 
 /**
