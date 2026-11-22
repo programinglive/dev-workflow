@@ -28,7 +28,7 @@ This creates a project-specific workflow state:
 
 ```bash
 cd your-project
-npm install @programinglive/dev-workflow-mcp-server
+npm install @programinglive/dev-workflow
 ```
 
 This automatically creates `.state/workflow-state.json` in your project root.
@@ -36,8 +36,8 @@ This automatically creates `.state/workflow-state.json` in your project root.
 ### Option 2: Install from Source
 
 ```bash
-git clone https://github.com/programinglive/dev-workflow-mcp-server.git
-cd dev-workflow-mcp-server
+git clone https://github.com/programinglive/dev-workflow.git
+cd dev-workflow
 npm install
 ```
 
@@ -61,7 +61,7 @@ Create or edit the `mcp_config.json` file:
     "dev-workflow": {
       "command": "node",
       "args": [
-        "d:\\code\\dev-workflow-mcp-server\\index.js"
+        "d:\\code\\dev-workflow\\index.js"
       ]
     }
   }
@@ -284,7 +284,7 @@ This displays your recent workflow completions.
 ## Getting Help
 
 - **Documentation:** [Main README](../../README.md)
-- **GitHub Issues:** [Report bugs or request features](https://github.com/programinglive/dev-workflow-mcp-server/issues)
+- **GitHub Issues:** [Report bugs or request features](https://github.com/programinglive/dev-workflow/issues)
 - **Troubleshooting:** [Common issues and solutions](./TROUBLESHOOTING.md)
 
 ---

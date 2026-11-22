@@ -56,7 +56,7 @@ Ensure `mcp_config.json` has valid JSON:
     "dev-workflow": {
       "command": "node",
       "args": [
-        "d:\\code\\dev-workflow-mcp-server\\index.js"
+        "d:\\code\\dev-workflow\\index.js"
       ]
     }
   }
@@ -86,7 +86,7 @@ If not found, specify full Node.js path in config:
   "mcpServers": {
     "dev-workflow": {
       "command": "C:\\Program Files\\nodejs\\node.exe",
-      "args": ["d:\\code\\dev-workflow-mcp-server\\index.js"]
+      "args": ["d:\\code\\dev-workflow\\index.js"]
     }
   }
 }
@@ -98,12 +98,12 @@ Check that `index.js` exists:
 
 ```powershell
 # Windows
-Test-Path "d:\code\dev-workflow-mcp-server\index.js"
+Test-Path "d:\code\dev-workflow\index.js"
 ```
 
 ```bash
 # macOS/Linux
-ls -la /path/to/dev-workflow-mcp-server/index.js
+ls -la /path/to/dev-workflow/index.js
 ```
 
 #### 5. Restart Antigravity
@@ -118,7 +118,7 @@ After configuration changes, **fully restart Antigravity**:
 Run the server manually to see errors:
 
 ```bash
-cd d:\code\dev-workflow-mcp-server
+cd d:\code\dev-workflow
 node index.js
 ```
 
@@ -170,12 +170,12 @@ Ensure each project has its own state:
 ```bash
 # Project A
 cd ~/projects/app-frontend
-npm install @programinglive/dev-workflow-mcp-server
+npm install @programinglive/dev-workflow
 # Creates .state/ in app-frontend/
 
 # Project B
 cd ~/projects/app-backend
-npm install @programinglive/dev-workflow-mcp-server
+npm install @programinglive/dev-workflow
 # Creates .state/ in app-backend/
 ```
 
@@ -188,7 +188,7 @@ Override state location with environment variable:
   "mcpServers": {
     "dev-workflow": {
       "command": "node",
-      "args": ["d:\\code\\dev-workflow-mcp-server\\index.js"],
+      "args": ["d:\\code\\dev-workflow\\index.js"],
       "env": {
         "DEV_WORKFLOW_STATE_FILE": "d:\\projects\\my-app\\.state\\workflow-state.json"
       }
@@ -284,14 +284,14 @@ In JSON, escape backslashes:
 
 ```json
 {
-  "args": ["d:\\code\\dev-workflow-mcp-server\\index.js"]
+  "args": ["d:\\code\\dev-workflow\\index.js"]
 }
 ```
 
 Not:
 ```json
 {
-  "args": ["d:\code\dev-workflow-mcp-server\index.js"]  // ❌ Wrong
+  "args": ["d:\code\dev-workflow\index.js"]  // ❌ Wrong
 }
 ```
 
@@ -301,7 +301,7 @@ Alternative: use forward slashes (works on Windows):
 
 ```json
 {
-  "args": ["d:/code/dev-workflow-mcp-server/index.js"]
+  "args": ["d:/code/dev-workflow/index.js"]
 }
 ```
 
@@ -311,7 +311,7 @@ Always use full paths, not relative:
 
 ```json
 {
-  "args": ["C:\\Users\\Username\\Projects\\dev-workflow-mcp-server\\index.js"]
+  "args": ["C:\\Users\\Username\\Projects\\dev-workflow\\index.js"]
 }
 ```
 
@@ -321,7 +321,7 @@ If path has spaces, ensure proper escaping:
 
 ```json
 {
-  "args": ["C:\\Program Files\\My Project\\dev-workflow-mcp-server\\index.js"]
+  "args": ["C:\\Program Files\\My Project\\dev-workflow\\index.js"]
 }
 ```
 
@@ -368,7 +368,7 @@ If multiple users/editors need simultaneous access:
   "mcpServers": {
     "dev-workflow": {
       "command": "node",
-      "args": ["d:\\code\\dev-workflow-mcp-server\\index.js"],
+      "args": ["d:\\code\\dev-workflow\\index.js"],
       "env": {
         "DEV_WORKFLOW_USER_ID": "antigravity-user"
       }
@@ -424,7 +424,7 @@ Each developer should have unique `DEV_WORKFLOW_USER_ID`:
   "mcpServers": {
     "dev-workflow": {
       "command": "node",
-      "args": ["d:\\code\\dev-workflow-mcp-server\\index.js"],
+      "args": ["d:\\code\\dev-workflow\\index.js"],
       "env": {
         "DEV_WORKFLOW_USER_ID": "alice"
       }
@@ -488,7 +488,7 @@ Most reliable approach - complete isolation:
   "mcpServers": {
     "dev-workflow": {
       "command": "node",
-      "args": ["d:\\code\\dev-workflow-mcp-server\\index.js"],
+      "args": ["d:\\code\\dev-workflow\\index.js"],
       "env": {
         "DEV_WORKFLOW_USER_ID": "antigravity"
       }
@@ -503,7 +503,7 @@ Most reliable approach - complete isolation:
   "mcpServers": {
     "dev-workflow": {
       "command": "node",
-      "args": ["d:\\code\\dev-workflow-mcp-server\\index.js"],
+      "args": ["d:\\code\\dev-workflow\\index.js"],
       "env": {
         "DEV_WORKFLOW_USER_ID": "windsurf"
       }
@@ -710,7 +710,7 @@ NODE_ENV=development node index.js
 Test manually:
 
 ```bash
-cd dev-workflow-mcp-server
+cd dev-workflow
 node index.js
 
 # Type to test:
@@ -719,8 +719,8 @@ node index.js
 
 ### Community Support
 
-- **GitHub Issues:** [Report bugs](https://github.com/programinglive/dev-workflow-mcp-server/issues)
-- **Discussions:** [Ask questions](https://github.com/programinglive/dev-workflow-mcp-server/discussions)
+- **GitHub Issues:** [Report bugs](https://github.com/programinglive/dev-workflow/issues)
+- **Discussions:** [Ask questions](https://github.com/programinglive/dev-workflow/discussions)
 
 ### Documentation
 
