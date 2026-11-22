@@ -27,21 +27,19 @@ export const PORTAL_SECTIONS: PortalSection[] = [
       {
         heading: "2. Runtime Requirements & Installation Modes",
         body: [
-          "Requires Node.js >= 20.0.0. Install directly from npm (`@programinglive/dev-workflow`) or from a repository clone:",
+          "Requires Node.js >= 20.0.0. Install directly from npm (`@programinglive/dev-workflow`) for standalone local-first use, or clone from source for development:",
         ],
-        code: `git clone https://github.com/programinglive/dev-workflow.git
-cd dev-workflow
-npm ci
-npx devwf doctor`,
+        code: `npm install -g @programinglive/dev-workflow
+devwf setup
+devwf doctor`,
         table: {
           headers: ["Mode", "Command", "When to Use"],
           rows: [
-            ["Source checkout", "npm ci", "Reproducible install from package-lock.json in a cloned repository"],
-            ["Local-first init", "npx devwf setup", "Initialize LOCAL_FIRST_STANDALONE profile (preserves existing Zettly)"],
-            ["Skip Zettly", "npx devwf setup --skip-zettly", "Explicitly skip Zettly on fresh install (never resets connected accounts)"],
-            ["Local CLI invocation", "npx devwf doctor", "Run devwf from the local checkout without modifying global PATH"],
-            ["Global local link", "npm install -g . && devwf doctor", "Expose devwf globally on your machine from the local clone"],
-            ["Public npm registry", "Pending Gate C", "Public npm install is not yet active; verify on /releases/ before using"],
+            ["Public npm registry (Recommended)", "npm install -g @programinglive/dev-workflow", "Install the published package globally with zero private GitHub access required"],
+            ["Local-first init", "devwf setup", "Initialize LOCAL_FIRST_STANDALONE profile (preserves existing Zettly)"],
+            ["Skip Zettly", "devwf setup --skip-zettly", "Explicitly skip Zettly on fresh install (never resets connected accounts)"],
+            ["Environment diagnostics", "devwf doctor", "Verify Node.js, Git, SQLite storage, and optional integrations"],
+            ["Source checkout", "git clone https://github.com/programinglive/dev-workflow.git && cd dev-workflow && npm ci", "Reproducible install from package-lock.json for contributors"],
           ],
         },
       },
