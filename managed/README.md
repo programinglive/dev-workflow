@@ -14,6 +14,7 @@ approved Dev Workflow MCP releases.
 | `device-entry.cjs` | Thin per-client entry point that calls the launcher. |
 | `admission.cjs` | Maintenance admission gate and its operator CLI. |
 | `install-device.py` | Installs the bootstrap into a device's `%LOCALAPPDATA%\ProgramingLive\ManagedMCP`. |
+| `plugins/dev-workflow-guard.ts` | OpenCode 1.x/2.x pre-tool guard plugin blocking `bash`/`shell`/`edit`/`write`/`patch` until `dev-workflow` `start_task` (or `resume_session`) is called in that session; synced fleet-wide by `node managed/rollout.cjs --rules-only`. |
 | `devwf-managed.service` | systemd unit for the release server. |
 
 ## Maintenance admission
