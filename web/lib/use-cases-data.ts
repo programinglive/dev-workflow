@@ -292,9 +292,9 @@ M src/routes/user.js
     whoItIsFor: "Tech leads, senior engineers, and PR reviewers automating pre-merge code reviews.",
     prerequisites: ["Git repository with staged or uncommitted changes", "Configured DevWorkflow MCP"],
     toolsUsed: [
-      { name: "audit_code", type: "mcp", description: "Audit working tree or diff against code quality rules" },
-      { name: "audit_api_contracts", type: "mcp", description: "Verify backward compatibility of API endpoints" },
-      { name: "helper_explain_violation", type: "mcp", description: "Explain rule violation and propose safe fix" },
+      { name: "audit", type: "mcp", description: "Audit working tree, diffs, API contracts, and security against engineering standards" },
+      { name: "analyze_change", type: "mcp", description: "Explain rule violations, change impact, and recommended tests" },
+      { name: "apply_safe_fix", type: "mcp", description: "Apply worktree-fenced deterministic AF-0/AF-1 fixes with rollback" },
     ],
     steps: [
       {
@@ -316,7 +316,7 @@ Audit: 0 critical vulnerabilities · 0 contract breaks · 1 refactor opportunity
       {
         number: 3,
         title: "Apply Safe Automated Fixes",
-        explanation: "Use helper_apply_safe_fix or refactor the highlighted regions before committing.",
+        explanation: "Use apply_safe_fix or refactor the highlighted regions before committing.",
         command: "npm test",
         expectedOutput: `All tests passed.`,
       },
@@ -336,7 +336,7 @@ Audit: 0 critical vulnerabilities · 0 contract breaks · 1 refactor opportunity
       ],
     },
     verificationSteps: [
-      "Run `audit_report` to generate structured JSON audit summary",
+      "Run `audit` with `category: 'report'` to generate a structured JSON and formatted audit summary",
       "Confirm clean static analysis and zero linting errors",
     ],
     limitationsAndTroubleshooting: [
@@ -359,8 +359,8 @@ Audit: 0 critical vulnerabilities · 0 contract breaks · 1 refactor opportunity
     whoItIsFor: "Backend and frontend engineers migrating legacy codebases, modernizing frameworks, or reducing technical debt.",
     prerequisites: ["Existing codebase with working execution environment", "Characterization or unit test harness"],
     toolsUsed: [
-      { name: "helper_refactor_advice", type: "mcp", description: "Analyze complexity and propose decomposition strategy" },
-      { name: "audit_architecture", type: "mcp", description: "Map dependency graphs and circular imports" },
+      { name: "analyze_change", type: "mcp", description: "Analyze complexity and propose incremental decomposition strategy (mode: refactor)" },
+      { name: "audit", type: "mcp", description: "Audit architecture boundaries and dependency direction (category: architecture)" },
       { name: "run_tests", type: "mcp", description: "Run test suite continuously throughout refactor" },
     ],
     steps: [
@@ -425,7 +425,7 @@ Audit: 0 critical vulnerabilities · 0 contract breaks · 1 refactor opportunity
     whoItIsFor: "DevSecOps engineers, security auditors, and developers preparing repositories for open-source or production release.",
     prerequisites: ["Git repository with commit history", "dev-workflow CLI installed"],
     toolsUsed: [
-      { name: "audit_security", type: "mcp", description: "Scan workspace and diffs for secrets and unsafe patterns" },
+      { name: "audit", type: "mcp", description: "Scan workspace and diffs for secrets and unsafe patterns (category: security)" },
       { name: "devwf doctor", type: "cli", description: "Verify strict security mode in local profile" },
     ],
     steps: [
@@ -440,8 +440,8 @@ Audit: 0 critical vulnerabilities · 0 contract breaks · 1 refactor opportunity
         number: 2,
         title: "Run Workspace Security Scan",
         explanation: "Trigger security audit tool via MCP or terminal to scan for high-entropy tokens and credentials.",
-        codeSample: `// AI Tool Call: audit_security
-{}`,
+        codeSample: `// AI Tool Call: audit
+{ "category": "security" }`,
       },
       {
         number: 3,
@@ -462,7 +462,7 @@ Audit: 0 critical vulnerabilities · 0 contract breaks · 1 refactor opportunity
       definitionOfDone: [
         "Zero secrets or sensitive environment variables committed to git",
         ".gitignore properly fences ~/.devworkflow and credential files",
-        "audit_security reports 0 critical or high findings",
+        "audit (category: security) reports 0 critical or high findings",
       ],
     },
     verificationSteps: [
@@ -491,7 +491,7 @@ Audit: 0 critical vulnerabilities · 0 contract breaks · 1 refactor opportunity
     toolsUsed: [
       { name: "create_tests", type: "mcp", description: "Draft comprehensive test scenarios before coding" },
       { name: "run_tests", type: "mcp", description: "Execute test runner and capture stdout/stderr evidence" },
-      { name: "helper_suggest_tests", type: "mcp", description: "Analyze branch coverage and suggest edge-case tests" },
+      { name: "analyze_change", type: "mcp", description: "Analyze change impact and suggest targeted regression tests (mode: tests)" },
     ],
     steps: [
       {
@@ -843,7 +843,7 @@ Connection verified successfully.`,
     toolsUsed: [
       { name: "view_history", type: "mcp", description: "Query past task durations, DoD completion rates, and next steps" },
       { name: "build_report", type: "mcp", description: "Aggregate build durations, test failure rates, and flakiness" },
-      { name: "helper_prioritize_debt", type: "mcp", description: "Analyze recorded next_steps to prioritize tech debt" },
+      { name: "analyze_change", type: "mcp", description: "Analyze technical debt priorities and improvement opportunities (mode: debt)" },
     ],
     steps: [
       {
@@ -859,8 +859,8 @@ Connection verified successfully.`,
         number: 2,
         title: "Analyze Technical Debt Backlog",
         explanation: "Extract recurring nextSteps recorded during previous complete_task invocations to discover systemic debt.",
-        codeSample: `// AI Tool Call: helper_prioritize_debt
-{}`,
+        codeSample: `// AI Tool Call: analyze_change
+{ "mode": "debt" }`,
       },
       {
         number: 3,
@@ -919,11 +919,11 @@ Connection verified successfully.`,
         command: "devwf fleet status --json",
         expectedOutput: `{
   "converged": true,
-  "fleetRelease": "v2.1.1",
+  "fleetRelease": "v3.1.0",
   "machines": [
-    { "name": "workstation-main", "status": "online", "version": "2.1.1" },
-    { "name": "workstation-mac", "status": "online", "version": "2.1.1" },
-    { "name": "workstation-server", "status": "online", "version": "2.1.1" }
+    { "name": "workstation-main", "status": "online", "version": "3.1.0" },
+    { "name": "workstation-mac", "status": "online", "version": "3.1.0" },
+    { "name": "workstation-server", "status": "online", "version": "3.1.0" }
   ]
 }`,
       },

@@ -61,6 +61,11 @@ Before taking any action or answering user requests regarding code changes, chec
 
 **Do not bypass these steps. The MCP server will block commits and releases if any required step is skipped.**
 
+### Mandatory Bug-Fix Knowledge & Open-Source Release Policies (v3.1.0+)
+
+- **Mandatory Bug-Fix Knowledge Policy (`BUG_FIX`):** Every verified bug fix MUST query `code_context` first, add or update a concise `@zettly-code` knowledge comment (or sidecar record for non-commentable files) documenting `@purpose`, `@bug-fix`, confirmed `@root-cause` (or unconfirmed `@hypothesis`), `@fix`, `@related`, and `@tests`, run `code_index(mode="update")`, and pass `audit(category="bugfix_knowledge")`.
+- **Permanent Open-Source Release Documentation Policy (`RELEASE`):** Every public open-source release MUST synchronize `package.json`, `README.md`, `CHANGELOG.md`, and website documentation (`web/lib/catalog.generated.ts`, `web/lib/how-to-use-data.ts`, `web/lib/use-cases-data.ts`), contain zero references to removed MCP tools or private workstation paths, and pass `audit(category="release_docs")`.
+
 ### English-only engineering policy (enforced)
 
 Write new identifiers, comments, docstrings, test descriptions, developer

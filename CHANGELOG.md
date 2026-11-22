@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [3.1.0](https://github.com/programinglive/dev-workflow/compare/v3.0.0...v3.1.0) (2026-11-22)
+
+### ✨ Features
+* **zettly-code:** integrate Zettly Code v1.0 persistent code memory and incremental SQLite knowledge graph via two canonical MCP tools (`code_index` and `code_context`), bringing the public catalog to 65 canonical tools with 0 compatibility aliases.
+* **audit:** integrate `bugfix_knowledge` (`bugfix_knowledge_gate`) and `release_docs` (`release_docs_gate`) into canonical `audit` to enforce mandatory `@zettly-code` bug-fix knowledge comments and permanent open-source release documentation/website synchronization.
+* **docs:** synchronize `README.md`, `CHANGELOG.md`, `AGENTS.md`, and website documentation (`web/lib/catalog.generated.ts`, `web/lib/how-to-use-data.ts`, `web/lib/use-cases-data.ts`) to v3.1.0 and remove outdated v2 tool references.
+
+## [3.0.0](https://github.com/programinglive/dev-workflow/compare/v2.1.5...v3.0.0) (2026-11-22)
+
+### ⚠ BREAKING CHANGES
+* Radical MCP catalog simplification: reduced public MCP tools from 84 to 63 canonical tools with 0 compatibility aliases by consolidating 11 `audit_*` tools into `audit`, 12 `helper_*` tools into `analyze_change`/`plan_fix`/`apply_safe_fix`, and 3 `project_summary*` tools into `project_summary`.
+
 ## Unreleased
 
 ### 🐛 Bug Fixes

@@ -12,9 +12,9 @@ import { getToolList } from "../tools/definitions.js";
 
 const REPO_ROOT = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 
-test("DevWorkflow V3.0 registers the 4 canonical engineering audit and helper tools (audit, analyze_change, plan_fix, apply_safe_fix) with zero legacy duplicate names", () => {
+test("DevWorkflow V3.1 registers the 6 canonical engineering & Zettly Code tools (audit, analyze_change, plan_fix, apply_safe_fix, code_index, code_context) with zero legacy duplicate names", () => {
   const catalogNames = new Set(getToolList().map((t) => t.name));
-  assert.equal(DEVWORKFLOW_V2_TOOL_DEFINITIONS.length, 4);
+  assert.equal(DEVWORKFLOW_V2_TOOL_DEFINITIONS.length, 6);
   for (const def of DEVWORKFLOW_V2_TOOL_DEFINITIONS) {
     assert.ok(catalogNames.has(def.name), `Missing canonical V3 tool '${def.name}' in getToolList()`);
   }

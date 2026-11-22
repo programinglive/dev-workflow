@@ -19,10 +19,16 @@ import {
   generateConsolidationPlan,
   TOOL_ALIASES,
 } from "./tool-catalog-auditor.js";
+import {
+  runCodeIndex,
+  runCodeContext,
+  runBugFixKnowledgeGate,
+} from "./zettly-code-adapter.js";
+import { evaluateReleaseDocsGate } from "./release-governance.js";
 
 const execFileAsync = promisify(execFile);
 
-export const STANDARDS_REGISTRY_VERSION = "3.0.0";
+export const STANDARDS_REGISTRY_VERSION = "3.1.0";
 export const FINDING_FINGERPRINT_VERSION = "2.0";
 
 const ALLOWED_VERIFY_BINARIES = new Set([
@@ -2483,9 +2489,11 @@ export const DEVWORKFLOW_V2_TOOL_DEFINITIONS = [
             "standards",
             "report",
             "catalog",
+            "bugfix_knowledge",
+            "release_docs",
           ],
           description:
-            "Audit category or mode: 'code' (default for files/repo), 'changes' (Git working_tree/staged/commit_range/PR merge-base), 'repository' (full repository scan), 'architecture', 'security', 'tests', 'api', 'database', 'standards' (validate YAML standards registry), 'report' (code/PR audit with formatted_report), or 'catalog' (audit MCP tool catalog).",
+            "Audit category or mode: 'code' (default for files/repo), 'changes' (Git working_tree/staged/commit_range/PR merge-base), 'repository' (full repository scan), 'architecture', 'security', 'tests', 'api', 'database', 'standards' (validate YAML standards registry), 'report' (code/PR audit with formatted_report), 'catalog' (audit MCP tool catalog), 'bugfix_knowledge' (verify mandatory @zettly-code bug-fix comments & graph freshness), or 'release_docs' (verify open-source README/CHANGELOG/website release synchronization).",
         },
         scope: {
           type: "string",
@@ -2494,6 +2502,20 @@ export const DEVWORKFLOW_V2_TOOL_DEFINITIONS = [
         },
         projectDir: { type: "string" },
         files: { type: "array", items: { type: "string" } },
+        taskType: { type: "string", description: "Optional task type for bugfix_knowledge gate (e.g. BUG_FIX, FEATURE)." },
+        bugId: { type: "string", description: "Optional bug identifier for bugfix_knowledge gate." },
+        problemDescription: { type: "string" },
+        confirmedRootCause: { type: "string" },
+        fixSummary: { type: "string" },
+        testReferences: { type: "array", items: { type: "string" } },
+        gitCommit: { type: "string" },
+        zettlyTodoId: { type: "number" },
+        requireFreshGraph: { type: "boolean" },
+        repoName: { type: "string", description: "Optional repository name for release_docs gate." },
+        expectedVersion: { type: "string", description: "Optional expected release version for release_docs gate." },
+        expectedToolCount: { type: "number" },
+        checkLiveWebsite: { type: "boolean" },
+        liveWebsiteHtml: { type: "string" },
         changeMode: {
           type: "string",
           description: "Git change detection mode: 'auto', 'working_tree', 'staged', 'commit_range', or 'pr'.",
@@ -2592,6 +2614,47 @@ export const DEVWORKFLOW_V2_TOOL_DEFINITIONS = [
       additionalProperties: false,
     },
   },
+  {
+    name: "code_index",
+    description:
+      "[ZETTLY_CODE] Manage the persistent Zettly Code SQLite knowledge graph for a repository: check freshness ('status'), bootstrap ('initialize'), incrementally re-index changed files ('update'), verify graph + @zettly-code annotations ('verify'), or rebuild deterministically ('rebuild').",
+    inputSchema: {
+      type: "object",
+      properties: {
+        mode: {
+          type: "string",
+          enum: ["status", "initialize", "update", "verify", "rebuild"],
+          description: "Index operation mode (default: 'status').",
+        },
+        projectDir: { type: "string" },
+        maxFiles: { type: "number" },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "code_context",
+    description:
+      "[ZETTLY_CODE_READ_ONLY] Query persistent Zettly Code debugging memory and bounded knowledge graph context before scanning files: retrieve relevant symbols, @zettly-code bug-fix notes, invariants, callers, dependencies, covering tests, impact radius, or historical bug-fix records.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        mode: {
+          type: "string",
+          enum: ["debug", "symbol", "dependencies", "callers", "tests", "impact", "history"],
+          description: "Retrieval mode (default: 'debug').",
+        },
+        projectDir: { type: "string" },
+        query: { type: "string" },
+        symbol: { type: "string" },
+        file: { type: "string" },
+        depth: { type: "number" },
+        maxFiles: { type: "number" },
+        autoUpdate: { type: "boolean" },
+      },
+      additionalProperties: false,
+    },
+  },
 ];
 
 export const DEVWORKFLOW_V2_TOOL_NAMES = new Set(
@@ -2623,6 +2686,33 @@ export async function handleDevWorkflowV2Tool(name, args = {}, workflowState = n
 
       if (rawCat === "standards") {
         return await validateStandardsRegistry(projectDir);
+      }
+
+      if (rawCat === "bugfix_knowledge") {
+        return await runBugFixKnowledgeGate({
+          projectDir,
+          changedFiles: files,
+          taskType: args.taskType || "BUG_FIX",
+          bugId: args.bugId || null,
+          problemDescription: args.problemDescription || "",
+          confirmedRootCause: args.confirmedRootCause || null,
+          fixSummary: args.fixSummary || "",
+          testReferences: Array.isArray(args.testReferences) ? args.testReferences : [],
+          gitCommit: args.gitCommit || null,
+          zettlyTodoId: args.zettlyTodoId || null,
+          requireFreshGraph: args.requireFreshGraph !== false,
+        });
+      }
+
+      if (rawCat === "release_docs") {
+        return await evaluateReleaseDocsGate({
+          projectDir,
+          repoName: args.repoName || null,
+          expectedVersion: args.expectedVersion || null,
+          expectedToolCount: args.expectedToolCount ?? null,
+          checkLiveWebsite: Boolean(args.checkLiveWebsite),
+          liveWebsiteHtml: args.liveWebsiteHtml || null,
+        });
       }
 
       if (rawCat === "catalog") {
@@ -2827,7 +2917,26 @@ export async function handleDevWorkflowV2Tool(name, args = {}, workflowState = n
         sessionId: args.sessionId || null,
       });
 
+    case "code_index":
+      return await runCodeIndex({
+        projectDir,
+        mode: args.mode || "status",
+        maxFiles: args.maxFiles || 5000,
+      });
+
+    case "code_context":
+      return await runCodeContext({
+        projectDir,
+        mode: args.mode || "debug",
+        query: args.query || "",
+        symbol: args.symbol || null,
+        file: args.file || null,
+        depth: args.depth || 2,
+        maxFiles: args.maxFiles || 12,
+        autoUpdate: args.autoUpdate !== false,
+      });
+
     default:
-      throw new Error(`Unsupported DevWorkflow V3.0 tool: ${name}`);
+      throw new Error(`Unsupported DevWorkflow V3.1 tool: ${name}`);
   }
 }
