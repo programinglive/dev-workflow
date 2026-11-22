@@ -157,6 +157,8 @@ async function syncState(workflowState,state,status,args,options) {
     if(todo.description!==description||(shouldComplete&&!todo.is_completed))await client.request('PATCH',`/todos/${todo.id}`,body);
     if(!isTerminal&&state.focus?.id&&!state.zettly.priorityPromoted&&options.env?.NODE_TEST_CONTEXT===undefined&&!options.client){
       state.zettly.priorityPromoted=true;
+      const isUrgent=state.taskType==='bugfix'||/\b(urgent|p0|hotfix|incident|security|critical|blocker|broken|outage)\b/i.test(String(state.currentTask||''));
+      try{await client.request('PATCH',`/todos/${todo.id}`,{importance:'important',priority:isUrgent?'urgent':'not_urgent'});}catch{}
       try{await client.request('PATCH',`/todos/${todo.id}/queue-state`,{queue_state:'backlog',reason:'Active dev-workflow task auto-triaged (Pareto 80/20)'});}catch{}
       try{await client.request('POST','/priority/main-work',{target_type:'focus',target_id:Number(state.focus.id),reason:'Active dev-workflow focus (Pareto 80/20)'});}catch{}
       try{await client.request('POST','/priority/plan/items',{todo_id:Number(todo.id),reason:'Active dev-workflow task committed for today (Pareto 80/20)',allow_over_capacity:true});}catch{}
