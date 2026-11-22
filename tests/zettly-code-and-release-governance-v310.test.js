@@ -15,6 +15,7 @@ import {
   isZettlyCodeAvailable,
   resetZettlyCodeAdapterCache,
 } from "../src/zettly-code-adapter.js";
+import { evaluateZettlyCodeGate } from "../tools/handler-modules/status-handlers.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "..");
@@ -337,13 +338,42 @@ test("BF-16: adapter fails gracefully when ZETTLY_CODE_MODULE_PATH points to mis
 // RG-01 .. RG-12: Permanent Open-Source Release Governance
 // ============================================================================
 
-test("RG-01: Open-Source Release Registry tracks all 13 public programinglive repositories", () => {
-  assert.equal(OPEN_SOURCE_RELEASE_REGISTRY.length, 13);
+test("RG-01: Open-Source Release Registry tracks all 14 public programinglive repositories including zettly-code", () => {
+  assert.equal(OPEN_SOURCE_RELEASE_REGISTRY.length, 14);
   const names = new Set(OPEN_SOURCE_RELEASE_REGISTRY.map((r) => r.name));
-  for (const expected of ["dev-workflow", "zettly", "dbpinball", "commiter", "hris", "zettly-editor"]) {
+  for (const expected of ["dev-workflow", "zettly", "zettly-code", "dbpinball", "commiter", "hris", "zettly-editor"]) {
     assert.ok(names.has(expected), `Missing public repo ${expected} in registry`);
   }
-  assert.ok(!names.has("zettly-code"), "Private repo zettly-code must NEVER appear in public open-source registry");
+});
+
+test("BF-17: evaluateZettlyCodeGate enforces mandatory @zettly-code annotations on bugfix tasks during check_ready_to_commit", async () => {
+  const dir = makeBugFixRepo("dw-bf17-");
+  try {
+    const blockedState = {
+      state: {
+        projectDir: dir,
+        taskType: "bugfix",
+        taskDescription: "Fix currency formatting bug",
+        fixSummary: "Patched currency helper",
+        zettly: { todoId: 1134 },
+      },
+    };
+    const blocked = await evaluateZettlyCodeGate(blockedState, {
+      zettlyCodeFiles: ["src/format.js"],
+    });
+    assert.equal(blocked.ok, false);
+    assert.ok(blocked.findings.some((f) => f.code === "MISSING_BUGFIX_KNOWLEDGE_COMMENT"));
+
+    const passed = await evaluateZettlyCodeGate(blockedState, {
+      zettlyCodeFiles: ["src/billing.js"],
+    });
+    assert.equal(passed.ok, true);
+    assert.equal(passed.status, "PASSED");
+    assert.equal(blockedState.state.zettlyCodeReference?.schema, "zettly-code-reference/v1");
+    assert.ok(blockedState.state.zettlyCodeReference?.knowledgeIds.includes("ZC-BILLING-001"));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("RG-02: audit(category='release_docs') PASSES on current dev-workflow workspace", async () => {

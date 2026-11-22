@@ -38,6 +38,15 @@ export const OPEN_SOURCE_RELEASE_REGISTRY = Object.freeze([
     requiredDocs: ["README.md", "AGENTS.md"],
   },
   {
+    name: "zettly-code",
+    repo: "programinglive/zettly-code",
+    visibility: "PUBLIC",
+    versionSource: "package.json",
+    websiteUrl: "https://zettly.programinglive.com",
+    websiteSourceDir: null,
+    requiredDocs: ["README.md", "CHANGELOG.md"],
+  },
+  {
     name: "dbpinball",
     repo: "programinglive/dbpinball",
     visibility: "PUBLIC",

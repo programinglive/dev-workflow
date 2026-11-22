@@ -12,6 +12,7 @@ import { fetchActiveSessions, fetchBuildReport, monitorUrl, localMonitorUrl } fr
 import { estimateBuild } from "../../monitor-server/build-report.cjs";
 import { formatMcpRecommendations } from "../../mcp-index.js";
 import { formatBuildStatusBlock } from "../../build-monitor.js";
+import { runCodeIndex, runBugFixKnowledgeGate } from "../../src/zettly-code-adapter.js";
 
 /**
  * Bahan gerbang dokumentasi untuk pesan penolakan.
@@ -269,6 +270,121 @@ export function evaluateStrictNullableInputGate(workflowState, context = {}) {
   return { ok: findings.length === 0, skipped: false, findings };
 }
 
+/**
+ * @zettly-code ZC-DW-READY-GATE-001
+ * @purpose Enforce mandatory Zettly Code knowledge graph indexing and @zettly-code annotations during check_ready_to_commit
+ * @domain code-intelligence
+ * @invariant Every bugfix task that modifies production source files in a Git repository must refresh .zettly-code/knowledge-graph.db and include valid @zettly-code annotations
+ * @related handleReadyCheck, runCodeIndex, runBugFixKnowledgeGate
+ * @tests zettly-code-and-release-governance-v310.test.js
+ */
+export async function evaluateZettlyCodeGate(workflowState, context = {}) {
+  if (context.skipZettlyCodeGate === true || process.env.DEVWF_SKIP_ZETTLY_CODE_GATE === "1") {
+    return { ok: true, skipped: true, findings: [] };
+  }
+
+  const status = workflowState?.state || {};
+  const projectDir = status.projectDir;
+  if (!projectDir || !existsSync(projectDir)) {
+    return { ok: true, skipped: true, findings: [] };
+  }
+
+  const rawType = String(status.taskType || "").trim().toLowerCase();
+  const isBugFix =
+    rawType === "bugfix" ||
+    rawType === "bug_fix" ||
+    rawType === "fix" ||
+    rawType === "hotfix";
+
+  let changedFiles = Array.isArray(context.zettlyCodeFiles) ? context.zettlyCodeFiles : null;
+  if (!changedFiles) {
+    // Only inspect files when projectDir is a real Git working tree
+    const gitCheck = spawnSync("git", ["rev-parse", "--is-inside-work-tree"], {
+      cwd: projectDir,
+      encoding: "utf8",
+    });
+    if (gitCheck.status !== 0) {
+      return { ok: true, skipped: true, findings: [] };
+    }
+
+    const diffRes = spawnSync("git", ["diff", "HEAD", "--name-only"], {
+      cwd: projectDir,
+      encoding: "utf8",
+    });
+    if (diffRes.status !== 0) {
+      return { ok: true, skipped: true, findings: [] };
+    }
+
+    const dirtyAtStart = new Set(
+      Array.isArray(status.dirtyBaselinePaths) ? status.dirtyBaselinePaths : []
+    );
+    const taskTouched = new Set(
+      Array.isArray(status.documentationFiles) ? status.documentationFiles : []
+    );
+
+    changedFiles = String(diffRes.stdout || "")
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .filter((f) => !dirtyAtStart.has(f) || taskTouched.has(f));
+  }
+
+  if (changedFiles.length === 0) {
+    return { ok: true, skipped: true, findings: [] };
+  }
+
+  // Keep the repository's Zettly Code knowledge graph fresh whenever an index already exists or on bugfix tasks
+  const graphDbPath = path.join(projectDir, ".zettly-code", "knowledge-graph.db");
+  if (isBugFix || existsSync(graphDbPath)) {
+    try {
+      await runCodeIndex({ projectDir, mode: "update" });
+    } catch {
+      // Fall through to gate evaluation
+    }
+  }
+
+  if (!isBugFix) {
+    return { ok: true, skipped: false, status: "NOT_APPLICABLE", findings: [] };
+  }
+
+  try {
+    const gateResult = await runBugFixKnowledgeGate({
+      projectDir,
+      changedFiles,
+      taskType: "BUG_FIX",
+      problemDescription: status.taskDescription || "",
+      fixSummary: status.fixSummary || status.taskDescription || "",
+      zettlyTodoId: status.zettly?.todoId || null,
+      requireFreshGraph: true,
+    });
+
+    if (gateResult && gateResult.zettlySyncReference && workflowState?.state) {
+      workflowState.state.zettlyCodeReference = gateResult.zettlySyncReference;
+    }
+
+    return {
+      ok: Boolean(gateResult?.ok),
+      skipped: false,
+      status: gateResult?.status || "UNKNOWN",
+      findings: Array.isArray(gateResult?.findings) ? gateResult.findings : [],
+      gateResult,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      skipped: false,
+      status: "ERROR",
+      findings: [
+        {
+          code: "ZETTLY_CODE_GATE_ERROR",
+          severity: "error",
+          message: err?.message || String(err),
+        },
+      ],
+    };
+  }
+}
+
 export async function handleReadyCheck(workflowState, context = {}) {
   const status = workflowState.state;
   const testsCreatedDone = status.testsSkipped || status.testsCreated;
@@ -288,6 +404,7 @@ export async function handleReadyCheck(workflowState, context = {}) {
   const docGateSatisfied = isGateSatisfied(docGate.status);
   const englishGate = evaluateEnglishPolicy(workflowState);
   const nullableDateGate = evaluateStrictNullableInputGate(workflowState, context);
+  const zettlyCodeGate = await evaluateZettlyCodeGate(workflowState, context);
 
   const checks = [
     { name: "Task started", done: status.currentPhase !== "idle" },
@@ -309,6 +426,7 @@ export async function handleReadyCheck(workflowState, context = {}) {
     { name: "Documentation updated for code changes", done: docGateSatisfied },
     { name: "English-only engineering policy", done: englishGate.ok },
     { name: "Strict nullable date input normalization", done: nullableDateGate.ok },
+    { name: "Zettly Code knowledge graph & @zettly-code annotations", done: zettlyCodeGate.ok },
     { name: "Definition of done satisfied", done: dodSatisfied },
   ];
 
@@ -360,6 +478,18 @@ export async function handleReadyCheck(workflowState, context = {}) {
       "Strict nullable date input check failed: bare `?? null` on `*_date` / `*_at` keys passes empty strings (`''`) from Livewire/UI forms into MySQL/MariaDB strict mode (`SQLSTATE[22007] 1292 Incorrect date value`), which SQLite tests hide.\n" +
         `${lines}\n` +
         "Normalize empty strings to `null` (e.g. `filled(...)` or `nullableTrimmed(...)`), assert `$this->assertNull($model->getRawOriginal('...'))` in tests, and run `npm run test:mariadb`.",
+    );
+  }
+
+  if (!zettlyCodeGate.ok) {
+    const lines = zettlyCodeGate.findings
+      .filter((f) => f.severity === "error")
+      .map((f) => `  - [${f.code}] ${f.file ? `${f.file}: ` : ""}${f.message}`)
+      .join("\n");
+    hints.push(
+      "Mandatory Zettly Code (`@zettly-code`) bug-fix knowledge gate failed:\n" +
+        `${lines}\n` +
+        "Every modified production source file in a bugfix task MUST carry a `@zettly-code` block comment (or sidecar JSON record in `engineering/zettly-code-sidecars/*.json`) with `@zettly-code <ID>`, `@purpose`, `@bug-fix`, `@root-cause` (or `@hypothesis`), and `@fix`, followed by `code_index({ mode: 'update' })`.",
     );
   }
 

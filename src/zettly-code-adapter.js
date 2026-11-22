@@ -1,12 +1,11 @@
 /**
  * Thin integration adapter connecting DevWorkflow MCP v3.1+ to Zettly Code
- * (`@programinglive/zettly-code`, private repository).
+ * (`@programinglive/zettly-code`, open-source MIT repository: https://github.com/programinglive/zettly-code).
  *
- * Keeps DevWorkflow decoupled from Zettly Code internals:
- * - Resolves Zettly Code via explicit env override, installed package,
- *   sibling of the target `projectDir`, or sibling of the DevWorkflow checkout.
- * - Fails gracefully with an explicit structured status when running in public standalone
- *   environments where the private Zettly Code package is not installed.
+ * Keeps DevWorkflow cleanly modularized while bundling Zettly Code out of the box:
+ * - Resolves Zettly Code via explicit env override, bundled `src/vendor/zettly-code/`,
+ *   installed package, sibling of the target `projectDir`, or sibling of the DevWorkflow checkout.
+ * - Fails gracefully with an explicit structured status only when explicitly pointed to an invalid override.
  */
 
 import fs from "node:fs";
@@ -19,12 +18,12 @@ let cachedModule = undefined;
 
 /**
  * @zettly-code ZC-DW-ADAPTER-001
- * @purpose Resolve the optional private @programinglive/zettly-code engine from env, node_modules, or sibling workspace
+ * @purpose Resolve the open-source @programinglive/zettly-code engine from env override, bundled vendor directory, node_modules, or sibling workspace
  * @domain code-intelligence
- * @invariant ManagedMCP revision cache paths must still resolve sibling zettly-code relative to target projectDir without hardcoding workstation paths
+ * @invariant ManagedMCP revision cache and standalone installations must always resolve the bundled open-source Zettly Code engine without external setup
  * @bug-fix BUG-DW-ADAPTER-313
  * @root-cause ManagedMCP executes from ~/.devworkflow/managed/revisions/<rev>, so checking only ../zettly-code relative to __dirname returned ZETTLY_CODE_UNAVAILABLE during live MCP calls
- * @fix Added candidate resolution relative to the caller's target projectDir before falling back to __dirname
+ * @fix Bundled open-source Zettly Code inside src/vendor/zettly-code and added candidate resolution relative to the caller's target projectDir
  * @related runCodeIndex, runCodeContext, runBugFixKnowledgeGate
  * @tests zettly-code-and-release-governance-v310.test.js
  */
@@ -38,9 +37,19 @@ async function loadZettlyCodeModule(projectDir = null) {
       cachedModule = await import(pathToFileURL(abs).href);
       return cachedModule;
     }
+    if (process.env.ZETTLY_CODE_STRICT_OVERRIDE === "1") {
+      return null;
+    }
   }
 
-  // 2. Installed private package `@programinglive/zettly-code`
+  // 2. Bundled open-source Zettly Code engine (`src/vendor/zettly-code/src/index.js`)
+  const bundledEntry = path.resolve(__dirname, "vendor", "zettly-code", "src", "index.js");
+  if (fs.existsSync(bundledEntry)) {
+    cachedModule = await import(pathToFileURL(bundledEntry).href);
+    return cachedModule;
+  }
+
+  // 3. Installed open-source package `@programinglive/zettly-code`
   try {
     cachedModule = await import("@programinglive/zettly-code");
     return cachedModule;
