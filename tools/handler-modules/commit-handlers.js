@@ -13,6 +13,7 @@ import { assertPreflightScope } from "../../preflight.js";
 import { evaluateGovernanceGate, loadPolicies } from "../../governance/engine.js";
 import { collectGitContext } from "../../governance/ci-validator.js";
 import { validateForceOverrideAuthorization } from "../../governance/exceptions.js";
+import { releaseWorktreeMutex, getHeldWorktreeCapability } from "../../process-lock.js";
 
 /**
  * Check whether test updates exist in the working tree or in recent commits on HEAD
@@ -772,8 +773,25 @@ export async function handleCompleteTask(args, workflowState, context = {}) {
   const projectDir = workflowState.state.projectDir || "";
   const zettlyResult = await closeZettlyTask(workflowState,'completed',args,context.zettlyOptions);
   const zettlyNote = zettlyResult.note ? `\n\n${zettlyResult.ok?'✅':'⚠️'} ${zettlyResult.note}` : '';
-  workflowState.reset();
+
+  // Durably save the completed task and history before unbinding capability
   await workflowState.save();
+
+  // Release the worktree kernel mutex so other sessions and tests can work on the tree
+  const activeCap =
+    workflowState.boundKernelCapability ||
+    (projectDir ? getHeldWorktreeCapability(projectDir) : null);
+  if (activeCap) {
+    try {
+      await releaseWorktreeMutex(activeCap);
+    } catch {}
+    if (typeof workflowState.bindKernelCapability === "function") {
+      workflowState.bindKernelCapability(null);
+    }
+  }
+
+  workflowState.reset();
+  await workflowState.save({ allowOrphanedReset: true });
 
   const askForSuggestions = aiSuggestions.length === 0
     ? `\n\n💡 Kirim 'nextSteps' saat 'complete_task' kalau ada yang Anda lihat selama ` +
@@ -906,6 +924,25 @@ export async function handleForceCompleteTask(args, workflowState, context = {})
     zettlyResult = { ok: false, note: `Zettly sync skipped during orphaned force-complete: ${error?.message || error}` };
   }
   const zettlyNote = zettlyResult.note ? `\n${zettlyResult.ok?'✅':'⚠️'} ${zettlyResult.note}` : '';
+
+  const projectDir = workflowState.state.projectDir || "";
+  const activeCap =
+    workflowState.boundKernelCapability ||
+    (projectDir ? getHeldWorktreeCapability(projectDir) : null);
+
+  try {
+    await workflowState.save({ allowOrphanedReset: true });
+  } catch {}
+
+  if (activeCap) {
+    try {
+      await releaseWorktreeMutex(activeCap);
+    } catch {}
+    if (typeof workflowState.bindKernelCapability === "function") {
+      workflowState.bindKernelCapability(null);
+    }
+  }
+
   workflowState.reset();
   await workflowState.save({ allowOrphanedReset: true });
 
@@ -938,6 +975,25 @@ export async function handleDropTask(args, workflowState, context = {}) {
     zettlyResult = { ok: false, note: `Zettly sync skipped during orphaned drop: ${error?.message || error}` };
   }
   const zettlyNote = zettlyResult.note ? `\n${zettlyResult.ok?'✅':'⚠️'} ${zettlyResult.note}` : '';
+
+  const projectDir = workflowState.state.projectDir || "";
+  const activeCap =
+    workflowState.boundKernelCapability ||
+    (projectDir ? getHeldWorktreeCapability(projectDir) : null);
+
+  try {
+    await workflowState.save({ allowOrphanedReset: true });
+  } catch {}
+
+  if (activeCap) {
+    try {
+      await releaseWorktreeMutex(activeCap);
+    } catch {}
+    if (typeof workflowState.bindKernelCapability === "function") {
+      workflowState.bindKernelCapability(null);
+    }
+  }
+
   workflowState.reset();
   await workflowState.save({ allowOrphanedReset: true });
 
