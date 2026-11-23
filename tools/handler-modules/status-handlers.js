@@ -272,9 +272,9 @@ export function evaluateStrictNullableInputGate(workflowState, context = {}) {
 
 /**
  * @zettly-code ZC-DW-READY-GATE-001
- * @purpose Enforce mandatory Zettly Code knowledge graph indexing and @zettly-code annotations during check_ready_to_commit
+ * @purpose Enforce mandatory Zettly Code knowledge graph indexing and @zettly-code annotations during check_ready_to_commit for ALL task types (bugfix, feature, refactor, other).
  * @domain code-intelligence
- * @invariant Every bugfix task that modifies production source files in a Git repository must refresh .zettly-code/knowledge-graph.db and include valid @zettly-code annotations
+ * @invariant Every task that modifies or creates production source files in a Git repository must refresh .zettly-code/knowledge-graph.db and include valid @zettly-code annotations.
  * @related handleReadyCheck, runCodeIndex, runBugFixKnowledgeGate
  * @tests zettly-code-and-release-governance-v310.test.js
  */
@@ -289,12 +289,13 @@ export async function evaluateZettlyCodeGate(workflowState, context = {}) {
     return { ok: true, skipped: true, findings: [] };
   }
 
-  const rawType = String(status.taskType || "").trim().toLowerCase();
+  const rawType = String(status.taskType || "feature").trim().toLowerCase();
   const isBugFix =
     rawType === "bugfix" ||
     rawType === "bug_fix" ||
     rawType === "fix" ||
     rawType === "hotfix";
+  const normalizedTaskType = isBugFix ? "BUG_FIX" : rawType.toUpperCase() || "FEATURE";
 
   let changedFiles = Array.isArray(context.zettlyCodeFiles) ? context.zettlyCodeFiles : null;
   if (!changedFiles) {
@@ -315,6 +316,11 @@ export async function evaluateZettlyCodeGate(workflowState, context = {}) {
       return { ok: true, skipped: true, findings: [] };
     }
 
+    const untrackedRes = spawnSync("git", ["ls-files", "--others", "--exclude-standard"], {
+      cwd: projectDir,
+      encoding: "utf8",
+    });
+
     const dirtyAtStart = new Set(
       Array.isArray(status.dirtyBaselinePaths) ? status.dirtyBaselinePaths : []
     );
@@ -322,36 +328,37 @@ export async function evaluateZettlyCodeGate(workflowState, context = {}) {
       Array.isArray(status.documentationFiles) ? status.documentationFiles : []
     );
 
-    changedFiles = String(diffRes.stdout || "")
-      .split(/\r?\n/)
-      .map((s) => s.trim())
-      .filter(Boolean)
-      .filter((f) => !dirtyAtStart.has(f) || taskTouched.has(f));
+    const combined = [
+      ...String(diffRes.stdout || "").split(/\r?\n/),
+      ...(untrackedRes.status === 0 ? String(untrackedRes.stdout || "").split(/\r?\n/) : []),
+    ];
+
+    changedFiles = Array.from(
+      new Set(
+        combined
+          .map((s) => s.trim())
+          .filter(Boolean)
+          .filter((f) => !dirtyAtStart.has(f) || taskTouched.has(f))
+      )
+    );
   }
 
   if (changedFiles.length === 0) {
     return { ok: true, skipped: true, findings: [] };
   }
 
-  // Keep the repository's Zettly Code knowledge graph fresh whenever an index already exists or on bugfix tasks
-  const graphDbPath = path.join(projectDir, ".zettly-code", "knowledge-graph.db");
-  if (isBugFix || existsSync(graphDbPath)) {
-    try {
-      await runCodeIndex({ projectDir, mode: "update" });
-    } catch {
-      // Fall through to gate evaluation
-    }
-  }
-
-  if (!isBugFix) {
-    return { ok: true, skipped: false, status: "NOT_APPLICABLE", findings: [] };
+  // Always keep the repository's Zettly Code knowledge graph fresh before validating annotations
+  try {
+    await runCodeIndex({ projectDir, mode: "update" });
+  } catch {
+    // Fall through to gate evaluation
   }
 
   try {
     const gateResult = await runBugFixKnowledgeGate({
       projectDir,
       changedFiles,
-      taskType: "BUG_FIX",
+      taskType: normalizedTaskType,
       problemDescription: status.taskDescription || "",
       fixSummary: status.fixSummary || status.taskDescription || "",
       zettlyTodoId: status.zettly?.todoId || null,

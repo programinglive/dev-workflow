@@ -197,17 +197,36 @@ test("BF-08: code_index(update) refreshes stale graph so bugfix_knowledge gate t
   }
 });
 
-test("BF-09: audit(category='bugfix_knowledge') skips non-bugfix FEATURE tasks cleanly", { skip: ZETTLY_CODE_SKIP }, async () => {
+test("BF-09: audit(category='bugfix_knowledge') enforces @zettly-code annotations on FEATURE/REFACTOR tasks too", { skip: ZETTLY_CODE_SKIP }, async () => {
   const dir = makeBugFixRepo("dw-bf09-");
   try {
-    const gate = await handleDevWorkflowV2Tool("audit", {
+    await handleDevWorkflowV2Tool("code_index", { projectDir: dir, mode: "initialize" });
+
+    // Unannotated production file on a FEATURE task MUST be blocked
+    const blocked = await handleDevWorkflowV2Tool("audit", {
       category: "bugfix_knowledge",
       projectDir: dir,
       files: ["src/format.js"],
       taskType: "FEATURE",
     });
-    assert.equal(gate.ok, true);
-    assert.equal(gate.status, "NOT_APPLICABLE");
+    assert.equal(blocked.ok, false);
+    assert.equal(blocked.status, "BLOCKED");
+    assert.ok(blocked.findings.some((f) => f.code === "MISSING_CODE_KNOWLEDGE_COMMENT"));
+
+    // Annotated production file with @zettly-code + @purpose on a FEATURE task MUST pass
+    fs.writeFileSync(
+      path.join(dir, "src", "feature.js"),
+      `/**\n * @zettly-code ZC-FEAT-001\n * @purpose Format customer loyalty points\n */\nexport function formatPoints(n) { return n + " pts"; }\n`
+    );
+    await handleDevWorkflowV2Tool("code_index", { projectDir: dir, mode: "update" });
+    const passed = await handleDevWorkflowV2Tool("audit", {
+      category: "bugfix_knowledge",
+      projectDir: dir,
+      files: ["src/feature.js"],
+      taskType: "FEATURE",
+    });
+    assert.equal(passed.ok, true);
+    assert.equal(passed.status, "PASSED");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
