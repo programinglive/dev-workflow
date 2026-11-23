@@ -14,6 +14,8 @@ import {
 import {
   isZettlyCodeAvailable,
   resetZettlyCodeAdapterCache,
+  extractCodeGraphSnapshot,
+  syncCodeGraphTelemetry,
 } from "../src/zettly-code-adapter.js";
 import { evaluateZettlyCodeGate } from "../tools/handler-modules/status-handlers.js";
 
@@ -519,3 +521,79 @@ test("RG-12: release_docs_gate blocks missing README.md in public open-source re
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 });
+
+test("BF-18: extractCodeGraphSnapshot and syncCodeGraphTelemetry dual-sync code_index telemetry to Zettly Cloud and PocketBase zettly_code_graphs", { skip: ZETTLY_CODE_SKIP }, async () => {
+  const dir = makeBugFixRepo("dw-bf18-");
+  try {
+    const indexRes = await handleDevWorkflowV2Tool("code_index", {
+      projectDir: dir,
+      mode: "initialize",
+      skipTelemetrySync: true,
+    });
+    assert.equal(indexRes.ok, true);
+
+    const snapshot = await extractCodeGraphSnapshot(dir, indexRes);
+    assert.equal(snapshot.stats.files_indexed, 3);
+    assert.equal(snapshot.stats.knowledge_annotations_count, 1);
+    assert.equal(snapshot.annotations.length, 1);
+    assert.equal(snapshot.annotations[0].id, "ZC-BILLING-001");
+    assert.equal(snapshot.annotations[0].bug_fix, "BUG-1001");
+
+    const requests = [];
+    const mockFetch = async (url, options = {}) => {
+      const body = options.body ? JSON.parse(options.body) : null;
+      requests.push({ url, method: options.method || "GET", body });
+
+      if (url.endsWith("/api/v1/engineering/code-graph/sync")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ success: true, data: { slug: snapshot.project_slug } }),
+        };
+      }
+
+      if (url.endsWith("/mcp")) {
+        if (body?.params?.name === "pb_list_records") {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              result: {
+                content: [{ type: "text", text: JSON.stringify({ items: [{ id: "rec_existing_123" }] }) }],
+              },
+            }),
+          };
+        }
+        if (body?.params?.name === "pb_update_record") {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              result: {
+                content: [{ type: "text", text: JSON.stringify({ id: "rec_existing_123", updated: true }) }],
+              },
+            }),
+          };
+        }
+      }
+
+      throw new Error(`Unexpected URL in BF-18: ${url}`);
+    };
+
+    const syncResult = await syncCodeGraphTelemetry(snapshot, {
+      zettlyApiUrl: "https://zettly.programinglive.com",
+      zettlyApiToken: "test-zettly-token",
+      centralGatewayUrl: "http://gateway.internal:3200/mcp",
+      fetchImpl: mockFetch,
+    });
+
+    assert.equal(syncResult.zettly.ok, true);
+    assert.equal(syncResult.pocketbase.ok, true);
+    assert.equal(syncResult.pocketbase.action, "updated");
+    assert.equal(syncResult.pocketbase.recordId, "rec_existing_123");
+    assert.equal(requests.length, 3);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
