@@ -15,7 +15,17 @@ approved Dev Workflow MCP releases.
 | `admission.cjs` | Maintenance admission gate and its operator CLI. |
 | `install-device.py` | Installs the bootstrap into a device's `%LOCALAPPDATA%\ProgramingLive\ManagedMCP`. |
 | `plugins/dev-workflow-guard.ts` | OpenCode 1.x/2.x pre-tool guard plugin blocking `bash`/`shell`/`edit`/`write`/`patch` until `dev-workflow` `start_task` (or `resume_session`) is called in that session; synced fleet-wide by `node managed/rollout.cjs --rules-only`. |
+| `rollout.cjs` | Publishes the release archive, promotes it to the central release server, and synchronizes shared workflow rules (including the Business-Process-First, Daily Sentry Zero, and UI/UX-Last priority hierarchy) across Codex, OpenCode, and AGY on HELLOWORLD, Mac, and MMCH. |
 | `devwf-managed.service` | systemd unit for the release server. |
+
+## Shared Priority Hierarchy (Business-Process-First & Daily Sentry Zero)
+
+`rollout.cjs` and `workflow-guidance.js` enforce a consistent cross-device priority order across all AI CLIs:
+
+1. **P0 — Operational Incidents & Active Sentry Errors:** Daily Sentry Zero discipline; triage and resolve unresolved Sentry crashes/errors daily before lower-tier work.
+2. **Q1 — Core Business Processes, Data/Financial Integrity, Security & Performance:** Business logic, numbering/merger safety, accounting/inventory accuracy, and SQL/N+1 bottlenecks.
+3. **Q2 — Supporting Operational Tooling & Documentation:** Release automation, CLI helpers, and system docs.
+4. **Q4 — UI/UX Polish, Cosmetics & Localization (i18n) ALWAYS LAST:** Executed only after higher tiers are clear; automatically checkpointed whenever a higher-tier Sentry or business-process Todo arrives.
 
 ## Maintenance admission
 
