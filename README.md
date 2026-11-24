@@ -79,7 +79,7 @@ After connecting, walk through your first governed task in [docs/getting-started
 |---|---|---|
 | **Layer 1 — Core** | Local-first MCP server, CLI (`devwf`), Task Contracts, SQLite WAL state, TDD/doc/commit gates, Code Audit Engine | **Yes (Included)** |
 | **Layer 2 — AI Clients** | Claude Code, Codex, OpenCode, Antigravity, generic MCP stdio clients | **Choose yours** |
-| **Layer 3 — Optional Integrations** | Per-user Zettly sync (`devwf zettly connect`), DevWorkflow Android Companion (`devwf pair`), Sentry linking | **Optional** |
+| **Layer 3 — Optional Integrations** | Per-user Zettly sync (`devwf zettly connect`), DevWorkflow Android Companion (`devwf pair`), Sentry linking & auto-resolution (`link_sentry_issue`, `complete_task`) | **Optional** |
 | **Layer 4 — Team / Fleet** | Central Monitor dashboard, `devwf fleet doctor`, managed multi-device rollouts | **Optional** |
 
 ---
