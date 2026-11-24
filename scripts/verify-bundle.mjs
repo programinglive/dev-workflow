@@ -7,6 +7,17 @@ import os from 'node:os';
 import path from 'node:path';
 import { existsSync } from 'node:fs';
 
+/**
+ * @zettly-code ZC-DW-BUNDLE-VERIFY-MUTEX-001
+ * @purpose Verify the built MCP bundle in an isolated project without dropping the caller's explicit macOS mutex opt-in.
+ * @domain tooling
+ * @bug-fix The bundle verification test now passes on macOS when DEVWF_ALLOW_UNVERIFIED_MUTEX is set.
+ * @root-cause The spawned MCP child received only two environment variables, so the macOS mutex opt-in never reached it and no task could be pinned.
+ * @fix Forward the opt-in variable to the child transport when the caller explicitly enabled it.
+ * @related scripts/verify-bundle.mjs, tests/build.test.js
+ * @tests tests/build.test.js
+ */
+
 const entry = path.resolve(process.argv[2] || 'dist/index.mjs');
 const TIMEOUT_MS = 15_000;
 
@@ -60,6 +71,11 @@ try {
     env: {
       DEV_WORKFLOW_STATE_FILE: statePin,
       DEV_WORKFLOW_SESSION_ID: 'bundle-verifier-isolated-session',
+      // The verifier runs on macOS too, where the kernel mutex is not natively
+      // verifiable. Forward the explicit opt-in so local CI can verify bundles.
+      ...(process.env.DEVWF_ALLOW_UNVERIFIED_MUTEX === '1'
+        ? { DEVWF_ALLOW_UNVERIFIED_MUTEX: '1' }
+        : {}),
     },
     stderr: 'pipe',
   });
