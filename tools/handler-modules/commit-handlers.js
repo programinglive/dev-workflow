@@ -1,3 +1,8 @@
+/**
+ * @zettly-code DWF-COMMIT-COMPLETE-001
+ * @purpose Handle commit_and_push, complete_task, force_complete_task, and drop_task lifecycle transitions including automatic Sentry issue resolution on task completion.
+ * @invariant Enforce DoD, deployment, and governance gates before completing a task; auto-resolve any linked Sentry issue before closing the Zettly Todo and resetting state.
+ */
 import { textResponse, isReleaseSatisfied, formatChecklist } from "./shared.js";
 import { handleReadyCheck } from "./status-handlers.js";
 import { openItems, renderChecklist, renderOutstanding, summarize } from "./dod.js";
@@ -15,6 +20,7 @@ import { collectGitContext } from "../../governance/ci-validator.js";
 import { validateForceOverrideAuthorization } from "../../governance/exceptions.js";
 import { releaseWorktreeMutex, getHeldWorktreeCapability } from "../../process-lock.js";
 import { inspectFocusCompletionStatus, formatFocusClosureGuidance } from "../../focus-workflow.js";
+import { autoResolveLinkedSentryIssue } from "./integration-handlers.js";
 
 /**
  * Release the canonical worktree mutex when a task reaches a terminal state.
@@ -803,6 +809,8 @@ export async function handleCompleteTask(args, workflowState, context = {}) {
   // Captured before reset, because reset clears it and the cleanup needs it.
   const projectDir = workflowState.state.projectDir || "";
   const linkedFocusId = Number(workflowState.state.focus?.id || workflowState.state.zettly?.focusId || 0);
+  const sentryResult = await autoResolveLinkedSentryIssue(workflowState, context.integrationOptions || context.zettlyOptions || {});
+  const sentryNote = sentryResult.note ? `\n\n${sentryResult.ok ? "✅" : "⚠️"} ${sentryResult.note}` : "";
   const zettlyResult = await closeZettlyTask(workflowState,'completed',args,context.zettlyOptions);
   const zettlyNote = zettlyResult.note ? `\n\n${zettlyResult.ok?'✅':'⚠️'} ${zettlyResult.note}` : '';
   workflowState.reset();
@@ -854,7 +862,7 @@ export async function handleCompleteTask(args, workflowState, context = {}) {
   return textResponse(
     `✅ Task completed!\n\nCommit message: ${args.commitMessage}\n` +
       `DoD: ${dod.done}/${dod.total} terbukti, ${dod.waived} dikecualikan.\nHistory recorded.` +
-      `${zettlyNote}${focusClosureNote}\n\n` +
+      `${sentryNote}${zettlyNote}${focusClosureNote}\n\n` +
       `${renderRecommendations(recommendations)}${diffNote}${askForSuggestions}${cleanupNote}`
   );
 }

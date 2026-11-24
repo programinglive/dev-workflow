@@ -1,3 +1,8 @@
+/**
+ * @zettly-code DWF-TOOL-DISPATCH-001
+ * @purpose Central MCP tool dispatcher and post-call Zettly Todo / Draw / Sentry synchronization wrapper.
+ * @invariant Route all 65 canonical MCP tools deterministically, pass integrationOptions to complete_task for automatic Sentry issue resolution, and sanitize all outputs.
+ */
 import { textResponse, isReleaseSatisfied, isErrorResponse, loadDocGateInputs } from "./shared.js";
 import { evaluateDocGate, isGateSatisfied, formatRelativeAge, renderDocGateFailure, MIN_WAIVER_REASON } from "./docs.js";
 import { assertSafeKnowledge } from '../../security/policy.js';
@@ -448,7 +453,7 @@ async function dispatchToolCall({
       case "skip_release":
         return handleSkipRelease(args, workflowState);
       case "complete_task":
-        return handleCompleteTask(args, workflowState, { git, zettlyOptions });
+        return handleCompleteTask(args, workflowState, { git, zettlyOptions, integrationOptions });
       case "next_steps":
         return handleNextSteps(args, workflowState);
       case "resume_session":

@@ -76,3 +76,21 @@ test('overlapping pages or changing provider counts cannot silently produce comp
   const result=await client.inventoryIssues({maxPages:5});assert.equal(result.complete,false,mode);assert.ok(result.inconsistencies.length>0);
  }
 });
+test('resolveIssue updates issue status via bounded organization PUT route and validates inputs',async()=>{
+ const calls=[];
+ const client=sentry.createSentryClient(config,{fetchImpl:async(url,options)=>{
+  calls.push({url,options,body:options.body?JSON.parse(options.body):null});
+  return new Response(JSON.stringify({...issue,status:JSON.parse(options.body).status}));
+ }});
+ const resolved=await client.resolveIssue('123');
+ assert.equal(resolved.id,'123');
+ assert.equal(resolved.status,'resolved');
+ assert.equal(calls.length,1);
+ assert.equal(calls[0].url,'https://sentry.io/api/0/organizations/example-org/issues/123/');
+ assert.equal(calls[0].options.method,'PUT');
+ assert.deepEqual(calls[0].body,{status:'resolved'});
+ const ignored=await client.resolveIssue('123',{status:'ignored'});
+ assert.equal(ignored.status,'ignored');
+ await assert.rejects(()=>client.resolveIssue('../bad'),/issue ID/i);
+ await assert.rejects(()=>client.resolveIssue('123',{status:'invalid'}),/status/i);
+});
