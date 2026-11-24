@@ -34,8 +34,9 @@ jobs:
     with:
       node-version: "24"
       runner: '["self-hosted","linux","bw-tools"]'
-      # bw-tools Linux runner supports npm cache; enable it for faster builds.
-      cache: "npm"
+      # Self-hosted bw-tools already persists ~/.npm locally on SSD; disable
+      # remote GitHub Actions npm cache to prevent 1.5 GB APAC egress per lockfile bump.
+      cache: ""
       test-command: npm run ci:test
       lint-command: npm run lint
       build-command: npm run ci:build
