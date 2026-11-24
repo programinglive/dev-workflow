@@ -155,3 +155,60 @@ export async function prepareTaskSource(args,options={}) {
    return {args:{...args,source:{system:'sentry',id:source.id,url:source.permalink,label:source.shortId||source.id},verifiedSourceIssue:{issueId:source.id,shortId:source.shortId||'',url:source.permalink||'',organization:api.sentry.organization||''}}};
   }catch(error){return {response:failed(`The Sentry source could not be verified${Number.isInteger(error.status)?` (HTTP ${error.status})`:''}. The existing workflow task was not changed.`)};}
 }
+
+let erpPreemptionCache={checkedAt:0,issues:[]};
+export function resetErpSentryPreemptionCache(){erpPreemptionCache={checkedAt:0,issues:[]};}
+
+export function isErpBackendProjectDir(projectDir='') {
+  const norm=String(projectDir||'').replace(/\\/g,'/').replace(/\/+$/,'').toLowerCase();
+  if(!norm)return false;
+  if(norm.includes('frontend_erp')||norm.includes('frontend-erp'))return false;
+  return norm.endsWith('/erp.beautyworld.co.id')||norm.endsWith('/deverp.beautyworld.co.id')||norm.endsWith('/erp');
+}
+
+export async function checkErpSentryPreemption({projectDir='',allowErpPreemptionOverride=false,mode='start_task',options={}}={}) {
+  if(allowErpPreemptionOverride===true||isErpBackendProjectDir(projectDir))return {preempted:false,issues:[],alertText:'',response:null};
+  const env=options.env||process.env;
+  const isTestEnv=env.NODE_TEST_CONTEXT!==undefined||env.NODE_ENV==='test';
+  if(isTestEnv&&!Object.hasOwn(options,'sentry'))return {preempted:false,issues:[],alertText:'',response:null};
+  const useCache=!Object.hasOwn(options,'sentry')&&Date.now()-erpPreemptionCache.checkedAt<45000;
+  let erpIssues=[];
+  if(useCache){
+   erpIssues=erpPreemptionCache.issues;
+  }else{
+   try{
+    const api=await clients(options);
+    if(!api.sentry)return {preempted:false,issues:[],alertText:'',response:null};
+    const queryFn=api.sentry.listIssuePage?()=>api.sentry.listIssuePage({query:'is:unresolved project:erp',limit:10,statsPeriod:'90d'}).then(r=>r.issues||[]):()=>api.sentry.listIssues({query:'is:unresolved project:erp',limit:10,statsPeriod:'90d'});
+    const rows=await Promise.race([queryFn(),new Promise((_,reject)=>setTimeout(()=>reject(Error('timeout')),2500))]);
+    erpIssues=(Array.isArray(rows)?rows:[]).filter(item=>!item?.project?.slug||item.project.slug==='erp');
+    if(!Object.hasOwn(options,'sentry'))erpPreemptionCache={checkedAt:Date.now(),issues:erpIssues};
+   }catch{
+    return {preempted:false,issues:[],alertText:'',response:null};
+   }
+  }
+  if(!erpIssues.length)return {preempted:false,issues:[],alertText:'',response:null};
+  const top=erpIssues[0];
+  const list=erpIssues.slice(0,5).map(i=>`  • ${i.shortId||i.id} (ID: ${i.id}, events: ${i.count||'1'}): ${i.title}${i.permalink?` — ${i.permalink}`:''}`).join('\n');
+  const alertText=
+   `🚨 P0 ERP SENTRY PREEMPTION ALERT (${erpIssues.length} unresolved issue(s) on erp.beautyworld.co.id):\n` +
+   `${list}\n` +
+   `Action required: erp.beautyworld.co.id overrides all other projects. Checkpoint current work ('checkpoint_task') and start a bugfix task in erp.beautyworld.co.id with source: { system: "sentry", id: "${top.id}" }.`;
+  if(mode==='start_task'){
+   return {
+    preempted:true,
+    issues:erpIssues,
+    alertText,
+    response:failed(
+     `🚨 P0 ERP SENTRY PREEMPTION GATE — Task refused for "${projectDir||'(non-ERP project)'}".\n\n` +
+     `erp.beautyworld.co.id is Priority #1 ahead of all other work whenever it has unresolved Sentry issues (${erpIssues.length} active):\n` +
+     `${list}\n\n` +
+     `Required next action:\n` +
+     `  1. Call 'start_task' for erp.beautyworld.co.id with source: { system: "sentry", id: "${top.id}" }\n` +
+     `  2. Fix, test, deploy, and call 'complete_task' (which auto-resolves ${top.shortId||top.id} in Sentry)\n` +
+     `  (Emergency override only: pass allowErpPreemptionOverride: true on start_task)`
+    ),
+   };
+  }
+  return {preempted:true,issues:erpIssues,alertText,response:null};
+}
