@@ -148,6 +148,11 @@ export function getToolList() {
               "two sessions on one working tree overwrite each other's files silently. Prefer closing the other " +
               "session or using a git worktree.",
           },
+          allowErpPreemptionOverride: {
+            type: "boolean",
+            description:
+              "Emergency override to allow starting a non-ERP task even when unresolved Sentry issues exist on project 'erp' (erp.beautyworld.co.id). Defaults to false.",
+          },
           mermaidFlow: {
             type: "string",
             description:

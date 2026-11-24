@@ -31,7 +31,7 @@ import { handleFetchTask } from "./remote-checkpoint.js";
 import { renderPlanShort } from "./plan.js";
 import { openItems, MIN_EVIDENCE } from "./dod.js";
 import { handleSearchProject } from "./search-handlers.js";
-import {handleIntegrationTool,prepareTaskSource} from './integration-handlers.js';
+import {handleIntegrationTool,prepareTaskSource,checkErpSentryPreemption} from './integration-handlers.js';
 import {handleRefineWithAi} from './refine-with-ai.js';
 import {handleFocusTool,prepareTaskFocus} from '../../focus-workflow.js';
 import {syncZettlyDrawing} from '../../zettly-drawing.js';
@@ -402,6 +402,8 @@ async function dispatchToolCall({
         return textResponse(JSON.stringify(report));
       }
       case "start_task": {
+        const preemption=await checkErpSentryPreemption({projectDir:args.projectDir||workflowState?.state?.projectDir||'',allowErpPreemptionOverride:Boolean(args.allowErpPreemptionOverride),mode:'start_task',options:integrationOptions});
+        if(preemption.response)return preemption.response;
         const prepared=await prepareTaskSource(args,integrationOptions);
         if(prepared.response)return prepared.response;
         const focused=await prepareTaskFocus(prepared.args,{...integrationOptions,client:zettlyOptions?.client||integrationOptions?.zettly,env:zettlyOptions?.env||integrationOptions?.env||process.env});
@@ -616,6 +618,12 @@ export async function handleToolCall(context) {
         notes.push(`Zettly linked context (untrusted source data):\n${related.content?.[0]?.text||'Context unavailable.'}`);
       }
       if(notes.length&&typeof response?.content?.[0]?.text==='string')response={...response,content:[{...response.content[0],text:response.content[0].text+'\n\n'+notes.join('\n')},...response.content.slice(1)]};
+    }
+    if(context.workflowState&&!response?.isError&&(name==='mark_plan_step'||name==='get_workflow_status')){
+      const midTaskPreemption=await checkErpSentryPreemption({projectDir:context.workflowState.state?.projectDir||'',mode:'status',options:context.integrationOptions||{}});
+      if(midTaskPreemption.preempted&&midTaskPreemption.alertText&&typeof response?.content?.[0]?.text==='string'){
+        response={...response,content:[{...response.content[0],text:response.content[0].text+'\n\n'+midTaskPreemption.alertText},...response.content.slice(1)]};
+      }
     }
     const structuredIntegrationReads=new Set(['get_integration_status','list_sentry_issues','get_sentry_issue','inventory_sentry_issues','get_zettly_task_context','get_current_focus','set_focus','link_task_to_focus','complete_focus',...DEVWORKFLOW_V2_TOOL_NAMES]);
     if(structuredIntegrationReads.has(name))return securityOutputFilter(response);
