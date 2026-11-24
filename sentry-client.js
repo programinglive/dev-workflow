@@ -1,3 +1,8 @@
+/**
+ * @zettly-code DWF-SENTRY-RESOLVE-001
+ * @purpose Native Sentry organization API client supporting bounded issue queries, inventory snapshots, and issue status resolution.
+ * @invariant Never expose raw event bodies, user PII, request headers/cookies, or provider error bodies; validate host, org slug, and numeric issue IDs fail-closed.
+ */
 import {readFileSync} from 'node:fs';
 import {registerRuntimeSecret} from './security/runtime-secrets.js';
 import {sanitize} from './security/sanitizer.js';
@@ -5,6 +10,7 @@ import {sanitize} from './security/sanitizer.js';
 const HOSTS=new Set(['sentry.io','us.sentry.io','de.sentry.io']);
 const slug=value=>typeof value==='string'&&/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,99}$/.test(value);
 const id=value=>typeof value==='string'&&/^\d{1,30}$/.test(value);
+const STATUSES=new Set(['resolved','unresolved','ignored']);
 const bounded=(value,max=500)=>typeof value==='string'?value.slice(0,max):'';
 
 export function readSentryConfig(env=process.env) {
@@ -99,6 +105,25 @@ export function createSentryClient(config,{fetchImpl=fetch,timeoutMs=8000}={}) {
   async getIssue(issueId){
    if(!id(issueId))throw Error('Invalid Sentry issue ID');
    const result=summary((await get('issues/'+issueId+'/')).data);
+   if(result.id!==issueId)throw Error('Invalid Sentry issue identity');
+   return result;
+  },
+  async resolveIssue(issueId,{status='resolved'}={}){
+   if(!id(issueId))throw Error('Invalid Sentry issue ID');
+   if(typeof status!=='string'||!STATUSES.has(status))throw Error('Invalid Sentry status');
+   let response;
+   try{
+    const url=new URL(checked.host+'/api/0/organizations/'+checked.organization+'/issues/'+issueId+'/');
+    response=await fetchImpl(url.href,{method:'PUT',redirect:'error',signal:AbortSignal.timeout(timeoutMs),headers:{authorization:'Bearer '+checked.token,accept:'application/json','content-type':'application/json'},body:JSON.stringify({status})});
+   }catch{throw Error('Sentry service unavailable');}
+   if(!response.ok)throw Object.assign(Error('Sentry HTTP '+response.status),{status:response.status});
+   let data;
+   try{
+    const chunks=[];let size=0;
+    for await(const chunk of response.body){size+=chunk.length;if(size>1024*1024)throw Error('Oversized response');chunks.push(chunk);}
+    data=JSON.parse(Buffer.concat(chunks).toString('utf8'));
+   }catch{throw Error('Invalid Sentry response');}
+   const result=summary(data);
    if(result.id!==issueId)throw Error('Invalid Sentry issue identity');
    return result;
   }

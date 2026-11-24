@@ -1,3 +1,8 @@
+/**
+ * @zettly-code DWF-SENTRY-DEFS-001
+ * @purpose Authoritative 65-tool canonical MCP tool definitions catalog for DevWorkflow.
+ * @invariant Maintain radical simplification (exactly 65 canonical public tools, zero duplicate wrappers); extend link_sentry_issue with action ('link' | 'resolve' | 'unresolve' | 'ignore') instead of adding a duplicate tool.
+ */
 import {focusToolDefinitions} from '../focus-workflow.js';
 import {DEVWORKFLOW_V2_TOOL_DEFINITIONS} from '../src/engineering-audit.js';
 
@@ -37,8 +42,8 @@ export function getToolList() {
     },
     {
       name:'link_sentry_issue',
-      description:'Verify and link a Sentry issue to the current canonical Zettly Todo. Requires an active workflow task with an existing Todo link; creates no additional task and does not resolve the issue or dispatch work.',
-      inputSchema:{type:'object',properties:{issueId:{type:'string',pattern:'^\\d{1,30}$'}},required:['issueId'],additionalProperties:false},
+      description:'Verify and link a Sentry issue to the current canonical Zettly Todo, or natively resolve/unresolve/ignore a Sentry issue via the Sentry API (action: "link" | "resolve" | "unresolve" | "ignore"). When linked, complete_task also auto-resolves the Sentry issue upon task completion.',
+      inputSchema:{type:'object',properties:{issueId:{type:'string',pattern:'^\\d{1,30}$'},action:{type:'string',enum:['link','resolve','unresolve','ignore'],description:'Defaults to "link". Pass "resolve" (or "unresolve" / "ignore") to update the issue status directly in Sentry.'},status:{type:'string',enum:['resolved','unresolved','ignored'],description:'Optional explicit Sentry status when action="resolve".'}},required:['issueId'],additionalProperties:false},
     },
     {
       name:'security_audit',

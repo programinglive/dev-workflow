@@ -1,4 +1,8 @@
 /**
+ * @zettly-code DWF-CATALOG-AUDITOR-001
+ * @purpose DevWorkflow MCP Tool Catalog Auditor, Semantic Duplication Classifier, Consolidation Planner & Automatic Catalog Regression Gate.
+ * @invariant Enforce zero unmapped tools, zero compatibility aliases, and complete metadata provenance across all 65 canonical public MCP tools.
+ *
  * DevWorkflow MCP Tool Catalog Auditor, Semantic Duplication Classifier,
  * Consolidation Planner & Automatic Catalog Regression Gate (v2.1.5).
  *
@@ -319,16 +323,16 @@ export const CANONICAL_TOOL_METADATA = Object.freeze({
     category: "external_integrations",
     handler: "handleIntegrationTool('link_sentry_issue')",
     module: "tools/handler-modules/integration-handlers.js",
-    domainService: "sentryClient.getIssue + workflowState.save",
+    domainService: "sentryClient.getIssue / sentryClient.resolveIssue + workflowState.save",
     dependencies: ["sentry-client.js", "zettly-workflow.js"],
-    sideEffects: "Remote read (Sentry issue) + local workflowState write + post-call Zettly Todo sync",
+    sideEffects: "Remote read/write (Sentry issue inspect or status update to resolved/unresolved/ignored) + local workflowState write + post-call Zettly Todo sync",
     permissionLevel: "LOCAL_AND_REMOTE_SYNC_WRITE",
     sessionScoped: true,
-    workflowRole: "Attach a verified Sentry issue reference to the active canonical Zettly Todo",
-    errorContract: "Refuses if no active workflow task or Zettly Todo is linked",
-    tests: ["tests/integration-handlers.test.js"],
+    workflowRole: "Attach a verified Sentry issue reference to the active canonical Zettly Todo, or natively resolve/unresolve/ignore a Sentry issue in Sentry",
+    errorContract: "Refuses action='link' if no active workflow task or Zettly Todo is linked; action='resolve' updates Sentry issue status directly",
+    tests: ["tests/integration-handlers.test.js", "tests/sentry-client.test.js"],
     stability: "stable",
-    capability: "Link a verified Sentry issue to the active workflow Todo",
+    capability: "Link a verified Sentry issue to the active workflow Todo or update its status (resolved/unresolved/ignored) in Sentry",
   },
   sync_zettly_task: {
     category: "external_integrations",

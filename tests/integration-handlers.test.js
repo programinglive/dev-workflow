@@ -1,6 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {handleIntegrationTool,prepareTaskSource} from '../tools/handler-modules/integration-handlers.js';
+import {handleIntegrationTool,prepareTaskSource,autoResolveLinkedSentryIssue} from '../tools/handler-modules/integration-handlers.js';
+import {handleCompleteTask} from '../tools/handler-modules/commit-handlers.js';
 import {syncZettlyTask,closeZettlyTask} from '../zettly-workflow.js';
 import {getToolList} from '../tools/definitions.js';
 import {handleToolCall} from '../tools/handlers.js';
@@ -13,7 +14,7 @@ function fixture(){
  let todo={id:166,type:'todo',is_completed:false,description:'Owner context',title:'Owner task',related_todos:[{id:167}]};const outcomes=[];const calls=[];
  const note={id:167,type:'note',is_completed:false,title:'Prior decision',description:'Reuse the verified integration.',related_todos:[]};
  const zettly={async request(method,route,body){calls.push({method,route});if(route==='/user')return {data:{id:1}};if(route==='/todos?type=todo')return {data:[todo]};if(route==='/todos?type=note')return {data:[note]};if(route==='/todos/167')return {data:note};if(route.startsWith('/todos/')){if(method==='PATCH')todo={...todo,...body};return {data:todo};}if(route.startsWith('/journal/entries')){if(method==='POST'){const entry={...body,id:1};outcomes.push(entry);return {data:entry};}return {data:outcomes};}throw Error('Unexpected request');}};
- const sentry={organization:'example',async listIssues(){return [issue];},async getIssue(){return issue;}};
+ const sentry={organization:'example',resolvedCalls:[],async listIssues(){return [issue];},async getIssue(){return issue;},async resolveIssue(id,{status='resolved'}={}){this.resolvedCalls.push({id,status});return {...issue,id,status};}};
  return {workflowState,options:{env:{},zettly,sentry},calls,outcomes,getTodo:()=>todo};
 }
 const text=result=>result.content.map(item=>item.text||'').join(' ');
@@ -106,4 +107,25 @@ test('an in-flight context read cannot attach to a different canonical Todo afte
  f.options.zettly.request=async(method,route,body)=>{const result=await request(method,route,body);if(route==='/todos/166')f.workflowState.state.zettly.todoId=167;return result;};
  const result=await handleIntegrationTool('get_zettly_task_context',{todoId:166,depth:1,maxNodes:5,attach:true},f.workflowState,f.options);
  assert.equal(result.isError,true);assert.equal(f.workflowState.state.zettly.todoId,167);assert.ok(!f.workflowState.state.zettlyContext);
+});
+test('link_sentry_issue with action=resolve updates Sentry status directly and records resolvedAt on matching task',async()=>{
+ const f=fixture();
+ const resolved=await handleIntegrationTool('link_sentry_issue',{issueId:'123',action:'resolve'},f.workflowState,f.options);
+ assert.ok(!resolved.isError,text(resolved));
+ assert.match(text(resolved),/status updated to 'resolved'/);
+ assert.deepEqual(f.options.sentry.resolvedCalls,[{id:'123',status:'resolved'}]);
+ assert.equal(f.workflowState.state.zettly.externalLinks.sentry.status,'resolved');
+ assert.ok(f.workflowState.state.zettly.externalLinks.sentry.resolvedAt);
+});
+test('complete_task automatically resolves linked Sentry issues in Sentry before resetting task state',async()=>{
+ const f=fixture();
+ f.workflowState.state.dodRevision=0;
+ f.workflowState.state.definitionOfDone=[{id:'dod-1',text:'Fix verified',status:'done',evidence:'npm test -> pass',revision:0}];
+ f.workflowState.state.releaseSkipped=true;
+ f.workflowState.state.zettly.externalLinks={sentry:{organization:'example',issueId:'123',shortId:'APP-1',url:issue.permalink}};
+ f.workflowState.addToHistory=()=>{};
+ f.workflowState.reset=()=>{f.workflowState.state={currentPhase:'idle'};};
+ const res=await handleCompleteTask({commitMessage:'fix: resolve sentry issue APP-1',nextSteps:['Monitor Sentry']},f.workflowState,{integrationOptions:f.options,zettlyOptions:{env:{DEVWF_ZETTLY_SYNC:'0'}}});
+ assert.match(text(res),/Sentry issue APP-1 \(123\) automatically marked as resolved/);
+ assert.deepEqual(f.options.sentry.resolvedCalls,[{id:'123',status:'resolved'}]);
 });
