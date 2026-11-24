@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### Unreleased
+
+### 🐛 Bug Fixes
+
+* **security:** treat GitHub Actions OIDC permission declarations as documentation instead of credentials, so history and summary projections no longer block `start_task`
+* **tooling:** forward the explicit macOS mutex opt-in to the isolated bundle verifier so local build verification passes
+* **chore:** ignore generated PocketBase databases so the commit gate cannot mistake them for source changes
+
 ## [3.1.3](https://github.com/programinglive/dev-workflow/compare/v3.1.2...v3.1.3) (2026-11-22)
 
 ### 🐛 Bug Fixes

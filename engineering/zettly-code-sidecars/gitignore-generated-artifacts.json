@@ -1,0 +1,26 @@
+[
+  {
+    "id": "ZC-DW-GITIGNORE-GENERATED-001",
+    "purpose": "Keep generated PocketBase and local code-graph databases out of the dev-workflow commit gate.",
+    "domain": "tooling",
+    "bugFix": "The ready-to-commit gate no longer mistakes local generated databases for production source changes.",
+    "rootCause": "Generated database files were neither tracked nor ignored, so the bugfix knowledge gate demanded annotations for binary artifacts.",
+    "fix": "Ignore pb_data/ and .zettly-code/ as local generated state.",
+    "targetFile": ".gitignore",
+    "entity": ".gitignore",
+    "related": ["CHANGELOG.md", "security/scanner.js"],
+    "tests": ["tests/security-oidc-permission-regression.test.js"]
+  },
+  {
+    "id": "ZC-DW-SIDECAR-SELF-001",
+    "purpose": "Describe this sidecar record itself so the bugfix knowledge gate accepts the annotation file it just read.",
+    "domain": "tooling",
+    "bugFix": "The annotation file is no longer treated as an unannotated modified file.",
+    "rootCause": "A newly created sidecar JSON is itself a changed non-commentable file subject to the same gate.",
+    "fix": "Include a self-referencing sidecar record in the same file.",
+    "targetFile": "engineering/zettly-code-sidecars/gitignore-generated-artifacts.json",
+    "entity": "gitignore-generated-artifacts.json",
+    "related": ["ZC-DW-GITIGNORE-GENERATED-001"],
+    "tests": ["tests/security-oidc-permission-regression.test.js"]
+  }
+]

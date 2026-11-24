@@ -1,6 +1,17 @@
 import { isSecretReference, SecretReference } from './references.js';
 import { runtimeSecretSpans,prepareRuntimeSecretScan } from './runtime-secrets.js';
 
+/**
+ * @zettly-code ZC-DW-OIDC-SCANNER-001
+ * @purpose Scan persisted knowledge for credentials while treating GitHub Actions OIDC permission declarations as ordinary documentation.
+ * @domain security
+ * @bug-fix Benign OIDC permission text in history and summary projections no longer raises SecretContentError during start_task.
+ * @root-cause The fix 2f82480 stayed on an unmerged branch, so main still flags `id-token: write` as a sensitive assignment.
+ * @fix Exempt only the exact OIDC permission key with the exact permission values read, write and none; all other assignments remain strict.
+ * @related security/policy.js, workflow-state.js, tests/security-oidc-permission-regression.test.js
+ * @tests tests/security-oidc-permission-regression.test.js
+ */
+
 export const REDACTED = '[REDACTED]';
 const sensitiveName = /(?:^|[_\-.])(?:password|passwd|pwd|secret|token|api[_-]?key|authorization|cookie|session|credential|private[_-]?key|connection[_-]?string)(?:$|[_\-.])/i;
 /**
@@ -65,6 +76,11 @@ export function secretSpans(text) {
       const value=text.slice(start,end);
       if(type==='authorization' && /^(?:Bearer|Basic|Token)\s+\[REDACTED\]$/i.test(value)) continue;
       if(type==='sensitive_assignment' && /^(?:authorization|cookie)$/i.test(match[1])) continue;
+      // GitHub Actions permission declarations are not credentials. Only the
+      // exact OIDC key with its three documented values is exempt; any other
+      // value assigned to `id-token` is still scanned as a possible secret.
+      if(type==='sensitive_assignment' && /^id-token$/i.test(match[1]) &&
+        /^(?:read|write|none)$/i.test(value.replace(/^[\s`]+|[\s`]+$/g, ''))) continue;
       if (isSafeValue(value)) continue;
       if(type==='authorization' && /^(Bearer|Basic|Token)\s+/i.test(value)) start+=value.match(/^\S+\s+/)[0].length;
       found.push({start,end,type,severity:type==='private_key'?'critical':'high'});

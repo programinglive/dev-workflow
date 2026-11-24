@@ -32,6 +32,8 @@ Thumbs.db
 *.tgz
 *.tsbuildinfo
 .managed-publish/
+pb_data/
+.zettly-code/
 
 !web/lib/
 
