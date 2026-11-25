@@ -82,6 +82,18 @@ test("set_sentry_issue_status requires confirm and a written reason", async () =
   assert.match(text(changed), /APP-1 \(123\)/);
 });
 
+test("set_sentry_issue_status rejects missing confirm even before Sentry is configured", async () => {
+  const r = await handleIntegrationTool(
+    "set_sentry_issue_status",
+    { issue: "123", status: "resolve" },
+    fixture().state,
+    { env: { SENTRY_ACCESS_TOKEN: "", SENTRY_ORG: "" } },
+  );
+  assert.equal(r.isError, true);
+  assert.match(text(r), /confirm/i);
+  assert.doesNotMatch(text(r), /not configured/i);
+});
+
 test("deprecated mutation actions in link_sentry_issue still work but warn", async () => {
   const f = fixture();
   const res = await handleIntegrationTool("link_sentry_issue", { issueId: "123", action: "resolve" }, f.state, {

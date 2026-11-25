@@ -36,6 +36,17 @@ async function probe(client,check) {
 
 export async function handleIntegrationTool(name,args={},workflowState,options={}) {
  try{
+  // Validate mutation input before any integration lookup: a missing confirm
+  // must never be hidden by an unavailable Sentry connection.
+  if(name==='set_sentry_issue_status'){
+   if(args.confirm!==true)return failed('Changing a Sentry issue status is a mutation: pass confirm: true with a written reason.');
+   const reason=String(args.reason||'').trim();
+   if(reason.length<5)return failed('Provide a reason of at least 5 characters explaining why the Sentry issue status changes.');
+   const requested=String(args.status||'').trim();
+   const target=requested==='resolve'?'resolved':requested==='unresolve'?'unresolved':requested==='ignore'?'ignored':'';
+   if(!SENTRY_STATUSES.has(target))return failed("Invalid status: use 'resolve', 'unresolve', or 'ignore'.");
+   if(!issueId(String(args.issue||args.issueId||'')))return failed('Provide a numeric Sentry issue id.');
+  }
   const api=await clients(options);
   if(name==='get_zettly_task_context'){
     if(!api.zettly)return failed('Zettly owner credentials are not configured.');
