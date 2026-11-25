@@ -45,6 +45,10 @@ trees. They must not share mutable task ownership:
   `WORKTREE_WRITE_REQUIRES_TRANSITION`.
 - Read-only inspection is unaffected, so multi-worktree development still works:
   each worktree gets its own task.
+- Start `start_task` with the target worktree path **from the beginning**. That
+  records the identity contract, preflight scope and kernel mutex for that exact
+  checkout, so `commit_and_push` can verify the work later. A task started in the
+  main checkout cannot be committed from a linked worktree.
 
 ### Authorization to switch project
 
