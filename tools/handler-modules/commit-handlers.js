@@ -826,8 +826,9 @@ export async function handleCompleteTask(args, workflowState, context = {}) {
   // Captured before reset, because reset clears it and the cleanup needs it.
   const projectDir = workflowState.state.projectDir || "";
   const linkedFocusId = Number(workflowState.state.focus?.id || workflowState.state.zettly?.focusId || 0);
-  const sentryResult = await autoResolveLinkedSentryIssue(workflowState, context.integrationOptions || context.zettlyOptions || {});
-  const sentryNote = sentryResult.note ? `\n\n${sentryResult.ok ? "✅" : "⚠️"} ${sentryResult.note}` : "";
+  const sentryAutoResolve=args.resolveSentry===true||String(context?.integrationOptions?.env?.DEVWF_SENTRY_AUTORESOLVE||process.env.DEVWF_SENTRY_AUTORESOLVE||'')==='1';
+  const sentryResult = await autoResolveLinkedSentryIssue(workflowState, context.integrationOptions || context.zettlyOptions || {}, sentryAutoResolve);
+  const sentryNote = `\n\n${sentryResult.ok ? "✅" : "⚠️"} ${sentryResult.note || "Sentry: no issue status changed."}`;
   const zettlyResult = await closeZettlyTask(workflowState,'completed',args,context.zettlyOptions);
   const zettlyNote = zettlyResult.note ? `\n\n${zettlyResult.ok?'✅':'⚠️'} ${zettlyResult.note}` : '';
   workflowState.reset();

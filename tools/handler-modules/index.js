@@ -378,6 +378,7 @@ async function dispatchToolCall({
       case 'inventory_sentry_issues':
       case 'get_zettly_task_context':
       case 'get_sentry_issue':
+      case 'set_sentry_issue_status':
       case 'link_sentry_issue':
         return handleIntegrationTool(name,args,workflowState,integrationOptions);
       case 'sync_zettly_task': {

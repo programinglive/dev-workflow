@@ -125,8 +125,8 @@ test('complete_task automatically resolves linked Sentry issues in Sentry before
  f.workflowState.state.zettly.externalLinks={sentry:{organization:'example',issueId:'123',shortId:'APP-1',url:issue.permalink}};
  f.workflowState.addToHistory=()=>{};
  f.workflowState.reset=()=>{f.workflowState.state={currentPhase:'idle'};};
- const res=await handleCompleteTask({commitMessage:'fix: resolve sentry issue APP-1',nextSteps:['Monitor Sentry']},f.workflowState,{integrationOptions:f.options,zettlyOptions:{env:{DEVWF_ZETTLY_SYNC:'0'}}});
- assert.match(text(res),/Sentry issue APP-1 \(123\) automatically marked as resolved/);
+ const res=await handleCompleteTask({commitMessage:'fix: resolve sentry issue APP-1',resolveSentry:true,nextSteps:['Monitor Sentry']},f.workflowState,{integrationOptions:f.options,zettlyOptions:{env:{DEVWF_ZETTLY_SYNC:'0'}}});
+ assert.match(text(res),/Sentry issue APP-1 \(123\) status changed to 'resolved'/);
  assert.deepEqual(f.options.sentry.resolvedCalls,[{id:'123',status:'resolved'}]);
 });
 test('preemption gate is disabled without explicit configuration and uses neutral configured wording', async()=>{
