@@ -26,12 +26,12 @@ test("RV-01..RV-05: Canonical release state model separates SOURCE, GITHUB, NPM_
     projectDir: REPO_ROOT,
     stage: "both",
     expectedVersion: PKG_VERSION,
-    expectedToolCount: 65,
+    expectedToolCount: 66,
     githubReleaseVersion: `v${PKG_VERSION}`,
     npmPublishedVersion: PKG_VERSION,
     npmLatestVersion: PKG_VERSION,
     runtimeVersion: PKG_VERSION,
-    liveWebsiteHtml: `<html><body>DevWorkflow ${PKG_VERSION} — 65 Canonical MCP Tools</body></html>`,
+    liveWebsiteHtml: `<html><body>DevWorkflow ${PKG_VERSION} — 66 Canonical MCP Tools</body></html>`,
   });
   assert.equal(res.ok, true);
   assert.equal(res.stageVerdict, "POST_PUBLISH_PASS");
@@ -63,7 +63,7 @@ test("RV-06..RV-10: Unpublished npm version or stale latest dist-tag fails post-
     projectDir: REPO_ROOT,
     stage: "pre_publish",
     expectedVersion: PKG_VERSION,
-    expectedToolCount: 65,
+    expectedToolCount: 66,
   });
   assert.equal(pre.ok, true);
   assert.equal(pre.stageVerdict, "PRE_PUBLISH_PASS");
@@ -73,9 +73,9 @@ test("RV-06..RV-10: Unpublished npm version or stale latest dist-tag fails post-
 // WEB-01 .. WEB-18: Website, Onboarding, Tutorials & Catalog Single Source of Truth
 // ============================================================================
 
-test("WEB-01..WEB-12: Active website source & runtime catalog contain current version, 65 tools, Zettly Code journey, and ZERO active removed v2 tool names", () => {
+test("WEB-01..WEB-12: Active website source & runtime catalog contain current version, 66 tools, Zettly Code journey, and ZERO active removed v2 tool names", () => {
   const tools = getToolList();
-  assert.equal(tools.length, 65);
+  assert.equal(tools.length, 66);
   const removedNames = Object.keys(REMOVED_LEGACY_TOOLS);
 
   // Runtime tool descriptions must not advertise removed v2 tool names
@@ -91,11 +91,11 @@ test("WEB-01..WEB-12: Active website source & runtime catalog contain current ve
 
   const catalog = fs.readFileSync(path.join(REPO_ROOT, "web", "lib", "catalog.generated.ts"), "utf8");
   assert.ok(catalog.includes(`"version": "${PKG_VERSION}"`));
-  assert.ok(catalog.includes(`"mcpToolCount": 65`));
+  assert.ok(catalog.includes(`"mcpToolCount": 66`));
 
   const howTo = fs.readFileSync(path.join(REPO_ROOT, "web", "lib", "how-to-use-data.ts"), "utf8");
   assert.ok(howTo.includes(`@programinglive/dev-workflow@${PKG_VERSION}`));
-  assert.ok(howTo.includes(`"toolsDiscovered": 65`));
+  assert.ok(howTo.includes(`"toolsDiscovered": 66`));
   assert.ok(howTo.includes("ZETTLY_CODE_DEBUGGING_JOURNEY"));
   assert.ok(howTo.includes("code_context"));
   assert.ok(howTo.includes("code_index"));
@@ -142,7 +142,7 @@ test("E2E Release Pipeline: detects README drift -> fixes -> PRE_PUBLISH_PASS ->
       projectDir: tmp,
       stage: "pre_publish",
       expectedVersion: "4.0.0",
-      expectedToolCount: 65,
+      expectedToolCount: 66,
     });
     assert.equal(step1.ok, false);
     assert.equal(step1.stageVerdict, "PRE_PUBLISH_FAIL");
@@ -153,13 +153,13 @@ test("E2E Release Pipeline: detects README drift -> fixes -> PRE_PUBLISH_PASS ->
     // Step 2: Repair docs and rebuild website catalog -> PRE_PUBLISH_PASS
     fs.writeFileSync(path.join(tmp, "README.md"), "# DevWorkflow 4.0.0\n");
     fs.writeFileSync(path.join(tmp, "CHANGELOG.md"), "# Changelog\n## 4.0.0\n");
-    fs.writeFileSync(path.join(tmp, "web", "lib", "catalog.generated.ts"), `export const C = { "version": "4.0.0", toolCount: 65 };`);
+    fs.writeFileSync(path.join(tmp, "web", "lib", "catalog.generated.ts"), `export const C = { "version": "4.0.0", toolCount: 66 };`);
     const step2 = await handleDevWorkflowV2Tool("audit", {
       category: "release_docs",
       projectDir: tmp,
       stage: "pre_publish",
       expectedVersion: "4.0.0",
-      expectedToolCount: 65,
+      expectedToolCount: 66,
     });
     assert.equal(step2.ok, true);
     assert.equal(step2.stageVerdict, "PRE_PUBLISH_PASS");
@@ -189,7 +189,7 @@ test("E2E Release Pipeline: detects README drift -> fixes -> PRE_PUBLISH_PASS ->
       npmPublishedVersion: "4.0.0",
       npmLatestVersion: "4.0.0",
       runtimeVersion: "4.0.0",
-      liveWebsiteHtml: "<html><body>DevWorkflow 4.0.0 — 65 Canonical MCP Tools</body></html>",
+      liveWebsiteHtml: "<html><body>DevWorkflow 4.0.0 — 66 Canonical MCP Tools</body></html>",
     });
     assert.equal(step4.ok, true);
     assert.equal(step4.stageVerdict, "POST_PUBLISH_PASS");

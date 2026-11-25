@@ -10,7 +10,7 @@ DevWorkflow v3.1+ integrates **Zettly Code** (`@programinglive/zettly-code`, ope
 
 ## Canonical MCP Tools
 
-DevWorkflow exposes two canonical public MCP tools for Zettly Code (keeping the full public catalog at **65 canonical tools** with **0 compatibility aliases**):
+DevWorkflow exposes two canonical public MCP tools for Zettly Code (keeping the full public catalog at **66 canonical tools** with **0 compatibility aliases**):
 
 | Tool | Modes | Purpose |
 |---|---|---|

@@ -63,7 +63,7 @@ Before taking any action or answering user requests regarding code changes, chec
 
 ### Tool Profiles (`core`, `standard`, `full`)
 
-The server can register a subset of its tools without changing any gate. A session started with `DEVWF_TOOL_PROFILE=core` sees only the 18 lifecycle tools; `standard` adds audit/autofix, code memory, release locking, deployment recording and discovery; the default `full` exposes all 65.
+The server can register a subset of its tools without changing any gate. A session started with `DEVWF_TOOL_PROFILE=core` sees only the 18 lifecycle tools; `standard` adds audit/autofix, code memory, release locking, deployment recording and discovery; the default `full` exposes all 66.
 
 - When a tool you expect is missing, check `devwf doctor` first. The answer is usually "not in this profile", not "broken server". `tools/call` for a hidden tool returns an explicit message naming the active profile.
 - Do not treat a hidden tool as a broken gate. The workflow steps remain mandatory; the smaller profiles only omit optional escape hatches (waivers, forced completion, release skipping, handoff, focus and Sentry tooling), so the smallest profile is also the strictest one.

@@ -1108,50 +1108,6 @@ export const GENERATED_CATALOG = {
       ]
     },
     {
-      "name": "set_sentry_issue_status",
-      "description": "Explicitly mutate a Sentry issue status (resolve, unresolve or ignore). A written reason and confirm:true are mandatory because this tool writes to the external Sentry API; full profile only.",
-      "required": [
-        "issue",
-        "status",
-        "reason",
-        "confirm"
-      ],
-      "params": [
-        {
-          "name": "issue",
-          "type": "string",
-          "description": "Numeric Sentry issue id.",
-          "required": true,
-          "enumValues": []
-        },
-        {
-          "name": "status",
-          "type": "string",
-          "description": "",
-          "required": true,
-          "enumValues": [
-            "resolve",
-            "unresolve",
-            "ignore"
-          ]
-        },
-        {
-          "name": "reason",
-          "type": "string",
-          "description": "Why the status changes; recorded in the response.",
-          "required": true,
-          "enumValues": []
-        },
-        {
-          "name": "confirm",
-          "type": "boolean",
-          "description": "Must be true to perform the mutation.",
-          "required": true,
-          "enumValues": []
-        }
-      ]
-    },
-    {
       "name": "link_task_to_focus",
       "description": "Link the active canonical workflow Todo to the selected active focus by focusId, preserving source identity and owner text. Rejects relinking to another focus.",
       "required": [
@@ -2054,6 +2010,50 @@ export const GENERATED_CATALOG = {
           "name": "steps",
           "type": "array",
           "description": "Ordered steps, one action per item.",
+          "required": true,
+          "enumValues": []
+        }
+      ]
+    },
+    {
+      "name": "set_sentry_issue_status",
+      "description": "Explicitly mutate a Sentry issue status (resolve, unresolve or ignore). A written reason and confirm:true are mandatory because this tool writes to the external Sentry API; full profile only.",
+      "required": [
+        "issue",
+        "status",
+        "reason",
+        "confirm"
+      ],
+      "params": [
+        {
+          "name": "issue",
+          "type": "string",
+          "description": "Numeric Sentry issue id.",
+          "required": true,
+          "enumValues": []
+        },
+        {
+          "name": "status",
+          "type": "string",
+          "description": "",
+          "required": true,
+          "enumValues": [
+            "resolve",
+            "unresolve",
+            "ignore"
+          ]
+        },
+        {
+          "name": "reason",
+          "type": "string",
+          "description": "Why the status changes; recorded in the response.",
+          "required": true,
+          "enumValues": []
+        },
+        {
+          "name": "confirm",
+          "type": "boolean",
+          "description": "Must be true to perform the mutation.",
           "required": true,
           "enumValues": []
         }

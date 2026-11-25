@@ -71,7 +71,7 @@ jobs:
                 projectDir: process.cwd(),
                 stage: "pre_publish",
                 expectedVersion: process.env.REL_VER,
-                expectedToolCount: 65,
+                expectedToolCount: 66,
               });
               console.log(JSON.stringify(res, null, 2));
               if (!res.ok) process.exit(1);

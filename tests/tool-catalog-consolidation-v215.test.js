@@ -53,7 +53,7 @@ async function createTempGitRepo(prefix = "dwf-v300-") {
   return dir;
 }
 
-test("TC-01: Radical simplification inventory accounts for all 65 canonical public MCP tools with zero compatibility aliases and zero unmapped tools", async () => {
+test("TC-01: Radical simplification inventory accounts for all 66 canonical public MCP tools with zero compatibility aliases and zero unmapped tools", async () => {
   const tools = getToolList();
   const report = await handleDevWorkflowV2Tool("audit", {
     category: "catalog",
@@ -62,9 +62,9 @@ test("TC-01: Radical simplification inventory accounts for all 65 canonical publ
     includeConsolidationPlan: true,
   });
 
-  assert.equal(tools.length, 65, "Expected exactly 65 canonical public MCP tools in v3.1.0 (63 + code_index + code_context)");
-  assert.equal(report.summary.total_public_tools, 65);
-  assert.equal(report.summary.canonical_public_tools, 65);
+  assert.equal(tools.length, 66, "Expected exactly 66 canonical public MCP tools in v3.1.0 (63 + code_index + code_context)");
+  assert.equal(report.summary.total_public_tools, 66);
+  assert.equal(report.summary.canonical_public_tools, 66);
   assert.equal(report.summary.compatibility_aliases, 0, "Zero compatibility aliases permitted in v3.0.0");
   assert.equal(Object.keys(TOOL_ALIASES).length, 0);
   assert.equal(Object.keys(REMOVED_LEGACY_TOOLS).length, 25);
@@ -362,7 +362,7 @@ test("TC-16: CLI compatibility — devwf audit catalog, devwf audit standards, a
   assert.equal(resCat.ok, true);
   const parsedCat = JSON.parse(outCat.lines.join("\n"));
   assert.equal(parsedCat.regression_gate.passed, true);
-  assert.equal(parsedCat.summary.total_public_tools, 65);
+  assert.equal(parsedCat.summary.total_public_tools, 66);
   assert.equal(parsedCat.summary.compatibility_aliases, 0);
 
   const outHuman = { lines: [], write(line) { this.lines.push(line); } };

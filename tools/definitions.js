@@ -4,8 +4,8 @@
  */
 /**
  * @zettly-code DWF-SENTRY-DEFS-001
- * @purpose Authoritative 65-tool canonical MCP tool definitions catalog for DevWorkflow.
- * @invariant Maintain radical simplification (exactly 65 canonical public tools, zero duplicate wrappers); extend link_sentry_issue with action ('link' | 'resolve' | 'unresolve' | 'ignore') instead of adding a duplicate tool.
+ * @purpose Authoritative 66-tool canonical MCP tool definitions catalog for DevWorkflow.
+ * @invariant Maintain radical simplification (exactly 66 canonical public tools, zero duplicate wrappers); extend link_sentry_issue with action ('link' | 'resolve' | 'unresolve' | 'ignore') instead of adding a duplicate tool.
  */
 import {focusToolDefinitions} from '../focus-workflow.js';
 import {DEVWORKFLOW_V2_TOOL_DEFINITIONS} from '../src/engineering-audit.js';

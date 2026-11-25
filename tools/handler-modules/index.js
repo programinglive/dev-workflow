@@ -5,7 +5,7 @@
 /**
  * @zettly-code DWF-TOOL-DISPATCH-001
  * @purpose Central MCP tool dispatcher and post-call Zettly Todo / Draw / Sentry synchronization wrapper.
- * @invariant Route all 65 canonical MCP tools deterministically, pass integrationOptions to complete_task for automatic Sentry issue resolution, and sanitize all outputs.
+ * @invariant Route all 66 canonical MCP tools deterministically, pass integrationOptions to complete_task for automatic Sentry issue resolution, and sanitize all outputs.
  */
 import { textResponse, isReleaseSatisfied, isErrorResponse, loadDocGateInputs } from "./shared.js";
 import { evaluateDocGate, isGateSatisfied, formatRelativeAge, renderDocGateFailure, MIN_WAIVER_REASON } from "./docs.js";
@@ -566,7 +566,7 @@ async function dispatchToolCall({
 }
 
 // The canonical catalog is static, so the name set is computed once instead of
-// rebuilding 65 schemas on every tool call.
+// rebuilding 66 schemas on every tool call.
 let registeredToolNames = null;
 function isRegisteredToolName(name) {
   if (!registeredToolNames) {
