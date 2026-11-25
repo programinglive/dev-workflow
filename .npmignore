@@ -9,6 +9,8 @@
 
 # Local workflow state
 .state/
+state/
+**/user-id
 *.db
 *.db-wal
 *.db-shm
