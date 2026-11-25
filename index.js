@@ -63,7 +63,9 @@ const __filename = fileURLToPath(import.meta.url);
 export const server = new Server(
   {
     name: "@programinglive/dev-workflow",
-    version: "1.0.0",
+    // Advertised MCP server version. Kept in lockstep with package.json so a
+    // client can prove which release it is talking to.
+    version: "3.1.4",
   },
   {
     capabilities: {
