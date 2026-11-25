@@ -572,7 +572,9 @@ export function evaluateMutationIdentity({ contract, state, actual, operation = 
         `The two directories share one git object store, but they are two writable trees. ` +
         `Sharing mutable task ownership between them lets one tree's work land in the other.\n\n` +
         `Start a new task in the target worktree (that records a new identity contract), ` +
-        `or run this operation in the worktree it started in.\n\n` +
+        `or run this operation in the worktree it started in. ` +
+        `Start the task from the target worktree path from the beginning so the identity contract, ` +
+        `preflight scope and kernel mutex all belong to that checkout.\n\n` +
         `Nothing was changed.`,
     };
   }

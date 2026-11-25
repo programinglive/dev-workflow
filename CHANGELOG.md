@@ -5,6 +5,8 @@ All notable changes to this project will be documented in this file. See [standa
 ## Unreleased (proposed 3.2.0)
 
 ### Breaking Behavior
+* **sentry:** `complete_task` no longer auto-resolves a linked Sentry issue by default. Pass `resolveSentry: true` or set `DEVWF_SENTRY_AUTORESOLVE=1` to restore the previous behavior; the response now names the issue id, new status and result. Proposed release number: 3.2.0.
+* **tools:** Sentry `resolve`/`unresolve`/`ignore` moves to `set_sentry_issue_status` with mandatory `confirm: true` and a written reason. The old `link_sentry_issue` actions remain deprecated aliases for at least two minor releases and print a warning. The full catalog grows from 65 to 66 tools; core and standard are unchanged.
 * **preemption:** the Sentry preemption gate is now OFF by default and must be configured explicitly with `DEVWF_PREEMPTION_ENABLED`, `DEVWF_PREEMPTION_SENTRY_PROJECT`, `DEVWF_PREEMPTION_QUERY`, and `DEVWF_PREEMPTION_PROJECT_DIR_MARKERS`. Installations that relied on the previous always-on gate must set these variables to restore the old behavior. The override flag is now `allowPreemptionOverride`; the previous name remains a deprecated alias and prints a warning. This is a breaking change in default behavior, not a version bump.
 
 ### Bug Fixes
