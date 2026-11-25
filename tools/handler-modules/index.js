@@ -37,7 +37,7 @@ import { handleFetchTask } from "./remote-checkpoint.js";
 import { renderPlanShort } from "./plan.js";
 import { openItems, MIN_EVIDENCE } from "./dod.js";
 import { handleSearchProject } from "./search-handlers.js";
-import {handleIntegrationTool,prepareTaskSource,checkErpSentryPreemption} from './integration-handlers.js';
+import {handleIntegrationTool,prepareTaskSource,checkSentryPreemption} from './integration-handlers.js';
 import {handleRefineWithAi} from './refine-with-ai.js';
 import {handleFocusTool,prepareTaskFocus} from '../../focus-workflow.js';
 import {syncZettlyDrawing} from '../../zettly-drawing.js';
@@ -408,13 +408,23 @@ async function dispatchToolCall({
         return textResponse(JSON.stringify(report));
       }
       case "start_task": {
-        const preemption=await checkErpSentryPreemption({projectDir:args.projectDir||workflowState?.state?.projectDir||'',allowErpPreemptionOverride:Boolean(args.allowErpPreemptionOverride),mode:'start_task',options:integrationOptions});
-        if(preemption.response)return preemption.response;
+        const legacyPreemptionOverride=args.allowErpPreemptionOverride===true;
+        const preemption=await checkSentryPreemption({projectDir:args.projectDir||workflowState?.state?.projectDir||'',allowPreemptionOverride:Boolean(args.allowPreemptionOverride),legacyOverride:legacyPreemptionOverride,mode:'start_task',options:integrationOptions});
+        if(preemption.response){
+          if(preemption.deprecationWarning&&preemption.response?.content?.[0]?.text){
+            preemption.response.content[0].text += `\n\n⚠️ ${preemption.deprecationWarning}`;
+          }
+          return preemption.response;
+        }
         const prepared=await prepareTaskSource(args,integrationOptions);
         if(prepared.response)return prepared.response;
         const focused=await prepareTaskFocus(prepared.args,{...integrationOptions,client:zettlyOptions?.client||integrationOptions?.zettly,env:zettlyOptions?.env||integrationOptions?.env||process.env});
         if(focused.response)return focused.response;
-        return handleStartTask(focused.args, workflowState, git, zettlyOptions);
+        const started=await handleStartTask(focused.args, workflowState, git, zettlyOptions);
+        if(preemption.deprecationWarning&&started?.content?.[0]?.text){
+          started.content[0].text += `\n\n⚠️ ${preemption.deprecationWarning}`;
+        }
+        return started;
       }
       case "refine_with_ai":
         return handleRefineWithAi(args, workflowState);
@@ -644,7 +654,7 @@ export async function handleToolCall(context) {
       if(notes.length&&typeof response?.content?.[0]?.text==='string')response={...response,content:[{...response.content[0],text:response.content[0].text+'\n\n'+notes.join('\n')},...response.content.slice(1)]};
     }
     if(context.workflowState&&!response?.isError&&(name==='mark_plan_step'||name==='get_workflow_status')){
-      const midTaskPreemption=await checkErpSentryPreemption({projectDir:context.workflowState.state?.projectDir||'',mode:'status',options:context.integrationOptions||{}});
+      const midTaskPreemption=await checkSentryPreemption({projectDir:context.workflowState.state?.projectDir||'',mode:'status',options:context.integrationOptions||{}});
       if(midTaskPreemption.preempted&&midTaskPreemption.alertText&&typeof response?.content?.[0]?.text==='string'){
         response={...response,content:[{...response.content[0],text:response.content[0].text+'\n\n'+midTaskPreemption.alertText},...response.content.slice(1)]};
       }

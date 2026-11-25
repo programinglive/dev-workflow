@@ -2,10 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
-## Unreleased (proposed 3.1.5)
+## Unreleased (proposed 3.2.0)
+
+### Breaking Behavior
+* **preemption:** the Sentry preemption gate is now OFF by default and must be configured explicitly with `DEVWF_PREEMPTION_ENABLED`, `DEVWF_PREEMPTION_SENTRY_PROJECT`, `DEVWF_PREEMPTION_QUERY`, and `DEVWF_PREEMPTION_PROJECT_DIR_MARKERS`. Installations that relied on the previous always-on gate must set these variables to restore the old behavior. The override flag is now `allowPreemptionOverride`; the previous name remains a deprecated alias and prints a warning. This is a breaking change in default behavior, not a version bump.
 
 ### Bug Fixes
-* **packaging:** exclude runtime `state/` and generated `user-id` files from the published npm tarball; `.npmignore` previously ignored only `.state/`, so a state root pointed at `<repo>/state` could leak a per-machine identifier into a release. No version bump is applied; 3.1.5 is the proposed release number for this fix.
+* **packaging:** exclude runtime `state/` and generated `user-id` files from the published npm tarball; `.npmignore` previously ignored only `.state/`, so a state root pointed at `<repo>/state` could leak a per-machine identifier into a release. Proposed release number for this fix alone: 3.1.5.
 
 ## [3.1.4](https://github.com/programinglive/dev-workflow/compare/v3.1.3...v3.1.4) (2026-11-25)
 

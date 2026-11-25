@@ -157,61 +157,100 @@ export async function prepareTaskSource(args,options={}) {
   }catch(error){return {response:failed(`The Sentry source could not be verified${Number.isInteger(error.status)?` (HTTP ${error.status})`:''}. The existing workflow task was not changed.`)};}
 }
 
-let erpPreemptionCache={checkedAt:0,issues:[]};
-export function resetErpSentryPreemptionCache(){erpPreemptionCache={checkedAt:0,issues:[]};}
+const PREEMPTION_ENV_KEYS = Object.freeze({
+  enabled: "DEVWF_PREEMPTION_ENABLED",
+  project: "DEVWF_PREEMPTION_SENTRY_PROJECT",
+  query: "DEVWF_PREEMPTION_QUERY",
+  markers: "DEVWF_PREEMPTION_PROJECT_DIR_MARKERS",
+});
 
-export function isErpBackendProjectDir(projectDir='') {
-  const norm=String(projectDir||'').replace(/\\/g,'/').replace(/\/+$/,'').toLowerCase();
-  if(!norm)return false;
-  if(norm.includes('frontend_erp')||norm.includes('frontend-erp'))return false;
-  return norm.endsWith('/erp.beautyworld.co.id')||norm.endsWith('/deverp.beautyworld.co.id')||norm.endsWith('/erp');
+let preemptionCache={checkedAt:0,issues:[]};
+export function resetSentryPreemptionCache(){preemptionCache={checkedAt:0,issues:[]};}
+
+/**
+ * Config-driven preemption gate. It is OFF unless the operator explicitly
+ * enables it and supplies the Sentry project, query and directory markers.
+ * An enabled but incomplete configuration fails closed instead of silently
+ * turning the gate off.
+ */
+export function resolvePreemptionConfig(env=process.env){
+  const enabled=String(env?.[PREEMPTION_ENV_KEYS.enabled]||'').trim().toLowerCase()==='1';
+  if(!enabled)return {ok:true,enabled:false,project:'',query:'',markers:[]};
+  const project=String(env?.[PREEMPTION_ENV_KEYS.project]||'').trim();
+  const query=String(env?.[PREEMPTION_ENV_KEYS.query]||'').trim();
+  const markers=String(env?.[PREEMPTION_ENV_KEYS.markers]||'').split(',')
+   .map((item)=>item.trim().replace(/\\/g,'/').replace(/\/+$/,''))
+   .filter(Boolean);
+  const missing=[];
+  if(!project)missing.push(PREEMPTION_ENV_KEYS.project);
+  if(!query)missing.push(PREEMPTION_ENV_KEYS.query);
+  if(markers.length===0)missing.push(PREEMPTION_ENV_KEYS.markers);
+  if(missing.length)return {ok:false,enabled:true,project,query,markers,reason:`Preemption is enabled but missing required configuration: ${missing.join(', ')}.`};
+  return {ok:true,enabled:true,project,query,markers};
 }
 
-export async function checkErpSentryPreemption({projectDir='',allowErpPreemptionOverride=false,mode='start_task',options={}}={}) {
-  if(allowErpPreemptionOverride===true||isErpBackendProjectDir(projectDir))return {preempted:false,issues:[],alertText:'',response:null};
+export function isPreemptionProjectDir(projectDir='',config=resolvePreemptionConfig()){
+  const norm=String(projectDir||'').replace(/\\/g,'/').replace(/\/+$/,'').toLowerCase();
+  if(!norm)return false;
+  return config.markers.some((marker)=>norm.includes(marker.toLowerCase()));
+}
+
+export async function checkSentryPreemption({projectDir='',allowPreemptionOverride=false,allowPreemptionOverrideAlias=false,legacyOverride=false,mode='start_task',options={}}={}){
   const env=options.env||process.env;
+  const config=resolvePreemptionConfig(env);
+  const useLegacyOverride=legacyOverride===true||allowPreemptionOverrideAlias===true;
+  const deprecationWarning=useLegacyOverride
+   ? `The legacy override flag is deprecated; use 'allowPreemptionOverride' instead.`
+   : undefined;
+  const clear={preempted:false,issues:[],alertText:'',response:null,deprecationWarning};
+  if(!config.enabled)return clear;
+  if(!config.ok){
+   return {...clear,preempted:true,response:failed(`⚠️ ${config.reason} Task NOT started; no state was changed.`)};
+  }
+  if(allowPreemptionOverride===true||useLegacyOverride===true||isPreemptionProjectDir(projectDir,config))return clear;
+
   const isTestEnv=env.NODE_TEST_CONTEXT!==undefined||env.NODE_ENV==='test';
-  if(isTestEnv&&!Object.hasOwn(options,'sentry'))return {preempted:false,issues:[],alertText:'',response:null};
-  const useCache=!Object.hasOwn(options,'sentry')&&Date.now()-erpPreemptionCache.checkedAt<45000;
-  let erpIssues=[];
+  if(isTestEnv&&!Object.hasOwn(options,'sentry'))return clear;
+  const useCache=!Object.hasOwn(options,'sentry')&&Date.now()-preemptionCache.checkedAt<45000;
+  let issues=[];
   if(useCache){
-   erpIssues=erpPreemptionCache.issues;
+   issues=preemptionCache.issues;
   }else{
    try{
     const api=await clients(options);
-    if(!api.sentry)return {preempted:false,issues:[],alertText:'',response:null};
-    const queryFn=api.sentry.listIssuePage?()=>api.sentry.listIssuePage({query:'is:unresolved project:erp',limit:10,statsPeriod:'90d'}).then(r=>r.issues||[]):()=>api.sentry.listIssues({query:'is:unresolved project:erp',limit:10,statsPeriod:'90d'});
+    if(!api.sentry)return {...clear,preempted:true,response:failed(`⚠️ Preemption is configured but Sentry is unavailable; fail-closed. Task NOT started.`)};
+    const queryFn=api.sentry.listIssuePage?()=>api.sentry.listIssuePage({query:config.query,limit:10,statsPeriod:'90d'}).then(r=>r.issues||[]):()=>api.sentry.listIssues({query:config.query,limit:10,statsPeriod:'90d'});
     const rows=await Promise.race([queryFn(),new Promise((_,reject)=>setTimeout(()=>reject(Error('timeout')),2500))]);
-    erpIssues=(Array.isArray(rows)?rows:[]).filter(item=>!item?.project?.slug||item.project.slug==='erp');
-    if(!Object.hasOwn(options,'sentry'))erpPreemptionCache={checkedAt:Date.now(),issues:erpIssues};
+    issues=(Array.isArray(rows)?rows:[]).filter(item=>!item?.project?.slug||item.project.slug===config.project);
+    if(!Object.hasOwn(options,'sentry'))preemptionCache={checkedAt:Date.now(),issues};
    }catch{
-    return {preempted:false,issues:[],alertText:'',response:null};
+    return {...clear,preempted:true,response:failed(`⚠️ Preemption is configured but the Sentry query failed or timed out; fail-closed. Task NOT started.`)};
    }
   }
-  if(!erpIssues.length)return {preempted:false,issues:[],alertText:'',response:null};
-  const top=erpIssues[0];
-  const list=erpIssues.slice(0,5).map(i=>`  • ${i.shortId||i.id} (ID: ${i.id}, events: ${i.count||'1'}): ${i.title}${i.permalink?` — ${i.permalink}`:''}`).join('\n');
+  if(!issues.length)return clear;
+  const list=issues.slice(0,5).map(i=>`  • ${i.shortId||i.id} (ID: ${i.id}, events: ${i.count||'1'}): ${i.title}${i.permalink?` — ${i.permalink}`:''}`).join('\n');
   const alertText=
-   `🚨 P0 ERP SENTRY PREEMPTION ALERT (${erpIssues.length} unresolved issue(s) on erp.beautyworld.co.id):\n` +
+   `🚨 SENTRY PREEMPTION ALERT (${issues.length} unresolved issue(s) on project ${config.project}):\n` +
    `${list}\n` +
    (isToolAllowedInProfile("checkpoint_task")
-     ? `Action required: erp.beautyworld.co.id overrides all other projects. Checkpoint current work ('checkpoint_task') and start a bugfix task in erp.beautyworld.co.id with source: { system: "sentry", id: "${top.id}" }.`
-     : `Action required: erp.beautyworld.co.id overrides all other projects. Close or drop the current task first (checkpointing is not available in the active profile), then start a bugfix task in erp.beautyworld.co.id with source: { system: "sentry", id: "${top.id}" }.`);
+    ? `Action required: project ${config.project} overrides all other work. Checkpoint current work ('checkpoint_task') and start a bugfix task for ${config.project} with source: { system: "sentry", id: "${issues[0].id}" }.`
+    : `Action required: project ${config.project} overrides all other work. Close or drop the current task first (checkpointing is not available in the active profile), then start a bugfix task for ${config.project} with source: { system: "sentry", id: "${issues[0].id}" }.`);
   if(mode==='start_task'){
    return {
     preempted:true,
-    issues:erpIssues,
+    issues,
     alertText,
+    deprecationWarning,
     response:failed(
-     `🚨 P0 ERP SENTRY PREEMPTION GATE — Task refused for "${projectDir||'(non-ERP project)'}".\n\n` +
-     `erp.beautyworld.co.id is Priority #1 ahead of all other work whenever it has unresolved Sentry issues (${erpIssues.length} active):\n` +
+     `🚨 SENTRY PREEMPTION GATE — Task refused for "${projectDir||'(unconfigured project)'}".\n\n` +
+     `Project ${config.project} is Priority #1 whenever it has unresolved Sentry issues (${issues.length} active):\n` +
      `${list}\n\n` +
      `Required next action:\n` +
-     `  1. Call 'start_task' for erp.beautyworld.co.id with source: { system: "sentry", id: "${top.id}" }\n` +
-     `  2. Fix, test, deploy, and call 'complete_task' (which auto-resolves ${top.shortId||top.id} in Sentry)\n` +
-     `  (Emergency override only: pass allowErpPreemptionOverride: true on start_task)`
+     `  1. Call 'start_task' for project ${config.project} with source: { system: "sentry", id: "${issues[0].id}" }\n` +
+     `  2. Fix, test, deploy, and call 'complete_task'\n` +
+     `  (Emergency override: pass allowPreemptionOverride: true on start_task)`
     ),
    };
   }
-  return {preempted:true,issues:erpIssues,alertText,response:null};
+  return {preempted:true,issues,alertText,response:null,deprecationWarning};
 }
