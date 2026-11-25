@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## Unreleased
+
+### Bug Fixes
+* **packaging:** require `managed/fleet-providers.cjs` in the published package because `cli/commands.js:48-53` imports it at module load, and exclude four unreferenced internal files (`RELEASE-1.33.1-EVIDENCE.md`, `scripts/setup-test-dbs.sh`, `scripts/test-db-adapters.sh`, `scripts/verify-push-branch.mjs`). Proposed version for this small release: 3.2.1 (patch); no version bump is applied here.
+
 ## [3.1.5](https://github.com/programinglive/dev-workflow/compare/v3.1.4...v3.1.5) (2026-11-25)
 
 ### Bug Fixes
