@@ -4,6 +4,7 @@ Authoritative history of user-visible changes for the Development Workflow MCP S
 
 | Version | Date | Notes |
 |---------|------|-------|
+| 3.1.5 | 2026-11-25 | **packaging:** exclude runtime `state/` and generated `user-id` from the npm tarball and gate publishing on the packaging dry-run test. |
 | 3.1.4 | 2026-11-25 | **security/tooling:** exempt GitHub OIDC permission declarations from the secret scanner, forward the macOS mutex opt-in to the bundle verifier, and skip device restarts when no AI session is live. |
 | 1.31.0 | 2026-11-12 | **architecture:** complete Milestone 0 audit and Zettly integration contract v1 (dbb3cfc) |
 | 1.26.0 | 2026-11-08 | **release:** merge origin/main into the monitor reconciliation line (4f37770): start-task now shows which tasks other sessions hold before choosing (#63), managed-rules build-host.example fix; restores a forward-only central release pointer that also contains the unified card-chain monitor of v1.25.0 (56992e9) |

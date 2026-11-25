@@ -57,7 +57,7 @@ const __filename = fileURLToPath(import.meta.url);
 export const server = new Server(
   {
     name: "@programinglive/dev-workflow",
-    version: "1.0.0",
+    version: "3.1.5",
   },
   {
     capabilities: {

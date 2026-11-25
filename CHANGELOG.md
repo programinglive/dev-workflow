@@ -2,10 +2,10 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
-## Unreleased (proposed 3.1.5)
+## [3.1.5](https://github.com/programinglive/dev-workflow/compare/v3.1.4...v3.1.5) (2026-11-25)
 
 ### Bug Fixes
-* **packaging:** exclude runtime `state/` and generated `user-id` files from the published npm tarball; `.npmignore` previously ignored only `.state/`, so a state root pointed at `<repo>/state` could leak a per-machine identifier into a release. No version bump is applied; 3.1.5 is the proposed release number for this fix.
+* **packaging:** exclude runtime `state/` and generated `user-id` files from the published npm tarball; `.npmignore` previously ignored only `.state/`, so a state root pointed at `<repo>/state` could leak a per-machine identifier into a release. Version metadata synchronized to 3.1.5 across package, server and website.
 
 ## [3.1.4](https://github.com/programinglive/dev-workflow/compare/v3.1.3...v3.1.4) (2026-11-25)
 
