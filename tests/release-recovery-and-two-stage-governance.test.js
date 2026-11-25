@@ -32,7 +32,7 @@ test("RV-01..RV-05: Canonical release state model separates SOURCE, GITHUB, NPM_
     npmPublishedVersion: PKG_VERSION,
     npmLatestVersion: PKG_VERSION,
     runtimeVersion: PKG_VERSION,
-    liveWebsiteHtml: `<html><body>DevWorkflow ${PKG_VERSION} — TOOL_COUNT Canonical MCP Tools</body></html>`,
+    liveWebsiteHtml: `<html><body>DevWorkflow ${PKG_VERSION} - ${TOOL_COUNT} Canonical MCP Tools</body></html>`,
   });
   assert.equal(res.ok, true);
   assert.equal(res.stageVerdict, "POST_PUBLISH_PASS");
@@ -92,11 +92,11 @@ test("WEB-01..WEB-12: Active website source & runtime catalog contain current ve
 
   const catalog = fs.readFileSync(path.join(REPO_ROOT, "web", "lib", "catalog.generated.ts"), "utf8");
   assert.ok(catalog.includes(`"version": "${PKG_VERSION}"`));
-  assert.ok(catalog.includes(`"mcpToolCount": TOOL_COUNT`));
+  assert.ok(catalog.includes(`"mcpToolCount": ${TOOL_COUNT}`));
 
   const howTo = fs.readFileSync(path.join(REPO_ROOT, "web", "lib", "how-to-use-data.ts"), "utf8");
   assert.ok(howTo.includes(`@programinglive/dev-workflow@${PKG_VERSION}`));
-  assert.ok(howTo.includes(`"toolsDiscovered": TOOL_COUNT`));
+  assert.ok(howTo.includes(`"toolsDiscovered": ${TOOL_COUNT}`));
   assert.ok(howTo.includes("ZETTLY_CODE_DEBUGGING_JOURNEY"));
   assert.ok(howTo.includes("code_context"));
   assert.ok(howTo.includes("code_index"));
@@ -154,7 +154,7 @@ test("E2E Release Pipeline: detects README drift -> fixes -> PRE_PUBLISH_PASS ->
     // Step 2: Repair docs and rebuild website catalog -> PRE_PUBLISH_PASS
     fs.writeFileSync(path.join(tmp, "README.md"), "# DevWorkflow 4.0.0\n");
     fs.writeFileSync(path.join(tmp, "CHANGELOG.md"), "# Changelog\n## 4.0.0\n");
-    fs.writeFileSync(path.join(tmp, "web", "lib", "catalog.generated.ts"), `export const C = { "version": "4.0.0", toolCount: TOOL_COUNT };`);
+    fs.writeFileSync(path.join(tmp, "web", "lib", "catalog.generated.ts"), `export const C = { "version": "4.0.0", toolCount: ${TOOL_COUNT} };`);
     const step2 = await handleDevWorkflowV2Tool("audit", {
       category: "release_docs",
       projectDir: tmp,
@@ -190,7 +190,7 @@ test("E2E Release Pipeline: detects README drift -> fixes -> PRE_PUBLISH_PASS ->
       npmPublishedVersion: "4.0.0",
       npmLatestVersion: "4.0.0",
       runtimeVersion: "4.0.0",
-      liveWebsiteHtml: "<html><body>DevWorkflow 4.0.0 — TOOL_COUNT Canonical MCP Tools</body></html>",
+      liveWebsiteHtml: `<html><body>DevWorkflow 4.0.0 - ${TOOL_COUNT} Canonical MCP Tools</body></html>`,
     });
     assert.equal(step4.ok, true);
     assert.equal(step4.stageVerdict, "POST_PUBLISH_PASS");

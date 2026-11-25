@@ -524,7 +524,7 @@ test("RG-11: release_docs_gate reports LIVE_SYNCED when live website HTML matche
     projectDir: REPO_ROOT,
     expectedVersion: PKG_VERSION,
     expectedToolCount: TOOL_COUNT,
-    liveWebsiteHtml: `<html><body>DevWorkflow ${PKG_VERSION} — TOOL_COUNT canonical tools: audit, code_index, code_context</body></html>`,
+    liveWebsiteHtml: `<html><body>DevWorkflow ${PKG_VERSION} - ${TOOL_COUNT} canonical tools: audit, code_index, code_context</body></html>`,
   });
   assert.equal(res.ok, true);
   assert.equal(res.checks.find((c) => c.name === "live_website").status, "LIVE_SYNCED");
