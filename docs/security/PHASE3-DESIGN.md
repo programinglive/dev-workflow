@@ -67,3 +67,30 @@ The rule enforced by `governance/exceptions.js:103-108` is that `owner !== appro
 5. Only in a later major/minor release, consider changing the default.
 
 Compatibility risks: existing automation that calls the four tools without a token keeps working until step 4; after step 4 those clients need an issued token. Adding `approvalToken` to tool schemas increases the prompt payload slightly for `core` and `standard` profiles, so the token estimates in `src/tool-profile-cost.js` must be recomputed. Team mode may reject existing waivers whose approver was not recorded, so migration must allow legacy records to remain visible but unusable under `DEVWF_REQUIRE_EXCEPTION=1`. Any change to `governance/engine.js` must preserve the existing `evaluateGovernanceGate` call sites at `:182` and `:206`.
+
+## 7. Phase 3 stage 1 implementation plan (small commits)
+
+Stage 1 covers design steps 1-3 from section 6: optional token acceptance, a shared validator, and interactive CLI issuance. `DEVWF_REQUIRE_EXCEPTION` enforcement is deliberately deferred to stage 2.
+
+1. `test: cover approvalToken inputs for the four waiver tools`
+   - Write failing tests first: no token, unknown token, expired token, wrong repository, `owner === approver`, wrong caller identity, and valid token for `skip_tests`, `waive_documentation`, `waive_dod_item`, `skip_release` (`tools/handler-modules/workflow-handlers.js:1291-1335`, `:1610-1655`; `tools/handler-modules/dod-handlers.js:205+`; `tools/handler-modules/release-handlers.js:426+`).
+   - Assert state is unchanged on every refusal.
+   - Compatibility: no production change; all tests fail against current code.
+2. `feat(exceptions): add a shared single-use token validator`
+   - Implement a helper that wraps `validatePolicyException` (`governance/exceptions.js:71,92-126`), checks expiry, caller binding and single use, and returns a structured decision. Do not wire callers yet.
+   - Add unit tests for the helper: valid, expired, self-approved, wrong scope, reused, tampered.
+   - Compatibility: no user-visible change.
+3. `feat(tools): accept approvalToken without requiring it`
+   - Add the optional argument to the four tool schemas in `tools/definitions.js` and call the validator from the four handlers before their state mutations.
+   - Tests from commit 1 turn green: invalid tokens refuse, valid tokens are consumed and recorded in history.
+   - Compatibility: callers that omit the token keep the current behavior; prompt payload grows slightly, so recompute `src/tool-profile-cost.js` estimates in the same commit.
+4. `feat(cli): issue single-use exception tokens interactively`
+   - Add `devwf exception issue` with forced TTY confirmation, solo/team modes, short expiry, and caller binding; refuse non-interactive issuance.
+   - Write tests first for TTY versus piped stdin, solo versus team role assignment, and the guarantee that the token never appears in MCP responses.
+   - Add history projection so `get_workflow_status` shows the approver and expiry.
+   - Compatibility: new command is additive; no existing command changes.
+5. `docs: describe exception tokens and migration`
+   - Update README, CHANGELOG and this design with the new command and the fact that enforcement remains opt-in until stage 2.
+   - No behavior change.
+
+Stage 2 (not part of this plan): `DEVWF_REQUIRE_EXCEPTION=1` enforcement, CI pre-provisioning guidance, and a later decision on making the requirement default. Backward-compatibility risk for stage 1 is limited to the extra schema field and token-estimate drift; no waiver becomes mandatory and no existing automation breaks.
