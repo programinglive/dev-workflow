@@ -30,6 +30,7 @@
     "lint": "node scripts/lint.mjs",
     "toolchain:doctor": "node scripts/toolchain-doctor.mjs",
     "check": "node --check index.js",
+    "prepublishOnly": "node --no-deprecation --import ./tests/setup-env.js --test tests/npm-packaging.test.js",
     "prepare": "node scripts/install-husky.js",
     "postinstall": "node install.js",
     "release": "commiter release",
