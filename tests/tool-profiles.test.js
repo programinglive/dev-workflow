@@ -28,6 +28,7 @@ import { renderDocGateFailure } from "../tools/handler-modules/docs.js";
 import { getContinueGuidance } from "../tools/handler-modules/shared.js";
 import { withWorkflowState, createRequest, createGitMock, testUtils, bindTaskToRepo } from "./test-helpers.js";
 
+const TOOL_COUNT = getAllToolDefinitions().length;
 const ALL_TOOL_NAMES = getAllToolDefinitions().map((tool) => tool.name);
 
 function withProfile(profile, fn) {
@@ -91,10 +92,10 @@ async function callTool(name, args, workflowState, git, exec) {
   });
 }
 
-test("default profile exposes all 66 tools", () => {
+test("default profile exposes all TOOL_COUNT tools", () => {
   withProfile(null, () => {
-    assert.equal(exposedNames().length, 66);
-    assert.equal(getAllToolDefinitions().length, 66);
+    assert.equal(exposedNames().length, TOOL_COUNT);
+    assert.equal(getAllToolDefinitions().length, TOOL_COUNT);
   });
 });
 
@@ -118,7 +119,7 @@ test("standard profile exposes core plus 12 operational tools", () => {
 
 test("full profile exposes every registered tool", () => {
   withProfile("full", () => {
-    assert.equal(exposedNames().length, 66);
+    assert.equal(exposedNames().length, TOOL_COUNT);
   });
 });
 
@@ -126,7 +127,7 @@ test("unknown profile values fall back to full instead of hiding tools", () => {
   assert.equal(resolveToolProfile("nonsense"), "full");
   assert.equal(resolveToolProfile(""), "full");
   withProfile("nonsense", () => {
-    assert.equal(exposedNames().length, 66);
+    assert.equal(exposedNames().length, TOOL_COUNT);
   });
 });
 
@@ -172,12 +173,12 @@ test("token estimate shrinks with the profile and is labelled as an estimate", (
 
   assert.equal(core.tools, 18);
   assert.equal(standard.tools, 30);
-  assert.equal(full.tools, 66);
+  assert.equal(full.tools, TOOL_COUNT);
   assert.ok(core.estimatedTokens < standard.estimatedTokens);
   assert.ok(standard.estimatedTokens < full.estimatedTokens);
   for (const cost of [core, standard, full]) {
     assert.match(cost.estimator, /estimate/i);
-    assert.equal(cost.registeredTools, 66, "the denominator is the whole catalog");
+    assert.equal(cost.registeredTools, TOOL_COUNT, "the denominator is the whole catalog");
     assert.ok(cost.estimatedTokens > 0);
   }
 });
