@@ -1,10 +1,5 @@
 #!/usr/bin/env node
 
-/**
- * @zettly-code DWF-TOOL-PROFILES-003
- * @purpose Serve profile-filtered tool instructions so a core session never receives guidance for tools its own tools/list hides.
- */
-
 import "dotenv/config";
 import { safeLog, sanitize, securityOutputFilter } from './security/sanitizer.js';
 import { securityMode } from './security/policy.js';
@@ -42,8 +37,7 @@ import {
 import { WorkflowState, sessionKeyFromRequest, reportToMonitorSafe, resolveStateFile, resolveHistoryFile } from "./workflow-state.js";
 import { resolveRequestSession } from "./session-scope.js";
 import { getToolList } from "./tools/definitions.js";
-import { buildWorkflowInstructions, ENGLISH_IMPLEMENTATION_RULE } from './workflow-guidance.js';
-import { getToolProfile } from './src/tool-profiles.js';
+import { WORKFLOW_INSTRUCTIONS, ENGLISH_IMPLEMENTATION_RULE } from './workflow-guidance.js';
 import { handleToolCall } from "./tools/handlers.js";
 import { handleDropTask } from "./tools/handler-modules/commit-handlers.js";
 import { setToolchain } from "./monitor.js";
@@ -70,7 +64,7 @@ export const server = new Server(
       tools: {},
       prompts: {},
     },
-    instructions: buildWorkflowInstructions(getToolProfile()),
+    instructions: WORKFLOW_INSTRUCTIONS,
   }
 );
 
