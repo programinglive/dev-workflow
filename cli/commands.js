@@ -1,4 +1,6 @@
 /**
+ * @zettly-code DWF-TOOL-PROFILES-012
+ * @purpose Show the active tool profile, tool count and estimated token cost in `devwf doctor`, and record the selected profile from `devwf setup`.
  * The five `devwf` subcommands.
  *
  * WHY DEPENDENCIES ARE INJECTED
@@ -36,6 +38,8 @@ import { formatHumanReport } from "../audit/report.js";
 import { handleDevWorkflowV2Tool } from "../src/engineering-audit.js";
 import { writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
+import { getToolProfile } from "../src/tool-profiles.js";
+import { estimateToolCatalogCost, TOKEN_ESTIMATOR_LABEL } from "../src/tool-profile-cost.js";
 import os from "node:os";
 
 const requireCjs = createRequire(import.meta.url);
@@ -358,7 +362,22 @@ export async function runCommand({
     out.write("  Storage Engine: better-sqlite3 (OK)");
     out.write("  Execution Mode: Local-first (OK)");
     out.write(`  Zettly Mode: ${zettlyStatus.mode}`);
-    return { ok: nodeOk, zettlyMode: zettlyStatus.mode };
+    const activeToolProfile = getToolProfile(env.DEVWF_TOOL_PROFILE);
+    const toolCost = estimateToolCatalogCost(activeToolProfile);
+    const profileSource = env.DEVWF_TOOL_PROFILE
+      ? "DEVWF_TOOL_PROFILE"
+      : "profile.json or default";
+    out.write(`  Tool Profile: ${activeToolProfile} (${toolCost.tools} of ${toolCost.registeredTools} tools, ${profileSource})`);
+    out.write(
+      `  Prompt Budget: ~${toolCost.estimatedTokens} tokens (tools + instructions, ${TOKEN_ESTIMATOR_LABEL})`,
+    );
+    return {
+      ok: nodeOk,
+      zettlyMode: zettlyStatus.mode,
+      toolProfile: activeToolProfile,
+      toolCount: toolCost.tools,
+      estimatedTokens: toolCost.estimatedTokens,
+    };
   }
 
   if (command === "setup") {
@@ -366,11 +385,18 @@ export async function runCommand({
       env,
       skipZettly: Boolean(args.skipZettly),
       dryRun: Boolean(args.dryRun),
+      toolProfile: args.profile || null,
     });
     if (args.json) {
       out.write(JSON.stringify(result, null, 2));
     } else {
       out.write(`DevWorkflow Setup: ${result.action} (${result.mode})`);
+      if (result.toolProfile) {
+        const cost = estimateToolCatalogCost(result.toolProfile);
+        out.write(
+          `  Tool Profile: ${result.toolProfile} (${cost.tools} tools, ~${cost.estimatedTokens} tokens ${TOKEN_ESTIMATOR_LABEL})`,
+        );
+      }
     }
     return result;
   }

@@ -1,8 +1,13 @@
+/**
+ * @zettly-code DWF-TOOL-PROFILES-009
+ * @purpose Emit lifecycle next-step lists that only reference tools registered in the active profile.
+ */
 import { existsSync } from "node:fs";
 import { classify } from '../../security/policy.js';
 import { sanitize } from '../../security/sanitizer.js';
 import { resolveInitialGovernance, loadPolicies, normalizeRepoSlug } from "../../governance/engine.js";
 import { textResponse, isReleaseSatisfied, isErrorResponse, ensurePrdExists, loadDocGateInputs } from "./shared.js";
+import { getToolProfile, isToolAllowedInProfile } from "../../src/tool-profiles.js";
 import { validateItemTexts } from "./dod.js";
 import {
   validatePlanSteps,
@@ -238,7 +243,9 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
     return textResponse(
       `⚠️ This task was handed over to ${handoff.to} by ${handoff.from}${handoff.at ? ` at ${handoff.at}` : ''}. ` +
       `Reason: ${handoff.reason}. The source machine must not keep working on it. ` +
-      `If this machine should resume locally, call 'acknowledge_handover' first.`
+      (isToolAllowedInProfile("acknowledge_handover")
+        ? `If this machine should resume locally, call 'acknowledge_handover' first.`
+        : `This profile cannot claim the handover; set DEVWF_TOOL_PROFILE=full to resume it on this machine.`)
     );
   }
   // One writer per repo.
@@ -1155,8 +1162,10 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
     `✅ Task Started: ${args.description}\n\n${project.message}${warningBlock}${claimBlock}${drawNote}\n\n` +
       cliTip +
       `📋 Definition of Done (${workflowState.state.definitionOfDone.length} items, all still open):\n${dodLines}\n` +
-      `   Prove each item with 'mark_dod_item' { id, evidence } once it is genuinely proven,\n` +
-      `   or exclude it with 'waive_dod_item' { id, reason } when it is truly irrelevant.\n\n` +
+      `   Prove each item with 'mark_dod_item' { id, evidence } once it is genuinely proven` +
+      (isToolAllowedInProfile("waive_dod_item")
+        ? `,\n   or exclude it with 'waive_dod_item' { id, reason } when it is truly irrelevant.\n\n`
+        : `.\n   DoD waivers are not available in the active profile; set DEVWF_TOOL_PROFILE=full if an item is genuinely irrelevant.\n\n`) +
       (planDerived
         ? `⚠️ 'plan' was not sent, so a TEMPORARY plan was derived from the DoD.\n` +
           `   Its order is not necessarily the correct working order. Send 'plan' on 'start_task',\n` +
@@ -1164,7 +1173,7 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
         : `${renderPlanFull(workflowState.state.plan)}\n\n`) +
       mcpBlock +
       preflightBlock +
-      `🎯 Be conscious about what you're coding!\n\nWorkflow Steps:\n1. ✓ Start task & Zettly Draw flow recorded (current)\n2. ⏳ Refine feature flow with 'create_feature_flow' if needed\n3. ⏳ Fix/implement the feature\n4. ⏳ Prove each definition-of-done item\n5. ⏳ Create tests\n6. ⏳ Run tests (must pass!)\n7. ⏳ Create documentation\n8. ⏳ Run 'check_ready_to_commit'\n9. ⏳ Run 'commit_and_push' (commits and pushes)\n10. ⏳ Run 'perform_release' or 'skip_release' (when no release is needed)\n11. ⏳ Complete task\n12. ✓ Workflow closed\n\nReminder: Focus on writing clean, maintainable code!`
+      `🎯 Be conscious about what you're coding!\n\nWorkflow Steps:\n1. ✓ Start task & Zettly Draw flow recorded (current)\n2. ⏳ Refine feature flow with 'create_feature_flow' if needed\n3. ⏳ Fix/implement the feature\n4. ⏳ Prove each definition-of-done item\n5. ⏳ Create tests\n6. ⏳ Run tests (must pass!)\n7. ⏳ Create documentation\n8. ⏳ Run 'check_ready_to_commit'\n9. ⏳ Run 'commit_and_push' (commits and pushes)\n10. ⏳ ${isToolAllowedInProfile("skip_release") ? "Run 'perform_release' or 'skip_release' (when no release is needed)" : "Run 'perform_release'"}\n11. ⏳ Complete task\n12. ✓ Workflow closed\n\nReminder: Focus on writing clean, maintainable code!`
   );
 }
 
@@ -1216,7 +1225,7 @@ export async function handleMarkBugFixed(args, workflowState) {
   await workflowState.save();
 
   return textResponse(
-    `✅ Feature/Bug marked as fixed!\n\n⚠️ CRITICAL REMINDER: You MUST create tests now!\n\nNext Steps:\n1. ✓ Fix/implement feature\n2. ⏳ Create tests for: ${args.summary}\n3. ⏳ Run tests (must be green!)\n4. ⏳ Create documentation\n5. ⏳ Run 'check_ready_to_commit'\n6. ⏳ Run 'commit_and_push'\n7. ⏳ Run 'perform_release' (or 'skip_release' if no release applies)\n8. ⏳ Complete task\n\n🚫 DO NOT SKIP TESTING!`
+    `✅ Feature/Bug marked as fixed!\n\n⚠️ CRITICAL REMINDER: You MUST create tests now!\n\nNext Steps:\n1. ✓ Fix/implement feature\n2. ⏳ Create tests for: ${args.summary}\n3. ⏳ Run tests (must be green!)\n4. ⏳ Create documentation\n5. ⏳ Run 'check_ready_to_commit'\n6. ⏳ Run 'commit_and_push'\n7. ⏳ ${isToolAllowedInProfile("skip_release") ? "Run 'perform_release' (or 'skip_release' if no release applies)" : "Run 'perform_release'"}\n8. ⏳ Complete task\n\n🚫 DO NOT SKIP TESTING!`
   );
 }
 
@@ -1284,7 +1293,9 @@ export async function handleCreateTests(workflowState) {
   await workflowState.save();
 
   return textResponse(
-    "✅ Tests recorded!\n\nNext Steps:\n1. ✓ Fix/implement feature\n2. ✓ Create tests\n3. ⏳ Run tests (must be green!)\n4. ⏳ Create documentation\n5. ⏳ Run 'check_ready_to_commit'\n6. ⏳ Run 'commit_and_push'\n7. ⏳ Run 'perform_release' (or 'skip_release' if appropriate)\n8. ⏳ Complete task\n\n🧪 Run your test command and record the results using 'run_tests'."
+    "✅ Tests recorded!\n\nNext Steps:\n1. ✓ Fix/implement feature\n2. ✓ Create tests\n3. ⏳ Run tests (must be green!)\n4. ⏳ Create documentation\n5. ⏳ Run 'check_ready_to_commit'\n6. ⏳ Run 'commit_and_push'\n7. ⏳ Run 'perform_release'" +
+      (isToolAllowedInProfile("skip_release") ? " (or 'skip_release' if appropriate)" : "") +
+      "\n8. ⏳ Complete task\n\n🧪 Run your test command and record the results using 'run_tests'."
   );
 }
 
@@ -1330,7 +1341,7 @@ Next Steps:
 3. ⏳ Create/update documentation
 4. ⏳ Run 'check_ready_to_commit'
 5. ⏳ Run 'commit_and_push'
-6. ⏳ Run 'perform_release' or 'skip_release'
+6. ⏳ ${isToolAllowedInProfile("skip_release") ? "Run 'perform_release' or 'skip_release'" : "Run 'perform_release'"}
 7. ⏳ Complete task`
   );
 }
@@ -1394,7 +1405,7 @@ export async function handleRunTests(args, workflowState) {
   await reportEventSafe(workflowState.state, "tests_passed", args.testCommand, workflowState._sessionKey().key);
 
   return textResponse(
-    `✅ All tests passed! 🎉\n\nTest command: ${args.testCommand}\n\n📝 Now create or update documentation using 'create_documentation' with:\n- documentationType: "PRD", "README", "RELEASE_NOTES", "inline-comments", "API-docs", "changelog", or "other"\n- summary: Brief description of what was documented\n\nNext Steps:\n1. ✓ Fix/implement feature\n2. ✓ Create tests\n3. ✓ Run tests (GREEN!)\n4. ⏳ Create/update documentation\n5. ⏳ Run 'check_ready_to_commit'\n6. ⏳ Run 'commit_and_push'\n7. ⏳ Run 'perform_release' (or use 'skip_release' if no release is needed)\n8. ⏳ Complete task`
+    `✅ All tests passed! 🎉\n\nTest command: ${args.testCommand}\n\n📝 Now create or update documentation using 'create_documentation' with:\n- documentationType: "PRD", "README", "RELEASE_NOTES", "inline-comments", "API-docs", "changelog", or "other"\n- summary: Brief description of what was documented\n\nNext Steps:\n1. ✓ Fix/implement feature\n2. ✓ Create tests\n3. ✓ Run tests (GREEN!)\n4. ⏳ Create/update documentation\n5. ⏳ Run 'check_ready_to_commit'\n6. ⏳ Run 'commit_and_push'\n7. ⏳ ${isToolAllowedInProfile("skip_release") ? "Run 'perform_release' (or use 'skip_release' if no release is needed)" : "Run 'perform_release'"}\n8. ⏳ Complete task`
   );
 }
 
@@ -1521,7 +1532,9 @@ export async function handleCreateDocumentation(args, workflowState, context = {
           `What actually changed right now:\n${actual}\n\n` +
           `Sebutkan path relatif terhadap akar repo (contoh: "README.md"), bukan path absolut. ` +
           `Update the files first, then declare them again. ` +
-          `If the documentation truly does not need changes, use 'waive_documentation' { reason }.\n\n` +
+          (isToolAllowedInProfile("waive_documentation")
+            ? `If the documentation truly does not need changes, use 'waive_documentation' { reason }.\n\n`
+            : `If the documentation truly does not need changes, set DEVWF_TOOL_PROFILE=full to use the recorded waiver path.\n\n`) +
           `No state was changed.`
       );
     }
@@ -1578,8 +1591,10 @@ export async function handleCreateDocumentation(args, workflowState, context = {
       : `✅ Gerbang dokumentasi terpenuhi (${gate.status}).`
     : `⚠️ The documentation gate is not satisfied yet: ${gate.sourceChanged.length} source files ` +
       `changed without a documentation file.\n` +
-      `   'check_ready_to_commit' will refuse until you use 'files: [...]' ` +
-      `or 'waive_documentation'.`;
+      (isToolAllowedInProfile("waive_documentation")
+        ? `   'check_ready_to_commit' will refuse until you use 'files: [...]' ` +
+          `or 'waive_documentation'.`
+        : `   'check_ready_to_commit' will refuse until you update a documentation file and pass it as 'files: [...]'.`);
 
   return textResponse(
     `✅ Documentation created/updated!\n\n` +
@@ -1595,7 +1610,7 @@ export async function handleCreateDocumentation(args, workflowState, context = {
       `4. ✓ Create/update documentation\n` +
       `5. ⏳ Run 'check_ready_to_commit' to verify\n` +
       `6. ⏳ Run 'commit_and_push'\n` +
-      `7. ⏳ Run 'perform_release' (or 'skip_release' when applicable)\n` +
+      `7. ⏳ ${isToolAllowedInProfile("skip_release") ? "Run 'perform_release' (or 'skip_release' when applicable)" : "Run 'perform_release'"}\n` +
       `8. ⏳ Mark as complete with 'complete_task'`
   );
 }

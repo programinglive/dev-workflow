@@ -1,4 +1,8 @@
 /**
+ * @zettly-code DWF-TOOL-PROFILES-015
+ * @purpose Refuse a tools/call for a tool the active profile hides, using the profile data instead of a second hand-written tool list.
+ */
+/**
  * @zettly-code DWF-TOOL-DISPATCH-001
  * @purpose Central MCP tool dispatcher and post-call Zettly Todo / Draw / Sentry synchronization wrapper.
  * @invariant Route all 65 canonical MCP tools deterministically, pass integrationOptions to complete_task for automatic Sentry issue resolution, and sanitize all outputs.
@@ -8,6 +12,8 @@ import { evaluateDocGate, isGateSatisfied, formatRelativeAge, renderDocGateFailu
 import { assertSafeKnowledge } from '../../security/policy.js';
 import { safeLog, securityOutputFilter } from '../../security/sanitizer.js';
 import { withEnglishGuidance } from '../../workflow-guidance.js';
+import { getAllToolDefinitions } from '../definitions.js';
+import { isToolAllowedInProfile, unavailabilityMessage } from '../../src/tool-profiles.js';
 import { syncZettlyTask, flushZettlyOutbox } from '../../zettly-workflow.js';
 import { securityAudit } from '../../security/audit.js';
 import { auditSite } from '../../audit/site-audit.js';
@@ -548,11 +554,29 @@ async function dispatchToolCall({
   }
 }
 
+// The canonical catalog is static, so the name set is computed once instead of
+// rebuilding 65 schemas on every tool call.
+let registeredToolNames = null;
+function isRegisteredToolName(name) {
+  if (!registeredToolNames) {
+    registeredToolNames = new Set(getAllToolDefinitions().map((tool) => tool.name));
+  }
+  return registeredToolNames.has(name);
+}
+
 // Await every handler here so asynchronous rejections cannot bypass egress checks.
 export async function handleToolCall(context) {
   try {
     const {args,error}=context.normalizeRequestArgs(context.request.params.arguments);
     if(error) return securityOutputFilter(textResponse(error));
+    const requestedTool=context.request.params.name;
+    // A tool hidden by the active profile must be unreachable, not merely
+    // unlisted: an MCP client that cached an older tools/list would otherwise
+    // keep calling a tool this session never advertised. Unknown names still fall
+    // through to the dispatcher so its existing error message is unchanged.
+    if(!isToolAllowedInProfile(requestedTool)&&isRegisteredToolName(requestedTool)){
+      return securityOutputFilter(textResponse(unavailabilityMessage(requestedTool)));
+    }
     assertSafeKnowledge({tool:context.request.params.name,args});
     assertSafeToolCommand(context.request.params.name,args);
     if (context.workflowState) context.workflowState.lastConflict = null;
@@ -652,7 +676,10 @@ export async function handleToolCall(context) {
     if(error?.code==='PROJECT_OWNERSHIP_LOST'||error?.name==='ProjectOwnershipLostError') {
       return {isError:true,content:[{type:'text',text:
         `⚠️ Project/worktree ownership lost: ${error.message}\n\n` +
-        `If the temporary worktree was already removed, use 'force_complete_task' or 'drop_task' to reset the session.`}]};
+        `If the temporary worktree was already removed, ` +
+        (isToolAllowedInProfile("force_complete_task")
+          ? `use 'force_complete_task' or 'drop_task' to reset the session.`
+          : `use 'drop_task' to reset the session.`)}]};
     }
     safeLog('error','Tool request failed',error);
     return {isError:true,content:[{type:'text',text:'⚠️ Internal server error while processing the tool request.'}]};

@@ -57,6 +57,12 @@ const IGNORED_DIRS = new Set([
   "node_modules", "vendor", "dist", "build", ".git", ".next", "target", "__pycache__",
 ]);
 
+/**
+ * @zettly-code DWF-TOOL-PROFILES-006
+ * @purpose Keep the documentation gate honest when the active tool profile does not expose a waiver tool.
+ */
+import { getToolProfile, isToolAllowedInProfile } from "../../src/tool-profiles.js";
+
 export function normalizePath(value) {
   return String(value ?? "")
     .trim()
@@ -245,6 +251,7 @@ export function renderDocGateFailure({
   sourceChanged = [],
   readmePath = "",
   readmeAge = "",
+  profile = getToolProfile(),
 } = {}) {
   const list = sourceChanged.map((p) => `   • ${p}`).join("\n");
   const count = sourceChanged.length;
@@ -261,8 +268,11 @@ export function renderDocGateFailure({
     ` 1. Perbarui README/docs, lalu:\n` +
     `    create_documentation { documentationType: "README",\n` +
     `                           files: ["README.md"], summary: "..." }\n` +
-    ` 2. Kalau perubahan ini memang tidak mengubah apa pun yang didokumentasikan:\n` +
-    `    waive_documentation { reason: "..." }   ← alasan masuk history, bukan hilang\n\n` +
+    (isToolAllowedInProfile("waive_documentation", profile)
+      ? ` 2. Kalau perubahan ini memang tidak mengubah apa pun yang didokumentasikan:\n` +
+        `    waive_documentation { reason: "..." }   ← alasan masuk history, bukan hilang\n\n`
+      : ` 2. A documentation waiver is not available in profile '${profile}'.\n` +
+        `    Set DEVWF_TOOL_PROFILE=full (or update the documentation) and re-run this check.\n\n`) +
     `Tidak ada yang di-commit.`
   );
 }

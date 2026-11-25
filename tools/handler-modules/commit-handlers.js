@@ -1,4 +1,8 @@
 /**
+ * @zettly-code DWF-TOOL-PROFILES-016
+ * @purpose Keep completion, deployment and release guidance inside the active profile, so a refusal never recommends a tool that tools/call would reject.
+ */
+/**
  * @zettly-code DWF-COMMIT-COMPLETE-001
  * @purpose Handle commit_and_push, complete_task, force_complete_task, and drop_task lifecycle transitions including automatic Sentry issue resolution on task completion.
  * @invariant Enforce DoD, deployment, and governance gates before completing a task; auto-resolve any linked Sentry issue before closing the Zettly Todo and resetting state.
@@ -10,6 +14,7 @@ import { containsTestFilesInStatus } from "../../git-helpers.js";
 import { reportEventSafe } from "../../monitor.js";
 import { validateAiSuggestions, collectSignals, buildRecommendations, renderRecommendations } from "./next-steps.js";
 import { resolveProjectDir, setActiveProjectDir, getActiveProjectDir } from "../../exec.js";
+import { isToolAllowedInProfile } from "../../src/tool-profiles.js";
 import { captureRepositoryIdentity, assertTaskRepository } from "../../repository-identity.js";
 import path from "path";
 import fs from "fs";
@@ -366,11 +371,13 @@ export async function handleCommitAndPush(args, context) {
   const outstanding = openItems(dodItems, workflowState.state.dodRevision);
   if (outstanding.length > 0) {
     return textResponse(
-      `⚠️ Dibatalkan: ${outstanding.length} item Definition of Done belum terpenuhi.\n\n` +
+      `⚠️ Refused: ${outstanding.length} Definition of Done item(s) are still open.\n\n` +
         `${renderOutstanding(dodItems, workflowState.state.dodRevision)}\n\n` +
-        `Buktikan dengan 'mark_dod_item' { id, evidence }, atau kecualikan dengan ` +
-        `'waive_dod_item' { id, reason }.\n\n` +
-        `Tidak ada yang di-stage dan tidak ada yang di-commit.`
+        `Prove them with 'mark_dod_item' { id, evidence }` +
+        (isToolAllowedInProfile("waive_dod_item")
+          ? `, or exclude an irrelevant item with 'waive_dod_item' { id, reason }.\n\n`
+          : `. Definition-of-Done waivers are not available in the active profile, so every item must be proven.\n\n`) +
+        `Nothing was staged and nothing was committed.`
     );
   }
 
@@ -679,7 +686,9 @@ export async function handleCompleteTask(args, workflowState, context = {}) {
     return textResponse(
       `⚠️ Task ini belum punya Definition of Done, jadi belum bisa ditutup.\n\n` +
         `Isi dulu dengan 'set_definition_of_done' { items: [...] }, buktikan tiap item, lalu ulangi 'complete_task'.\n` +
-        `Kalau memang harus ditutup sekarang, pakai 'force_complete_task' dengan alasan - langkah itu tercatat.`
+        (isToolAllowedInProfile("force_complete_task")
+          ? `If it really must be closed now, use 'force_complete_task' with a reason - that path is recorded.`
+          : `If it really must be closed now, set DEVWF_TOOL_PROFILE=full to use the recorded force-complete path.`)
     );
   }
 
@@ -688,8 +697,11 @@ export async function handleCompleteTask(args, workflowState, context = {}) {
     return textResponse(
       `⚠️ ${dod.open} item Definition of Done masih terbuka:\n\n` +
         `${renderOutstanding(dodItems, dodState.dodRevision)}\n\n` +
-        `Buktikan dengan 'mark_dod_item' { id, evidence } atau kecualikan dengan ` +
-        `'waive_dod_item' { id, reason }.`
+        (isToolAllowedInProfile("waive_dod_item")
+          ? `Prove it with 'mark_dod_item' { id, evidence }, or exclude it with ` +
+            `'waive_dod_item' { id, reason }.`
+          : `Prove it with 'mark_dod_item' { id, evidence }. DoD waivers are not available in the active profile; ` +
+            `set DEVWF_TOOL_PROFILE=full if this item is genuinely irrelevant.`)
     );
   }
 
@@ -709,9 +721,14 @@ export async function handleCompleteTask(args, workflowState, context = {}) {
           `Langkah yang benar:\n` +
           `  1. rilis lewat tag: 'perform_release' (release script + push tag)\n` +
           `  2. tunggu pipeline CI/CD sampai selesai\n` +
-          `  3. catat tag yang benar-benar live: 'record_deployment' { tag, pipelineId, sites, evidence }\n\n` +
+          (isToolAllowedInProfile("record_deployment")
+            ? `  3. catat tag yang benar-benar live: 'record_deployment' { tag, pipelineId, sites, evidence }\n\n`
+            : `  3. record the tag that is actually live; the active profile does not expose the deployment recorder, ` +
+              `set DEVWF_TOOL_PROFILE=standard for it.\n\n`) +
           `Task BELUM ditutup.\n` +
-          `Kalau task ini memang tidak perlu rilis, pakai 'skip_release' dengan alasan tertulis.`
+          (isToolAllowedInProfile("skip_release")
+            ? `If this task genuinely needs no release, use 'skip_release' with a written reason.`
+            : `If this task genuinely needs no release, set DEVWF_TOOL_PROFILE=full to use the recorded skip-release path.`)
       );
     }
   }
@@ -824,8 +841,9 @@ export async function handleCompleteTask(args, workflowState, context = {}) {
   }
 
   const askForSuggestions = aiSuggestions.length === 0
-    ? `\n\n💡 Kirim 'nextSteps' saat 'complete_task' kalau ada yang Anda lihat selama ` +
-      `mengerjakan — itu yang dibaca sesi berikutnya lewat 'next_steps'.`
+    ? `\n\n💡 Pass 'nextSteps' to 'complete_task' with anything you noticed while ` +
+      `working so the next session can read them.` +
+      (isToolAllowedInProfile("next_steps") ? ` 'next_steps' shows the stored list later.` : "")
     : "";
 
   // Finished work should not leave litter behind. Only branches whose commits

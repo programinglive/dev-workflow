@@ -33,7 +33,8 @@ export const USAGE = `devwf - close sessions and cards without the web monitor
 
 Usage:
   devwf doctor                                 Check environment, node, and storage diagnostics
-  devwf setup [--skip-zettly] [--json]         Initialize local-first profile (preserves existing Zettly)
+  devwf setup [--skip-zettly] [--profile <core|standard|full>] [--json]
+                                               Initialize local-first profile (preserves existing Zettly)
   devwf zettly status|skip|connect|switch|disconnect|doctor
                                                Manage optional per-user Zettly integration
   devwf pair [--url <url>] [--json]            Generate pairing challenge for mobile companion
@@ -76,6 +77,10 @@ Exit codes:
 `;
 
 const FLAGS_WITH_VALUE = new Set([
+  /**
+   * @zettly-code DWF-TOOL-PROFILES-011
+   * @purpose Parse `devwf setup --profile` so profile selection is a first-class CLI flag.
+   */
   "--session",
   "--reason",
   "--token",
@@ -96,6 +101,7 @@ const FLAGS_WITH_VALUE = new Set([
   "--fail-on",
   "--parity-prefix",
   "--out",
+  "--profile",
 ]);
 const BOOLEAN_FLAGS = new Set(["--dry-run", "--orphans", "--help", "--version", "--json", "--authorize", "--all", "--resume", "--force", "--skip-zettly", "--confirm", "--token-stdin", "--include-external"]);
 
@@ -219,6 +225,7 @@ export function parseArgs(argv = []) {
       else if (word === "--out") args.out = value;
       else if (word === "--next-steps") args.nextSteps.push(value);
       else if (word === "--summary") args.summary = value;
+      else if (word === "--profile") args.profile = value;
       continue;
     }
 

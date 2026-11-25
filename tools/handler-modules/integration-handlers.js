@@ -4,6 +4,7 @@
  * @invariant Never create duplicate Zettly Todos when linking or resolving Sentry issues; auto-resolve linked Sentry issues on task completion without blocking terminal task closure if Sentry is unreachable.
  */
 import {textResponse} from './shared.js';
+import {isToolAllowedInProfile} from '../../src/tool-profiles.js';
 import {readSentryConfig,createSentryClient} from '../../sentry-client.js';
 import {resolveZettlyConfig,createZettlyClient} from '../../zettly-client.js';
 import {mkdir,writeFile} from 'node:fs/promises';
@@ -193,7 +194,9 @@ export async function checkErpSentryPreemption({projectDir='',allowErpPreemption
   const alertText=
    `🚨 P0 ERP SENTRY PREEMPTION ALERT (${erpIssues.length} unresolved issue(s) on erp.beautyworld.co.id):\n` +
    `${list}\n` +
-   `Action required: erp.beautyworld.co.id overrides all other projects. Checkpoint current work ('checkpoint_task') and start a bugfix task in erp.beautyworld.co.id with source: { system: "sentry", id: "${top.id}" }.`;
+   (isToolAllowedInProfile("checkpoint_task")
+     ? `Action required: erp.beautyworld.co.id overrides all other projects. Checkpoint current work ('checkpoint_task') and start a bugfix task in erp.beautyworld.co.id with source: { system: "sentry", id: "${top.id}" }.`
+     : `Action required: erp.beautyworld.co.id overrides all other projects. Close or drop the current task first (checkpointing is not available in the active profile), then start a bugfix task in erp.beautyworld.co.id with source: { system: "sentry", id: "${top.id}" }.`);
   if(mode==='start_task'){
    return {
     preempted:true,
