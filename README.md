@@ -59,6 +59,32 @@ For non-interactive / CI setups or contributing from source, see [docs/getting-s
 
 ---
 
+## Choose a Tool Profile
+
+Every MCP session pays for the tool catalog it receives. DevWorkflow can register a **smaller catalog** without changing what the workflow enforces: the same gates, the same evidence requirements, the same handler code. Only the visible tool list changes.
+
+```bash
+devwf setup --profile core    # or standard, full
+devwf doctor                  # shows the active profile, tool count and estimated prompt budget
+```
+
+| Profile | Tools | Prompt budget (estimate) | Choose it when |
+|---|---|---|---|
+| `core` | 18 | ~5.5k tokens (about 72% smaller) | You only need the task lifecycle: start → flow → fix → test → document → ready → commit → release → complete. The strictest profile: no waiver, force-complete, handoff or Sentry tools. |
+| `standard` | 30 | ~9.4k tokens (about 52% smaller) | You also want audit/autofix, code memory (`code_index`, `code_context`), release locking, deployment recording and project discovery. |
+| `full` | 65 | ~19.8k tokens | Everything, including waivers, forced completion, focus tools, handoff, Sentry and session tooling. **Default.** |
+
+Token figures are labelled estimates (tools plus server instructions, about three characters per token), not measurements — read them as relative cost, not exact billing.
+
+- Selection order: `DEVWF_TOOL_PROFILE` environment variable, then the `toolProfile` recorded by `devwf setup --profile` in `~/.devworkflow/profile.json`, then `full`.
+- An unknown or empty value falls back to `full`, so a typo can never lock a session out of its tools.
+- Calling a tool that the active profile hides is refused with a message naming the profile and how to switch, instead of a confusing "unknown tool".
+- Guidance adapts: instructions and error messages never tell you to call a tool your profile does not expose.
+- Profiles never weaken a gate. `core` simply has no waiver tools, so the smallest profile is also the strictest one.
+- Restart the MCP server after changing the profile; clients cache `tools/list` for the life of the process.
+
+---
+
 ## Connect an AI Coding Client
 
 Choose your MCP client guide:

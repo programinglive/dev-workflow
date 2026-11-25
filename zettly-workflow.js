@@ -1,4 +1,9 @@
+/**
+ * @zettly-code DWF-TOOL-PROFILES-018
+ * @purpose Report a pending Zettly sync without naming a retry tool the active profile hides.
+ */
 import {createHash,randomUUID} from 'node:crypto';
+import {isToolAllowedInProfile} from './src/tool-profiles.js';
 import {sanitize} from './security/sanitizer.js';
 import {normalizeProjectPath} from './db/session-key.js';
 import {StateConflict} from './db/errors.js';
@@ -78,7 +83,10 @@ function pending(state,error) {
   state.zettly.pending=true;
   state.zettly.lastError=error.code==='ZETTLY_ACCOUNT_MISMATCH'?'Zettly account does not match the configured owner':error.status?`Zettly HTTP ${error.status}`:error.uncertain?'Zettly creation result is uncertain':'Zettly synchronization unavailable';
   state.zettly.lastAttemptAt=Date.now();
-  return {ok:false,note:`Zettly sync pending: ${state.zettly.lastError}. Retry with sync_zettly_task; do not create a duplicate Todo.`};
+  return {ok:false,note:`Zettly sync pending: ${state.zettly.lastError}. ` +
+    (isToolAllowedInProfile('sync_zettly_task')
+      ? `Retry with sync_zettly_task; do not create a duplicate Todo.`
+      : `Do not create a duplicate Todo.`)};
 }
 function blockFor(state,status,args={}) {
   const safe=sanitize({task:state.taskDescription,project:state.projectDir,phase:status,plan:state.plan||[],dod:state.definitionOfDone||[],commit:args.commitMessage||state.lastCommitMessage||'',next:args.nextSteps||[],reason:args.reason||''});

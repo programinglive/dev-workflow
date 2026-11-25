@@ -1,8 +1,13 @@
+/**
+ * @zettly-code DWF-TOOL-PROFILES-017
+ * @purpose Report readiness hints and conflict recovery without naming a recovery or waiver tool the active profile hides.
+ */
 import { textResponse, formatChecklist, isReleaseSatisfied, getContinueGuidance, resetToCommitIfWorkingChanges, loadDocGateInputs } from "./shared.js";
 import { resolveInitialGovernance } from "../../governance/engine.js";
 import { handleCommitAndPush } from "./commit-handlers.js";
 import { openItems, renderChecklist, renderOutstanding, summarize } from "./dod.js";
 import { evaluateDocGate, isGateSatisfied, formatRelativeAge, renderDocGateFailure } from "./docs.js";
+import { getToolProfile, isToolAllowedInProfile } from "../../src/tool-profiles.js";
 import { existsSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
@@ -164,7 +169,9 @@ export async function handleGetWorkflowStatus(workflowState) {
       for (const o of orphans.slice(0, 5)) {
         opsNote += `\n   ${o.sessionKey}: "${o.taskDescription || "(tanpa task)"}" (${o.phase})`;
       }
-      opsNote += `\n   Pulihkan dengan resume_session bila masih diperlukan.`;
+      opsNote += isToolAllowedInProfile("resume_session")
+        ? `\n   Pulihkan dengan resume_session bila masih diperlukan.`
+        : `\n   Set DEVWF_TOOL_PROFILE=full to restore this state if it is still needed.`;
     }
   } catch {
     // Laporan tambahan tidak boleh menghalangi status.
@@ -496,7 +503,8 @@ export async function handleReadyCheck(workflowState, context = {}) {
     hints.push(
       "Mandatory Zettly Code (`@zettly-code`) bug-fix knowledge gate failed:\n" +
         `${lines}\n` +
-        "Every modified production source file in a bugfix task MUST carry a `@zettly-code` block comment (or sidecar JSON record in `engineering/zettly-code-sidecars/*.json`) with `@zettly-code <ID>`, `@purpose`, `@bug-fix`, `@root-cause` (or `@hypothesis`), and `@fix`, followed by `code_index({ mode: 'update' })`.",
+        "Every modified production source file in a bugfix task MUST carry a `@zettly-code` block comment (or sidecar JSON record in `engineering/zettly-code-sidecars/*.json`) with `@zettly-code <ID>`, `@purpose`, `@bug-fix`, `@root-cause` (or `@hypothesis`), and `@fix`" +
+          (isToolAllowedInProfile("code_index") ? ", followed by `code_index({ mode: 'update' })`." : "."),
     );
   }
 
@@ -508,7 +516,10 @@ export async function handleReadyCheck(workflowState, context = {}) {
   } else if (!dodSatisfied) {
     hints.push(
       `Item DoD yang belum terpenuhi:\n${renderOutstanding(dodItems, status.dodRevision)}\n` +
-        `Buktikan dengan 'mark_dod_item' { id, evidence } atau kecualikan dengan 'waive_dod_item' { id, reason }.`
+        (isToolAllowedInProfile("waive_dod_item")
+          ? `Prove it with 'mark_dod_item' { id, evidence }, or exclude it with 'waive_dod_item' { id, reason }.`
+          : `Prove it with 'mark_dod_item' { id, evidence }. DoD waivers are not available in the active profile; ` +
+            `set DEVWF_TOOL_PROFILE=full if this item is genuinely irrelevant.`)
     );
   }
 
@@ -624,7 +635,9 @@ export async function handleRerunWorkflow(workflowState) {
     dod.definitionOfDone.length > 0
       ? `\n\nDoD dipertahankan: ${dod.definitionOfDone.length} item` +
         ` (${dod.definitionOfDone.filter((item) => item.status === "done").length} sudah terbukti).` +
-        `\nItem yang sudah terbukti TIDAK perlu dibuktikan ulang - kecualikan dengan 'waive_dod_item',` +
+        (isToolAllowedInProfile("waive_dod_item")
+          ? `\nItems already proven do not need to be proven again - exclude them with 'waive_dod_item',`
+          : `\nItems already proven do not need to be proven again.`) +
         ` atau tambah item baru dengan 'set_definition_of_done' { items: [...], append: true }.`
       : "";
 

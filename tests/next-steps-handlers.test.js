@@ -93,7 +93,7 @@ test("complete_task tanpa nextSteps tetap menutup task dan meminta saran", async
   try {
     const r = await handleCompleteTask({ commitMessage: "feat: x" }, state, ctx());
     assert.match(text(r), /^✅/);
-    assert.match(text(r), /Kirim 'nextSteps'/);
+    assert.match(text(r), /Pass 'nextSteps' to 'complete_task'/);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

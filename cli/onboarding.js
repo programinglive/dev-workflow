@@ -1,4 +1,6 @@
 /**
+ * @zettly-code DWF-TOOL-PROFILES-013
+ * @purpose Validate and persist the tool profile chosen during `devwf setup` without touching the Zettly connection.
  * Local-first onboarding and isolated Zettly profile management.
  *
  * Shared by `install.js`, the `devwf` CLI (`setup`, `zettly`, `doctor`), and
@@ -11,6 +13,7 @@ import path from "node:path";
 import { CliError } from "./args.js";
 import { registerRuntimeSecret } from "../security/runtime-secrets.js";
 import { readZettlyConfig, resolveZettlyConfig, zettlySyncEnabled } from "../zettly-client.js";
+import { isKnownToolProfile, TOOL_PROFILE_NAMES } from "../src/tool-profiles.js";
 
 export const ONBOARDING_MODES = Object.freeze({
   LOCAL_FIRST_STANDALONE: "LOCAL_FIRST_STANDALONE",
@@ -184,10 +187,23 @@ async function verifyZettlyIdentity({ base, token, fetchImpl = fetch, timeoutMs 
   return { userId, accountLabel };
 }
 
-export async function runOnboardingSetup({ env = process.env, home = os.homedir(), skipZettly = false, dryRun = false } = {}) {
+export async function runOnboardingSetup({ env = process.env, home = os.homedir(), skipZettly = false, dryRun = false, toolProfile = null } = {}) {
   const paths = getProfilePaths(env, home);
   const existing = detectExistingZettlyConnection({ env, home });
   const currentProfile = readOnboardingProfileSync(env, home);
+  const requestedToolProfile =
+    toolProfile == null || String(toolProfile).trim() === "" ? null : validateToolProfile(toolProfile);
+  const effectiveToolProfile = requestedToolProfile || currentProfile?.toolProfile || null;
+
+  if (requestedToolProfile && requestedToolProfile !== currentProfile?.toolProfile && !dryRun) {
+    await writeProfile(paths, {
+      version: 1,
+      mode: currentProfile?.mode || ONBOARDING_MODES.LOCAL_FIRST_STANDALONE,
+      zettly: currentProfile?.zettly || null,
+      toolProfile: requestedToolProfile,
+      updatedAt: new Date().toISOString(),
+    });
+  }
 
   if (existing.connected) {
     return {
@@ -198,17 +214,19 @@ export async function runOnboardingSetup({ env = process.env, home = os.homedir(
       base: existing.base || undefined,
       expectedUserId: existing.expectedUserId,
       skipIgnoredBecauseConnected: Boolean(skipZettly),
+      toolProfile: effectiveToolProfile,
       dryRun,
     };
   }
 
   const targetMode = skipZettly ? ONBOARDING_MODES.ZETTLY_SKIPPED : ONBOARDING_MODES.LOCAL_FIRST_STANDALONE;
-  if (currentProfile?.mode === targetMode) {
+  if (currentProfile?.mode === targetMode && !requestedToolProfile) {
     return {
       ok: true,
       action: "ALREADY_CONFIGURED",
       mode: currentProfile.mode,
       standalone: true,
+      toolProfile: effectiveToolProfile,
       dryRun,
     };
   }
@@ -217,6 +235,7 @@ export async function runOnboardingSetup({ env = process.env, home = os.homedir(
     version: 1,
     mode: targetMode,
     zettly: currentProfile?.zettly || null,
+    toolProfile: effectiveToolProfile,
     updatedAt: new Date().toISOString(),
   };
   if (!dryRun) {
@@ -224,11 +243,26 @@ export async function runOnboardingSetup({ env = process.env, home = os.homedir(
   }
   return {
     ok: true,
-    action: skipZettly ? "ZETTLY_SKIPPED" : "INITIALIZED_LOCAL_FIRST",
+    action: requestedToolProfile ? "TOOL_PROFILE_RECORDED" : skipZettly ? "ZETTLY_SKIPPED" : "INITIALIZED_LOCAL_FIRST",
     mode: targetMode,
     standalone: true,
+    toolProfile: effectiveToolProfile,
     dryRun,
   };
+}
+
+/**
+ * Validate `devwf setup --profile`. A typo must fail loudly here instead of
+ * silently falling back to `full` at runtime.
+ */
+export function validateToolProfile(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!isKnownToolProfile(normalized)) {
+    throw new CliError(
+      `Unknown tool profile "${value}". Valid profiles: ${TOOL_PROFILE_NAMES.join(", ")}.`
+    );
+  }
+  return normalized;
 }
 
 export async function skipZettlySetup({ env = process.env, home = os.homedir(), dryRun = false } = {}) {
