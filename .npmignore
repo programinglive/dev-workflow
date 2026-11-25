@@ -57,6 +57,10 @@ coverage/
 docs/
 CHANGELOG.md
 test-output.html
+RELEASE-*-EVIDENCE.md
+scripts/setup-test-dbs.sh
+scripts/test-db-adapters.sh
+scripts/verify-push-branch.mjs
 
 # Internal fleet rollout, deployment, and known-hosts assets
 monitor-server/bw-tools-known-hosts
