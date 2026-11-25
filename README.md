@@ -101,6 +101,8 @@ export DEVWF_PREEMPTION_PROJECT_DIR_MARKERS='/work/payments-service'
 
 Sentry status changes are explicit: `set_sentry_issue_status { issue, status, reason, confirm: true }` is a full-profile-only mutation tool. `complete_task` never changes a Sentry issue unless `resolveSentry: true` or `DEVWF_SENTRY_AUTORESOLVE=1` is set, and it always reports the issue id, new status and result. The mutation actions on `link_sentry_issue` remain deprecated aliases with a warning.
 
+**Migrating from the previous default (breaking behavior):** set all four `DEVWF_PREEMPTION_*` variables above to restore the always-on gate, and set `DEVWF_SENTRY_AUTORESOLVE=1` (or pass `resolveSentry: true`) to restore automatic issue resolution. The `full` profile now exposes 66 tools; `core` and `standard` are unchanged.
+
 ---
 
 ## Connect an AI Coding Client

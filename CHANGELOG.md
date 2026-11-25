@@ -6,12 +6,27 @@ All notable changes to this project will be documented in this file. See [standa
 
 ### Bug Fixes
 * **packaging:** exclude runtime `state/` and generated `user-id` files from the published npm tarball; `.npmignore` previously ignored only `.state/`, so a state root pointed at `<repo>/state` could leak a per-machine identifier into a release. Version metadata synchronized to 3.1.5 across package, server and website.
+
 ## Unreleased (proposed 3.2.0)
 
 ### Breaking Behavior
 * **sentry:** `complete_task` no longer auto-resolves a linked Sentry issue by default. Pass `resolveSentry: true` or set `DEVWF_SENTRY_AUTORESOLVE=1` to restore the previous behavior; the response now names the issue id, new status and result. Proposed release number: 3.2.0.
 * **tools:** Sentry `resolve`/`unresolve`/`ignore` moves to `set_sentry_issue_status` with mandatory `confirm: true` and a written reason. The old `link_sentry_issue` actions remain deprecated aliases for at least two minor releases and print a warning. The full catalog grows from 65 to 66 tools; core and standard are unchanged.
 * **preemption:** the Sentry preemption gate is now OFF by default and must be configured explicitly with `DEVWF_PREEMPTION_ENABLED`, `DEVWF_PREEMPTION_SENTRY_PROJECT`, `DEVWF_PREEMPTION_QUERY`, and `DEVWF_PREEMPTION_PROJECT_DIR_MARKERS`. Installations that relied on the previous always-on gate must set these variables to restore the old behavior. The override flag is now `allowPreemptionOverride`; the previous name remains a deprecated alias and prints a warning. This is a breaking change in default behavior, not a version bump.
+
+### Migration to 3.2.0 (breaking behavior; version not bumped here)
+
+To restore the old always-on preemption gate, set all four variables before starting the MCP server:
+
+```
+DEVWF_PREEMPTION_ENABLED=1
+DEVWF_PREEMPTION_SENTRY_PROJECT=<your-sentry-project-slug>
+DEVWF_PREEMPTION_QUERY=is:unresolved project:<your-sentry-project-slug>
+DEVWF_PREEMPTION_PROJECT_DIR_MARKERS=/path/to/the-priority-project
+```
+
+To restore automatic Sentry resolution on `complete_task`, set `DEVWF_SENTRY_AUTORESOLVE=1` or pass `resolveSentry: true` on that call. Sentry status changes now also have a dedicated tool: `set_sentry_issue_status { issue, status, reason, confirm: true }`. The former mutation actions on `link_sentry_issue` still work as deprecated aliases and print a warning. The `full` profile exposes 66 tools instead of 65; `core` (18) and `standard` (30) are unchanged.
+
 ## [3.1.4](https://github.com/programinglive/dev-workflow/compare/v3.1.3...v3.1.4) (2026-11-25)
 
 ### 🐛 Bug Fixes
