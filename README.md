@@ -71,9 +71,9 @@ devwf doctor                  # shows the active profile, tool count and estimat
 
 | Profile | Tools | Prompt budget (estimate) | Choose it when |
 |---|---|---|---|
-| `core` | 18 | ~5.6k tokens (about 72% smaller) | You only need the task lifecycle: start → flow → fix → test → document → ready → commit → release → complete. The strictest profile: no waiver, force-complete, handoff or Sentry tools. |
-| `standard` | 30 | ~9.5k tokens (about 52% smaller) | You also want audit/autofix, code memory (`code_index`, `code_context`), release locking, deployment recording and project discovery. |
-| `full` | 65 | ~19.9k tokens | Everything, including waivers, forced completion, focus tools, handoff, Sentry and session tooling. **Default.** |
+| `core` | 18 | ~5.8k tokens (about 72% smaller) | You only need the task lifecycle: start → flow → fix → test → document → ready → commit → release → complete. The strictest profile: no waiver, force-complete, handoff or Sentry tools. |
+| `standard` | 30 | ~9.7k tokens (about 52% smaller) | You also want audit/autofix, code memory (`code_index`, `code_context`), release locking, deployment recording and project discovery. |
+| `full` | 65 | ~20.3k tokens | Everything, including waivers, forced completion, focus tools, handoff, Sentry and session tooling. **Default.** |
 
 Token figures are labelled estimates (tools plus server instructions, about three characters per token), not measurements — read them as relative cost, not exact billing.
 
