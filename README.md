@@ -71,9 +71,9 @@ devwf doctor                  # shows the active profile, tool count and estimat
 
 | Profile | Tools | Prompt budget (estimate) | Choose it when |
 |---|---|---|---|
-| `core` | 18 | ~5.5k tokens (about 72% smaller) | You only need the task lifecycle: start → flow → fix → test → document → ready → commit → release → complete. The strictest profile: no waiver, force-complete, handoff or Sentry tools. |
-| `standard` | 30 | ~9.4k tokens (about 52% smaller) | You also want audit/autofix, code memory (`code_index`, `code_context`), release locking, deployment recording and project discovery. |
-| `full` | 65 | ~19.8k tokens | Everything, including waivers, forced completion, focus tools, handoff, Sentry and session tooling. **Default.** |
+| `core` | 18 | ~5.6k tokens (about 72% smaller) | You only need the task lifecycle: start → flow → fix → test → document → ready → commit → release → complete. The strictest profile: no waiver, force-complete, handoff or Sentry tools. |
+| `standard` | 30 | ~9.5k tokens (about 52% smaller) | You also want audit/autofix, code memory (`code_index`, `code_context`), release locking, deployment recording and project discovery. |
+| `full` | 65 | ~19.9k tokens | Everything, including waivers, forced completion, focus tools, handoff, Sentry and session tooling. **Default.** |
 
 Token figures are labelled estimates (tools plus server instructions, about three characters per token), not measurements — read them as relative cost, not exact billing.
 
@@ -83,6 +83,21 @@ Token figures are labelled estimates (tools plus server instructions, about thre
 - Guidance adapts: instructions and error messages never tell you to call a tool your profile does not expose.
 - Profiles never weaken a gate. `core` simply has no waiver tools, so the smallest profile is also the strictest one.
 - Restart the MCP server after changing the profile; clients cache `tools/list` for the life of the process.
+
+---
+
+## Optional Sentry Preemption Gate
+
+The gate is **off by default**. Enable it only when one Sentry project must take priority over unrelated work:
+
+```bash
+export DEVWF_PREEMPTION_ENABLED=1
+export DEVWF_PREEMPTION_SENTRY_PROJECT=payments
+export DEVWF_PREEMPTION_QUERY='is:unresolved project:payments'
+export DEVWF_PREEMPTION_PROJECT_DIR_MARKERS='/work/payments-service'
+```
+
+`DEVWF_PREEMPTION_PROJECT_DIR_MARKERS` is a comma-separated list of path fragments identifying the project directory that is allowed to continue while its issues are open. With the gate enabled, a `start_task` for any other directory is refused while matching unresolved issues exist. If Sentry is unavailable, times out, or the configuration is incomplete, the gate **fails closed**. `allowPreemptionOverride: true` remains the emergency bypass; the former override name is a deprecated alias and prints a warning. Previous releases enabled this gate unconditionally for a single project — to restore that behavior, set the four variables above.
 
 ---
 

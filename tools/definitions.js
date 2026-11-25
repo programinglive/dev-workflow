@@ -160,10 +160,17 @@ export function getAllToolDefinitions() {
               "two sessions on one working tree overwrite each other's files silently. Prefer closing the other " +
               "session or using a git worktree.",
           },
+          allowPreemptionOverride: {
+            type: "boolean",
+            description:
+              "Emergency override for a configured Sentry preemption gate. Only for the machine owner: it records a " +
+              "written bypass of a deliberate priority decision. Defaults to false and has no effect when the gate is disabled.",
+          },
           allowErpPreemptionOverride: {
             type: "boolean",
             description:
-              "Emergency override to allow starting a non-ERP task even when unresolved Sentry issues exist on project 'erp' (erp.beautyworld.co.id). Defaults to false.",
+              "Deprecated alias of allowPreemptionOverride. Kept for backward compatibility; its use is reported in the " +
+              "start_task response. New callers must use allowPreemptionOverride.",
           },
           mermaidFlow: {
             type: "string",

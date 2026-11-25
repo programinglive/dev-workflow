@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {handleIntegrationTool,prepareTaskSource,autoResolveLinkedSentryIssue,checkErpSentryPreemption,isErpBackendProjectDir} from '../tools/handler-modules/integration-handlers.js';
+import {handleIntegrationTool,prepareTaskSource,autoResolveLinkedSentryIssue,checkSentryPreemption} from '../tools/handler-modules/integration-handlers.js';
 import {handleCompleteTask} from '../tools/handler-modules/commit-handlers.js';
 import {syncZettlyTask,closeZettlyTask} from '../zettly-workflow.js';
 import {getToolList} from '../tools/definitions.js';
@@ -129,24 +129,26 @@ test('complete_task automatically resolves linked Sentry issues in Sentry before
  assert.match(text(res),/Sentry issue APP-1 \(123\) automatically marked as resolved/);
  assert.deepEqual(f.options.sentry.resolvedCalls,[{id:'123',status:'resolved'}]);
 });
-test('checkErpSentryPreemption blocks non-ERP start_task when unresolved project:erp issues exist, allows erp.beautyworld.co.id, and emits mid-task alerts',async()=>{
- const erpIssue={id:'7817922409',shortId:'ERP-63',title:'Allowed memory size exhausted on /report/getForecasting',permalink:'https://programinglive.sentry.io/issues/7817922409/',count:'25',project:{slug:'erp'}};
- const options={env:{},sentry:{organization:'programinglive',async listIssues(){return [erpIssue];}}};
- assert.equal(isErpBackendProjectDir('D:\\code\\erp.beautyworld.co.id'),true);
- assert.equal(isErpBackendProjectDir('D:\\code\\frontend_erp'),false);
- assert.equal(isErpBackendProjectDir('D:\\code\\clinic'),false);
- const blocked=await checkErpSentryPreemption({projectDir:'D:\\code\\clinic',mode:'start_task',options});
+test('preemption gate is disabled without explicit configuration and uses neutral configured wording', async()=>{
+ const issue={id:'7817922409',shortId:'APP-63',title:'Allowed memory size exhausted',permalink:'https://example.invalid/issues/7817922409/',count:'25',project:{slug:'payments'}};
+ const env={
+  DEVWF_PREEMPTION_ENABLED:'1',
+  DEVWF_PREEMPTION_SENTRY_PROJECT:'payments',
+  DEVWF_PREEMPTION_QUERY:'is:unresolved project:payments',
+  DEVWF_PREEMPTION_PROJECT_DIR_MARKERS:'/work/payments-service',
+ };
+ const sentry={organization:'example',async listIssues(){return [issue];}};
+ const disabled=await checkSentryPreemption({projectDir:'D:\\work\\other',mode:'start_task',options:{env:{},sentry}});
+ assert.equal(disabled.preempted,false);
+ const blocked=await checkSentryPreemption({projectDir:'D:\\work\\other',mode:'start_task',options:{env,sentry}});
  assert.equal(blocked.preempted,true);
  assert.equal(blocked.response.isError,true);
- assert.match(text(blocked.response),/P0 ERP SENTRY PREEMPTION GATE/);
- assert.match(text(blocked.response),/ERP-63/);
- const allowedErp=await checkErpSentryPreemption({projectDir:'D:\\code\\erp.beautyworld.co.id',mode:'start_task',options});
- assert.equal(allowedErp.preempted,false);
- assert.equal(allowedErp.response,null);
- const allowedOverride=await checkErpSentryPreemption({projectDir:'D:\\code\\clinic',allowErpPreemptionOverride:true,mode:'start_task',options});
- assert.equal(allowedOverride.preempted,false);
- const midTask=await checkErpSentryPreemption({projectDir:'D:\\code\\clinic',mode:'status',options});
+ assert.match(text(blocked.response),/SENTRY PREEMPTION GATE/);
+ assert.match(text(blocked.response),/APP-63/);
+ const exempt=await checkSentryPreemption({projectDir:'D:\\work\\payments-service',mode:'start_task',options:{env,sentry}});
+ assert.equal(exempt.preempted,false);
+ const midTask=await checkSentryPreemption({projectDir:'D:\\work\\other',mode:'status',options:{env,sentry}});
  assert.equal(midTask.preempted,true);
  assert.equal(midTask.response,null);
- assert.match(midTask.alertText,/P0 ERP SENTRY PREEMPTION ALERT/);
+ assert.match(midTask.alertText,/SENTRY PREEMPTION ALERT/);
 });
