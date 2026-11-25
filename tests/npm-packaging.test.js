@@ -44,6 +44,18 @@ test("npm pack excludes runtime state and generated identity files", () => {
   assert.deepEqual(leaked, [], "npm tarball must not contain runtime state or identity files");
 });
 
+test("npm pack excludes internal evidence and test helper files", () => {
+  const paths = packedPaths();
+  const excluded = paths.filter(
+    (file) =>
+      /^RELEASE-[^-]+-EVIDENCE\.md$/.test(file) ||
+      file === "scripts/setup-test-dbs.sh" ||
+      file === "scripts/test-db-adapters.sh" ||
+      file === "scripts/verify-push-branch.mjs",
+  );
+  assert.deepEqual(excluded, [], "internal evidence and test helpers must not be published");
+});
+
 test("npm pack keeps the files required to run the MCP server", () => {
   const paths = new Set(packedPaths());
   const required = [
