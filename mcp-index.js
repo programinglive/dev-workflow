@@ -194,7 +194,7 @@ export const MCP_ECOSYSTEM_INDEX = Object.freeze([
   {
     id: "clinic-helper",
     serverName: "clinic-helper",
-    endpoint: "Local MCP (Clinic ERP workspace)",
+    endpoint: "Local MCP workspace",
     category: "Clinic ERP (Laravel / Livewire / Beautyworld)",
     summary:
       "Diagnose Clinic ERP environment, run scoped Paratest suites, execute Artisan/Composer commands safely, inspect release plans, and query Clinic domain knowledge.",
