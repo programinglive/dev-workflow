@@ -51,6 +51,7 @@ test("npm pack keeps the files required to run the MCP server", () => {
     "README.md",
     "index.js",
     "cli/args.js",
+    "managed/fleet-providers.cjs",
     "tools/definitions.js",
     "src/tool-profiles.js",
     "src/tool-profile-cost.js",
@@ -58,8 +59,7 @@ test("npm pack keeps the files required to run the MCP server", () => {
     "src/vendor/zettly-code/src/index.js",
     "engineering/zettly-code-sidecars/gitignore-generated-artifacts.json",
   ];
-  const requiredPresent = required.filter((file) => fs.existsSync(path.join(ROOT, file)));
-  for (const file of requiredPresent) {
+  for (const file of required) {
     assert.ok(paths.has(file), `published package is missing required file ${file}`);
   }
 });
