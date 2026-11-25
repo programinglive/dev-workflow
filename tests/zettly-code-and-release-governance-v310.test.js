@@ -64,9 +64,9 @@ export function calculateInvoice(subtotal, discount) {
 // BF-01 .. BF-16: Bug-Fix Workflow & DevWorkflow MCP v3.1.0 Integration
 // ============================================================================
 
-test("BF-01: DevWorkflow v3.1.0 exposes exactly 65 canonical public tools (63 + code_index + code_context) with 0 aliases", () => {
+test("BF-01: DevWorkflow v3.1.0 exposes exactly 66 canonical public tools (63 + code_index + code_context) with 0 aliases", () => {
   const tools = getToolList();
-  assert.equal(tools.length, 65);
+  assert.equal(tools.length, 66);
   const names = new Set(tools.map((t) => t.name));
   assert.ok(names.has("code_index"));
   assert.ok(names.has("code_context"));
@@ -330,14 +330,14 @@ test("BF-14: code_index(verify) detects valid annotations and fresh index", { sk
   }
 });
 
-test("BF-15: audit(category='catalog') confirms 65 canonical tools, 0 aliases, and registered code_index/code_context metadata", async () => {
+test("BF-15: audit(category='catalog') confirms 66 canonical tools, 0 aliases, and registered code_index/code_context metadata", async () => {
   const report = await handleDevWorkflowV2Tool("audit", {
     category: "catalog",
     includeMatrix: false,
     includeInventory: false,
   });
-  assert.equal(report.summary.total_public_tools, 65);
-  assert.equal(report.summary.canonical_public_tools, 65);
+  assert.equal(report.summary.total_public_tools, 66);
+  assert.equal(report.summary.canonical_public_tools, 66);
   assert.equal(report.summary.compatibility_aliases, 0);
   assert.equal(report.summary.unmapped_tools_count, 0);
 });
@@ -402,7 +402,7 @@ test("RG-02: audit(category='release_docs') PASSES on current dev-workflow works
     category: "release_docs",
     projectDir: REPO_ROOT,
     expectedVersion: PKG_VERSION,
-    expectedToolCount: 65,
+    expectedToolCount: 66,
   });
   assert.equal(res.ok, true, `Expected release_docs gate to pass, got findings: ${JSON.stringify(res.findings)}`);
   assert.equal(res.status, "PASSED");
@@ -453,7 +453,7 @@ test("RG-06: release_docs_gate BLOCKS outdated website catalog.generated.ts vers
     fs.writeFileSync(path.join(tmp, "README.md"), "# DevWorkflow 3.1.0\n");
     fs.writeFileSync(path.join(tmp, "CHANGELOG.md"), "# Changelog\n## 3.1.0\n");
     fs.writeFileSync(path.join(tmp, "web", "lib", "catalog.generated.ts"), `export const CATALOG = { "version": "2.1.1", toolCount: 64 };`);
-    const res = await evaluateReleaseDocsGate({ projectDir: tmp, expectedToolCount: 65 });
+    const res = await evaluateReleaseDocsGate({ projectDir: tmp, expectedToolCount: 66 });
     assert.equal(res.ok, false);
     assert.ok(res.findings.some((f) => f.code === "WEBSITE_CATALOG_VERSION_DRIFT"));
     assert.ok(res.findings.some((f) => f.code === "WEBSITE_TOOL_COUNT_DRIFT"));
@@ -511,7 +511,7 @@ test("RG-10: release_docs_gate detects live website drift when HTML lacks curren
   const res = await evaluateReleaseDocsGate({
     projectDir: REPO_ROOT,
     expectedVersion: PKG_VERSION,
-    expectedToolCount: 65,
+    expectedToolCount: 66,
     liveWebsiteHtml: "<html><body>DevWorkflow v2.1.1 — use audit_code</body></html>",
   });
   assert.equal(res.ok, false);
@@ -522,8 +522,8 @@ test("RG-11: release_docs_gate reports LIVE_SYNCED when live website HTML matche
   const res = await evaluateReleaseDocsGate({
     projectDir: REPO_ROOT,
     expectedVersion: PKG_VERSION,
-    expectedToolCount: 65,
-    liveWebsiteHtml: `<html><body>DevWorkflow ${PKG_VERSION} — 65 canonical tools: audit, code_index, code_context</body></html>`,
+    expectedToolCount: 66,
+    liveWebsiteHtml: `<html><body>DevWorkflow ${PKG_VERSION} — 66 canonical tools: audit, code_index, code_context</body></html>`,
   });
   assert.equal(res.ok, true);
   assert.equal(res.checks.find((c) => c.name === "live_website").status, "LIVE_SYNCED");

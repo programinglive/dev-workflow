@@ -2,7 +2,7 @@
  * @zettly-code DWF-TOOL-PROFILES-001
  * @purpose Single source of truth for MCP tool profiles. A profile decides which
  * canonical tools are registered by `tools/list` and which are callable through
- * `tools/call`, so a small session can pay for 18 tools instead of 65 without
+ * `tools/call`, so a small session can pay for 18 tools instead of 66 without
  * forking the handler layer.
  * @invariant Profiles are data, not branching logic: every profile name, tool list
  * and description lives in this file. `full` resolves to every registered tool so a

@@ -87,6 +87,29 @@ export async function handleIntegrationTool(name,args={},workflowState,options={
     await writeFile(snapshotPath,JSON.stringify(sanitize(inventory),null,2)+'\n',{mode:0o600,flag:'wx'});
     return json({organization:inventory.organization,complete:inventory.complete,scope:inventory.scope,projectCount:inventory.projects.length,issueCount:inventory.issues.length,totalHits:inventory.totalHits,projects:inventory.projects,nextCursor:inventory.nextCursor,projectCursor:inventory.projectCursor,inconsistencies:inventory.inconsistencies,snapshotPath});
   }
+  if(name==='set_sentry_issue_status'){
+   if(args.confirm!==true)return failed('Changing a Sentry issue status is a mutation: pass confirm: true with a written reason.');
+   const reason=String(args.reason||'').trim();
+   if(reason.length<5)return failed('Provide a reason of at least 5 characters explaining why the Sentry issue status changes.');
+   const requested=String(args.status||'').trim();
+   const targetStatus=requested==='resolve'?'resolved':requested==='unresolve'?'unresolved':requested==='ignore'?'ignored':'';
+   if(!SENTRY_STATUSES.has(targetStatus))return failed("Invalid status: use 'resolve', 'unresolve', or 'ignore'.");
+   const candidateId=String(args.issue||args.issueId||'');
+   const targetId=issueId(candidateId)?candidateId:'';
+   if(!targetId)return failed('Provide a numeric Sentry issue id.');
+   if(typeof api.sentry.resolveIssue!=='function')return failed('Sentry client does not support issue status updates.');
+   const updated=await api.sentry.resolveIssue(targetId,{status:targetStatus});
+   if(String(updated.id)!==targetId)throw Error('Source identity changed');
+   const status=updated.status||targetStatus;
+   const linked=workflowState?.state?.zettly?.externalLinks?.sentry;
+   if(linked?.issueId===targetId&&workflowState?.state?.zettly){
+    const previous=workflowState.state.zettly.externalLinks;
+    workflowState.state.zettly.externalLinks={...previous,sentry:{...linked,status,resolvedAt:status==='resolved'?new Date().toISOString():null}};
+    try{const saved=await workflowState.save();if(saved?.verified===false||saved?.conflict)throw Error('Task link persistence was not verified');}
+    catch{if(workflowState.state?.zettly)workflowState.state.zettly.externalLinks=previous;}
+   }
+   return textResponse(`Sentry issue ${updated.shortId||targetId} (${targetId}) status changed to '${status}' (confirmed). Reason: ${reason}`);
+  }
   if(!issueId(args.issueId))return failed('Provide a numeric Sentry issueId.');
   if(name==='get_sentry_issue')return json(await api.sentry.getIssue(args.issueId));
   if(name!=='link_sentry_issue')return failed('Unknown integration tool.');
@@ -107,7 +130,7 @@ export async function handleIntegrationTool(name,args={},workflowState,options={
      catch{if(previous===undefined)delete state.zettly.externalLinks;else state.zettly.externalLinks=previous;}
     }
    }
-   return textResponse(`Sentry issue ${updated.shortId||updated.id} (${updated.id}) status updated to '${updated.status||targetStatus}'.${linkedTodoNote}`);
+   return textResponse(`⚠️ Deprecated: 'link_sentry_issue' action '${requestedAction}' is an alias; use 'set_sentry_issue_status' for Sentry mutations. Sentry issue ${updated.shortId||updated.id} (${updated.id}) status updated to '${updated.status||targetStatus}'.${linkedTodoNote}`);
   }
   if(requestedAction!=='link')return failed("Invalid action for link_sentry_issue: use 'link', 'resolve', 'unresolve', or 'ignore'.");
   if(!state?.workflowTaskId||!state.taskDescription||!Number.isSafeInteger(state.zettly?.todoId)||state.zettly.todoId<1)return failed('Start or resume a canonical workflow task with a linked Zettly Todo before linking an issue.');
@@ -122,26 +145,28 @@ export async function handleIntegrationTool(name,args={},workflowState,options={
    if(result?.verified===false||result?.conflict)throw Error('Task link persistence was not verified');
   }catch(error){if(workflowState.state===state){if(previous===undefined)delete state.zettly.externalLinks;else state.zettly.externalLinks=previous;}throw error;}
   return textResponse(`Verified Sentry issue ${source.shortId||source.id} linked to the existing Zettly Todo #${state.zettly.todoId}. No new task was created.`);
- }catch(error){return failed(`Integration request failed${Number.isInteger(error.status)?` (HTTP ${error.status})`:''}. Check the configured account, source IDs, service availability and workflow ownership before retrying. No provider error body was returned.`);}
+  }catch(error){return failed(`Integration request failed${Number.isInteger(error.status)?` (HTTP ${error.status})`:''}. Check the configured account, source IDs, service availability and workflow ownership before retrying. No provider error body was returned.`);}
 }
 
-export async function autoResolveLinkedSentryIssue(workflowState,options={}) {
+export async function autoResolveLinkedSentryIssue(workflowState,options={},enabled=false) {
   const state=workflowState?.state;
   const linkedSentry=state?.zettly?.externalLinks?.sentry;
   const originSentryId=state?.taskOrigin?.system==='sentry'&&issueId(String(state?.taskOrigin?.id||''))?String(state.taskOrigin.id):'';
   const targetId=issueId(String(linkedSentry?.issueId||''))?String(linkedSentry.issueId):originSentryId;
-  if(!targetId)return {attempted:false,ok:true,note:''};
+  if(!targetId)return {attempted:false,ok:true,changed:false,note:'Sentry: no issue status changed.'};
   const label=linkedSentry?.shortId||state?.taskOrigin?.label||targetId;
+  if(!enabled)return {attempted:false,ok:true,changed:false,issueId:targetId,shortId:label,note:`Sentry issue ${label} (${targetId}) was not modified: auto-resolve is disabled.`};
   try{
    const api=await clients(options);
-   if(!api.sentry||typeof api.sentry.resolveIssue!=='function')return {attempted:false,ok:false,issueId:targetId,shortId:label,note:`Sentry issue ${label} (${targetId}) was not auto-resolved because Sentry credentials are not configured.`};
+   if(!api.sentry||typeof api.sentry.resolveIssue!=='function')return {attempted:false,ok:false,changed:false,issueId:targetId,shortId:label,note:`Sentry issue ${label} (${targetId}) was not resolved because Sentry credentials are not configured.`};
    const resolved=await api.sentry.resolveIssue(targetId,{status:'resolved'});
    if(state?.zettly){
     state.zettly.externalLinks={...state.zettly.externalLinks,sentry:{...(linkedSentry||{}),organization:String(api.sentry.organization||linkedSentry?.organization||'').slice(0,100),issueId:resolved.id,shortId:String(resolved.shortId||label).slice(0,100),url:resolved.permalink||linkedSentry?.url||'',status:resolved.status||'resolved',resolvedAt:new Date().toISOString()}};
    }
-   return {attempted:true,ok:true,issueId:resolved.id,shortId:resolved.shortId||label,status:resolved.status||'resolved',note:`Sentry issue ${resolved.shortId||label} (${resolved.id}) automatically marked as resolved.`};
+   const status=resolved.status||'resolved';
+   return {attempted:true,ok:true,changed:true,issueId:resolved.id,shortId:resolved.shortId||label,status,result:'resolved',note:`Sentry issue ${resolved.shortId||label} (${resolved.id}) status changed to '${status}' (auto-resolve requested).`};
   }catch(error){
-   return {attempted:true,ok:false,issueId:targetId,shortId:label,note:`Sentry issue ${label} (${targetId}) could not be auto-resolved${Number.isInteger(error?.status)?` (HTTP ${error.status})`:''}; resolve it with link_sentry_issue { issueId: "${targetId}", action: "resolve" }.`};
+   return {attempted:true,ok:false,changed:false,issueId:targetId,shortId:label,note:`Sentry issue ${label} (${targetId}) could not be auto-resolved${Number.isInteger(error?.status)?` (HTTP ${error.status})`:''}; use 'set_sentry_issue_status' { issue: "${targetId}", status: "resolve", reason, confirm: true }.`};
   }
 }
 

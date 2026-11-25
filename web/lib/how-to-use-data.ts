@@ -145,7 +145,7 @@ All core health checks PASSED.`,
   "mcpStdio": {
     "handshake": "OK",
     "protocolVersion": "2024-11-05",
-    "toolsDiscovered": 65
+    "toolsDiscovered": 66
   }
 }`,
     tips: [

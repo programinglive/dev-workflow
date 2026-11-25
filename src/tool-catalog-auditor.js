@@ -1,7 +1,7 @@
 /**
  * @zettly-code DWF-CATALOG-AUDITOR-001
  * @purpose DevWorkflow MCP Tool Catalog Auditor, Semantic Duplication Classifier, Consolidation Planner & Automatic Catalog Regression Gate.
- * @invariant Enforce zero unmapped tools, zero compatibility aliases, and complete metadata provenance across all 65 canonical public MCP tools.
+ * @invariant Enforce zero unmapped tools, zero compatibility aliases, and complete metadata provenance across all 66 canonical public MCP tools.
  *
  * DevWorkflow MCP Tool Catalog Auditor, Semantic Duplication Classifier,
  * Consolidation Planner & Automatic Catalog Regression Gate (v2.1.5).
@@ -333,6 +333,21 @@ export const CANONICAL_TOOL_METADATA = Object.freeze({
     tests: ["tests/integration-handlers.test.js", "tests/sentry-client.test.js"],
     stability: "stable",
     capability: "Link a verified Sentry issue to the active workflow Todo or update its status (resolved/unresolved/ignored) in Sentry",
+  },
+  set_sentry_issue_status: {
+    category: "external_integrations",
+    handler: "handleIntegrationTool('set_sentry_issue_status')",
+    module: "tools/handler-modules/integration-handlers.js",
+    domainService: "sentryClient.resolveIssue + workflowState.save",
+    dependencies: ["sentry-client.js", "zettly-workflow.js"],
+    sideEffects: "Remote Sentry issue status write + local Zettly link update",
+    permissionLevel: "LOCAL_AND_REMOTE_SYNC_WRITE",
+    sessionScoped: true,
+    workflowRole: "Explicitly resolve, unresolve or ignore a Sentry issue with mandatory confirm and reason",
+    errorContract: "Refuses without confirm:true or a written reason; full profile only",
+    tests: ["tests/sentry-side-effects.test.js"],
+    stability: "stable",
+    capability: "Mutate a Sentry issue status with explicit confirmation",
   },
   sync_zettly_task: {
     category: "external_integrations",

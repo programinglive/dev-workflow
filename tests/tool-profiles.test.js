@@ -91,10 +91,10 @@ async function callTool(name, args, workflowState, git, exec) {
   });
 }
 
-test("default profile exposes all 65 tools", () => {
+test("default profile exposes all 66 tools", () => {
   withProfile(null, () => {
-    assert.equal(exposedNames().length, 65);
-    assert.equal(getAllToolDefinitions().length, 65);
+    assert.equal(exposedNames().length, 66);
+    assert.equal(getAllToolDefinitions().length, 66);
   });
 });
 
@@ -118,7 +118,7 @@ test("standard profile exposes core plus 12 operational tools", () => {
 
 test("full profile exposes every registered tool", () => {
   withProfile("full", () => {
-    assert.equal(exposedNames().length, 65);
+    assert.equal(exposedNames().length, 66);
   });
 });
 
@@ -126,7 +126,7 @@ test("unknown profile values fall back to full instead of hiding tools", () => {
   assert.equal(resolveToolProfile("nonsense"), "full");
   assert.equal(resolveToolProfile(""), "full");
   withProfile("nonsense", () => {
-    assert.equal(exposedNames().length, 65);
+    assert.equal(exposedNames().length, 66);
   });
 });
 
@@ -172,12 +172,12 @@ test("token estimate shrinks with the profile and is labelled as an estimate", (
 
   assert.equal(core.tools, 18);
   assert.equal(standard.tools, 30);
-  assert.equal(full.tools, 65);
+  assert.equal(full.tools, 66);
   assert.ok(core.estimatedTokens < standard.estimatedTokens);
   assert.ok(standard.estimatedTokens < full.estimatedTokens);
   for (const cost of [core, standard, full]) {
     assert.match(cost.estimator, /estimate/i);
-    assert.equal(cost.registeredTools, 65, "the denominator is the whole catalog");
+    assert.equal(cost.registeredTools, 66, "the denominator is the whole catalog");
     assert.ok(cost.estimatedTokens > 0);
   }
 });

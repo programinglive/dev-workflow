@@ -9,7 +9,7 @@ export const GENERATED_CATALOG = {
   "repositoryVisibility": "PUBLIC",
   "npmPubliclyPublished": true,
   "npmRegistryUrl": "https://www.npmjs.com/package/@programinglive/dev-workflow",
-  "mcpToolCount": 65,
+  "mcpToolCount": 66,
   "mcpTools": [
     {
       "name": "acknowledge_handover",
@@ -1042,7 +1042,7 @@ export const GENERATED_CATALOG = {
     },
     {
       "name": "inventory_sentry_issues",
-      "description": "Enumerate every accessible Sentry project and all issue pages within the explicit query and time window. Saves a sanitized device-local snapshot and returns per-project counts plus a complete flag. A capped, inconsistent or unfinished scan is not complete. Does not resolve issues or create tasks.",
+      "description": "Enumerate every accessible Sentry project and all issue pages within the explicit query and time window. Writes a device-local inventory snapshot with mode 0600. Saves a sanitized device-local snapshot and returns per-project counts plus a complete flag. A capped, inconsistent or unfinished scan is not complete. Does not resolve issues or create tasks.",
       "required": [],
       "params": [
         {
@@ -2010,6 +2010,50 @@ export const GENERATED_CATALOG = {
           "name": "steps",
           "type": "array",
           "description": "Ordered steps, one action per item.",
+          "required": true,
+          "enumValues": []
+        }
+      ]
+    },
+    {
+      "name": "set_sentry_issue_status",
+      "description": "Explicitly mutate a Sentry issue status (resolve, unresolve or ignore). A written reason and confirm:true are mandatory because this tool writes to the external Sentry API; full profile only.",
+      "required": [
+        "issue",
+        "status",
+        "reason",
+        "confirm"
+      ],
+      "params": [
+        {
+          "name": "issue",
+          "type": "string",
+          "description": "Numeric Sentry issue id.",
+          "required": true,
+          "enumValues": []
+        },
+        {
+          "name": "status",
+          "type": "string",
+          "description": "",
+          "required": true,
+          "enumValues": [
+            "resolve",
+            "unresolve",
+            "ignore"
+          ]
+        },
+        {
+          "name": "reason",
+          "type": "string",
+          "description": "Why the status changes; recorded in the response.",
+          "required": true,
+          "enumValues": []
+        },
+        {
+          "name": "confirm",
+          "type": "boolean",
+          "description": "Must be true to perform the mutation.",
           "required": true,
           "enumValues": []
         }

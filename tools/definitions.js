@@ -4,8 +4,8 @@
  */
 /**
  * @zettly-code DWF-SENTRY-DEFS-001
- * @purpose Authoritative 65-tool canonical MCP tool definitions catalog for DevWorkflow.
- * @invariant Maintain radical simplification (exactly 65 canonical public tools, zero duplicate wrappers); extend link_sentry_issue with action ('link' | 'resolve' | 'unresolve' | 'ignore') instead of adding a duplicate tool.
+ * @purpose Authoritative 66-tool canonical MCP tool definitions catalog for DevWorkflow.
+ * @invariant Maintain radical simplification (exactly 66 canonical public tools, zero duplicate wrappers); extend link_sentry_issue with action ('link' | 'resolve' | 'unresolve' | 'ignore') instead of adding a duplicate tool.
  */
 import {focusToolDefinitions} from '../focus-workflow.js';
 import {DEVWORKFLOW_V2_TOOL_DEFINITIONS} from '../src/engineering-audit.js';
@@ -26,7 +26,7 @@ export function getAllToolDefinitions() {
     },
     {
       name:'inventory_sentry_issues',
-      description:'Enumerate every accessible Sentry project and all issue pages within the explicit query and time window. Saves a sanitized device-local snapshot and returns per-project counts plus a complete flag. A capped, inconsistent or unfinished scan is not complete. Does not resolve issues or create tasks.',
+      description:'Enumerate every accessible Sentry project and all issue pages within the explicit query and time window. Writes a device-local inventory snapshot with mode 0600. Saves a sanitized device-local snapshot and returns per-project counts plus a complete flag. A capped, inconsistent or unfinished scan is not complete. Does not resolve issues or create tasks.',
       inputSchema:{type:'object',properties:{query:{type:'string',maxLength:500,description:'Default is:unresolved; use an empty query to inventory all statuses.'},statsPeriod:{type:'string',pattern:'^\\d{1,3}[dhmw]$',description:'Explicit Sentry retention window; defaults to90d.'},maxPages:{type:'integer',minimum:1,maximum:100,description:'Maximum pages per project/issue collection; defaults to100.'}},additionalProperties:false},
     },
     {
@@ -51,8 +51,13 @@ export function getAllToolDefinitions() {
     },
     {
       name:'link_sentry_issue',
-      description:'Verify and link a Sentry issue to the current canonical Zettly Todo, or natively resolve/unresolve/ignore a Sentry issue via the Sentry API (action: "link" | "resolve" | "unresolve" | "ignore"). When linked, complete_task also auto-resolves the Sentry issue upon task completion.',
+      description:'Verify and link a Sentry issue to the current canonical Zettly Todo. The action values "resolve", "unresolve" and "ignore" are deprecated aliases that still mutate Sentry but print a warning; use set_sentry_issue_status for status changes. A linked issue is not mutated by complete_task unless resolveSentry is true or DEVWF_SENTRY_AUTORESOLVE=1.',
       inputSchema:{type:'object',properties:{issueId:{type:'string',pattern:'^\\d{1,30}$'},action:{type:'string',enum:['link','resolve','unresolve','ignore'],description:'Defaults to "link". Pass "resolve" (or "unresolve" / "ignore") to update the issue status directly in Sentry.'},status:{type:'string',enum:['resolved','unresolved','ignored'],description:'Optional explicit Sentry status when action="resolve".'}},required:['issueId'],additionalProperties:false},
+    },
+    {
+      name:'set_sentry_issue_status',
+      description:'Explicitly mutate a Sentry issue status (resolve, unresolve or ignore). A written reason and confirm:true are mandatory because this tool writes to the external Sentry API; full profile only.',
+      inputSchema:{type:'object',properties:{issue:{type:'string',pattern:'^\\d{1,30}$',description:'Numeric Sentry issue id.'},status:{type:'string',enum:['resolve','unresolve','ignore']},reason:{type:'string',minLength:5,maxLength:300,description:'Why the status changes; recorded in the response.'},confirm:{type:'boolean',description:'Must be true to perform the mutation.'}},required:['issue','status','reason','confirm'],additionalProperties:false},
     },
     {
       name:'security_audit',
@@ -864,13 +869,23 @@ export function getAllToolDefinitions() {
         "tests, new TODOs in the diff, files left uncommitted) plus the 'nextSteps' you supply. " +
         (isToolAllowedInProfile("next_steps")
           ? "The recommendations are stored in history and readable later with 'next_steps'."
-          : "The recommendations are stored in history for the next session."),
+          : "The recommendations are stored in history for the next session.") +
+        (isToolAllowedInProfile("set_sentry_issue_status")
+          ? " A linked Sentry issue is reported explicitly; it is mutated only when 'resolveSentry' is true or DEVWF_SENTRY_AUTORESOLVE=1 (default off)."
+          : " A linked Sentry issue is reported explicitly and is not mutated by this profile."),
       inputSchema: {
         type: "object",
         properties: {
           commitMessage: {
             type: "string",
             description: "The commit message used",
+          },
+          resolveSentry: {
+            type: "boolean",
+            description:
+              "Opt in to mutating the linked Sentry issue to resolved during completion. Defaults to false; " +
+              "DEVWF_SENTRY_AUTORESOLVE=1 restores the previous always-on behavior. When enabled the issue id, " +
+              "new status and result are reported explicitly in the response.",
           },
           nextSteps: {
             type: "array",
