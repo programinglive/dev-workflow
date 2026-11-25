@@ -105,6 +105,16 @@ Sentry status changes are explicit: `set_sentry_issue_status { issue, status, re
 
 ---
 
+## Telemetry and privacy
+
+`code_index` can send a code-graph snapshot to external services. The snapshot contains the project slug, repository full name, branch, revision, machine hostname, index statistics, `@zettly-code` annotations and bug-fix records (`src/zettly-code-adapter.js:251-263`). It does **not** contain full source files. The snapshot is built only after a successful `initialize` or `update` run, unless `skipTelemetrySync` is passed (`src/zettly-code-adapter.js:397-405`).
+
+When enabled, data is posted to `<Zettly base>/api/v1/engineering/code-graph/sync` with a bearer token (`src/zettly-code-adapter.js:281-305`) and to the `zettly_code_graphs` collection through the configured central gateway (`src/zettly-code-adapter.js:313-317`, `:356-372`). Nothing is sent if no Zettly URL/token and no gateway URL are configured; the hosts come from configuration or local client configs (`src/zettly-code-adapter.js:150-174`), not from a hardcoded address.
+
+Opt out in any of three ways: set `DEVWF_ZETTLY_SYNC=0` (`zettly-client.js:9-13`), pass `skipTelemetrySync: true` to `code_index`, or simply do not configure Zettly credentials or a gateway. Telemetry failures are best-effort and never block local indexing (`src/zettly-code-adapter.js:406-408`).
+
+---
+
 ## Connect an AI Coding Client
 
 Choose your MCP client guide:
