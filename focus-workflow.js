@@ -1,6 +1,11 @@
+/**
+ * @zettly-code DWF-TOOL-PROFILES-004
+ * @purpose Explain the focus-closure step without naming a focus tool the active profile hides.
+ */
 import {resolveZettlyConfig,createZettlyClient} from './zettly-client.js';
 import {sanitize} from './security/sanitizer.js';
 import {handoffGuard} from './tools/handler-modules/checkpoint-handlers.js';
+import {getToolProfile,isToolAllowedInProfile} from './src/tool-profiles.js';
 
 const positive=value=>Number.isSafeInteger(value)&&value>0;
 const text=(value,max=2500)=>typeof value==='string'?value.slice(0,max):'';
@@ -100,13 +105,15 @@ export async function inspectFocusCompletionStatus(focusId,options={}) {
  }
 }
 
-export function formatFocusClosureGuidance(status) {
+export function formatFocusClosureGuidance(status, profile = getToolProfile()) {
  if(!status||status.checked!==true||!status.active)return '';
  const label=status.title?`Focus #${status.focusId} ("${status.title}")`:`Focus #${status.focusId}`;
  if(status.readyToClose){
   return (
    `\n\n🎯 Focus Ready to Close: ${label} now has 0 open tasks (${status.completed}/${status.total} completed).\n` +
-   `   Call 'complete_focus' { focusId: ${status.focusId}, evidence: "<concrete verification evidence>" } before telling the user everything is finished, so this focus does not remain open on the Today dashboard with "Needs Next Action".\n` +
+   (isToolAllowedInProfile('complete_focus', profile)
+     ? `   Call 'complete_focus' { focusId: ${status.focusId}, evidence: "<concrete verification evidence>" } before telling the user everything is finished, so this focus does not remain open on the Today dashboard with "Needs Next Action".\n`
+     : `   Set DEVWF_TOOL_PROFILE=full to close this focus with recorded evidence before telling the user everything is finished.\n`) +
    `   (Keep it active only if you are immediately adding follow-up tasks to this focus.)`
   );
  }

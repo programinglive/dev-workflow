@@ -1,12 +1,21 @@
 /**
+ * @zettly-code DWF-TOOL-PROFILES-014
+ * @purpose Expose the unfiltered tool catalog once, then filter it per profile so tools/list and the documentation gate agree on what exists.
+ */
+/**
  * @zettly-code DWF-SENTRY-DEFS-001
  * @purpose Authoritative 65-tool canonical MCP tool definitions catalog for DevWorkflow.
  * @invariant Maintain radical simplification (exactly 65 canonical public tools, zero duplicate wrappers); extend link_sentry_issue with action ('link' | 'resolve' | 'unresolve' | 'ignore') instead of adding a duplicate tool.
  */
 import {focusToolDefinitions} from '../focus-workflow.js';
 import {DEVWORKFLOW_V2_TOOL_DEFINITIONS} from '../src/engineering-audit.js';
+import {filterToolsByProfile, isToolAllowedInProfile} from '../src/tool-profiles.js';
 
-export function getToolList() {
+/**
+ * Unfiltered catalog. Catalog tooling and profile-cost estimation must see every
+ * registered tool regardless of the session profile.
+ */
+export function getAllToolDefinitions() {
   return [
     ...focusToolDefinitions,
     ...DEVWORKFLOW_V2_TOOL_DEFINITIONS,
@@ -126,8 +135,11 @@ export function getToolList() {
             description:
               "REQUIRED. The concrete conditions that must be true before this task counts as done, " +
               "one condition per item, for example ['build lulus', 'halaman login terverifikasi']. " +
-              "Each item must later be proven with 'mark_dod_item' (evidence required) or waived with " +
-              "'waive_dod_item' (reason required). A task cannot be committed or closed while any item is open.",
+              "Each item must later be proven with 'mark_dod_item' (evidence required)" +
+              (isToolAllowedInProfile("waive_dod_item")
+                ? " or waived with 'waive_dod_item' (reason required)"
+                : "") +
+              ". A task cannot be committed or closed while any item is open.",
           },
           plan: {
             type: "array",
@@ -843,7 +855,9 @@ export function getToolList() {
         "Mark the task as complete after successful commit & push. Resets workflow for next task. " +
         "Reports what to do next, built from facts this session produced (waived DoD items, skipped " +
         "tests, new TODOs in the diff, files left uncommitted) plus the 'nextSteps' you supply. " +
-        "The recommendations are stored in history and readable later with 'next_steps'.",
+        (isToolAllowedInProfile("next_steps")
+          ? "The recommendations are stored in history and readable later with 'next_steps'."
+          : "The recommendations are stored in history for the next session."),
       inputSchema: {
         type: "object",
         properties: {
@@ -858,7 +872,10 @@ export function getToolList() {
             description:
               "1-5 follow-ups you noticed while working that the tool cannot infer, 10-200 characters each, " +
               "e.g. ['refreshToken belum menangani clock skew']. Invalid values are rejected with an explanation " +
-              "rather than dropped. Stored in history and shown by 'next_steps' in the next session.",
+              "rather than dropped. Stored in history" +
+              (isToolAllowedInProfile("next_steps")
+                ? " and shown by 'next_steps' in the next session."
+                : " for the next session."),
           },
         },
         required: ["commitMessage"],
@@ -1031,7 +1048,10 @@ export function getToolList() {
               "Evidence for each open definition-of-done item, keyed by item id and applied just before the ready check, " +
               "for example { \"dod-1\": \"npm test -> 533 pass\" }. Required whenever an item is still open: the workflow " +
               "refuses to run at all rather than stop halfway through, because it cannot invent proof. Each value must be " +
-              "at least 5 characters. Items that do not apply must be waived with 'waive_dod_item' first.",
+              "at least 5 characters. Items that do not apply must be " +
+              (isToolAllowedInProfile("waive_dod_item")
+                ? "waived with 'waive_dod_item' first."
+                : "excluded with a recorded waiver, which the active profile does not provide."),
           },
           releaseType: {
             type: "string",
@@ -1259,4 +1279,12 @@ export function getToolList() {
       },
     },
   ];
+}
+
+/**
+ * Profile-filtered catalog. This is the single point that decides what
+ * `tools/list` registers; the `tools/call` dispatcher applies the same rule.
+ */
+export function getToolList() {
+  return filterToolsByProfile(getAllToolDefinitions());
 }

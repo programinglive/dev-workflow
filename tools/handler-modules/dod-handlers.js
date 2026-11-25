@@ -1,4 +1,8 @@
 /**
+ * @zettly-code DWF-TOOL-PROFILES-007
+ * @purpose Keep Definition-of-Done guidance limited to the tools the active profile exposes.
+ */
+/**
  * Handler untuk Definition of Done.
  *
  * Tipis dengan sengaja: aturan "apa yang sah" hidup di `dod.js`, dan handler di
@@ -16,6 +20,7 @@ import {
   nextItemId,
   renderChecklist,
 } from "./dod.js";
+import { isToolAllowedInProfile } from "../../src/tool-profiles.js";
 
 function noActiveTask() {
   return textResponse("⚠️ No active task. Use 'start_task' first, or 'set_definition_of_done' after starting one.");
@@ -74,7 +79,9 @@ export async function handleSetDefinitionOfDone(args, workflowState) {
         `⚠️ Daftar ini sudah punya ${proven.length} item yang terbukti atau dikecualikan:\n${itemList(state)}\n\n` +
           `Mengganti seluruh daftar akan membuang bukti itu. Pilih salah satu:\n` +
           `  - tambahkan item baru: set_definition_of_done { items: [...], append: true }\n` +
-          `  - mulai ulang workflow: rerun_workflow`,
+          (isToolAllowedInProfile("rerun_workflow")
+            ? `  - mulai ulang workflow: rerun_workflow`
+            : `  - set DEVWF_TOOL_PROFILE=full to restart the workflow with rerun_workflow`),
       );
     }
   }
@@ -112,7 +119,9 @@ export async function handleSetDefinitionOfDone(args, workflowState) {
   return textResponse(
     `✅ Definition of Done ${append ? "ditambah" : "disusun"}: ${items.length} item.\n\n` +
       renderChecklist(items, state.dodRevision) +
-      `\n\nBuktikan dengan 'mark_dod_item' { id, evidence } atau kecualikan dengan 'waive_dod_item' { id, reason }.`,
+      (isToolAllowedInProfile("waive_dod_item")
+        ? `\n\nBuktikan dengan 'mark_dod_item' { id, evidence } atau kecualikan dengan 'waive_dod_item' { id, reason }.`
+        : `\n\nProve it with 'mark_dod_item' { id, evidence }.`),
   );
 }
 

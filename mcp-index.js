@@ -1,4 +1,6 @@
 /**
+ * @zettly-code DWF-TOOL-PROFILES-005
+ * @purpose Offer ecosystem discovery only when the active profile registers the recommender tool.
  * Central MCP Ecosystem Index & Context-Aware Recommender.
  *
  * Since `dev-workflow` is always the first MCP server invoked in every coding
@@ -6,6 +8,8 @@
  * as the discovery index and router for all other MCP servers available across
  * our devices and central gateway (`http://127.0.0.1:3200/sse`).
  */
+
+import { isToolAllowedInProfile } from "./src/tool-profiles.js";
 
 export const MCP_ECOSYSTEM_INDEX = Object.freeze([
   {
@@ -656,9 +660,11 @@ export function formatMcpRecommendations(resultOrContext = {}) {
     );
   }
 
-  lines.push(
-    `💡 Tip: Run \`recommend_mcp_tools\` with \`{ "query": "<topic>" }\` or \`{ "includeAll": true }\` anytime to search all MCP tools in our ecosystem.`
-  );
+  if (isToolAllowedInProfile("recommend_mcp_tools")) {
+    lines.push(
+      `💡 Tip: Run \`recommend_mcp_tools\` with \`{ "query": "<topic>" }\` or \`{ "includeAll": true }\` anytime to search all MCP tools in our ecosystem.`
+    );
+  }
 
   return lines.join("\n");
 }

@@ -61,6 +61,15 @@ Before taking any action or answering user requests regarding code changes, chec
 
 **Do not bypass these steps. The MCP server will block commits and releases if any required step is skipped.**
 
+### Tool Profiles (`core`, `standard`, `full`)
+
+The server can register a subset of its tools without changing any gate. A session started with `DEVWF_TOOL_PROFILE=core` sees only the 18 lifecycle tools; `standard` adds audit/autofix, code memory, release locking, deployment recording and discovery; the default `full` exposes all 65.
+
+- When a tool you expect is missing, check `devwf doctor` first. The answer is usually "not in this profile", not "broken server". `tools/call` for a hidden tool returns an explicit message naming the active profile.
+- Do not treat a hidden tool as a broken gate. The workflow steps remain mandatory; the smaller profiles only omit optional escape hatches (waivers, forced completion, release skipping, handoff, focus and Sentry tooling), so the smallest profile is also the strictest one.
+- Guidance is profile-aware: startup instructions and error messages never name a tool the active profile hides. A test enforces this over every guidance response.
+- Switch with `DEVWF_TOOL_PROFILE` or `devwf setup --profile <name>`, then restart the MCP server. The environment variable wins over the recorded default, and an unknown value falls back to `full`.
+
 ### Mandatory Bug-Fix Knowledge & Open-Source Release Policies (v3.1.0+)
 
 - **Mandatory Bug-Fix Knowledge Policy (`BUG_FIX`):** Every verified bug fix MUST query `code_context` first, add or update a concise `@zettly-code` knowledge comment (or sidecar record for non-commentable files) documenting `@purpose`, `@bug-fix`, confirmed `@root-cause` (or unconfirmed `@hypothesis`), `@fix`, `@related`, and `@tests`, run `code_index(mode="update")`, and pass `audit(category="bugfix_knowledge")`.

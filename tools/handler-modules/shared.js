@@ -1,9 +1,14 @@
+/**
+ * @zettly-code DWF-TOOL-PROFILES-008
+ * @purpose Report the next workflow step without naming a tool the active profile hides.
+ */
 import fs from "fs/promises";
 import { existsSync } from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { sanitize } from '../../security/sanitizer.js';
 import { parseStatusEntries as defaultParseStatusEntries } from "../../git-helpers.js";
+import { getToolProfile, isToolAllowedInProfile } from "../../src/tool-profiles.js";
 
 export const PROJECT_SUMMARY_FILENAME = "project-summary.json";
 
@@ -119,7 +124,7 @@ export function generateProjectSummary(history) {
   return `🧠 Project Knowledge Summary\n\n📊 Stats\n- Total tasks completed: ${totalTasks}\n- Recent task mix: ${typeSummary}\n- Last active: ${lastActive}\n\n📝 Recent tasks (last 5)\n${history.slice(-5).reverse().map((e, i) => `${i + 1}. ${e.taskDescription} (${e.taskType})`).join("\n")}`;
 }
 
-export function getContinueGuidance(status) {
+export function getContinueGuidance(status, profile = getToolProfile()) {
   switch (status.currentPhase) {
     case "coding": {
       const task = status.taskDescription ? ` "${status.taskDescription}"` : "";
@@ -161,9 +166,19 @@ export function getContinueGuidance(status) {
     case "commit":
       return "All checks passed—run 'commit_and_push' with your commit message (and optional branch).";
     case "release":
-      return "Commit recorded. Execute 'perform_release' with the release command you ran to publish changes, or call 'skip_release' with a justification if no release is required.";
+      return (
+        "Commit recorded. Execute 'perform_release' with the release command you ran to publish changes" +
+        (isToolAllowedInProfile("skip_release", profile)
+          ? ", or call 'skip_release' with a justification if no release is required."
+          : ".")
+      );
     case "ready_to_complete":
-      return "Release recorded. Siapkan 'nextSteps' (1-5 butir, 10-200 karakter) saat 'complete_task' — apa yang sebaiknya dikerjakan berikutnya — lalu tutup dengan 'complete_task'. 'next_steps' menampilkan rekomendasi yang tersimpan di history.";
+      return (
+        "Release recorded. Prepare 'nextSteps' (1-5 items, 10-200 characters) when calling 'complete_task' - what should be done next - then close with 'complete_task'." +
+        (isToolAllowedInProfile("next_steps", profile)
+          ? " 'next_steps' shows the stored recommendations in a later session."
+          : "")
+      );
     default:
       return "Review your workflow progress and complete the next required step.";
   }

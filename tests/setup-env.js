@@ -56,6 +56,12 @@ process.env.DEVWF_MONITOR_URL = "";
 process.env.DEVWF_ZETTLY_SYNC = '0';
 process.env.DEVWF_REQUIRE_FOCUS = process.env.DEVWF_REQUIRE_FOCUS || '';
 
+// Tool profiles also resolve from ~/.devworkflow/profile.json. Pin the default
+// profile so a developer who ran `devwf setup --profile core` on their machine
+// does not change what the suite registers. Tests that exercise other profiles
+// set the variable themselves.
+process.env.DEVWF_TOOL_PROFILE = process.env.DEVWF_TOOL_PROFILE || 'full';
+
 function cleanup() {
   try {
     rmSync(stateDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
