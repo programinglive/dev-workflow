@@ -54,6 +54,23 @@ devwf setup
 devwf doctor
 ```
 
+> **npm 11+ / 12:** lifecycle scripts are blocked by default. SQLite storage needs
+> the native `better-sqlite3` binding, so allow its build script once for all
+> future global installs (keep any entries you already have):
+>
+> ```bash
+> npm config set allow-scripts "@github/keytar,@programinglive/dev-workflow,better-sqlite3" --location=user
+> ```
+>
+> If a previous install was made with scripts blocked, repair it with:
+>
+> ```bash
+> npm install -g --allow-scripts=@programinglive/dev-workflow,better-sqlite3 @programinglive/dev-workflow
+> ```
+>
+> `devwf doctor` must report `Storage Engine: better-sqlite3 (OK)`. Without the
+> binding, every MCP tool call fails with a sanitized diagnostic.
+
 That's it. DevWorkflow initializes in `LOCAL_FIRST_STANDALONE` mode with zero network calls and zero external accounts.
 
 For non-interactive / CI setups or contributing from source, see [docs/getting-started/installation.md](docs/getting-started/installation.md).

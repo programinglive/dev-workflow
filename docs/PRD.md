@@ -117,7 +117,7 @@ graph TD
 - Registry version 3.3.0 and `dist.shasum` `8af0aba1b7f1b3d44b123747597cd8dd6382eb7a` matched the local pack.
 - Annotated `v3.3.0` tag pushed at `385f5e4909c1338370a8086d3c4671f98c1c6381` with a GitHub Release using `docs/release-notes/RELEASE_NOTES.md`.
 - Published tarball: 255 files, no `state/` or `user-id`, no unexpected email addresses, gitleaks clean.
-- Global install: `devwf --version` 3.3.0 and `devwf doctor` OK; the native `better-sqlite3` binding requires reinstalling with `--allow-scripts` on npm versions that block install scripts.
+- Global install: `devwf --version` 3.3.0 and `devwf doctor` OK; npm 11+/12 needs a user-level `allow-scripts` entry for `better-sqlite3` plus a one-off `--allow-scripts` reinstall, verified by a fresh flagless global install.
 - Stdio MCP: 18 / 30 / 66 tools for core / standard / full, out-of-profile calls rejected, Context cost line present, `devwf tools --tokens` verified.
 - Old `@programinglive/dev-workflow-mcp-server` 1.29.2–1.32.8 deprecated with the full notice; 3.2.0 and later untouched.
 - Central release host promoted to 3.3.0; bootstrap and prewarm resolved on HELLOWORLD, Mac and MMCH; managed rule block present in all nine AI CLI files.

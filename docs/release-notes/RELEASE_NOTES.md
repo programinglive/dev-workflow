@@ -695,7 +695,7 @@ Released on **2025-12-06**.
 - Registry: version 3.3.0, `dist.shasum` `8af0aba1b7f1b3d44b123747597cd8dd6382eb7a`, matching the locally packed tarball.
 - Annotated tag `v3.3.0` pushed at `385f5e4909c1338370a8086d3c4671f98c1c6381`; GitHub Release created with these notes.
 - Published tarball: 255 files, no `state/` or `user-id`, no unexpected email addresses, gitleaks clean.
-- Global install: `devwf --version` = 3.3.0 and `devwf doctor` OK. On npm versions that block install scripts, reinstall with `--allow-scripts` for `better-sqlite3` so its native binding is present.
+- Global install: `devwf --version` = 3.3.0 and `devwf doctor` OK. npm 11+/12 blocks lifecycle scripts by default, which omits the native `better-sqlite3` binding; the permanent fix is `npm config set allow-scripts "@github/keytar,@programinglive/dev-workflow,better-sqlite3" --location=user`, with a one-off `--allow-scripts` reinstall to repair an already-installed copy. A fresh `npm install -g` without flags was regression-tested.
 - Stdio MCP: profiles expose 18 / 30 / 66 tools, out-of-profile calls are rejected, `get_workflow_status` includes the Context cost line, and `devwf tools --tokens` reports the expected catalog sizes.
 - Old `@programinglive/dev-workflow-mcp-server` versions 1.29.2 through 1.32.8 are deprecated with the full rename and metadata notice; 3.2.0 and later are untouched.
 - Central release host promoted to 3.3.0; bootstraps and prewarm resolved on HELLOWORLD, Mac and MMCH; the managed rule block is present in all nine AI CLI files.
