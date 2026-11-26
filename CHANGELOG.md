@@ -12,7 +12,7 @@ All notable changes to this project will be documented in this file. See [standa
 ### Bug Fixes
 * **packaging:** exclude runtime `state/` and generated `user-id` files from the published npm tarball; `.npmignore` previously ignored only `.state/`, so a state root pointed at `<repo>/state` could leak a per-machine identifier into a release. Version metadata synchronized to 3.1.5 across package, server and website.
 
-## [3.2.0](https://github.com/programinglive/dev-workflow/compare/v3.1.5...v3.2.0) (2026-11-25)
+## [3.2.0](https://github.com/programinglive/dev-workflow/compare/v3.1.5...v3.2.0) (2026-11-26)
 
 **BREAKING BEHAVIOR:** the Sentry preemption gate is disabled by default, Sentry auto-resolve is opt-in, and the `full` catalog has 66 tools. Read the migration block below before upgrading.
 
