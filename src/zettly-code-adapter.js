@@ -1,3 +1,4 @@
+import { loadUserConfig } from './user-config.js';
 /**
  * Thin integration adapter connecting DevWorkflow MCP v3.1+ to Zettly Code
  * (`@programinglive/zettly-code`, open-source MIT repository: https://github.com/programinglive/zettly-code).
@@ -88,20 +89,8 @@ export async function isZettlyCodeAvailable(projectDir = null) {
   return Boolean(mod && typeof mod.handleCodeIndex === "function");
 }
 
-const KNOWN_REPO_SLUGS = {
-  clinic: { slug: "clinic", repo_full_name: "beautyworld_repository/clinic" },
-  "hris.beautyworld.co.id": { slug: "hris", repo_full_name: "beautyworld_repository/hris.beautyworld.co.id" },
-  hris: { slug: "hris", repo_full_name: "beautyworld_repository/hris.beautyworld.co.id" },
-  "erp.beautyworld.co.id": { slug: "erp", repo_full_name: "beautyworld_repository/erp.beautyworld.co.id" },
-  erp: { slug: "erp", repo_full_name: "beautyworld_repository/erp.beautyworld.co.id" },
-  frontend_erp: { slug: "frontend-erp", repo_full_name: "beautyworld_repository/frontend_erp" },
-  "frontend-erp": { slug: "frontend-erp", repo_full_name: "beautyworld_repository/frontend_erp" },
-  zettly: { slug: "zettly-app", repo_full_name: "programinglive/zettly" },
-  "zettly-app": { slug: "zettly-app", repo_full_name: "programinglive/zettly" },
-  "zettly-code": { slug: "zettly-code", repo_full_name: "programinglive/zettly-code" },
-  "dev-workflow": { slug: "dev-workflow", repo_full_name: "programinglive/dev-workflow" },
-  "central-mcp-gateway": { slug: "central-mcp-gateway", repo_full_name: "programinglive/central-mcp-gateway" },
-};
+const KNOWN_REPO_SLUGS = loadUserConfig('DEVWF_REPO_SLUG_MAP', 'config/repo-slug-map.json').slugs || {};
+
 
 function resolveRepoIdentity(projectDir) {
   const baseName = path.basename(path.resolve(projectDir || process.cwd()));

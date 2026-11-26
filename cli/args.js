@@ -14,7 +14,7 @@
  * only `list` runs without one.
  */
 
-const COMMANDS = ["list", "close", "share", "drop", "complete", "checkpoint", "help", "version", "doctor", "pair", "fleet", "identity", "setup", "zettly", "governance", "audit"];
+const COMMANDS = ["list", "close", "share", "drop", "complete", "checkpoint", "help", "version", "doctor", "tools", "pair", "fleet", "identity", "setup", "zettly", "governance", "audit"];
 const FLEET_VERBS = ["status", "check", "plan", "stage", "activate", "verify", "rollback", "doctor", "upgrade"];
 const ZETTLY_VERBS = ["status", "skip", "connect", "switch", "disconnect", "doctor"];
 const GOVERNANCE_VERBS = ["validate", "policies"];
@@ -33,6 +33,7 @@ export const USAGE = `devwf - close sessions and cards without the web monitor
 
 Usage:
   devwf doctor                                 Check environment, node, and storage diagnostics
+  devwf tools --tokens                         Show measured prompt cost per tool profile
   devwf setup [--skip-zettly] [--profile <core|standard|full>] [--json]
                                                Initialize local-first profile (preserves existing Zettly)
   devwf zettly status|skip|connect|switch|disconnect|doctor
@@ -103,7 +104,7 @@ const FLAGS_WITH_VALUE = new Set([
   "--out",
   "--profile",
 ]);
-const BOOLEAN_FLAGS = new Set(["--dry-run", "--orphans", "--help", "--version", "--json", "--authorize", "--all", "--resume", "--force", "--skip-zettly", "--confirm", "--token-stdin", "--include-external"]);
+const BOOLEAN_FLAGS = new Set(["--dry-run", "--orphans", "--help", "--version", "--json", "--authorize", "--all", "--resume", "--force", "--skip-zettly", "--confirm", "--token-stdin", "--include-external", "--tokens"]);
 
 /**
  * Parses argv (without the node and script entries).
@@ -196,6 +197,7 @@ export function parseArgs(argv = []) {
       if (word === "--confirm") args.confirm = true;
       if (word === "--token-stdin") args.tokenStdin = true;
       if (word === "--include-external") args.includeExternal = true;
+      if (word === "--tokens") args.tokens = true;
       continue;
     }
 

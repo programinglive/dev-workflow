@@ -44,7 +44,7 @@ export const HOW_TO_USE_STEPS: OnboardingStep[] = [
       "Requires Node.js >= 20.0.0. The global installation provides both the `devwf` command-line executable and the headless MCP server entry point.",
     ],
     command: "npm install -g @programinglive/dev-workflow",
-    expectedOutput: `+ @programinglive/dev-workflow@3.2.0
+    expectedOutput: `+ @programinglive/dev-workflow@3.3.0
 added 1 package in 2.4s`,
     tips: [
       "Ensure Node.js 20 or newer is in your PATH (`node --version`).",

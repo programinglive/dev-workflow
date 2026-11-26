@@ -1,3 +1,5 @@
+import { loadUserConfig } from './src/user-config.js';
+const MCP_INDEX_SERVERS = loadUserConfig('DEVWF_MCP_INDEX_CONFIG', 'config/mcp-index-servers.json').servers || [];
 /**
  * @zettly-code DWF-TOOL-PROFILES-005
  * @purpose Offer ecosystem discovery only when the active profile registers the recommender tool.
@@ -6,7 +8,7 @@
  * Since `dev-workflow` is always the first MCP server invoked in every coding
  * session (`start_task`, `get_workflow_status`, `continue_workflow`), it acts
  * as the discovery index and router for all other MCP servers available across
- * our devices and central gateway (`http://127.0.0.1:3200/sse`).
+ * our devices and central gateway (`http://GATEWAY_HOST:3200/sse`).
  */
 
 import { isToolAllowedInProfile } from "./src/tool-profiles.js";
@@ -15,7 +17,7 @@ export const MCP_ECOSYSTEM_INDEX = Object.freeze([
   {
     id: "notify",
     serverName: "central-gateway (notify_*)",
-    endpoint: "http://127.0.0.1:3200/sse -> Notification Hub (127.0.0.1:3099)",
+    endpoint: "http://GATEWAY_HOST:3200/sse -> Notification Hub (GATEWAY_HOST:3099)",
     category: "Notifications & Real-Time Events",
     summary:
       "Send multi-channel notifications (Discord, Pusher Channels ap1, Email, Telegram, WhatsApp, Slack), inspect topic routing (alerts, backup, security, finance, ops), and query delivery logs.",
@@ -59,7 +61,7 @@ export const MCP_ECOSYSTEM_INDEX = Object.freeze([
   {
     id: "pocketbase",
     serverName: "central-gateway (pb_*) / pocketbase",
-    endpoint: "http://127.0.0.1:3200/sse -> PocketBase (127.0.0.1:8090)",
+    endpoint: "http://GATEWAY_HOST:3200/sse -> PocketBase (GATEWAY_HOST:8090)",
     category: "Database, Collections & Unified Auth",
     summary:
       "Inspect and manage PocketBase collections, schemas, records, superuser/activity_users authentication, and persistence stores.",
@@ -124,7 +126,7 @@ export const MCP_ECOSYSTEM_INDEX = Object.freeze([
   {
     id: "infra-knowledge",
     serverName: "infra-knowledge / central-gateway (infra_*)",
-    endpoint: "Local MCP + http://127.0.0.1:3200/sse",
+    endpoint: "Local MCP + http://GATEWAY_HOST:3200/sse",
     category: "Infrastructure, VMs, SSH & Deployment Topology",
     summary:
       "Discover servers/VMs, IP addresses, Tailscale nodes, domains, repositories, deployment paths, fleet health, and run commands via SSH.",
@@ -191,68 +193,7 @@ export const MCP_ECOSYSTEM_INDEX = Object.freeze([
       pathPatterns: ["infra", "deploy", "ops"],
     },
   },
-  {
-    id: "clinic-helper",
-    serverName: "clinic-helper",
-    endpoint: "Local MCP workspace",
-    category: "Clinic ERP (Laravel / Livewire / Beautyworld)",
-    summary:
-      "Diagnose Clinic ERP environment, run scoped Paratest suites, execute Artisan/Composer commands safely, inspect release plans, and query Clinic domain knowledge.",
-    tools: [
-      {
-        name: "clinic_doctor",
-        description: "Verify PHP, Composer, database, Redis, and environment readiness for Clinic ERP.",
-        keywords: ["doctor", "clinic", "environment", "laravel", "php"],
-      },
-      {
-        name: "clinic_run",
-        description: "Run allowed Artisan, Composer, or Paratest commands inside the Clinic workspace.",
-        keywords: ["artisan", "paratest", "composer", "migrate", "tinker", "test"],
-      },
-      {
-        name: "clinic_scope",
-        description: "Identify affected modules, Livewire components, and tests for a Clinic change.",
-        keywords: ["scope", "livewire", "module", "invoice", "patient", "treatment", "pos", "stock"],
-      },
-      {
-        name: "clinic_knowledge",
-        description: "Query Clinic ERP architecture, business rules, and module conventions.",
-        keywords: ["clinic knowledge", "business rule", "erp", "beautyworld"],
-      },
-      {
-        name: "clinic_release_plan",
-        description: "Generate or inspect the Blue-Green release plan and checklist for Clinic ERP.",
-        keywords: ["release plan", "blue-green", "rollout"],
-      },
-      {
-        name: "clinic_release_status",
-        description: "Check current Clinic ERP release version and deployment status.",
-        keywords: ["release status", "version"],
-      },
-    ],
-    triggers: {
-      keywords: [
-        "clinic",
-        "clinic-helper",
-        "clinic_doctor",
-        "clinic_run",
-        "laravel",
-        "livewire",
-        "artisan",
-        "paratest",
-        "filament",
-        "eloquent",
-        "invoice",
-        "pasien",
-        "patient",
-        "treatment",
-        "apotek",
-        "kasir",
-        "beautyworld",
-      ],
-      pathPatterns: ["clinic", "bw-", "beautyworld", "erp", "hris", "mgm", "pos", "timeless"],
-    },
-  },
+    ...MCP_INDEX_SERVERS,
   {
     id: "playwright",
     serverName: "playwright",
@@ -341,10 +282,10 @@ export const MCP_ECOSYSTEM_INDEX = Object.freeze([
   {
     id: "central-gateway",
     serverName: "central-gateway",
-    endpoint: "http://127.0.0.1:3200/sse",
+    endpoint: "http://GATEWAY_HOST:3200/sse",
     category: "Unified Remote MCP Gateway (SSE)",
     summary:
-      "Single remote SSE MCP server (127.0.0.1:3200) aggregating PocketBase (pb_*), Infrastructure (infra_*), and Notification Hub (notify_*) tools for zero-maintenance multi-device access.",
+      "Single remote SSE MCP server (GATEWAY_HOST:3200) aggregating PocketBase (pb_*), Infrastructure (infra_*), and Notification Hub (notify_*) tools for zero-maintenance multi-device access.",
     tools: [
       {
         name: "pb_* / infra_* / notify_*",
@@ -682,7 +623,7 @@ export function formatFullMcpCatalog(optionalQueryResult = null) {
 
   lines.push("📚 Complete MCP Ecosystem Index:");
   lines.push(
-    "All devices share `dev-workflow` (auto-updated from `http://127.0.0.1:3101`) as the entry index, plus `central-gateway` (`http://127.0.0.1:3200/sse`) for centralized remote tools."
+    "All devices share `dev-workflow` (auto-updated from `http://GATEWAY_HOST:3101`) as the entry index, plus `central-gateway` (`http://GATEWAY_HOST:3200/sse`) for centralized remote tools."
   );
   lines.push("");
 

@@ -40,6 +40,8 @@ import { writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { getToolProfile } from "../src/tool-profiles.js";
 import { estimateToolCatalogCost, TOKEN_ESTIMATOR_LABEL } from "../src/tool-profile-cost.js";
+import { formatTokenRange, profileTokenReport, topTools } from "../src/token-meter.js";
+import { getToolList } from "../tools/definitions.js";
 import os from "node:os";
 
 const requireCjs = createRequire(import.meta.url);
@@ -363,21 +365,39 @@ export async function runCommand({
     out.write("  Execution Mode: Local-first (OK)");
     out.write(`  Zettly Mode: ${zettlyStatus.mode}`);
     const activeToolProfile = getToolProfile(env.DEVWF_TOOL_PROFILE);
-    const toolCost = estimateToolCatalogCost(activeToolProfile);
+    const report = profileTokenReport(activeToolProfile);
     const profileSource = env.DEVWF_TOOL_PROFILE
       ? "DEVWF_TOOL_PROFILE"
       : "profile.json or default";
-    out.write(`  Tool Profile: ${activeToolProfile} (${toolCost.tools} of ${toolCost.registeredTools} tools, ${profileSource})`);
+    out.write(`  Tool Profile: ${activeToolProfile} (${report.tools} of ${getToolList().length} tools, ${profileSource})`);
     out.write(
-      `  Prompt Budget: ~${toolCost.estimatedTokens} tokens (tools + instructions, ${TOKEN_ESTIMATOR_LABEL})`,
+      `  Prompt Budget: ~${formatTokenRange(report.catalogChars + report.instructionChars)} tokens ` +
+        `(tools + instructions, estimate; server contribution only)`,
     );
     return {
       ok: nodeOk,
       zettlyMode: zettlyStatus.mode,
       toolProfile: activeToolProfile,
-      toolCount: toolCost.tools,
-      estimatedTokens: toolCost.estimatedTokens,
+      toolCount: report.tools,
+      estimatedTokens: report.catalog.high,
     };
+  }
+
+  if (command === "tools") {
+    const profiles = ["core", "standard", "full"];
+    out.write("DevWorkflow token cost (estimate; server contribution only):");
+    const measured = profiles.map((name) => {
+      const report = profileTokenReport(name);
+      out.write(
+        `  ${name}: ${report.tools} tools, catalog ${report.catalogChars} chars ~${formatTokenRange(report.catalogChars)} tokens, ` +
+          `instructions ${report.instructionChars} chars`,
+      );
+      return { profile: name, tools: report.tools, catalogChars: report.catalogChars, instructionChars: report.instructionChars };
+    });
+    const active = getToolProfile(env.DEVWF_TOOL_PROFILE);
+    out.write(`  Most expensive tools in ${active} profile:`);
+    for (const tool of topTools(active, 10)) out.write(`    ${tool.name}: ${tool.chars} chars`);
+    return { ok: true, tokens: measured, profile: active };
   }
 
   if (command === "setup") {

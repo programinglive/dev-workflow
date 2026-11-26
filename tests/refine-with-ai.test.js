@@ -59,6 +59,13 @@ test('retrying an identical refinement does not append duplicate context', async
   assert.equal(workflow.saved, 1);
 });
 
+test('refinement accepts the Zettly Todo number shown by get_workflow_status', async () => {
+  const workflow = fixture();
+  const response = await handleRefineWithAi({ ...revised, taskId: 541 }, workflow);
+  assert.equal(response.isError, undefined);
+  assert.equal(workflow.state.workflowTaskId, 'task-1');
+});
+
 test('wrong task identity and incomplete reconstruction do not mutate state', async () => {
   const workflow = fixture();
   const before = structuredClone(workflow.state);

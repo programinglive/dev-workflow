@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+/**
+ * @zettly-code DWF-REAPER-CONFIG-001
+ * @purpose Read the monitor address from configuration instead of a hardcoded address.
+ */
 'use strict';
 
 /**
@@ -12,10 +16,10 @@
  * local verification is reported as RECOVERY_REQUIRED rather than guessed.
  *
  * Usage:
- *   node scripts/session-reaper.cjs [--monitor http://100.77.138.14:3100] [--json]
+ *   node scripts/session-reaper.cjs [--monitor <url>] [--json]
  */
 
-const DEFAULT_MONITOR = process.env.DEVWF_MONITOR_URL || 'http://100.77.138.14:3100';
+const DEFAULT_MONITOR = process.env.DEVWF_MONITOR_URL || '';
 
 function parseArgs(argv) {
   const args = { monitor: DEFAULT_MONITOR, json: false };
