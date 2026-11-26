@@ -71,11 +71,19 @@ devwf doctor                  # shows the active profile, tool count and estimat
 
 | Profile | Tools | Prompt budget (estimate) | Choose it when |
 |---|---|---|---|
-| `core` | 18 | ~5.8k tokens (about 72% smaller) | You only need the task lifecycle: start → flow → fix → test → document → ready → commit → release → complete. The strictest profile: no waiver, force-complete, handoff or Sentry tools. |
-| `standard` | 30 | ~9.7k tokens (about 52% smaller) | You also want audit/autofix, code memory (`code_index`, `code_context`), release locking, deployment recording and project discovery. |
-| `full` | 66 | ~20.3k tokens | Everything, including waivers, forced completion, focus tools, handoff, Sentry and session tooling. **Default.** |
+| `core` | 18 | ~4.3k-5.8k tokens (about 72% smaller) | You only need the task lifecycle: start → flow → fix → test → document → ready → commit → release → complete. The strictest profile: no waiver, force-complete, handoff or Sentry tools. |
+| `standard` | 30 | ~7.2k-9.7k tokens (about 52% smaller) | You also want audit/autofix, code memory (`code_index`, `code_context`), release locking, deployment recording and project discovery. |
+| `full` | 66 | ~15.2k-20.2k tokens | Everything, including waivers, forced completion, focus tools, handoff, Sentry and session tooling. **Default.** |
 
 Token figures are labelled estimates (tools plus server instructions, about three characters per token), not measurements — read them as relative cost, not exact billing.
+
+### Token cost
+
+`devwf tools --tokens` prints the measured character and estimated token cost for each profile. `devwf doctor` uses the same numbers. `get_workflow_status` ends with one server-side line such as:
+
+`Context cost (estimate): profile=core, 18 tools, catalog ~3.7k-4.9k tokens; responses this session ~X-Y tokens over N calls; top: a, b, c`
+
+The server measures only its own contribution: the active `tools/list` catalog, its instruction text, and the characters of tool responses in this process. It cannot see the client's system prompt, the total session context, or model output; those are known only to the client. Every figure is a `chars/4` to `chars/3` estimate range, never a token-meter reading. Set `DEVWF_TOKEN_METER=0` to remove the status line; no tool or parameter is added.
 
 - Selection order: `DEVWF_TOOL_PROFILE` environment variable, then the `toolProfile` recorded by `devwf setup --profile` in `~/.devworkflow/profile.json`, then `full`.
 - An unknown or empty value falls back to `full`, so a typo can never lock a session out of its tools.

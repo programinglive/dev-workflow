@@ -13,7 +13,8 @@ import { assertSafeKnowledge } from '../../security/policy.js';
 import { safeLog, securityOutputFilter } from '../../security/sanitizer.js';
 import { withEnglishGuidance } from '../../workflow-guidance.js';
 import { getAllToolDefinitions } from '../definitions.js';
-import { isToolAllowedInProfile, unavailabilityMessage } from '../../src/tool-profiles.js';
+import { isToolAllowedInProfile, unavailabilityMessage, getToolProfile } from '../../src/tool-profiles.js';
+import { formatTokenRange, getSessionUsage, profileTokenReport, recordToolResponse } from '../../src/token-meter.js';
 import { syncZettlyTask, flushZettlyOutbox } from '../../zettly-workflow.js';
 import { securityAudit } from '../../security/audit.js';
 import { auditSite } from '../../audit/site-audit.js';
@@ -658,6 +659,26 @@ export async function handleToolCall(context) {
       const midTaskPreemption=await checkSentryPreemption({projectDir:context.workflowState.state?.projectDir||'',mode:'status',options:context.integrationOptions||{}});
       if(midTaskPreemption.preempted&&midTaskPreemption.alertText&&typeof response?.content?.[0]?.text==='string'){
         response={...response,content:[{...response.content[0],text:response.content[0].text+'\n\n'+midTaskPreemption.alertText},...response.content.slice(1)]};
+      }
+    }
+    recordToolResponse(name, response);
+    if (
+      name === 'get_workflow_status' &&
+      String(process.env.DEVWF_TOKEN_METER || '') !== '0' &&
+      !response?.isError &&
+      typeof response?.content?.[0]?.text === 'string'
+    ) {
+      try {
+        const report = profileTokenReport(getToolProfile());
+        const usage = getSessionUsage();
+        const top = usage.byTool.slice(0, 3).map((item) => item.name).join(', ') || 'none';
+        const line =
+          `\n\nContext cost (estimate): profile=${report.profile}, ${report.tools} tools, ` +
+          `catalog ~${formatTokenRange(report.catalogChars)} tokens; responses this session ` +
+          `~${formatTokenRange(usage.chars)} tokens over ${usage.calls} calls; top: ${top}`;
+        response = { ...response, content: [{ ...response.content[0], text: response.content[0].text + line }, ...response.content.slice(1)] };
+      } catch {
+        // Instrumentation must never fail the status response.
       }
     }
     const structuredIntegrationReads=new Set(['get_integration_status','list_sentry_issues','get_sentry_issue','inventory_sentry_issues','get_zettly_task_context','get_current_focus','set_focus','link_task_to_focus','complete_focus',...DEVWORKFLOW_V2_TOOL_NAMES]);
