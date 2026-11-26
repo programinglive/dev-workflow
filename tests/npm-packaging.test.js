@@ -56,6 +56,34 @@ test("npm pack excludes internal evidence and test helper files", () => {
   assert.deepEqual(excluded, [], "internal evidence and test helpers must not be published");
 });
 
+// Public project addresses and documented example addresses are intentional.
+// Any other email in the published tarball is a privacy leak.
+const EMAIL_ALLOWLIST = new Set([
+  "CODE_OF_CONDUCT.md",
+  "CONTRIBUTING.md",
+  "SECURITY.md",
+  "engineering/exceptions/approved-exceptions.yaml",
+  "monitor-server/repo-link.cjs",
+  "scripts/create-admin.js",
+  "scripts/verify-bundle.mjs",
+  "scripts/verify-push-branch.mjs",
+]);
+
+test("npm pack contains no email addresses outside the documented allowlist", () => {
+  const emailPattern = /[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g;
+  const unexpected = [];
+  for (const rel of packedPaths()) {
+    if (EMAIL_ALLOWLIST.has(rel)) continue;
+    if (!/\.(js|cjs|mjs|ts|tsx|json|md|ya?ml|example|sh|service|txt|html)$/.test(rel)) continue;
+    const absolute = path.join(ROOT, rel);
+    if (!fs.existsSync(absolute)) continue;
+    const content = fs.readFileSync(absolute, "utf8");
+    const matches = content.match(emailPattern) || [];
+    if (matches.length) unexpected.push(`${rel}:${matches.length}`);
+  }
+  assert.deepEqual(unexpected, [], "unexpected email addresses in published files");
+});
+
 test("npm pack keeps the files required to run the MCP server", () => {
   const paths = new Set(packedPaths());
   const required = [

@@ -386,7 +386,7 @@ export const MCP_ECOSYSTEM_INDEX = Object.freeze([
   {
     id: "gcp",
     serverName: "google-compute-engine / google-cloud-monitoring / google-cloud-pubsub / google-cloud-resource-manager",
-    endpoint: "Local GCP MCP Suite (account: noreply@example.invalid)",
+    endpoint: "Remote MCP endpoint",
     category: "Google Cloud Platform (GCE, Monitoring, Pub/Sub, Storage)",
     summary:
       "Inspect and manage GCP Compute Engine instances, disks, snapshots, Cloud Monitoring metrics/alerts/dashboards, and Pub/Sub topics/subscriptions.",
