@@ -2,14 +2,15 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
-## Unreleased (planned 3.3.0)
+## [3.3.0](https://github.com/programinglive/dev-workflow/compare/v3.2.0...v3.3.0) (2026-11-26)
 
 ### Migration
 * **config:** `KNOWN_REPO_SLUGS` now lives in `config/repo-slug-map.json` (empty by default). Point `DEVWF_REPO_SLUG_MAP` at a private JSON file with `{ "slugs": { "<repo>": { "slug": "...", "repo_full_name": "..." } } }` to restore organisation mappings.
 * **config:** the public `clinic-helper` index entry now lives in `config/mcp-index-servers.json` (empty by default). Point `DEVWF_MCP_INDEX_CONFIG` at a private JSON file with `{ "servers": [ ... ] }` to restore it.
 * **config:** `scripts/session-reaper.cjs` uses `DEVWF_MONITOR_URL` with no hardcoded default; set it explicitly in the environment.
 * **refine:** `refine_with_ai` now accepts either the canonical `workflowTaskId` or the Zettly Todo number shown by `get_workflow_status`.
-* **privacy:** product code no longer contains the organisation strings or the monitor IP that were previously hardcoded in `mcp-index.js`, `src/zettly-code-adapter.js`, and `scripts/session-reaper.cjs`. No version bump is applied.
+* **privacy:** product code no longer contains the organisation strings or the monitor IP that were previously hardcoded in `mcp-index.js`, `src/zettly-code-adapter.js`, and `scripts/session-reaper.cjs`.
+* **tokens:** `devwf tools --tokens`, `devwf doctor` and `get_workflow_status` now show measured catalog and response cost as labelled estimate ranges. The server measures only its own contribution; total session context and model output remain client-side only.
 
 ## [3.1.5](https://github.com/programinglive/dev-workflow/compare/v3.1.4...v3.1.5) (2026-11-25)
 

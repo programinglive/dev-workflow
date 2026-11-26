@@ -4,6 +4,7 @@ Authoritative history of user-visible changes for the Development Workflow MCP S
 
 | Version | Date | Notes |
 |---------|------|-------|
+| 3.3.0 | 2026-11-26 | **config/refine/tokens:** organisation data moved to optional external configuration, `refine_with_ai` accepts the Zettly Todo number, and measured token-cost estimates are shown per profile. |
 | 3.2.0 | 2026-11-26 | **breaking:** Sentry preemption gate off by default, auto-resolve opt-in, new confirmed `set_sentry_issue_status` tool (66 in full). |
 | 3.1.5 | 2026-11-25 | **packaging:** exclude runtime `state/` and generated `user-id` from the npm tarball and gate publishing on the packaging dry-run test. |
 | 3.1.4 | 2026-11-25 | **security/tooling:** exempt GitHub OIDC permission declarations from the secret scanner, forward the macOS mutex opt-in to the bundle verifier, and skip device restarts when no AI session is live. |
