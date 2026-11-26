@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## Unreleased (planned 3.3.0)
+
+### Planned
+* **config:** move the monitor host address in `scripts/session-reaper.cjs:15,18` into configuration, alongside the planned move of `KNOWN_REPO_SLUGS` (`src/zettly-code-adapter.js:91-104`) and the public `clinic-helper` index data (`mcp-index.js:195-253`) out of hardcoded product code. Written note only; no implementation in 3.2.0.
+
 ## [3.1.5](https://github.com/programinglive/dev-workflow/compare/v3.1.4...v3.1.5) (2026-11-25)
 
 ### Bug Fixes
@@ -15,6 +20,10 @@ All notable changes to this project will be documented in this file. See [standa
 * **sentry:** `complete_task` no longer auto-resolves a linked Sentry issue by default. Pass `resolveSentry: true` or set `DEVWF_SENTRY_AUTORESOLVE=1` to restore the previous behavior; the response now names the issue id, new status and result. Release number: 3.2.0.
 * **tools:** Sentry `resolve`/`unresolve`/`ignore` moves to `set_sentry_issue_status` with mandatory `confirm: true` and a written reason. The old `link_sentry_issue` actions remain deprecated aliases for at least two minor releases and print a warning. The full catalog grows from 65 to 66 tools; core and standard are unchanged.
 * **preemption:** the Sentry preemption gate is now OFF by default and must be configured explicitly with `DEVWF_PREEMPTION_ENABLED`, `DEVWF_PREEMPTION_SENTRY_PROJECT`, `DEVWF_PREEMPTION_QUERY`, and `DEVWF_PREEMPTION_PROJECT_DIR_MARKERS`. Installations that relied on the previous always-on gate must set these variables to restore the old behavior. The override flag is now `allowPreemptionOverride`; the previous name remains a deprecated alias and prints a warning. This is a breaking change in default behavior; version 3.2.0.
+
+### Bug Fixes
+* **packaging:** require `managed/fleet-providers.cjs` in the published package (`cli/commands.js:48-53` imports it at module load), drop the personal account from the public MCP index label, and exclude four unreferenced internal files (`RELEASE-1.33.1-EVIDENCE.md`, `scripts/setup-test-dbs.sh`, `scripts/test-db-adapters.sh`, `scripts/verify-push-branch.mjs`). `scripts/verify-monitor-deployment.mjs` stays because `tests/monitor-deployment-contract.test.js:8` references it.
+* **privacy:** add an explicit tarball email allowlist test; only documented public project addresses and example addresses may appear in published files.
 
 ### Migration to 3.2.0 (breaking behavior)
 
