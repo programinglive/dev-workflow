@@ -95,6 +95,8 @@ test("npm pack keeps the files required to run the MCP server", () => {
     "tools/definitions.js",
     "src/tool-profiles.js",
     "src/tool-profile-cost.js",
+    "config/repo-slug-map.json",
+    "config/mcp-index-servers.json",
     "src/vendor/zettly-code/LICENSE",
     "src/vendor/zettly-code/src/index.js",
     "engineering/zettly-code-sidecars/gitignore-generated-artifacts.json",
