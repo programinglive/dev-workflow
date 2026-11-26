@@ -1,3 +1,7 @@
+/**
+ * @zettly-code DWF-REFINE-ID-001
+ * @purpose Accept either the canonical workflowTaskId or the linked Zettly Todo number shown by get_workflow_status, so refinement can be invoked from a status response.
+ */
 import { textResponse } from './shared.js';
 import { validatePlanSteps, normalizePlan, createPlan } from './plan.js';
 import { validateItemTexts, nextItemId } from './dod.js';
@@ -28,8 +32,10 @@ export async function handleRefineWithAi(args, workflowState) {
   if (!state || state.currentPhase === 'idle' || !state.workflowTaskId) {
     return { ...textResponse('Start a canonical task before refining it.'), isError: true };
   }
-  if (args.taskId !== state.workflowTaskId) {
-    return { ...textResponse('Task identity changed. Read the active task and retry with its canonical ID.'), isError: true };
+  const todoId = Number.isSafeInteger(state.zettly?.todoId) ? String(state.zettly.todoId) : '';
+  const suppliedId = String(args.taskId ?? '');
+  if (suppliedId !== state.workflowTaskId && (!todoId || suppliedId !== todoId)) {
+    return { ...textResponse('Task identity changed. Pass the canonical workflowTaskId or the Zettly Todo number shown by get_workflow_status.'), isError: true };
   }
   const description = typeof args.description === 'string' ? args.description.trim() : '';
   const newContext = typeof args.newContext === 'string' ? args.newContext.trim() : '';
