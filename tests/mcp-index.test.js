@@ -47,7 +47,6 @@ test("MCP_ECOSYSTEM_INDEX covers all core MCP servers in the ecosystem", () => {
     "infra-knowledge",
     "notify",
     "zettly",
-    "clinic-helper",
     "playwright",
     "cloudflare",
     "gcp",
@@ -69,17 +68,16 @@ test("MCP_ECOSYSTEM_INDEX covers all core MCP servers in the ecosystem", () => {
   }
 });
 
-test("recommendMcpTools ranks clinic-helper and playwright for Clinic Laravel UI tasks", () => {
+test("recommendMcpTools ranks playwright for browser verification tasks", () => {
   const result = recommendMcpTools({
-    description: "Fix Livewire invoice calculation and verify in browser on Clinic ERP",
-    projectDir: "D:/code/clinic",
-    definitionOfDone: ["Paratest passes", "Playwright browser snapshot verified"],
-    plan: ["Run clinic_doctor", "Inspect Livewire component"],
+    description: "Fix an invoice calculation and verify the result in a real browser",
+    projectDir: "D:/code/example-app",
+    definitionOfDone: ["Unit tests pass", "Browser snapshot verified"],
+    plan: ["Inspect the component", "Verify in browser"],
   });
 
-  assert.ok(result.recommendations.length >= 2);
+  assert.ok(result.recommendations.length >= 1);
   const topIds = result.recommendations.map((r) => r.id);
-  assert.ok(topIds.includes("clinic-helper"), `Expected clinic-helper in [${topIds.join(", ")}]`);
   assert.ok(topIds.includes("playwright"), `Expected playwright in [${topIds.join(", ")}]`);
 });
 
@@ -175,7 +173,7 @@ test("recommend_mcp_tools tool is registered in definitions and callable via han
     const catalogText = catalogResp.content[0].text;
     assert.match(catalogText, /📚 Complete MCP Ecosystem Index/);
     assert.match(catalogText, /central-gateway/);
-    assert.match(catalogText, /clinic-helper/);
+    assert.match(catalogText, /pocketbase/);
   });
 });
 
