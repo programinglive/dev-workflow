@@ -115,6 +115,22 @@ function externalLinkSummary(state) {
   const provenance=buildTaskProvenance(state);
   return [`Source: ${provenance.taskOrigin.system}${provenance.taskOrigin.id?` ${provenance.taskOrigin.id}`:''}`,links.sentry?`Sentry: ${links.sentry.shortId||links.sentry.issueId} ${links.sentry.url||''}`:'',links.drawing?`Zettly Draw: ${links.drawing.url||`https://zettly.programinglive.com/draw/${links.drawing.id}`}`:''].filter(Boolean).join('\n');
 }
+function findClaimableOpenSourceTodo(todos,state) {
+  const list=Array.isArray(todos)?todos:[];
+  const sentryId=String(state.zettly?.externalLinks?.sentry?.issueId||(state.taskOrigin?.system==='sentry'?state.taskOrigin.id:'')||'').trim();
+  const sentryShortId=String(state.zettly?.externalLinks?.sentry?.shortId||(state.taskOrigin?.system==='sentry'&&state.taskOrigin?.label!==sentryId?state.taskOrigin.label:'')||'').trim();
+  if(!sentryId&&!sentryShortId)return null;
+  const shortRe=sentryShortId?new RegExp(`\\b${sentryShortId.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}\\b`,'i'):null;
+  return list.find(item=>{
+    if(!item||item.is_completed||item.archived)return false;
+    if(item.type&&item.type!=='todo')return false;
+    const desc=String(item.description||'');
+    const title=String(item.title||'');
+    if(sentryId&&desc.includes(sentryId))return true;
+    if(shortRe&&(shortRe.test(title)||shortRe.test(desc)))return true;
+    return false;
+  })||null;
+}
 function mergeBlock(description,state,block) {
   const id=state.workflowTaskId.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
   const without=String(description||'').replace(new RegExp(`<!-- dev-workflow:${id}:start -->[\\s\\S]*?<!-- dev-workflow:${id}:end -->`,'g'),'').trim();
@@ -139,6 +155,9 @@ async function syncState(workflowState,state,status,args,options) {
       const response=await client.request('GET','/todos');
       const marker=`data-dev-workflow-id="${escape(state.workflowTaskId)}"`;
       todo=(response.data||[]).find(item=>String(item.description||'').includes(marker));
+      if(!todo) {
+        todo=findClaimableOpenSourceTodo(response.data||[],state);
+      }
       if(!todo) {
         if(state.zettly.createAttempted)throw Object.assign(new Error('Creation uncertain'),{uncertain:true});
         state.zettly.createAttempted=true;

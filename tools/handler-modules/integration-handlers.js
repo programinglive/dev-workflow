@@ -14,6 +14,7 @@ import {createHash} from 'node:crypto';
 import {sanitize} from '../../security/sanitizer.js';
 import {readZettlyTaskContext} from '../../zettly-context.js';
 import {drawingMatchesWorkflow} from '../../zettly-drawing.js';
+import {collectActiveSessionClaims,findMatchingActiveClaim,toIssueActiveClaim} from '../../claim-view.js';
 
 const failed=message=>({...textResponse(message),isError:true});
 const json=value=>textResponse(JSON.stringify(value));
@@ -88,15 +89,38 @@ export async function handleIntegrationTool(name,args={},workflowState,options={
     return textResponse(`Verified Zettly Draw #${args.drawingId} linked to Todo #${state.zettly.todoId}.`);
   }
   if(!api.sentry)return failed('Sentry is not configured. Set SENTRY_ORG and SENTRY_ACCESS_TOKEN in the private launcher environment, or select a private file with DEVWF_SENTRY_CONFIG.');
-  if(name==='list_sentry_issues')return json(api.sentry.listIssuePage?await api.sentry.listIssuePage(args):await api.sentry.listIssues(args));
+  const ownSessionKey=(typeof workflowState?._sessionKey==='function'?workflowState._sessionKey()?.key:'')||workflowState?.sessionId||'';
+  const annotateSentryIssue=async(rawIssue,activeClaims)=>{
+    if(!rawIssue||typeof rawIssue!=='object')return rawIssue;
+    const match=findMatchingActiveClaim({sentryIssueId:String(rawIssue.id||''),shortId:String(rawIssue.shortId||'')},activeClaims,{ownSessionKey});
+    return {...rawIssue,activeClaim:toIssueActiveClaim(match)};
+  };
+  if(name==='list_sentry_issues'){
+    const rawResult=api.sentry.listIssuePage?await api.sentry.listIssuePage(args):await api.sentry.listIssues(args);
+    const activeClaims=await collectActiveSessionClaims({ownSessionKey,stateFile:workflowState?.stateFile||'',env:options.env||process.env,fetchImpl:options.fetchImpl||fetch,timeoutMs:1500});
+    if(Array.isArray(rawResult)){
+      const annotated=await Promise.all(rawResult.map(item=>annotateSentryIssue(item,activeClaims)));
+      return json(annotated);
+    }
+    if(rawResult&&Array.isArray(rawResult.issues)){
+      const annotated=await Promise.all(rawResult.issues.map(item=>annotateSentryIssue(item,activeClaims)));
+      return json({...rawResult,issues:annotated});
+    }
+    return json(rawResult);
+  }
   if(name==='inventory_sentry_issues'){
     if(!workflowState?.stateFile)return failed('A device-local workflow state file is required to save an inventory snapshot.');
     const inventory=await api.sentry.inventoryIssues(args);
+    const activeClaims=await collectActiveSessionClaims({ownSessionKey,stateFile:workflowState?.stateFile||'',env:options.env||process.env,fetchImpl:options.fetchImpl||fetch,timeoutMs:1500});
+    if(Array.isArray(inventory.issues)){
+      inventory.issues=await Promise.all(inventory.issues.map(item=>annotateSentryIssue(item,activeClaims)));
+    }
     const directory=path.join(path.dirname(workflowState.stateFile),'sentry-inventory');
     await mkdir(directory,{recursive:true,mode:0o700});
     const snapshotPath=path.join(directory,'inventory-'+randomUUID()+'.json');
     await writeFile(snapshotPath,JSON.stringify(sanitize(inventory),null,2)+'\n',{mode:0o600,flag:'wx'});
-    return json({organization:inventory.organization,complete:inventory.complete,scope:inventory.scope,projectCount:inventory.projects.length,issueCount:inventory.issues.length,totalHits:inventory.totalHits,projects:inventory.projects,nextCursor:inventory.nextCursor,projectCursor:inventory.projectCursor,inconsistencies:inventory.inconsistencies,snapshotPath});
+    const claimedIssues=(inventory.issues||[]).filter(i=>i?.activeClaim?.claimed).map(i=>({id:i.id,shortId:i.shortId,activeClaim:i.activeClaim}));
+    return json({organization:inventory.organization,complete:inventory.complete,scope:inventory.scope,projectCount:inventory.projects.length,issueCount:inventory.issues.length,totalHits:inventory.totalHits,projects:inventory.projects,nextCursor:inventory.nextCursor,projectCursor:inventory.projectCursor,inconsistencies:inventory.inconsistencies,claimedIssueCount:claimedIssues.length,claimedIssues,snapshotPath});
   }
   if(name==='set_sentry_issue_status'){
    if(args.confirm!==true)return failed('Changing a Sentry issue status is a mutation: pass confirm: true with a written reason.');
@@ -122,7 +146,11 @@ export async function handleIntegrationTool(name,args={},workflowState,options={
    return textResponse(`Sentry issue ${updated.shortId||targetId} (${targetId}) status changed to '${status}' (confirmed). Reason: ${reason}`);
   }
   if(!issueId(args.issueId))return failed('Provide a numeric Sentry issueId.');
-  if(name==='get_sentry_issue')return json(await api.sentry.getIssue(args.issueId));
+  if(name==='get_sentry_issue'){
+    const rawIssue=await api.sentry.getIssue(args.issueId);
+    const activeClaims=await collectActiveSessionClaims({ownSessionKey,stateFile:workflowState?.stateFile||'',env:options.env||process.env,fetchImpl:options.fetchImpl||fetch,timeoutMs:1500});
+    return json(await annotateSentryIssue(rawIssue,activeClaims));
+  }
   if(name!=='link_sentry_issue')return failed('Unknown integration tool.');
   const state=workflowState?.state;
   const requestedAction=args.action??'link';
@@ -262,6 +290,11 @@ export async function checkSentryPreemption({projectDir='',allowPreemptionOverri
    }catch{
     return {...clear,preempted:true,response:failed(`⚠️ Preemption is configured but the Sentry query failed or timed out; fail-closed. Task NOT started.`)};
    }
+  }
+  if(!issues.length)return clear;
+  const activeClaims=await collectActiveSessionClaims({ownSessionKey:options.ownSessionKey||'',stateFile:options.stateFile||'',env,fetchImpl:options.fetchImpl||fetch,timeoutMs:1500});
+  if(activeClaims.length>0){
+   issues=issues.filter(item=>!findMatchingActiveClaim({sentryIssueId:String(item?.id||''),shortId:String(item?.shortId||'')},activeClaims));
   }
   if(!issues.length)return clear;
   const list=issues.slice(0,5).map(i=>`  • ${i.shortId||i.id} (ID: ${i.id}, events: ${i.count||'1'}): ${i.title}${i.permalink?` — ${i.permalink}`:''}`).join('\n');

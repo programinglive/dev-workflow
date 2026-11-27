@@ -1,4 +1,8 @@
 /**
+ * @zettly-code DWF-CLAIM-MONITOR-001
+ * @purpose Broadcast session snapshots with open-source-safe activeClaim metadata to the optional DevWorkflow Monitor.
+ */
+/**
  * Mengirim snapshot state ke monitor pusat - dan TIDAK PERNAH menggagalkan
  * pekerjaan kalau monitor mati.
  *
@@ -108,6 +112,29 @@ export function buildSnapshot({ state, sessionKey = "", projectPath = "", sessio
   // {taskId, title, startedAt}; main's assignWorkflowIdentity captures
   // {id, description, title, todoId}. Both normalize to one record.
   const taskId = String(s.workflowTaskId || "");
+  const phase = String(s.currentPhase || "idle");
+  const isClaimed = Boolean(
+    phase &&
+      !["idle", "closed", "done", "cancelled", "archived", "handed-off"].includes(phase) &&
+      String(s.taskDescription || "").trim() !== "",
+  );
+  const sentryLink = s.zettly?.externalLinks?.sentry || null;
+  const origin = s.taskOrigin && typeof s.taskOrigin === "object" ? s.taskOrigin : null;
+  const sentryIssueId = String(
+    sentryLink?.issueId || (origin?.system === "sentry" ? origin.id : "") || "",
+  ).trim();
+  const sentryShortId = String(
+    sentryLink?.shortId || (origin?.system === "sentry" && origin.label !== origin.id ? origin.label : "") || "",
+  ).trim();
+  const activeClaim = {
+    claimed: isClaimed,
+    status: isClaimed ? "in_progress" : "idle",
+    taskId,
+    todoId: Number.isSafeInteger(Number(s.zettly?.todoId)) && Number(s.zettly?.todoId) > 0 ? Number(s.zettly.todoId) : null,
+    source: origin && origin.system ? { system: String(origin.system), id: String(origin.id || ""), label: String(origin.label || "") } : null,
+    sentryIssueId: sentryIssueId || null,
+    sentryShortId: sentryShortId || null,
+  };
   const parent = s.parentTask && typeof s.parentTask === "object" ? s.parentTask : null;
   const parentId = parent ? String(parent.taskId || parent.id || "") : "";
   const parentTask = parentId
@@ -122,6 +149,7 @@ export function buildSnapshot({ state, sessionKey = "", projectPath = "", sessio
     ...buildTaskProvenance(s),
     sessionKey,
     taskId,
+    activeClaim,
     parentTask,
     machine: machineName(env),
     projectPath: String(projectPath || ""),

@@ -27,7 +27,7 @@ Install → Connect AI Client → Start Task → Design Flow → Implement → T
 ## Key Benefits
 
 - **Prevents Hallucination & Scope Creep:** Enforces explicit Task Contracts (`plan`, `definitionOfDone`, and Mermaid flow gates) before implementation.
-- **Worktree & Session Isolation:** Prevents concurrent AI sessions from overwriting each other's files.
+- **Worktree & Session Isolation:** Prevents concurrent AI sessions from overwriting each other's files, and automatically checks active session claims (locally and via the optional DevWorkflow Monitor `/api/sessions`) during `start_task`, `list_sentry_issues`, `get_sentry_issue`, `inventory_sentry_issues`, and `checkSentryPreemption` so two AI sessions never claim or duplicate the same issue (`forceClaim: true` overrides when intentionally taking over).
 - **Empirical Quality Gates:** Requires real test runs, documentation updates, and clean Git state before `commit_and_push`.
 - **Release Discipline (v3.3.0):** every source change is versioned, tagged and synchronized across GitHub, npm and the public website.
 - **Automatic Code Audit & Safe Fixes (v3.1.3 — 65 Canonical Tools):** Built-in canonical `audit`, `analyze_change`, `plan_fix`, and `apply_safe_fix` MCP tools detect security, database, architecture, quality, bug-fix knowledge (`category: "bugfix_knowledge"`), and open-source release documentation drift (`category: "release_docs"`), and apply bounded `AF-0`/`AF-1` autofixes with automatic snapshot rollback.
