@@ -70,7 +70,13 @@ test("the closure still reports a terminal phase", () => {
 test("the snapshot builder exposes the task id the table keys on", () => {
   const monitor = readFileSync(path.join(ROOT, "monitor.js"), "utf8");
   assert.match(monitor, /const taskId = String\(s\.workflowTaskId \|\| ""\)/);
-  assert.match(monitor, /taskId,\s*\n\s*parentTask,/);
+  // Both keys must be own properties of the snapshot payload. The order is not
+  // part of the contract: activeClaim was added between them on 27 Nov 2026.
+  assert.match(
+    monitor,
+    /return \{[\s\S]*?\n\s*taskId,[\s\S]*?\n\s*parentTask,/,
+    "buildSnapshot must expose both taskId and parentTask in the returned payload",
+  );
 });
 
 test("the upsert keys callers must satisfy: (session_key, task_id)", () => {
