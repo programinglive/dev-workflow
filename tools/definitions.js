@@ -165,6 +165,12 @@ export function getAllToolDefinitions() {
               "two sessions on one working tree overwrite each other's files silently. Prefer closing the other " +
               "session or using a git worktree.",
           },
+          forceClaim: {
+            type: "boolean",
+            description:
+              "Override the duplicate task/issue claim guard when another live AI session on the monitor or local machine " +
+              "has already claimed the same source issue or Todo. Defaults to false.",
+          },
           allowPreemptionOverride: {
             type: "boolean",
             description:

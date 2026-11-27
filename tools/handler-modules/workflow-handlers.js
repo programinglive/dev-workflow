@@ -64,7 +64,12 @@ import path from "node:path";
 import { assignWorkflowIdentity, validateZettlyTaskArguments } from '../../zettly-workflow.js';
 import { recommendMcpTools, formatMcpRecommendations, formatFullMcpCatalog } from "../../mcp-index.js";
 import { normalizeBuildState, formatBuildStatusBlock } from "../../build-monitor.js";
-import { claimReportBlock } from "../../claim-view.js";
+import {
+  claimReportBlock,
+  collectActiveSessionClaims,
+  findMatchingActiveClaim,
+  formatDuplicateClaimRefusal,
+} from "../../claim-view.js";
 import { fetchActiveSessions, monitorUrl } from "../../monitor.js";
 import os from 'node:os';
 import {flowGraph,syncZettlyDrawing} from '../../zettly-drawing.js';
@@ -236,6 +241,25 @@ async function handleStartTaskSerialized(args, workflowState, git, zettlyOptions
   }
   const zettlyArgumentError=validateZettlyTaskArguments(args);
   if(zettlyArgumentError)return textResponse(`⚠️ ${zettlyArgumentError} The existing task was not changed.`);
+  const ownSessionKeyForClaim =
+    (typeof workflowState?._sessionKey === "function" ? workflowState._sessionKey()?.key : "") ||
+    workflowState?.sessionId ||
+    "";
+  if (args.forceClaim !== true) {
+    const activeClaims = await collectActiveSessionClaims({
+      ownSessionKey: ownSessionKeyForClaim,
+      stateFile: workflowState?.stateFile || "",
+      env,
+      fetchImpl: zettlyOptions?.fetchImpl || fetch,
+      timeoutMs: 1500,
+    });
+    const duplicateClaim = findMatchingActiveClaim(args, activeClaims, {
+      ownSessionKey: ownSessionKeyForClaim,
+    });
+    if (duplicateClaim) {
+      return textResponse(formatDuplicateClaimRefusal(duplicateClaim));
+    }
+  }
   // A task handed over to another machine must not be silently continued here:
   // the marker names the target, and acknowledgement is an explicit step.
   const handoff=handoffGuard(workflowState.state);

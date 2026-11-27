@@ -1,7 +1,12 @@
-import { defineConfig } from 'vite';
+/**
+ * @zettly-code DWF-VITE-CONFIG-001
+ * @purpose Vite SSR build configuration for dist/index.mjs with zero runtime dependency on vite in vite.config.js.
+ */
 import { fileURLToPath } from 'url';
 import path from 'path';
 import { builtinModules } from 'node:module';
+
+const defineConfig = (config) => config;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
