@@ -26,6 +26,14 @@ test('workflow-guidance exports CLI-First, Mandatory Mermaid Flow, Pareto Priori
   assert.match(guidanceSource, /Daily Sentry Zero/);
   assert.match(guidanceSource, /UI\/UX polish, cosmetics, and localization \(i18n\) ALWAYS LAST/);
   assert.match(guidanceSource, /PR\/MR Reversibility & Release-Safety Gate/);
+  assert.match(guidanceSource, /Mobile-First Web Architecture/);
+});
+
+test('managed rollout rule block enforces Mobile-First Web Architecture', () => {
+  const rolloutSource = fs.readFileSync(path.join(__dirname, '..', 'managed', 'rollout.cjs'), 'utf8');
+  assert.match(rolloutSource, /Mobile-First Web Architecture/);
+  assert.match(rolloutSource, /360-390px/);
+  assert.match(rolloutSource, /44x44px/);
 });
 
 test('managed rollout rule block enforces Business-Process-First, Daily Sentry Zero, and UI/UX-Last priority hierarchy', () => {
